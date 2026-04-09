@@ -7,17 +7,24 @@ export function setupSocketHandlers(io: Server): void {
   const roomManager = new RoomManager(
     // onUpdate
     (roomId, engine) => {
+      const turnTimeRemaining = roomManager.getTurnTimeRemaining(roomId);
       const players = engine.state.players;
       for (const player of players) {
         if (player.type === 'human') {
           const socket = io.sockets.sockets.get(player.id);
           if (socket) {
-            socket.emit('game-update', engine.getPublicState(player.id));
+            socket.emit('game-update', {
+              ...engine.getPublicState(player.id),
+              turnTimeRemaining,
+            });
           }
         }
       }
       // Also broadcast to spectators / general room
-      io.to(roomId).emit('game-update-public', engine.getPublicState());
+      io.to(roomId).emit('game-update-public', {
+        ...engine.getPublicState(),
+        turnTimeRemaining,
+      });
     },
     // onChat
     (roomId, message) => {

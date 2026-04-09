@@ -14,11 +14,12 @@ interface PlayerSeatProps {
   position: { x: string; y: string };
   seatIndex: number;
   compact?: boolean;
+  turnDuration?: number;
   onSit?: (seatIndex: number) => void;
 }
 
 export default function PlayerSeat({
-  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false, onSit,
+  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false, turnDuration = 0, onSit,
 }: PlayerSeatProps) {
   if (!player) {
     return (
@@ -108,8 +109,8 @@ export default function PlayerSeat({
           </div>
         )}
 
-        {/* Turn timer */}
-        {isActive && (
+        {/* Turn timer - 서버 기반 */}
+        {isActive && turnDuration > 0 && (
           <motion.div
             className={`bg-gray-700 rounded-full mt-0.5 overflow-hidden ${compact ? 'w-12 h-0.5' : 'w-full h-1'}`}
             initial={{ opacity: 0 }}
@@ -119,7 +120,7 @@ export default function PlayerSeat({
               className="h-full bg-gradient-to-r from-green-400 to-yellow-400 rounded-full"
               initial={{ width: '100%' }}
               animate={{ width: '0%' }}
-              transition={{ duration: 30, ease: 'linear' }}
+              transition={{ duration: turnDuration / 1000, ease: 'linear' }}
             />
           </motion.div>
         )}

@@ -91,18 +91,22 @@ export default function PokerTable() {
         </div>
 
         {/* Player seats */}
-        {seats.map((pos, i) => (
-          <PlayerSeat
-            key={i}
-            player={seatPlayers[i]}
-            isCurrentPlayer={seatPlayers[i]?.id === myId}
-            isDealer={gameState.dealerIndex === i}
-            isActive={gameState.players[gameState.activePlayerIndex]?.seatIndex === i}
-            position={pos}
-            seatIndex={i}
-            compact={isMobile}
-          />
-        ))}
+        {seats.map((pos, i) => {
+          const isActiveHere = gameState.players[gameState.activePlayerIndex]?.seatIndex === i;
+          return (
+            <PlayerSeat
+              key={i}
+              player={seatPlayers[i]}
+              isCurrentPlayer={seatPlayers[i]?.id === myId}
+              isDealer={gameState.dealerIndex === i}
+              isActive={isActiveHere}
+              position={pos}
+              seatIndex={i}
+              compact={isMobile}
+              turnDuration={isActiveHere ? ((gameState as any).turnTimeRemaining ?? 0) : 0}
+            />
+          );
+        })}
 
         {/* Winner announcement */}
         {gameState.winners && gameState.winners.length > 0 && (

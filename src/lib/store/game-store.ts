@@ -19,9 +19,11 @@ interface GameStore {
   connected: boolean;
   playerName: string;
   currentRoomId: string | null;
+  pendingRoomId: string | null;
+  joinError: string | null;
 
   // Game
-  gameState: GameState | null;
+  gameState: (GameState & { turnTimeRemaining?: number }) | null;
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
 
@@ -45,6 +47,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   connected: false,
   playerName: '',
   currentRoomId: null,
+  pendingRoomId: null,
+  joinError: null,
   gameState: null,
   chatMessages: [],
   rooms: [],
@@ -67,14 +71,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ rooms });
     });
 
+    // [FIX 3] room-joined 이벤트에서 currentRoomId 설정 (ack 기반)
     socket.on('room-joined', (data: { gameState: GameState; chatHistory: ChatMessage[] }) => {
+      const { pendingRoomId } = get();
       set({
+        currentRoomId: pendingRoomId,
+        pendingRoomId: null,
         gameState: data.gameState,
         chatMessages: data.chatHistory,
+        joinError: null,
       });
     });
 
-    socket.on('game-update', (gameState: GameState) => {
+    socket.on('game-update', (gameState: GameState & { turnTimeRemaining?: number }) => {
       set({ gameState });
     });
 
@@ -84,8 +93,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
       }));
     });
 
-    socket.on('room-created', (data: { roomId: string }) => {
+    socket.on('room-created', () => {
       set({ showCreateRoom: false });
+    });
+
+    // [FIX 3] 에러 핸들러 — join 실패 시 상태 롤백
+    socket.on('error', (data: { message: string }) => {
+      set({
+        currentRoomId: null,
+        pendingRoomId: null,
+        gameState: null,
+        joinError: data.message,
+      });
     });
 
     set({ socket });
@@ -101,18 +120,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   setPlayerName: (name: string) => set({ playerName: name }),
 
+  // [FIX 3] joinRoom은 pendingRoomId만 설정, 실제 roomId는 room-joined에서 확정
   joinRoom: (roomId: string, buyIn: number, seatIndex: number) => {
     const { socket, playerName } = get();
     if (!socket) return;
     socket.emit('join-room', { roomId, playerName, buyIn, seatIndex });
-    set({ currentRoomId: roomId });
+    // pending 상태로 설정 — 서버 room-joined 응답 후 확정
+    set({ pendingRoomId: roomId, joinError: null, currentRoomId: roomId });
   },
 
   leaveRoom: () => {
     const { socket } = get();
     if (!socket) return;
     socket.emit('leave-room');
-    set({ currentRoomId: null, gameState: null, chatMessages: [] });
+    set({ currentRoomId: null, pendingRoomId: null, gameState: null, chatMessages: [], joinError: null });
   },
 
   sendAction: (action: ActionType, amount?: number) => {
