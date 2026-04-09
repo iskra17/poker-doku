@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "tsx src/server/index.ts",
     "build": "next build",
-    "start": "node dist/server/index.js",
+    "start": "tsx src/server/index.ts",
     "lint": "eslint"
   },
   "dependencies": {
@@ -15,6 +15,7 @@
     "react-dom": "19.2.4",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
+    "tsx": "^4.21.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -25,7 +26,6 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
     "tailwindcss": "^4",
-    "tsx": "^4.21.0",
     "typescript": "^5"
   }
 }
