@@ -4,7 +4,6 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Player, PlayerAction } from '@/lib/poker/types';
 import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
-import ChipStack from './ChipStack';
 
 interface PlayerSeatProps {
   player: Player | null;
@@ -50,35 +49,39 @@ export default function PlayerSeat({
 
   const isFolded = player.status === 'folded';
   const isAllIn = player.status === 'all-in';
+  const isSittingOut = player.status === 'sitting-out';
+  const isBusted = player.chips <= 0 && !isAllIn;
+  const isDimmed = isFolded || isSittingOut || isBusted;
   const avatarSize = compact ? 'sm' : 'md';
 
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: isFolded ? 0.5 : 1, scale: 1 }}
+      animate={{ opacity: isDimmed ? 0.4 : 1, scale: 1 }}
       className="absolute -translate-x-1/2 -translate-y-1/2"
       style={{ left: position.x, top: position.y }}
     >
-      <div className={`flex flex-col items-center gap-0.5 ${compact ? 'gap-0' : 'gap-1'} ${isFolded ? 'grayscale' : ''}`}>
+      <div className={`flex flex-col items-center gap-0.5 ${compact ? 'gap-0' : 'gap-1'} ${isDimmed ? 'grayscale' : ''}`}>
         {/* Character avatar */}
         <CharacterAvatar
           characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : 'player'}
           size={avatarSize}
           isActive={isActive}
           isDealer={isDealer}
-          expression={isAllIn ? 'confident' : isActive ? 'thinking' : 'neutral'}
+          expression={isBusted ? 'neutral' : isAllIn ? 'confident' : isActive ? 'thinking' : 'neutral'}
         />
 
         {/* Name & chips */}
-        <div className={`bg-black/60 backdrop-blur-sm rounded-lg text-center border border-white/10
+        <div className={`bg-black/60 backdrop-blur-sm rounded-lg text-center border
+          ${isBusted ? 'border-red-500/30' : 'border-white/10'}
           ${compact ? 'px-2 py-0.5 min-w-[60px]' : 'px-3 py-1 min-w-[90px]'}
         `}>
           <div className={`text-white font-bold truncate ${compact ? 'text-[10px] max-w-[55px]' : 'text-xs max-w-[80px]'}`}>
             {player.name}
             {isCurrentPlayer && <span className="text-purple-400 ml-0.5">(You)</span>}
           </div>
-          <div className={`text-yellow-300 font-semibold ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
-            {player.chips.toLocaleString()}
+          <div className={`font-semibold ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
+            {isBusted ? 'BUSTED' : player.chips.toLocaleString()}
           </div>
         </div>
 
@@ -94,6 +97,9 @@ export default function PlayerSeat({
         )}
         {isFolded && (
           <div className={`text-gray-400 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>FOLDED</div>
+        )}
+        {isSittingOut && !isBusted && (
+          <div className={`text-gray-500 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>SITTING OUT</div>
         )}
 
         {/* Hole cards - 히어로는 크게, 상대방은 작게 */}
@@ -111,7 +117,7 @@ export default function PlayerSeat({
           </div>
         )}
 
-        {/* Action label + Current bet */}
+        {/* Action label */}
         <AnimatePresence>
           {lastAction && lastAction.playerId === player.id && (
             <motion.div
@@ -127,11 +133,6 @@ export default function PlayerSeat({
             </motion.div>
           )}
         </AnimatePresence>
-        {player.currentBet > 0 && (
-          <div className="mt-0.5">
-            <ChipStack amount={player.currentBet} size={compact ? 'sm' : 'md'} />
-          </div>
-        )}
 
         {/* Turn timer - 서버 기반 */}
         {isActive && turnDuration > 0 && (

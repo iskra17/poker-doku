@@ -6,6 +6,7 @@ import PlayerSeat from './PlayerSeat';
 import CommunityCards from './CommunityCards';
 import PotDisplay from './PotDisplay';
 import ActionBar from './ActionBar';
+import ChipStack from './ChipStack';
 import DealerCharacter from '../characters/DealerCharacter';
 import { ActionType } from '@/lib/poker/types';
 
@@ -29,6 +30,25 @@ const MOBILE_SEATS = [
   { x: '92%', y: '62%' },   // 5: right middle
 ];
 
+// 각 좌석에서 테이블 중앙 방향으로 오프셋된 칩 위치 (좌석→중앙 사이 40% 지점)
+const DESKTOP_BET_POSITIONS = [
+  { x: '50%', y: '72%' },   // 0: bottom → 위로
+  { x: '25%', y: '58%' },   // 1: left bottom → 우상
+  { x: '25%', y: '38%' },   // 2: left top → 우하
+  { x: '50%', y: '22%' },   // 3: top → 아래로
+  { x: '75%', y: '38%' },   // 4: right top → 좌하
+  { x: '75%', y: '58%' },   // 5: right bottom → 좌상
+];
+
+const MOBILE_BET_POSITIONS = [
+  { x: '50%', y: '68%' },   // 0: bottom → 위로
+  { x: '22%', y: '56%' },   // 1: left middle → 우상
+  { x: '22%', y: '34%' },   // 2: left top → 우하
+  { x: '50%', y: '18%' },   // 3: top → 아래로
+  { x: '78%', y: '34%' },   // 4: right top → 좌하
+  { x: '78%', y: '56%' },   // 5: right middle → 좌상
+];
+
 export default function PokerTable() {
   const { gameState, socket, sendAction } = useGameStore();
   const isMobile = useIsMobile();
@@ -39,6 +59,7 @@ export default function PokerTable() {
   const myPlayer = gameState.players.find(p => p.id === myId);
   const isMyTurn = myPlayer && gameState.players[gameState.activePlayerIndex]?.id === myId;
   const seats = isMobile ? MOBILE_SEATS : DESKTOP_SEATS;
+  const betPositions = isMobile ? MOBILE_BET_POSITIONS : DESKTOP_BET_POSITIONS;
 
   const seatPlayers = seats.map((_, seatIndex) => {
     return gameState.players.find(p => p.seatIndex === seatIndex) || null;
@@ -106,6 +127,21 @@ export default function PokerTable() {
               turnDuration={isActiveHere ? ((gameState as any).turnTimeRemaining ?? 0) : 0}
               lastAction={gameState.lastAction}
             />
+          );
+        })}
+
+        {/* Bet chips - 테이블 중앙 방향에 배치 */}
+        {betPositions.map((pos, i) => {
+          const player = seatPlayers[i];
+          if (!player || player.currentBet <= 0) return null;
+          return (
+            <div
+              key={`bet-${i}`}
+              className="absolute -translate-x-1/2 -translate-y-1/2 z-10"
+              style={{ left: pos.x, top: pos.y }}
+            >
+              <ChipStack amount={player.currentBet} size={isMobile ? 'sm' : 'md'} />
+            </div>
           );
         })}
 
