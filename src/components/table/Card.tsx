@@ -3,7 +3,7 @@
 import { motion } from 'framer-motion';
 import { Card as CardType, Suit } from '@/lib/poker/types';
 
-type CardSize = 'xs' | 'sm' | 'md';
+type CardSize = 'xs' | 'sm' | 'md' | 'lg';
 
 interface CardProps {
   card: CardType;
@@ -29,10 +29,11 @@ const suitSymbols: Record<Suit, string> = {
   spades: '♠',
 };
 
-const sizeConfig: Record<CardSize, { card: string; text: string; suit: string; symbol: string }> = {
-  xs: { card: 'w-7 h-10', text: 'text-[8px]', suit: 'text-xs', symbol: '✦' },
-  sm: { card: 'w-10 h-14', text: 'text-xs', suit: 'text-lg', symbol: '✦' },
-  md: { card: 'w-14 h-20', text: 'text-sm', suit: 'text-2xl', symbol: '✦' },
+const sizeConfig: Record<CardSize, { card: string; rank: string; suit: string; symbol: string }> = {
+  xs: { card: 'w-7 h-10', rank: 'text-[9px]', suit: 'text-[8px]', symbol: '✦' },
+  sm: { card: 'w-10 h-14', rank: 'text-sm', suit: 'text-xs', symbol: '✦' },
+  md: { card: 'w-14 h-20', rank: 'text-base', suit: 'text-sm', symbol: '✦' },
+  lg: { card: 'w-[4.5rem] h-[6.2rem]', rank: 'text-xl', suit: 'text-base', symbol: '✦' },
 };
 
 export default function CardComponent({ card, hidden = false, highlight = false, delay = 0, size, small }: CardProps) {
@@ -54,26 +55,23 @@ export default function CardComponent({ card, hidden = false, highlight = false,
   }
 
   const color = suitColors[card.suit];
+  const isRed = card.suit === 'hearts' || card.suit === 'diamonds';
 
   return (
     <motion.div
       initial={{ rotateY: -180, opacity: 0, y: -20 }}
       animate={{ rotateY: 0, opacity: 1, y: 0 }}
       transition={{ duration: 0.5, delay }}
-      className={`${cfg.card} rounded-lg bg-white shadow-lg flex flex-col items-center justify-between p-0.5 md:p-1 relative
-        ${highlight ? 'ring-2 ring-yellow-400 shadow-yellow-400/50' : 'border border-gray-300'}
+      className={`${cfg.card} rounded-lg shadow-lg flex flex-col items-start justify-start p-1 relative overflow-hidden
+        ${highlight ? 'ring-2 ring-yellow-400 shadow-yellow-400/50' : 'border border-gray-200'}
       `}
+      style={{ background: isRed ? '#fff5f5' : '#f5f8ff' }}
     >
-      <div className={`self-start ${cfg.text} font-bold leading-tight`} style={{ color }}>
-        <div>{card.rank}</div>
-        <div className="-mt-0.5">{suitSymbols[card.suit]}</div>
+      <div className={`${cfg.rank} font-extrabold leading-none`} style={{ color }}>
+        {card.rank}
       </div>
-      <div className={cfg.suit} style={{ color }}>
+      <div className={`${cfg.suit} leading-none -mt-0.5`} style={{ color }}>
         {suitSymbols[card.suit]}
-      </div>
-      <div className={`self-end ${cfg.text} font-bold leading-tight rotate-180`} style={{ color }}>
-        <div>{card.rank}</div>
-        <div className="-mt-0.5">{suitSymbols[card.suit]}</div>
       </div>
     </motion.div>
   );

@@ -1,7 +1,7 @@
 'use client';
 
-import { motion } from 'framer-motion';
-import { Player } from '@/lib/poker/types';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Player, PlayerAction } from '@/lib/poker/types';
 import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
 import ChipStack from './ChipStack';
@@ -15,11 +15,20 @@ interface PlayerSeatProps {
   seatIndex: number;
   compact?: boolean;
   turnDuration?: number;
+  lastAction?: PlayerAction | null;
   onSit?: (seatIndex: number) => void;
 }
 
+const actionLabels: Record<string, { text: string; color: string }> = {
+  fold: { text: 'FOLD', color: 'bg-gray-600' },
+  check: { text: 'CHECK', color: 'bg-blue-600' },
+  call: { text: 'CALL', color: 'bg-green-600' },
+  raise: { text: 'RAISE', color: 'bg-yellow-600' },
+  'all-in': { text: 'ALL IN', color: 'bg-red-600' },
+};
+
 export default function PlayerSeat({
-  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false, turnDuration = 0, onSit,
+  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false, turnDuration = 0, lastAction, onSit,
 }: PlayerSeatProps) {
   if (!player) {
     return (
@@ -87,25 +96,40 @@ export default function PlayerSeat({
           <div className={`text-gray-400 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>FOLDED</div>
         )}
 
-        {/* Hole cards */}
+        {/* Hole cards - 히어로는 크게, 상대방은 작게 */}
         {player.holeCards.length > 0 && !isFolded && (
-          <div className={`flex mt-0.5 ${compact ? 'gap-0' : 'gap-0.5'}`}>
+          <div className={`flex mt-0.5 ${isCurrentPlayer ? 'gap-1' : compact ? 'gap-0' : 'gap-0.5'}`}>
             {player.holeCards.map((card, i) => (
               <CardComponent
                 key={i}
                 card={card}
                 hidden={!isCurrentPlayer && player.status !== 'all-in'}
-                size={compact ? 'xs' : 'sm'}
+                size={isCurrentPlayer ? (compact ? 'lg' : 'lg') : (compact ? 'xs' : 'sm')}
                 delay={i * 0.1}
               />
             ))}
           </div>
         )}
 
-        {/* Current bet */}
+        {/* Action label + Current bet */}
+        <AnimatePresence>
+          {lastAction && lastAction.playerId === player.id && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.5, y: -5 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.8 }}
+              className={`${actionLabels[lastAction.type]?.color || 'bg-gray-600'} text-white font-bold rounded-full shadow-lg
+                ${compact ? 'text-[9px] px-2 py-0.5' : 'text-[11px] px-3 py-0.5'}
+              `}
+            >
+              {actionLabels[lastAction.type]?.text}
+              {lastAction.amount > 0 && ` ${lastAction.amount.toLocaleString()}`}
+            </motion.div>
+          )}
+        </AnimatePresence>
         {player.currentBet > 0 && (
           <div className="mt-0.5">
-            <ChipStack amount={player.currentBet} size={compact ? 'xs' : 'sm'} />
+            <ChipStack amount={player.currentBet} size={compact ? 'sm' : 'md'} />
           </div>
         )}
 

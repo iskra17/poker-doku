@@ -16,9 +16,9 @@ function formatChips(amount: number): string {
 }
 
 const chipSizeConfig: Record<ChipSize, { chip: string; text: string }> = {
-  xs: { chip: 'w-4 h-4 text-[8px]', text: 'text-[9px]' },
-  sm: { chip: 'w-5 h-5 text-[10px]', text: 'text-xs' },
-  md: { chip: 'w-7 h-7 text-xs', text: 'text-sm' },
+  xs: { chip: 'w-5 h-5 text-[9px]', text: 'text-[10px]' },
+  sm: { chip: 'w-6 h-6 text-[10px]', text: 'text-xs' },
+  md: { chip: 'w-8 h-8 text-sm', text: 'text-sm' },
 };
 
 export default function ChipStack({ amount, size = 'md' }: ChipStackProps) {

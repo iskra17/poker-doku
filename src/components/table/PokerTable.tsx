@@ -19,9 +19,9 @@ const DESKTOP_SEATS = [
   { x: '90%', y: '65%' },   // 5: right bottom
 ];
 
-// Mobile: compact portrait layout
+// Mobile: compact portrait layout (히어로 카드가 커서 좌석을 약간 위로)
 const MOBILE_SEATS = [
-  { x: '50%', y: '82%' },   // 0: bottom center (hero)
+  { x: '50%', y: '78%' },   // 0: bottom center (hero)
   { x: '8%',  y: '62%' },   // 1: left middle
   { x: '8%',  y: '28%' },   // 2: left top
   { x: '50%', y: '8%' },    // 3: top center
@@ -104,6 +104,7 @@ export default function PokerTable() {
               seatIndex={i}
               compact={isMobile}
               turnDuration={isActiveHere ? ((gameState as any).turnTimeRemaining ?? 0) : 0}
+              lastAction={gameState.lastAction}
             />
           );
         })}
