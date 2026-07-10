@@ -18,8 +18,8 @@ export const BOT_PERSONALITIES: Record<string, BotPersonality> = {
     foldToPressure: 0.80,
     callDown: 0.20,
   },
-  'ryu': {
-    id: 'ryu',
+  'ryuka': {
+    id: 'ryuka',
     vpip: 0.45,
     pfr: 0.35,
     aggression: 0.80,
