@@ -1,5 +1,20 @@
 import type { Metadata, Viewport } from "next";
+import { Noto_Sans_KR, Jua } from "next/font/google";
 import "./globals.css";
+
+const notoSansKr = Noto_Sans_KR({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--font-noto-sans-kr",
+  display: "swap",
+});
+
+const jua = Jua({
+  subsets: ["latin"],
+  weight: "400",
+  variable: "--font-jua",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "Poker Doku - ポーカー道場",
@@ -25,7 +40,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full antialiased">
+    <html lang="ko" className={`${notoSansKr.variable} ${jua.variable} h-full antialiased`}>
       <body className="h-dvh bg-grid overflow-hidden touch-manipulation">{children}</body>
     </html>
   );

@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
 import { GameState, ChatMessage, ActionType } from '../poker/types';
+import { diffGameState, emitGameEvent } from '../events/game-events';
 
 interface RoomInfo {
   id: string;
@@ -13,17 +14,32 @@ interface RoomInfo {
   status: string;
 }
 
+// 재접속용 세션 토큰: localStorage에 보관하는 비밀값 (서버가 좌석/칩을 이 토큰으로 복원)
+function getSessionToken(): string {
+  if (typeof window === 'undefined') return '';
+  const KEY = 'poker-doku-session';
+  let token = localStorage.getItem(KEY);
+  if (!token) {
+    token = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    localStorage.setItem(KEY, token);
+  }
+  return token;
+}
+
 interface GameStore {
   // Connection
   socket: Socket | null;
   connected: boolean;
   playerName: string;
+  myPlayerId: string | null;
   currentRoomId: string | null;
   pendingRoomId: string | null;
   joinError: string | null;
 
   // Game
-  gameState: (GameState & { turnTimeRemaining?: number }) | null;
+  gameState: GameState | null;
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
 
@@ -46,6 +62,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   socket: null,
   connected: false,
   playerName: '',
+  myPlayerId: null,
   currentRoomId: null,
   pendingRoomId: null,
   joinError: null,
@@ -57,6 +74,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   connect: () => {
     const socket = io({
       transports: ['websocket', 'polling'],
+      auth: { sessionToken: getSessionToken() },
     });
 
     socket.on('connect', () => {
@@ -67,15 +85,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ connected: false });
     });
 
+    // 서버 발급 공개 playerId (socket.id와 무관 — 재접속에도 유지됨)
+    socket.on('session', (data: { playerId: string }) => {
+      set({ myPlayerId: data.playerId });
+    });
+
     socket.on('room-list', (rooms: RoomInfo[]) => {
       set({ rooms });
     });
 
     // [FIX 3] room-joined 이벤트에서 currentRoomId 설정 (ack 기반)
-    socket.on('room-joined', (data: { gameState: GameState; chatHistory: ChatMessage[] }) => {
+    // 재접속 복원 시에는 pendingRoomId가 없으므로 서버가 내려주는 roomId를 사용
+    socket.on('room-joined', (data: { roomId?: string; gameState: GameState; chatHistory: ChatMessage[] }) => {
       const { pendingRoomId } = get();
       set({
-        currentRoomId: pendingRoomId,
+        currentRoomId: data.roomId ?? pendingRoomId,
         pendingRoomId: null,
         gameState: data.gameState,
         chatMessages: data.chatHistory,
@@ -83,8 +107,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     });
 
-    socket.on('game-update', (gameState: GameState & { turnTimeRemaining?: number }) => {
+    socket.on('game-update', (gameState: GameState) => {
+      const prev = get().gameState;
       set({ gameState });
+      // 스냅샷 diff → 게임 이벤트 발행 (사운드/애니메이션/로그가 구독)
+      for (const event of diffGameState(prev, gameState, get().myPlayerId)) {
+        emitGameEvent(event);
+      }
     });
 
     socket.on('chat-message', (message: ChatMessage) => {
