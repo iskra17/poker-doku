@@ -23,7 +23,8 @@ export default function CommunityCards({ cards, winningCards = [], compact = fal
           key={`${card.rank}-${card.suit}-${i}`}
           card={card}
           highlight={isWinning(card)}
-          delay={i * 0.15}
+          dimmed={winningCards.length > 0 && !isWinning(card)}
+          delay={(i % 3) * 0.15}
           size={cardSize}
         />
       ))}

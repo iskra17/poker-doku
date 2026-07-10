@@ -8,58 +8,23 @@ import PotDisplay from './PotDisplay';
 import ActionBar from './ActionBar';
 import ChipStack from './ChipStack';
 import DealerCharacter from '../characters/DealerCharacter';
+import HandStrengthBadge from './HandStrengthBadge';
+import AnimationLayer from './AnimationLayer';
+import WinnerSequence from './WinnerSequence';
+import SeatSpeechBubbles from '../characters/SeatSpeechBubble';
 import { ActionType } from '@/lib/poker/types';
-
-// Desktop: wide elliptical layout
-const DESKTOP_SEATS = [
-  { x: '50%', y: '88%' },   // 0: bottom center (hero)
-  { x: '10%', y: '65%' },   // 1: left bottom
-  { x: '10%', y: '30%' },   // 2: left top
-  { x: '50%', y: '8%' },    // 3: top center
-  { x: '90%', y: '30%' },   // 4: right top
-  { x: '90%', y: '65%' },   // 5: right bottom
-];
-
-// Mobile: compact portrait layout (히어로 카드가 커서 좌석을 약간 위로)
-const MOBILE_SEATS = [
-  { x: '50%', y: '78%' },   // 0: bottom center (hero)
-  { x: '8%',  y: '62%' },   // 1: left middle
-  { x: '8%',  y: '28%' },   // 2: left top
-  { x: '50%', y: '8%' },    // 3: top center
-  { x: '92%', y: '28%' },   // 4: right top
-  { x: '92%', y: '62%' },   // 5: right middle
-];
-
-// 각 좌석에서 테이블 중앙 방향으로 오프셋된 칩 위치 (좌석→중앙 사이 40% 지점)
-const DESKTOP_BET_POSITIONS = [
-  { x: '50%', y: '72%' },   // 0: bottom → 위로
-  { x: '25%', y: '58%' },   // 1: left bottom → 우상
-  { x: '25%', y: '38%' },   // 2: left top → 우하
-  { x: '50%', y: '22%' },   // 3: top → 아래로
-  { x: '75%', y: '38%' },   // 4: right top → 좌하
-  { x: '75%', y: '58%' },   // 5: right bottom → 좌상
-];
-
-const MOBILE_BET_POSITIONS = [
-  { x: '50%', y: '68%' },   // 0: bottom → 위로
-  { x: '22%', y: '56%' },   // 1: left middle → 우상
-  { x: '22%', y: '34%' },   // 2: left top → 우하
-  { x: '50%', y: '18%' },   // 3: top → 아래로
-  { x: '78%', y: '34%' },   // 4: right top → 좌하
-  { x: '78%', y: '56%' },   // 5: right middle → 좌상
-];
+import { getLayout } from './table-layout';
 
 export default function PokerTable() {
-  const { gameState, socket, sendAction } = useGameStore();
+  const { gameState, myPlayerId, sendAction } = useGameStore();
   const isMobile = useIsMobile();
 
   if (!gameState) return null;
 
-  const myId = socket?.id;
+  const myId = myPlayerId;
   const myPlayer = gameState.players.find(p => p.id === myId);
   const isMyTurn = myPlayer && gameState.players[gameState.activePlayerIndex]?.id === myId;
-  const seats = isMobile ? MOBILE_SEATS : DESKTOP_SEATS;
-  const betPositions = isMobile ? MOBILE_BET_POSITIONS : DESKTOP_BET_POSITIONS;
+  const { seats, betPositions } = getLayout(isMobile);
 
   const seatPlayers = seats.map((_, seatIndex) => {
     return gameState.players.find(p => p.seatIndex === seatIndex) || null;
@@ -81,20 +46,20 @@ export default function PokerTable() {
           }}
         />
 
-        {/* Table shape */}
+        {/* Table shape — 네이비→바이올렛 펠트 + 핑크 림라이트 */}
         <div
-          className="absolute inset-2 md:inset-4 rounded-[50%] border-2 md:border-4 border-yellow-700/40 shadow-inner"
+          className="absolute inset-2 md:inset-4 rounded-[50%] border-2 md:border-4 border-gilded/25 shadow-inner"
           style={{
-            background: 'radial-gradient(ellipse, #1a2744 0%, #0f1a2e 50%, #0a1020 100%)',
-            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5), 0 0 40px rgba(139, 92, 246, 0.15)',
+            background: 'radial-gradient(ellipse, var(--color-felt-hi) 0%, var(--color-felt-lo) 55%, #0c0925 100%)',
+            boxShadow: 'inset 0 0 80px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07), 0 0 40px rgba(167,139,250,0.15)',
           }}
         >
-          <div className="absolute inset-2 md:inset-3 rounded-[50%] border border-yellow-600/20" />
+          <div className="absolute inset-2 md:inset-3 rounded-[50%] border border-gilded/15" />
         </div>
 
         {/* Dealer character */}
         <div className="absolute left-1/2 top-[22%] md:top-[25%] -translate-x-1/2 -translate-y-1/2 z-10 scale-75 md:scale-100">
-          <DealerCharacter street={gameState.street} />
+          <DealerCharacter />
         </div>
 
         {/* Community cards */}
@@ -124,7 +89,8 @@ export default function PokerTable() {
               position={pos}
               seatIndex={i}
               compact={isMobile}
-              turnDuration={isActiveHere ? ((gameState as any).turnTimeRemaining ?? 0) : 0}
+              turnDuration={isActiveHere ? (gameState.turnTimeRemaining ?? 0) : 0}
+              turnTotalSeconds={gameState.turnTimer || 30}
               lastAction={gameState.lastAction}
             />
           );
@@ -145,22 +111,29 @@ export default function PokerTable() {
           );
         })}
 
-        {/* Winner announcement */}
-        {gameState.winners && gameState.winners.length > 0 && (
-          <div className="absolute left-1/2 top-[70%] md:top-[75%] -translate-x-1/2 -translate-y-1/2 z-20">
-            <div className="bg-black/70 backdrop-blur-sm rounded-xl px-4 py-2 md:px-6 md:py-3 border border-yellow-500/40 text-center">
-              {gameState.winners.map((w, i) => {
-                const winner = gameState.players.find(p => p.id === w.playerId);
-                return (
-                  <div key={i} className="text-yellow-300 font-bold text-sm md:text-base">
-                    {winner?.name} wins {w.amount}
-                    {w.hand && <span className="text-yellow-100 font-normal ml-1 text-xs md:text-sm">({w.hand.description})</span>}
-                  </div>
-                );
-              })}
-            </div>
+        {/* 내 핸드 강도 (상대 턴일 때 — 내 턴에는 ActionBar 안에 표시) */}
+        {myPlayer && !isMyTurn && gameState.isHandInProgress &&
+          myPlayer.holeCards.length === 2 && myPlayer.status !== 'folded' && (
+          <div
+            className="absolute z-20 -translate-x-1/2 -translate-y-1/2"
+            style={isMobile ? { left: '70%', top: '64%' } : { left: '64%', top: '86%' }}
+          >
+            <HandStrengthBadge
+              holeCards={myPlayer.holeCards}
+              communityCards={gameState.communityCards}
+              compact={isMobile}
+            />
           </div>
         )}
+
+        {/* 칩/카드 비행 오버레이 */}
+        <AnimationLayer isMobile={isMobile} />
+
+        {/* 봇 좌석 말풍선 */}
+        <SeatSpeechBubbles isMobile={isMobile} />
+
+        {/* 승리 연출 (스포트라이트/배너/컨페티) */}
+        <WinnerSequence isMobile={isMobile} />
       </div>
 
       {/* Action bar */}

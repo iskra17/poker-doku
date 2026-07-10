@@ -2,8 +2,10 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import { Player, PlayerAction } from '@/lib/poker/types';
+import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
 import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
+import TurnTimer from './TurnTimer';
 
 interface PlayerSeatProps {
   player: Player | null;
@@ -14,6 +16,7 @@ interface PlayerSeatProps {
   seatIndex: number;
   compact?: boolean;
   turnDuration?: number;
+  turnTotalSeconds?: number;
   lastAction?: PlayerAction | null;
   onSit?: (seatIndex: number) => void;
 }
@@ -27,8 +30,12 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 };
 
 export default function PlayerSeat({
-  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false, turnDuration = 0, lastAction, onSit,
+  player, isCurrentPlayer, isDealer, isActive, position, seatIndex, compact = false,
+  turnDuration = 0, turnTotalSeconds = 30, lastAction, onSit,
 }: PlayerSeatProps) {
+  // 훅은 early return 이전에 호출 (React 규칙)
+  const expression = useSeatExpression(player?.id, isActive);
+
   if (!player) {
     return (
       <div
@@ -58,18 +65,28 @@ export default function PlayerSeat({
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: isDimmed ? 0.4 : 1, scale: 1 }}
-      className="absolute -translate-x-1/2 -translate-y-1/2"
-      style={{ left: position.x, top: position.y }}
+      className="absolute"
+      // Tailwind -translate 클래스는 framer transform에 덮여 사라지므로 x/y로 센터링
+      style={{ left: position.x, top: position.y, x: '-50%', y: '-50%' }}
     >
       <div className={`flex flex-col items-center gap-0.5 ${compact ? 'gap-0' : 'gap-1'} ${isDimmed ? 'grayscale' : ''}`}>
-        {/* Character avatar */}
-        <CharacterAvatar
-          characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : 'player'}
-          size={avatarSize}
-          isActive={isActive}
-          isDealer={isDealer}
-          expression={isBusted ? 'neutral' : isAllIn ? 'confident' : isActive ? 'thinking' : 'neutral'}
-        />
+        {/* Character avatar + 턴 타이머 링 */}
+        <div className="relative">
+          <CharacterAvatar
+            characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : 'player'}
+            size={avatarSize}
+            isActive={isActive}
+            isDealer={isDealer}
+            expression={isBusted ? 'sad' : isAllIn ? 'confident' : expression}
+          />
+          {isActive && turnDuration > 0 && (
+            <TurnTimer
+              remainingMs={turnDuration}
+              totalSeconds={turnTotalSeconds}
+              sizePx={compact ? 40 : 56}
+            />
+          )}
+        </div>
 
         {/* Name & chips */}
         <div className={`bg-black/60 backdrop-blur-sm rounded-lg text-center border
@@ -101,6 +118,9 @@ export default function PlayerSeat({
         {isSittingOut && !isBusted && (
           <div className={`text-gray-500 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>SITTING OUT</div>
         )}
+        {player.isDisconnected && (
+          <div className={`text-orange-400 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>OFFLINE</div>
+        )}
 
         {/* Hole cards - 히어로는 크게, 상대방은 작게 */}
         {player.holeCards.length > 0 && !isFolded && (
@@ -109,7 +129,7 @@ export default function PlayerSeat({
               <CardComponent
                 key={i}
                 card={card}
-                hidden={!isCurrentPlayer && player.status !== 'all-in'}
+                hidden={!isCurrentPlayer && !player.revealed}
                 size={isCurrentPlayer ? (compact ? 'lg' : 'lg') : (compact ? 'xs' : 'sm')}
                 delay={i * 0.1}
               />
@@ -134,21 +154,6 @@ export default function PlayerSeat({
           )}
         </AnimatePresence>
 
-        {/* Turn timer - 서버 기반 */}
-        {isActive && turnDuration > 0 && (
-          <motion.div
-            className={`bg-gray-700 rounded-full mt-0.5 overflow-hidden ${compact ? 'w-12 h-0.5' : 'w-full h-1'}`}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-          >
-            <motion.div
-              className="h-full bg-gradient-to-r from-green-400 to-yellow-400 rounded-full"
-              initial={{ width: '100%' }}
-              animate={{ width: '0%' }}
-              transition={{ duration: turnDuration / 1000, ease: 'linear' }}
-            />
-          </motion.div>
-        )}
       </div>
     </motion.div>
   );
