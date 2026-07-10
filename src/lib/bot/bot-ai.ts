@@ -38,7 +38,6 @@ function getPreflopTier(cards: Card[]): number {
 function getPostflopStrength(player: Player, communityCards: Card[]): number {
   // Simplified post-flop strength estimation (0-1)
   const allCards = [...player.holeCards, ...communityCards];
-  const ranks = allCards.map(c => rankValue(c.rank));
   const suits = allCards.map(c => c.suit);
 
   const holeRanks = player.holeCards.map(c => rankValue(c.rank));

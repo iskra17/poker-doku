@@ -1,9 +1,10 @@
 import { PokerEngine } from '../lib/poker/engine';
-import { Room, RoomConfig, Player, ChatMessage } from '../lib/poker/types';
+import { RoomConfig, Player, ChatMessage, ActionType } from '../lib/poker/types';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 
-const TURN_TIMEOUT_MS = 30_000; // 30초 턴 타임아웃
+const DEFAULT_TURN_TIMEOUT_S = 30; // config.turnTime 미설정 시 폴백 (초)
+const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 
 export class RoomManager {
   private rooms: Map<string, { engine: PokerEngine; config: RoomConfig; createdAt: number }> = new Map();
@@ -62,7 +63,7 @@ export class RoomManager {
     if (!room) return false;
     const success = room.engine.addPlayer(player);
     if (success) {
-      this.sendSystemChat(roomId, `${player.name} joined the table!`);
+      this.sendSystemChat(roomId, `${player.name}님이 테이블에 앉았습니다.`);
       this.tryStartGame(roomId);
     }
     return success;
@@ -71,17 +72,39 @@ export class RoomManager {
   leaveRoom(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
-    const player = room.engine.removePlayer(playerId);
+
+    const wasInProgress = room.engine.state.isHandInProgress;
+    // 이탈자 턴에 걸려 있던 stale 타이머 제거 (아니어도 아래 startPlayerLoop가 재설정)
+    this.clearTurnTimer(roomId);
+
+    const { player, handComplete } = room.engine.processLeave(playerId);
     if (player) {
-      this.sendSystemChat(roomId, `${player.name} left the table.`);
+      this.sendSystemChat(roomId, `${player.name}님이 테이블을 떠났습니다.`);
     }
-    // Clean up empty rooms
-    if (room.engine.state.players.filter(p => p.type === 'human').length === 0) {
+
+    // Clean up empty rooms — 제거 예약자는 휴먼 수에서 제외
+    const humans = room.engine.state.players.filter(p => p.type === 'human' && !p.pendingRemoval);
+    if (humans.length === 0) {
       this.stopBotLoop(roomId);
       this.clearPendingStart(roomId);
       this.clearTurnTimer(roomId);
       this.rooms.delete(roomId);
       this.chatHistory.delete(roomId);
+      return;
+    }
+
+    if (wasInProgress && player) {
+      if (handComplete) {
+        this.onUpdate(roomId, room.engine);
+        this.announceWinner(roomId);
+        this.scheduleNextHand(roomId);
+      } else if (room.engine.state.isHandInProgress) {
+        // 이탈이 턴/라운드를 진행시켰을 수 있으므로 루프 재가동 (핸드 정지 방지)
+        this.startPlayerLoop(roomId);
+        this.onUpdate(roomId, room.engine);
+      } else {
+        this.onUpdate(roomId, room.engine);
+      }
     }
   }
 
@@ -122,22 +145,29 @@ export class RoomManager {
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
 
-    // Reset folded/waiting players
+    // Reset folded/waiting players — grace 중(접속 끊김)인 플레이어는 새 핸드에 딜인하지 않음
     for (const p of room.engine.state.players) {
       if (p.chips > 0) {
-        p.status = 'waiting';
+        p.status = p.isDisconnected ? 'sitting-out' : 'waiting';
       }
     }
 
     room.engine.startHand();
+
+    // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못했으면 봇 충원 경로로 재시도
+    if (!room.engine.state.isHandInProgress) {
+      this.tryStartGame(roomId);
+      return;
+    }
 
     const dealer = getCharacterById('dealer');
     if (dealer) {
       this.sendBotChat(roomId, 'dealer', dealer.name, dealer.chatMessages[0]);
     }
 
-    this.onUpdate(roomId, room.engine);
+    // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
     this.startPlayerLoop(roomId);
+    this.onUpdate(roomId, room.engine);
   }
 
   // --- [FIX 2] 서버 턴 타이머 ---
@@ -160,19 +190,21 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer || activePlayer.type !== 'human') return;
 
-    const deadline = Date.now() + TURN_TIMEOUT_MS;
+    const timeoutMs = (room.config.turnTime || DEFAULT_TURN_TIMEOUT_S) * 1000;
+    const deadline = Date.now() + timeoutMs;
     this.turnDeadlines.set(roomId, deadline);
 
     const timer = setTimeout(() => {
       this.turnTimers.delete(roomId);
       this.turnDeadlines.delete(roomId);
-      this.handleTurnTimeout(roomId, activePlayer.id);
-    }, TURN_TIMEOUT_MS);
+      this.autoActFor(roomId, activePlayer.id, '시간 초과');
+    }, timeoutMs);
 
     this.turnTimers.set(roomId, timer);
   }
 
-  private handleTurnTimeout(roomId: string, playerId: string): void {
+  /** 체크 가능하면 체크, 아니면 폴드로 자동 처리 (타임아웃/접속 끊김 공용) */
+  private autoActFor(roomId: string, playerId: string, reason: string): void {
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.isHandInProgress) return;
 
@@ -180,27 +212,63 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer || activePlayer.id !== playerId) return;
 
-    // 체크 가능하면 체크, 아니면 폴드
     const canCheck = activePlayer.currentBet >= room.engine.state.currentBet;
-    const action = canCheck ? 'check' : 'fold';
+    const action: ActionType = canCheck ? 'check' : 'fold';
 
-    this.sendSystemChat(roomId, `${activePlayer.name} timed out — auto ${action}.`);
+    this.sendSystemChat(roomId, `${activePlayer.name}님 ${reason} — 자동 ${action === 'check' ? '체크' : '폴드'}되었습니다.`);
 
-    const result = room.engine.processAction({
-      playerId,
-      type: action as any,
-      amount: 0,
-    });
+    const result = room.engine.processAction({ playerId, type: action, amount: 0 });
 
     if (result.valid) {
-      this.onUpdate(roomId, room.engine);
       if (result.handComplete) {
+        this.onUpdate(roomId, room.engine);
         this.announceWinner(roomId);
         this.scheduleNextHand(roomId);
       } else {
+        // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
         this.startPlayerLoop(roomId);
+        this.onUpdate(roomId, room.engine);
       }
     }
+  }
+
+  // --- 재접속 (grace period) ---
+
+  /** disconnect 직후: 좌석/칩은 유지하고 마킹만. 자기 턴이면 즉시 자동 처리 */
+  handleDisconnect(roomId: string, playerId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const player = room.engine.state.players.find(p => p.id === playerId);
+    if (!player || player.pendingRemoval) return;
+
+    player.isDisconnected = true;
+    this.sendSystemChat(roomId, `${player.name}님의 연결이 끊겼어요 — 잠시 자리를 지켜둘게요.`);
+
+    if (room.engine.state.isHandInProgress) {
+      const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+      if (active?.id === playerId) {
+        this.clearTurnTimer(roomId);
+        this.autoActFor(roomId, playerId, '접속 끊김');
+        return; // autoActFor가 onUpdate/루프 재개까지 처리
+      }
+    }
+    this.onUpdate(roomId, room.engine);
+  }
+
+  /** grace 내 재접속: 좌석/칩 복원 */
+  handleReconnect(roomId: string, playerId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const player = room.engine.state.players.find(p => p.id === playerId);
+    if (!player) return;
+
+    player.isDisconnected = false;
+    if (player.status === 'sitting-out' && player.chips > 0) {
+      player.status = 'waiting'; // 다음 핸드 자동 참여
+    }
+    this.sendSystemChat(roomId, `${player.name}님이 다시 연결됐어요!`);
+    this.onUpdate(roomId, room.engine);
+    this.tryStartGame(roomId);
   }
 
   // --- 통합 플레이어 루프 (봇 + 휴먼 턴 타이머) ---
@@ -217,6 +285,14 @@ export class RoomManager {
 
     if (activePlayer.type === 'bot') {
       this.startBotLoop(roomId);
+    } else if (activePlayer.isDisconnected) {
+      // 끊긴 플레이어의 턴: 풀 타이머 대신 짧은 지연 후 자동 처리 (다른 플레이어 대기 방지)
+      this.clearTurnTimer(roomId);
+      const timer = setTimeout(() => {
+        this.turnTimers.delete(roomId);
+        this.autoActFor(roomId, activePlayer.id, '접속 끊김');
+      }, DISCONNECTED_AUTO_ACT_MS);
+      this.turnTimers.set(roomId, timer);
     } else {
       // 휴먼 턴 → 타이머 시작
       this.startTurnTimer(roomId);
@@ -251,15 +327,23 @@ export class RoomManager {
           if (msg) this.sendBotChat(roomId, activePlayer.id, activePlayer.name, msg);
         }
 
-        this.onUpdate(roomId, room.engine);
-
         if (!room.engine.state.isHandInProgress) {
           // Hand ended
+          this.onUpdate(roomId, room.engine);
           this.announceWinner(roomId);
           this.scheduleNextHand(roomId);
           return;
         }
 
+        // 다음 차례가 휴먼이면 타이머를 먼저 시작해 스냅샷에 turnTimeRemaining을 싣는다
+        const next = room.engine.state.players[room.engine.state.activePlayerIndex];
+        if (next && next.type !== 'bot') {
+          this.startPlayerLoop(roomId);
+          this.onUpdate(roomId, room.engine);
+          return;
+        }
+
+        this.onUpdate(roomId, room.engine);
         // Continue bot loop if next player is also a bot
         const nextInterval = setTimeout(loop, 500);
         this.botIntervals.set(roomId, nextInterval);
@@ -272,10 +356,11 @@ export class RoomManager {
 
   private scheduleNextHand(roomId: string): void {
     this.clearPendingStart(roomId);
+    // 승리 연출 시퀀스(~5.5s)가 끝난 뒤 다음 핸드 시작
     const timer = setTimeout(() => {
       this.pendingStartTimers.delete(roomId);
       this.startNewHand(roomId);
-    }, 4000);
+    }, 6500);
     this.pendingStartTimers.set(roomId, timer);
   }
 
@@ -287,7 +372,7 @@ export class RoomManager {
     }
   }
 
-  processPlayerAction(roomId: string, playerId: string, actionType: string, amount: number = 0): boolean {
+  processPlayerAction(roomId: string, playerId: string, actionType: ActionType, amount: number = 0): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
 
@@ -296,19 +381,20 @@ export class RoomManager {
 
     const result = room.engine.processAction({
       playerId,
-      type: actionType as any,
+      type: actionType,
       amount,
     });
 
     if (!result.valid) return false;
 
-    this.onUpdate(roomId, room.engine);
-
     if (result.handComplete) {
+      this.onUpdate(roomId, room.engine);
       this.announceWinner(roomId);
       this.scheduleNextHand(roomId);
     } else {
+      // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
       this.startPlayerLoop(roomId);
+      this.onUpdate(roomId, room.engine);
     }
 
     return true;
@@ -323,7 +409,7 @@ export class RoomManager {
       if (!player) continue;
 
       const handDesc = winner.hand ? ` with ${winner.hand.description}` : '';
-      this.sendSystemChat(roomId, `${player.name} wins ${winner.amount} chips${handDesc}!`);
+      this.sendSystemChat(roomId, `${player.name}님이 ${winner.amount.toLocaleString()} 칩을 획득했습니다${handDesc}!`);
 
       // Winner character quote
       if (player.type === 'bot') {

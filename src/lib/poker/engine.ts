@@ -1,16 +1,17 @@
 import { Deck } from './deck';
 import { evaluateHand, compareHands } from './evaluator';
 import {
-  GameState, Player, PlayerAction, ActionType, Street,
+  GameState, Player, PlayerAction, ActionType,
   Pot, WinResult, Card, RoomConfig,
 } from './types';
 
 export class PokerEngine {
-  private deck: Deck = new Deck();
+  private deck: Deck;
   private config: RoomConfig;
   state: GameState;
 
-  constructor(config: RoomConfig, roomId: string) {
+  constructor(config: RoomConfig, roomId: string, deck: Deck = new Deck()) {
+    this.deck = deck;
     this.config = config;
     this.state = {
       id: roomId,
@@ -28,6 +29,8 @@ export class PokerEngine {
       winners: null,
       lastAction: null,
       turnTimer: config.turnTime,
+      handNumber: 0,
+      actionSeq: 0,
     };
   }
 
@@ -38,11 +41,55 @@ export class PokerEngine {
     return true;
   }
 
-  removePlayer(playerId: string): Player | null {
+  /**
+   * 플레이어 이탈 처리.
+   * 핸드 진행 중에는 절대 splice하지 않는다 (dealerIndex/activePlayerIndex 밀림 방지).
+   * 대신 폴드 + pendingRemoval 마킹으로 좌석을 유지하고, 다음 핸드 시작 시 일괄 제거한다.
+   */
+  processLeave(playerId: string): { player: Player | null; handComplete: boolean } {
     const idx = this.state.players.findIndex(p => p.id === playerId);
-    if (idx === -1) return null;
-    const [removed] = this.state.players.splice(idx, 1);
-    return removed;
+    if (idx === -1) return { player: null, handComplete: false };
+    const player = this.state.players[idx];
+
+    if (!this.state.isHandInProgress) {
+      this.state.players.splice(idx, 1);
+      if (this.state.players.length === 0) {
+        this.state.dealerIndex = 0;
+      } else {
+        if (idx <= this.state.dealerIndex) {
+          this.state.dealerIndex = Math.max(0, this.state.dealerIndex - 1);
+        }
+        this.state.dealerIndex %= this.state.players.length;
+      }
+      return { player, handComplete: false };
+    }
+
+    player.pendingRemoval = true;
+    const wasInHand = player.status === 'active' || player.status === 'all-in';
+    const wasTheirTurn = this.state.players[this.state.activePlayerIndex]?.id === playerId;
+    if (!wasInHand) return { player, handComplete: false };
+
+    // 올인 이탈자도 폴드 처리 — 기여금은 dead money로 rebuildPots가 팟에 남긴다
+    player.status = 'folded';
+    this.rebuildPots();
+    const { handComplete } = this.advanceAfterAction(wasTheirTurn);
+    return { player, handComplete };
+  }
+
+  /** 제거 예약된 플레이어를 일괄 splice (핸드 시작 전에만 호출). dealerIndex 보정 포함 */
+  removePendingPlayers(): void {
+    for (let i = this.state.players.length - 1; i >= 0; i--) {
+      if (!this.state.players[i].pendingRemoval) continue;
+      this.state.players.splice(i, 1);
+      if (i <= this.state.dealerIndex) {
+        this.state.dealerIndex = Math.max(0, this.state.dealerIndex - 1);
+      }
+    }
+    if (this.state.players.length > 0) {
+      this.state.dealerIndex %= this.state.players.length;
+    } else {
+      this.state.dealerIndex = 0;
+    }
   }
 
   getActivePlayers(): Player[] {
@@ -59,9 +106,11 @@ export class PokerEngine {
   }
 
   startHand(): void {
+    this.removePendingPlayers();
     if (!this.canStartHand()) return;
 
     this.deck.reset();
+    this.state.handNumber++;
     this.state.isHandInProgress = true;
     this.state.communityCards = [];
     this.state.pots = [{ amount: 0, eligiblePlayerIds: [] }];
@@ -73,6 +122,7 @@ export class PokerEngine {
 
     // Reset players
     for (const player of this.state.players) {
+      player.totalContributed = 0;
       if (player.chips > 0 && player.status !== 'sitting-out') {
         player.status = 'active';
         player.holeCards = [];
@@ -94,9 +144,6 @@ export class PokerEngine {
     for (const player of activePlayers) {
       player.holeCards = this.deck.deal(2);
     }
-
-    // Set eligible players for main pot
-    this.state.pots[0].eligiblePlayerIds = activePlayers.map(p => p.id);
 
     // Set first actor (UTG, left of BB)
     this.setFirstActor();
@@ -146,13 +193,14 @@ export class PokerEngine {
     }
 
     this.state.currentBet = this.config.bigBlind;
+    this.rebuildPots();
   }
 
   private postBlind(player: Player, amount: number): void {
     const actual = Math.min(amount, player.chips);
     player.chips -= actual;
     player.currentBet = actual;
-    this.state.pots[0].amount += actual;
+    player.totalContributed += actual;
     if (player.chips === 0) {
       player.status = 'all-in';
     }
@@ -200,25 +248,36 @@ export class PokerEngine {
         const callAmount = Math.min(this.state.currentBet - player.currentBet, player.chips);
         player.chips -= callAmount;
         player.currentBet += callAmount;
-        this.state.pots[this.state.pots.length - 1].amount += callAmount;
+        player.totalContributed += callAmount;
         if (player.chips === 0) player.status = 'all-in';
         break;
       }
 
       case 'raise': {
-        const raiseTotal = action.amount;
+        // 서버 권위 검증: 금액은 [currentBet + minRaise, chips + currentBet] 범위여야 한다.
+        // 언더레이즈는 올인일 때만 합법이며 액션을 재오픈하지 않는다 (표준 룰).
+        if (!Number.isFinite(action.amount)) return { valid: false, handComplete: false };
+        const raiseTotal = Math.floor(action.amount);
+        const maxTotal = player.chips + player.currentBet;
+        const minTotal = this.state.currentBet + this.state.minRaise;
+        if (raiseTotal <= this.state.currentBet) return { valid: false, handComplete: false };
+        if (raiseTotal > maxTotal) return { valid: false, handComplete: false };
+        const isAllIn = raiseTotal === maxTotal;
+        if (raiseTotal < minTotal && !isAllIn) return { valid: false, handComplete: false };
+
         const toAdd = raiseTotal - player.currentBet;
-        if (toAdd > player.chips) return { valid: false, handComplete: false };
         player.chips -= toAdd;
         player.currentBet = raiseTotal;
-        this.state.pots[this.state.pots.length - 1].amount += toAdd;
-        this.state.minRaise = raiseTotal - this.state.currentBet;
+        player.totalContributed += toAdd;
+        const isFullRaise = raiseTotal >= minTotal;
+        if (isFullRaise) this.state.minRaise = raiseTotal - this.state.currentBet;
         this.state.currentBet = raiseTotal;
         if (player.chips === 0) player.status = 'all-in';
-        // Reset hasActed for other active players
-        for (const p of this.state.players) {
-          if (p.id !== player.id && p.status === 'active') {
-            p.hasActed = false;
+        if (isFullRaise) {
+          for (const p of this.state.players) {
+            if (p.id !== player.id && p.status === 'active') {
+              p.hasActed = false;
+            }
           }
         }
         break;
@@ -228,16 +287,19 @@ export class PokerEngine {
         const allInAmount = player.chips;
         const totalBet = player.currentBet + allInAmount;
         if (totalBet > this.state.currentBet) {
-          this.state.minRaise = Math.max(this.state.minRaise, totalBet - this.state.currentBet);
-          this.state.currentBet = totalBet;
-          for (const p of this.state.players) {
-            if (p.id !== player.id && p.status === 'active') {
-              p.hasActed = false;
+          const isFullRaise = totalBet >= this.state.currentBet + this.state.minRaise;
+          if (isFullRaise) {
+            this.state.minRaise = totalBet - this.state.currentBet;
+            for (const p of this.state.players) {
+              if (p.id !== player.id && p.status === 'active') {
+                p.hasActed = false;
+              }
             }
           }
+          this.state.currentBet = totalBet;
         }
         player.currentBet = totalBet;
-        this.state.pots[this.state.pots.length - 1].amount += allInAmount;
+        player.totalContributed += allInAmount;
         player.chips = 0;
         player.status = 'all-in';
         break;
@@ -246,25 +308,37 @@ export class PokerEngine {
 
     player.hasActed = true;
     this.state.lastAction = action;
+    this.state.actionSeq++;
+    this.rebuildPots();
 
-    // Check if only one player remains
+    const { handComplete } = this.advanceAfterAction(true);
+    return { valid: true, handComplete };
+  }
+
+  /**
+   * 액션(또는 이탈 폴드) 이후 공통 진행 로직:
+   * 단독 생존 체크 → 베팅 라운드 완료 체크 → 턴 이동.
+   * moveTurn=false면 턴 포인터를 옮기지 않는다 (현재 액터가 아닌 플레이어의 이탈 처리용).
+   */
+  private advanceAfterAction(moveTurn: boolean): { handComplete: boolean } {
+    // Check if only one player remains (everyone else folded)
     const remaining = this.getActivePlayers();
-    if (remaining.filter(p => p.status !== 'all-in').length <= 1 && remaining.length <= 1) {
-      // Everyone folded or one player left
+    if (remaining.length <= 1) {
       this.endHand();
-      return { valid: true, handComplete: true };
+      return { handComplete: true };
     }
 
     // Check if betting round is complete
     if (this.isBettingRoundComplete()) {
-      this.calculateSidePots();
       const handComplete = this.advanceStreet();
-      return { valid: true, handComplete };
+      return { handComplete };
     }
 
     // Move to next player
-    this.state.activePlayerIndex = this.getNextActiveIndex(this.state.activePlayerIndex);
-    return { valid: true, handComplete: false };
+    if (moveTurn) {
+      this.state.activePlayerIndex = this.getNextActiveIndex(this.state.activePlayerIndex);
+    }
+    return { handComplete: false };
   }
 
   getValidActions(player: Player): ActionType[] {
@@ -302,43 +376,56 @@ export class PokerEngine {
     return acting.every(p => p.hasActed && p.currentBet === this.state.currentBet);
   }
 
-  private calculateSidePots(): void {
-    const allInPlayers = this.state.players
-      .filter(p => p.status === 'all-in' || p.status === 'active')
-      .sort((a, b) => a.currentBet - b.currentBet);
+  /**
+   * 팟 재유도: 플레이어별 핸드 누적 기여금(totalContributed)에서 팟 계층 전체를 매번 다시 계산한다.
+   * 스트리트 경계(currentBet 리셋)와 무관하므로 멀티 스트리트 사이드팟 금액 소실이 구조적으로 불가능.
+   * 폴드한 플레이어의 기여금(dead money)도 자동 포함된다.
+   * 팟 계층은 표준 룰대로 "올인 금액"에서만 분할한다 (올인이 없으면 항상 단일 팟).
+   * 불변식: sum(pots.amount) === sum(players.totalContributed)
+   */
+  private rebuildPots(): void {
+    const contributors = this.state.players.filter(p => p.totalContributed > 0);
+    const contenders = this.state.players.filter(
+      p => (p.status === 'active' || p.status === 'all-in') && p.totalContributed > 0
+    );
+    const total = contributors.reduce((s, p) => s + p.totalContributed, 0);
 
-    if (allInPlayers.length === 0) return;
+    if (total === 0 || contenders.length === 0) {
+      this.state.pots = [{ amount: total, eligiblePlayerIds: contenders.map(p => p.id) }];
+      return;
+    }
 
-    const hasDifferentBets = new Set(allInPlayers.map(p => p.currentBet)).size > 1;
-    const hasAllIn = allInPlayers.some(p => p.status === 'all-in');
+    // 올인 컨텐더의 기여 레벨에서만 팟을 자른다 + 상위 전체를 담는 마지막 계층
+    const allInLevels = [
+      ...new Set(contenders.filter(p => p.status === 'all-in').map(p => p.totalContributed)),
+    ].sort((a, b) => a - b);
+    const levels: number[] = [...allInLevels, Infinity];
 
-    if (!hasDifferentBets || !hasAllIn) return;
-
-    // Recalculate pots from scratch
     const pots: Pot[] = [];
-    const betLevels = [...new Set(allInPlayers.map(p => p.currentBet))].sort((a, b) => a - b);
-    let prevLevel = 0;
-
-    for (const level of betLevels) {
-      const diff = level - prevLevel;
-      if (diff <= 0) continue;
-      const eligible = this.state.players.filter(
-        p => (p.status === 'active' || p.status === 'all-in') && p.currentBet >= level
+    let prev = 0;
+    for (const level of levels) {
+      const amount = contributors.reduce(
+        (s, p) => s + Math.max(0, Math.min(p.totalContributed, level) - prev), 0);
+      if (amount <= 0) {
+        prev = level;
+        continue;
+      }
+      const eligible = contenders.filter(p =>
+        level === Infinity ? p.totalContributed > prev || allInLevels.length === 0 : p.totalContributed >= level,
       );
-      const foldedContribution = this.state.players
-        .filter(p => p.status === 'folded' && p.currentBet > prevLevel)
-        .reduce((sum, p) => sum + Math.min(p.currentBet - prevLevel, diff), 0);
-
-      pots.push({
-        amount: diff * eligible.length + foldedContribution,
-        eligiblePlayerIds: eligible.map(p => p.id),
-      });
-      prevLevel = level;
+      if (eligible.length === 0 && pots.length > 0) {
+        // 자격자 없는 잔여분(예: 올인 캡 초과 dead money)은 직전 팟에 귀속
+        pots[pots.length - 1].amount += amount;
+      } else {
+        pots.push({
+          amount,
+          eligiblePlayerIds: (eligible.length > 0 ? eligible : contenders).map(p => p.id),
+        });
+      }
+      prev = level;
     }
 
-    if (pots.length > 0) {
-      this.state.pots = pots;
-    }
+    this.state.pots = pots;
   }
 
   private advanceStreet(): boolean {
@@ -445,12 +532,19 @@ export class PokerEngine {
   getPublicState(forPlayerId?: string): GameState {
     return {
       ...this.state,
-      players: this.state.players.map(p => ({
-        ...p,
-        holeCards: p.id === forPlayerId || this.state.street === 'showdown'
-          ? p.holeCards
-          : p.holeCards.map(() => ({ suit: 'spades', rank: '2' } as Card)), // hidden cards
-      })),
+      players: this.state.players.map(p => {
+        // 쇼다운 생존자(active/all-in)만 공개. 폴드한 플레이어는 머킹(비공개)
+        const revealed =
+          this.state.street === 'showdown' &&
+          (p.status === 'active' || p.status === 'all-in');
+        return {
+          ...p,
+          revealed,
+          holeCards: p.id === forPlayerId || revealed
+            ? p.holeCards
+            : p.holeCards.map(() => ({ suit: 'spades', rank: '2' } as Card)), // hidden cards
+        };
+      }),
     };
   }
 }

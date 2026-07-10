@@ -1,7 +1,7 @@
 import { Player } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { decideBotAction } from './bot-ai';
-import { getRandomBotCharacter, CharacterProfile } from '../characters';
+import { getRandomBotCharacter } from '../characters';
 
 let botIdCounter = 0;
 
@@ -17,6 +17,7 @@ export function createBot(seatIndex: number, buyIn: number, excludeCharacterIds:
     seatIndex,
     holeCards: [],
     currentBet: 0,
+    totalContributed: 0,
     status: 'waiting',
     hasActed: false,
     personalityId: character.id,

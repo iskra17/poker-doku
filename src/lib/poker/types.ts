@@ -37,8 +37,12 @@ export interface Player {
   seatIndex: number;
   holeCards: Card[];
   currentBet: number;
+  totalContributed: number; // 이번 핸드 누적 팟 기여금 (스트리트 무관)
   status: PlayerStatus;
   hasActed: boolean;
+  pendingRemoval?: boolean; // 핸드 진행 중 이탈 → 다음 핸드 시작 전 제거 예약
+  isDisconnected?: boolean; // 재접속 유예(grace) 중
+  revealed?: boolean; // 서버가 명시하는 홀카드 공개 여부 (쇼다운 생존자만 true)
   personalityId?: string; // for bots
 }
 
@@ -73,6 +77,9 @@ export interface GameState {
   winners: WinResult[] | null;
   lastAction: PlayerAction | null;
   turnTimer: number; // seconds remaining
+  turnTimeRemaining?: number; // ms — 서버→클라 전용 (전송 시 주입)
+  handNumber: number; // 핸드 카운터 — 클라 diff 이벤트 파생용
+  actionSeq: number; // 유효 액션 카운터 — 클라 diff 이벤트 파생용
 }
 
 export interface WinResult {
