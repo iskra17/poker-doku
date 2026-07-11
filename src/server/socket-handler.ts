@@ -50,7 +50,7 @@ export function setupSocketHandlers(io: Server): void {
     minBuyIn: 20 * MIN_BUYIN_BB,
     maxBuyIn: 20 * MAX_BUYIN_BB,
     maxPlayers: 6,
-    turnTime: 30,
+    turnTime: 8,
   }, true);
 
   roomManager.createRoom({
@@ -60,7 +60,7 @@ export function setupSocketHandlers(io: Server): void {
     minBuyIn: 50 * MIN_BUYIN_BB,
     maxBuyIn: 50 * MAX_BUYIN_BB,
     maxPlayers: 6,
-    turnTime: 30,
+    turnTime: 8,
   }, true);
 
   roomManager.createRoom({
@@ -70,7 +70,7 @@ export function setupSocketHandlers(io: Server): void {
     minBuyIn: 100 * MIN_BUYIN_BB,
     maxBuyIn: 100 * MAX_BUYIN_BB,
     maxPlayers: 6,
-    turnTime: 30,
+    turnTime: 8,
   }, true);
 
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
@@ -290,7 +290,7 @@ export function setupSocketHandlers(io: Server): void {
       const safeConfig: RoomConfig = {
         ...config,
         maxPlayers: 6,
-        turnTime: Math.min(Math.max(Number(config.turnTime) || 30, 10), 120),
+        turnTime: Math.min(Math.max(Number(config.turnTime) || 8, 5), 60),
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
         // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택

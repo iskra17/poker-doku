@@ -227,7 +227,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.emit('create-room', {
       ...config,
       maxPlayers: 6,
-      turnTime: 30,
+      turnTime: 8,
     });
   },
 

@@ -30,7 +30,11 @@ npx tsc --noEmit
 - **재접속**: `src/server/session-manager.ts`. localStorage 토큰(비밀) ↔ playerId(공개) ↔ socketId
   매핑, disconnect 후 60초 grace 동안 좌석/칩 보존. 토큰을 gameState로 노출하지 말 것.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
-  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의).
+  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
+  남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.
+- **액션 규칙**: `getValidActions`는 응수 가능한 상대(active)가 없으면(전원 올인) 레이즈/올인을
+  제공하지 않음 — 콜/폴드만 (ActionBar도 동일 조건으로 클라 측 숨김). 회귀 테스트:
+  `engine.validactions.test.ts`.
 - **클라이언트 이벤트 레이어**: 서버는 `game-update` 스냅샷만 push. `src/lib/events/game-events.ts`의
   `diffGameState()`가 prev/next를 비교해 이벤트(hand-start/action/bets-collected/winners 등)를 발행하고,
   사운드·애니메이션·액션로그·캐릭터 표정이 이 스트림을 구독한다. diff 안정성을 위해 서버가

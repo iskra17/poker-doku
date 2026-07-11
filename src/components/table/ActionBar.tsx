@@ -23,6 +23,7 @@ export default function ActionBar() {
   const { gameState, myPlayerId, sendAction, toggleSitOut, useTimeBank } = useGameStore();
   const betStepUnit = useSettingsStore(s => s.betStepUnit);
   const [raiseAmount, setRaiseAmount] = useState(0);
+  const [amountDraft, setAmountDraft] = useState<string | null>(null); // 금액 직접 입력 중 임시값
   const [prevRoundKey, setPrevRoundKey] = useState('');
   const isMobile = useIsMobile();
 
@@ -89,7 +90,11 @@ export default function ActionBar() {
 
   const canCheck = myPlayer.currentBet >= gameState.currentBet;
   const canCall = !canCheck && callAmount > 0;
-  const canRaise = maxRaise >= minRaise;
+  // 응수 가능한 상대(active)가 없으면(전원 올인 등) 레이즈/올인은 데드 액션 — 콜/폴드만 노출 (표준 룰)
+  const othersCanRespond = gameState.players.some(
+    p => p.id !== myPlayerId && p.status === 'active',
+  );
+  const canRaise = maxRaise >= minRaise && othersCanRespond;
   // 포스트플랍에서 아직 아무 베팅이 없으면 '벳', 그 외(블라인드/베팅 위)는 '레이즈'
   const aggroLabel = gameState.street !== 'preflop' && gameState.currentBet === 0 ? '벳' : '레이즈';
 
@@ -98,9 +103,18 @@ export default function ActionBar() {
   if (roundKey !== prevRoundKey) {
     setPrevRoundKey(roundKey);
     setRaiseAmount(0);
+    setAmountDraft(null);
   }
 
   const effectiveRaise = Math.min(maxRaise, Math.max(raiseAmount, minRaise));
+
+  // 금액 직접 입력: 입력 중엔 draft 그대로, 확정(blur/Enter) 시 파싱해 범위로 클램프
+  const commitAmountDraft = () => {
+    if (amountDraft === null) return;
+    const n = Math.floor(Number(amountDraft));
+    if (Number.isFinite(n) && n > 0) setRaiseAmount(n);
+    setAmountDraft(null);
+  };
 
   const act = (action: ActionType, amount?: number) => {
     playEffect('ui-click');
@@ -153,10 +167,28 @@ export default function ActionBar() {
             )}
             {canRaise && (
               <div className="ml-auto text-right leading-tight">
-                <span className="font-bold text-blossom tabular text-lg">
-                  {effectiveRaise.toLocaleString()}
-                </span>
-                <span className="block text-[10px] text-ink-dim tabular">
+                {/* 금액 직접 입력 — 탭/클릭 후 타이핑 (모바일 숫자 키패드) */}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={amountDraft ?? String(effectiveRaise)}
+                  onFocus={e => {
+                    setAmountDraft(String(effectiveRaise));
+                    e.target.select();
+                  }}
+                  onChange={e => setAmountDraft(e.target.value.replace(/[^0-9]/g, ''))}
+                  onBlur={commitAmountDraft}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      commitAmountDraft();
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  aria-label={`${aggroLabel} 금액 직접 입력`}
+                  className="w-[96px] text-right bg-black/40 border border-white/15 rounded-lg px-2 py-0.5 font-bold text-blossom tabular text-base focus:outline-none focus:border-blossom/70 focus:bg-black/60"
+                />
+                <span className="block text-[10px] text-ink-dim tabular pr-1">
                   {(effectiveRaise / bb).toFixed(1)} BB
                 </span>
               </div>
@@ -196,20 +228,20 @@ export default function ActionBar() {
             </div>
           )}
 
-          {/* 3행: 액션 버튼 — 좁은 화면에서 세로로 깨지지 않게 flex-1 + nowrap */}
+          {/* 3행: 액션 버튼 — 동일 색상(primary)으로 통일, 좁은 화면에서 세로로 깨지지 않게 flex-1 + nowrap */}
           <div className="flex items-center w-full gap-1.5">
-            <Button variant="danger" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
+            <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
               폴드
             </Button>
 
             {canCheck && (
-              <Button variant="secondary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
+              <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
                 체크
               </Button>
             )}
 
             {canCall && (
-              <Button variant="success" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
+              <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
                 콜 {callAmount.toLocaleString()}
               </Button>
             )}
@@ -220,12 +252,12 @@ export default function ActionBar() {
               </Button>
             )}
 
-            {myPlayer.chips > 0 && (
+            {myPlayer.chips > 0 && othersCanRespond && (
               <Button
-                variant="danger"
+                variant="primary"
                 size="md"
                 onClick={() => act('all-in')}
-                className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm !bg-gradient-to-r !from-red-600 !to-orange-600 !shadow-orange-500/25"
+                className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm"
               >
                 올인
               </Button>

@@ -5,7 +5,7 @@ import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
 import { AIDialogue } from './ai-dialogue';
 
-const DEFAULT_TURN_TIMEOUT_S = 30; // config.turnTime 미설정 시 폴백 (초)
+const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
 
@@ -298,6 +298,25 @@ export class RoomManager {
     const timer = setTimeout(() => {
       this.turnTimers.delete(roomId);
       this.turnDeadlines.delete(roomId);
+
+      // 기본 시간 초과 → 타임뱅크가 남아 있으면 자동 사용해 연장, 다 쓰면 자동 체크/폴드
+      const current = this.rooms.get(roomId);
+      const stillActive = current?.engine.state.players[current.engine.state.activePlayerIndex];
+      if (
+        current && stillActive && stillActive.id === activePlayer.id
+        && current.engine.state.isHandInProgress
+        && (stillActive.timeBankChips ?? 0) > 0
+      ) {
+        stillActive.timeBankChips = (stillActive.timeBankChips ?? 0) - 1;
+        this.sendSystemChat(
+          roomId,
+          `${stillActive.name}님 시간 초과 — 타임뱅크 자동 사용 (+${TIME_BANK_EXTEND_MS / 1000}초, 남은 타임칩 ${stillActive.timeBankChips}개)`,
+        );
+        this.startTurnTimer(roomId, TIME_BANK_EXTEND_MS);
+        this.onUpdate(roomId, current.engine);
+        return;
+      }
+
       this.autoActFor(roomId, activePlayer.id, '시간 초과');
     }, timeoutMs);
 

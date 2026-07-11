@@ -476,8 +476,14 @@ export class PokerEngine {
       actions.push('call');
     }
 
+    // 레이즈/올인은 응수할 수 있는 상대(active)가 남아 있을 때만 의미가 있다.
+    // 상대 전원이 올인이면 초과분은 아무도 콜할 수 없는 데드 액션 — 콜/폴드만 제공 (표준 룰)
+    const othersCanRespond = this.state.players.some(
+      p => p.id !== player.id && p.status === 'active',
+    );
+
     const minRaiseAmount = this.state.currentBet + this.state.minRaise;
-    if (player.chips + player.currentBet > this.state.currentBet) {
+    if (othersCanRespond && player.chips + player.currentBet > this.state.currentBet) {
       if (player.chips + player.currentBet >= minRaiseAmount) {
         actions.push('raise');
       }
