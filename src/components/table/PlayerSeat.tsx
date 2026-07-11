@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Player } from '@/lib/poker/types';
 import { SeatAction } from '@/lib/hooks/use-seat-actions';
 import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
 import TurnTimer from './TurnTimer';
@@ -19,6 +20,10 @@ interface PlayerSeatProps {
   turnDuration?: number;
   turnTotalSeconds?: number;
   seatAction?: SeatAction | null;
+  /** 홀카드를 붙일 쪽 — 우측 열 좌석은 화면 클리핑 방지를 위해 왼쪽(테이블 중앙 방향) */
+  cardSide?: 'left' | 'right';
+  /** 칩↔BB 표기 전환용 현재 빅블라인드 */
+  bigBlind?: number;
   onSit?: (seatIndex: number) => void;
 }
 
@@ -31,18 +36,21 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 };
 
 /**
- * 좌석 — absolute 레이어 합성.
- * 상대: 카드백이 아바타 뒤 상단에 피크(z-0) → 아바타(z-10) → 플레이트(z-20, 아바타 하단 겹침)
- *       → 액션 배지(z-30, 플레이트 모서리). 쇼다운 시 카드가 전면(z-30)으로 공개.
- * 히어로: 홀카드 lg가 아바타 위/뒤에 팬 배치 (하단 독이 상시 예약되어 가림 없음).
+ * 좌석 — 프로필(캐릭터) 중심 레이아웃.
+ * 아바타를 크게(모바일 80px/데스크탑 96px) 두고, 홀카드는 아바타 옆에 살짝 겹치는
+ * 작은 배지로 처리: 히어로 xs 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 시 sm(z-30).
+ * cardSide로 좌우를 정한다 (우측 열 좌석은 왼쪽 — overflow-hidden 클리핑 방지).
+ * 이름/칩 플레이트는 아바타 하단 겹침(z-20), 칩 부분 터치로 칩↔BB 표기 토글.
  * 폴드/탈락 디밍은 아바타·카드에만 — 이름/칩 플레이트는 가독 유지.
  */
 export default function PlayerSeat({
   player, isCurrentPlayer, isActive, position, seatIndex, compact = false,
-  turnDuration = 0, turnTotalSeconds = 30, seatAction, onSit,
+  turnDuration = 0, turnTotalSeconds = 30, seatAction, cardSide = 'right', bigBlind = 0, onSit,
 }: PlayerSeatProps) {
   // 훅은 early return 이전에 호출 (React 규칙)
   const expression = useSeatExpression(player?.id, isActive);
+  const chipDisplayMode = useSettingsStore(s => s.chipDisplayMode);
+  const toggleChipDisplayMode = useSettingsStore(s => s.toggleChipDisplayMode);
 
   if (!player) {
     return (
@@ -53,7 +61,7 @@ export default function PlayerSeat({
         <button
           onClick={() => onSit?.(seatIndex)}
           className={`rounded-full border-2 border-dashed border-white/20 hover:border-purple-400/50 hover:bg-purple-500/10 transition-all flex items-center justify-center text-white/30 hover:text-purple-300 cursor-pointer
-            ${compact ? 'w-12 h-12 text-[10px]' : 'w-16 h-16 text-xs'}
+            ${compact ? 'w-20 h-20 text-xs' : 'w-24 h-24 text-sm'}
           `}
         >
           앉기
@@ -67,9 +75,20 @@ export default function PlayerSeat({
   const isSittingOut = player.status === 'sitting-out';
   const isBusted = player.chips <= 0 && !isAllIn;
   const isDimmed = isFolded || isSittingOut || isBusted;
-  const avatarSize = compact ? 'sm' : 'md';
+  const avatarSize = compact ? 'lg' : 'xl';
   const showCards = player.holeCards.length > 0 && !isFolded;
   const revealed = !isCurrentPlayer && !!player.revealed;
+
+  // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 xs > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
+  const cardOverlapPx = isCurrentPlayer ? 14 : revealed ? 12 : 10;
+  const cardAnchorStyle = cardSide === 'left'
+    ? { right: `calc(100% - ${cardOverlapPx}px)` }
+    : { left: `calc(100% - ${cardOverlapPx}px)` };
+
+  // 칩 표기 — BB 모드면 현재 빅블라인드 기준, 소수 첫째 자리 반올림 (100.0 → "100")
+  const chipsText = chipDisplayMode === 'bb' && bigBlind > 0
+    ? `${(Math.round((player.chips / bigBlind) * 10) / 10).toLocaleString()}BB`
+    : player.chips.toLocaleString();
 
   const badge = isAllIn
     ? actionLabels['all-in']
@@ -91,41 +110,7 @@ export default function PlayerSeat({
       style={{ left: position.x, top: position.y, x: '-50%', y: '-50%' }}
     >
       <div className="relative flex flex-col items-center">
-        {/* 홀카드 — 히어로: 아바타 위 수평 정렬(시인성 최우선) / 상대: 아바타 뒤 피크 → 쇼다운 시 전면 공개 */}
-        {showCards && (
-          isCurrentPlayer ? (
-            <div className="absolute left-1/2 -translate-x-1/2 -top-14 z-0 flex gap-1 pointer-events-none">
-              {player.holeCards.map((card, i) => (
-                <CardComponent key={i} card={card} size="md" delay={i * 0.1} />
-              ))}
-            </div>
-          ) : (
-            <div
-              className={`absolute left-1/2 -translate-x-1/2 flex pointer-events-none
-                ${revealed ? 'z-30 -top-7 gap-0.5' : 'z-0 -top-4'}`}
-            >
-              {player.holeCards.map((card, i) => (
-                <div
-                  key={i}
-                  className={
-                    revealed
-                      ? ''
-                      : i === 0 ? 'rotate-[-8deg] translate-y-0.5' : 'rotate-[8deg] -ml-2'
-                  }
-                >
-                  <CardComponent
-                    card={card}
-                    hidden={!player.revealed}
-                    size={revealed ? 'sm' : 'xs'}
-                    delay={i * 0.1}
-                  />
-                </div>
-              ))}
-            </div>
-          )
-        )}
-
-        {/* 아바타 + 턴 타이머 링 — 디밍은 여기(와 카드)에만 */}
+        {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만 */}
         <div className={`relative z-10 transition-opacity ${isDimmed ? 'opacity-40 grayscale' : ''}`}>
           <SeatEmote playerId={player.id} />
           <CharacterAvatar
@@ -138,26 +123,59 @@ export default function PlayerSeat({
             <TurnTimer
               remainingMs={turnDuration}
               totalSeconds={turnTotalSeconds}
-              sizePx={compact ? 40 : 56}
+              sizePx={compact ? 80 : 96}
             />
+          )}
+
+          {/* 홀카드 — 아바타 옆에 살짝 겹침: 히어로 xs 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 sm */}
+          {showCards && (
+            <div
+              className={`absolute top-1/2 -translate-y-1/2 flex pointer-events-none ${revealed ? 'z-30 gap-0.5' : 'z-20'}`}
+              style={cardAnchorStyle}
+            >
+              {player.holeCards.map((card, i) => (
+                <div
+                  key={i}
+                  className={
+                    revealed
+                      ? ''
+                      : i === 0 ? 'rotate-[-6deg]' : 'rotate-[6deg] -ml-1.5 translate-y-0.5'
+                  }
+                >
+                  <CardComponent
+                    card={card}
+                    hidden={!isCurrentPlayer && !player.revealed}
+                    size={isCurrentPlayer ? 'xs' : revealed ? 'sm' : '2xs'}
+                    delay={i * 0.1}
+                  />
+                </div>
+              ))}
+            </div>
           )}
         </div>
 
         {/* 이름/칩 플레이트 — 아바타 하단에 겹침, 폴드여도 가독 유지 */}
-        <div className={`relative z-20 -mt-2 ${isDimmed ? 'opacity-80' : ''}`}>
+        <div className={`relative z-20 -mt-3 ${isDimmed ? 'opacity-80' : ''}`}>
           <div className={`bg-black/70 backdrop-blur-sm rounded-lg text-center border
             ${isBusted ? 'border-red-500/30' : 'border-white/10'}
-            ${compact ? 'px-2 py-0.5 min-w-[60px]' : 'px-3 py-1 min-w-[90px]'}
+            ${compact ? 'px-2.5 py-1 min-w-[84px]' : 'px-3.5 py-1 min-w-[104px]'}
           `}>
-            <div className={`text-white font-bold truncate ${compact ? 'text-[10px] max-w-[55px]' : 'text-xs max-w-[80px]'}`}>
+            <div className={`text-white font-bold truncate mx-auto ${compact ? 'text-[13px] max-w-[80px]' : 'text-[15px] max-w-[100px]'}`}>
               {player.name}
               {isCurrentPlayer && <span className="text-blossom ml-0.5">(나)</span>}
             </div>
-            <div className={`font-semibold ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-[9px]' : 'text-[11px]'}`}>
+            {/* 칩 — 터치/클릭으로 칩↔BB 표기 전환 (소수 첫째 자리 반올림) */}
+            <button
+              type="button"
+              onClick={toggleChipDisplayMode}
+              title="칩 ↔ BB 표기 전환"
+              className={`block w-full font-semibold cursor-pointer select-none tabular-nums
+                ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-xs' : 'text-[13px]'}`}
+            >
               {isBusted
                 ? (player.finishPlace ? `${player.finishPlace}위 탈락` : '탈락')
-                : player.chips.toLocaleString()}
-            </div>
+                : chipsText}
+            </button>
           </div>
 
           {/* 액션 배지 — 플레이트 우상단 모서리 겹침 */}
@@ -170,7 +188,7 @@ export default function PlayerSeat({
                 exit={{ opacity: 0, scale: 0.8 }}
                 transition={isAllIn ? { scale: { duration: 0.8, repeat: Infinity } } : undefined}
                 className={`absolute -top-2.5 -right-2 z-30 ${badge.color} text-white font-bold rounded-full shadow-lg whitespace-nowrap
-                  ${compact ? 'text-[8px] px-1.5 py-0.5' : 'text-[10px] px-2 py-0.5'}
+                  ${compact ? 'text-[10px] px-1.5 py-0.5' : 'text-[11px] px-2 py-0.5'}
                 `}
               >
                 {badge.text}
@@ -182,10 +200,10 @@ export default function PlayerSeat({
 
         {/* 상태 표시 */}
         {isSittingOut && !isBusted && (
-          <div className={`z-20 mt-0.5 text-gray-500 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>자리 비움</div>
+          <div className={`z-20 mt-0.5 text-gray-500 font-bold ${compact ? 'text-[10px]' : 'text-[11px]'}`}>자리 비움</div>
         )}
         {player.isDisconnected && (
-          <div className={`z-20 mt-0.5 text-orange-400 font-bold ${compact ? 'text-[8px]' : 'text-[10px]'}`}>오프라인</div>
+          <div className={`z-20 mt-0.5 text-orange-400 font-bold ${compact ? 'text-[10px]' : 'text-[11px]'}`}>오프라인</div>
         )}
       </div>
     </motion.div>

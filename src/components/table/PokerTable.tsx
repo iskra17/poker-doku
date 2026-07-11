@@ -108,18 +108,22 @@ export default function PokerTable() {
         {/* Player seats — 내 좌석이 하단 중앙에 오도록 디스플레이 슬롯 회전 */}
         {seats.map((_, i) => {
           const isActiveHere = gameState.players[gameState.activePlayerIndex]?.seatIndex === i;
+          const displaySlot = toDisplayIndex(i, mySeatIndex);
           return (
             <PlayerSeat
               key={i}
               player={seatPlayers[i]}
               isCurrentPlayer={seatPlayers[i]?.id === myId}
               isActive={isActiveHere}
-              position={seats[toDisplayIndex(i, mySeatIndex)]}
+              position={seats[displaySlot]}
               seatIndex={i}
               compact={isMobile}
               turnDuration={isActiveHere ? (gameState.turnTimeRemaining ?? 0) : 0}
               turnTotalSeconds={gameState.turnTimer || 30}
               seatAction={seatActions[i] ?? null}
+              // 우측 열(슬롯 4·5)은 카드가 화면 밖으로 잘리지 않게 왼쪽(중앙 방향)에 부착
+              cardSide={displaySlot === 4 || displaySlot === 5 ? 'left' : 'right'}
+              bigBlind={gameState.bigBlind}
             />
           );
         })}

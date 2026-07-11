@@ -7,7 +7,7 @@ import CharacterImage from './CharacterImage';
 
 interface CharacterAvatarProps {
   characterId: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   expression?: Expression;
   isActive?: boolean;
 }
@@ -16,6 +16,7 @@ const sizeMap = {
   sm: 'w-10 h-10 text-lg',
   md: 'w-14 h-14 text-2xl',
   lg: 'w-20 h-20 text-3xl',
+  xl: 'w-24 h-24 text-4xl',
 };
 
 // 표정 전환 시 1회 재생되는 리액션 모션 — 승리(happy)는 바운스, 패배(sad)는 흔들림

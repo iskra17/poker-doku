@@ -7,6 +7,9 @@ import type { DeckStyleId, DeckColorId } from '@/components/table/card-theme';
 /** 베팅 슬라이더/스테퍼 증감 단위 기준 */
 export type BetStepUnit = 'sb' | 'bb';
 
+/** 좌석 칩 스택 표기 — 칩 수 / 빅블라인드 환산 */
+export type ChipDisplayMode = 'chips' | 'bb';
+
 interface SettingsStore {
   muted: boolean;
   toggleMuted: () => void;
@@ -32,6 +35,9 @@ interface SettingsStore {
   /** 팟 칩을 권종별로 쌓아 올리는 연출 */
   stackedPot: boolean;
   toggleStackedPot: () => void;
+  /** 좌석 칩 스택 표기 (칩 부분 터치로 토글) */
+  chipDisplayMode: ChipDisplayMode;
+  toggleChipDisplayMode: () => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -54,6 +60,8 @@ export const useSettingsStore = create<SettingsStore>()(
       setBetStepUnit: (betStepUnit) => set({ betStepUnit }),
       stackedPot: true,
       toggleStackedPot: () => set(s => ({ stackedPot: !s.stackedPot })),
+      chipDisplayMode: 'chips',
+      toggleChipDisplayMode: () => set(s => ({ chipDisplayMode: s.chipDisplayMode === 'chips' ? 'bb' : 'chips' })),
     }),
     { name: 'poker-doku-settings' },
   ),

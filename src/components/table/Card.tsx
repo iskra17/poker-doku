@@ -7,7 +7,7 @@ import {
   DeckStyleId, DeckColorId, SUIT_SYMBOLS, getSuitColor, getSuitTint,
 } from './card-theme';
 
-type CardSize = 'xs' | 'sm' | 'md' | 'lg';
+type CardSize = '2xs' | 'xs' | 'sm' | 'md' | 'lg';
 
 interface CardProps {
   card: CardType;
@@ -28,6 +28,7 @@ interface CardProps {
 const sizeConfig: Record<CardSize, {
   card: string; corner: string; cornerSuit: string; centerSuit: string; bigRank: string; bigSuit: string;
 }> = {
+  '2xs': { card: 'w-5 h-7', corner: 'text-[5px]', cornerSuit: 'text-[4px]', centerSuit: 'text-[11px]', bigRank: 'text-[11px]', bigSuit: 'text-[7px]' },
   xs: { card: 'w-7 h-10', corner: 'text-[7px]', cornerSuit: 'text-[6px]', centerSuit: 'text-base', bigRank: 'text-base', bigSuit: 'text-[10px]' },
   sm: { card: 'w-10 h-14', corner: 'text-[9px]', cornerSuit: 'text-[8px]', centerSuit: 'text-2xl', bigRank: 'text-2xl', bigSuit: 'text-sm' },
   md: { card: 'w-14 h-20', corner: 'text-[11px]', cornerSuit: 'text-[10px]', centerSuit: 'text-4xl', bigRank: 'text-4xl', bigSuit: 'text-xl' },
