@@ -12,7 +12,7 @@ import { Card, GameState, ActionType, Street, WinResult, Player } from '../poker
 export type GameEvent =
   | { type: 'hand-start'; handNumber: number }
   | { type: 'street-dealt'; street: Street; newCards: Card[]; startIndex: number }
-  | { type: 'action'; playerId: string; playerName: string; seatIndex: number; actionType: ActionType; amount: number; street: Street }
+  | { type: 'action'; playerId: string; playerName: string; seatIndex: number; actionType: ActionType; amount: number; street: Street; isBet: boolean }
   | { type: 'bets-collected'; bets: { seatIndex: number; amount: number }[] }
   | { type: 'my-turn-start'; deadline: number }
   | { type: 'showdown-reveal' }
@@ -64,6 +64,8 @@ export function diffGameState(
       actionType: next.lastAction.type,
       amount: next.lastAction.amount,
       street: next.street,
+      // 벳 vs 레이즈: 포스트플랍에서 해당 스트리트 첫 베팅(직전 currentBet 0)이면 벳
+      isBet: next.lastAction.type === 'raise' && next.street !== 'preflop' && prev.currentBet === 0,
     });
   }
 

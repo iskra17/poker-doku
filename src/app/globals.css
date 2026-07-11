@@ -26,6 +26,10 @@
   --color-felt-lo: #141031;    /* 펠트 그라디언트 어두운 쪽 */
   --color-ink: #f4edff;        /* 본문 텍스트 */
   --color-ink-dim: #b9a8d9;    /* 보조 텍스트 */
+  --color-suit-red: #ff4f6e;   /* 카드 수트 — ♥ (2컬러에선 ♦도) */
+  --color-suit-blue: #4fa3ff;  /* 카드 수트 — ♦ (4컬러) */
+  --color-suit-green: #2fbe85; /* 카드 수트 — ♣ (4컬러) */
+  --color-suit-dark: #2a2e3f;  /* 카드 수트 — ♠ (2컬러에선 ♣도) */
   --font-body: var(--font-noto-sans-kr), 'Segoe UI', Arial, sans-serif;
   --font-display: var(--font-jua), var(--font-noto-sans-kr), sans-serif;
 }

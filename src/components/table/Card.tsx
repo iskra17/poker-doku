@@ -1,7 +1,11 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Card as CardType, Suit } from '@/lib/poker/types';
+import { Card as CardType } from '@/lib/poker/types';
+import { useSettingsStore } from '@/lib/store/settings-store';
+import {
+  DeckStyleId, DeckColorId, SUIT_SYMBOLS, getSuitColor, getSuitTint,
+} from './card-theme';
 
 type CardSize = 'xs' | 'sm' | 'md' | 'lg';
 
@@ -15,37 +19,19 @@ interface CardProps {
   size?: CardSize;
   /** @deprecated Use size='sm' instead */
   small?: boolean;
+  /** 설정 미리보기용 스타일 강제 (기본: 설정 스토어 값) */
+  deckStyle?: DeckStyleId;
+  /** 설정 미리보기용 배색 강제 (기본: 설정 스토어 값) */
+  deckColor?: DeckColorId;
 }
 
-// 4색덱: 하트 빨강 / 다이아 파랑 / 클럽 초록 / 스페이드 잉크
-const suitColors: Record<Suit, string> = {
-  hearts: '#FF4F6E',
-  diamonds: '#4FA3FF',
-  clubs: '#2FBE85',
-  spades: '#2A2E3F',
-};
-
-const suitTints: Record<Suit, string> = {
-  hearts: 'rgba(255, 79, 110, 0.05)',
-  diamonds: 'rgba(79, 163, 255, 0.05)',
-  clubs: 'rgba(47, 190, 133, 0.05)',
-  spades: 'rgba(42, 46, 63, 0.04)',
-};
-
-const suitSymbols: Record<Suit, string> = {
-  hearts: '♥',
-  diamonds: '♦',
-  clubs: '♣',
-  spades: '♠',
-};
-
 const sizeConfig: Record<CardSize, {
-  card: string; rank: string; corner: string; cornerSuit: string; watermark: string; showWatermark: boolean;
+  card: string; corner: string; cornerSuit: string; centerSuit: string; bigRank: string; bigSuit: string;
 }> = {
-  xs: { card: 'w-7 h-10', rank: 'text-sm', corner: 'text-[7px]', cornerSuit: 'text-[6px]', watermark: 'text-lg', showWatermark: false },
-  sm: { card: 'w-10 h-14', rank: 'text-xl', corner: 'text-[9px]', cornerSuit: 'text-[8px]', watermark: 'text-2xl', showWatermark: false },
-  md: { card: 'w-14 h-20', rank: 'text-2xl', corner: 'text-[11px]', cornerSuit: 'text-[10px]', watermark: 'text-4xl', showWatermark: true },
-  lg: { card: 'w-[4.5rem] h-[6.2rem]', rank: 'text-3xl', corner: 'text-xs', cornerSuit: 'text-[11px]', watermark: 'text-5xl', showWatermark: true },
+  xs: { card: 'w-7 h-10', corner: 'text-[7px]', cornerSuit: 'text-[6px]', centerSuit: 'text-base', bigRank: 'text-base', bigSuit: 'text-[10px]' },
+  sm: { card: 'w-10 h-14', corner: 'text-[9px]', cornerSuit: 'text-[8px]', centerSuit: 'text-2xl', bigRank: 'text-2xl', bigSuit: 'text-sm' },
+  md: { card: 'w-14 h-20', corner: 'text-[11px]', cornerSuit: 'text-[10px]', centerSuit: 'text-4xl', bigRank: 'text-4xl', bigSuit: 'text-xl' },
+  lg: { card: 'w-[4.5rem] h-[6.2rem]', corner: 'text-xs', cornerSuit: 'text-[11px]', centerSuit: 'text-5xl', bigRank: 'text-5xl', bigSuit: 'text-2xl' },
 };
 
 /** 카드 뒷면 — 핑크→퍼플 그라디언트 + 사선 격자 + 다이아 모노그램 */
@@ -76,11 +62,26 @@ function CardBack() {
 
 export default function CardComponent({
   card, hidden = false, highlight = false, dimmed = false, delay = 0, size, small,
+  deckStyle, deckColor,
 }: CardProps) {
+  const storeStyle = useSettingsStore(s => s.deckStyle);
+  const storeColor = useSettingsStore(s => s.deckColor);
+  const style = deckStyle ?? storeStyle;
+  const colorway = deckColor ?? storeColor;
+
   const resolvedSize: CardSize = size ?? (small ? 'sm' : 'md');
   const cfg = sizeConfig[resolvedSize];
-  const color = suitColors[card.suit];
-  const symbol = suitSymbols[card.suit];
+  const suitColor = getSuitColor(card.suit, colorway);
+  const symbol = SUIT_SYMBOLS[card.suit];
+  const isTen = card.rank === '10';
+  const isSolid = style === 'solid';
+  // 솔리드: 수트색이 카드 배경, 글자는 흰색 (테두리 없음 — 시인성 최우선)
+  const glyphColor = isSolid ? '#ffffff' : suitColor;
+  const faceBackground = isSolid
+    ? suitColor
+    : style === 'classic'
+      ? `linear-gradient(150deg, #ffffff 0%, ${getSuitTint(card.suit, colorway)} 100%), #ffffff`
+      : '#ffffff';
 
   return (
     <motion.div
@@ -100,38 +101,39 @@ export default function CardComponent({
         {/* 앞면 */}
         <div
           className={`absolute inset-0 rounded-lg overflow-hidden shadow-lg
-            ${highlight ? 'ring-2 ring-gilded shadow-gilded/50' : 'border border-gray-300/80'}
+            ${highlight ? 'ring-2 ring-gilded shadow-gilded/50' : isSolid ? '' : 'border border-gray-300/80'}
           `}
           style={{
             backfaceVisibility: 'hidden',
-            background: `linear-gradient(150deg, #ffffff 0%, ${suitTints[card.suit]} 100%), #ffffff`,
+            background: faceBackground,
           }}
         >
-          {/* 좌상단 코너 인덱스 */}
-          <div className="absolute top-0.5 left-1 flex flex-col items-center leading-none" style={{ color }}>
-            <span className={`${cfg.corner} font-bold leading-none`}>{card.rank}</span>
-            <span className={`${cfg.cornerSuit} leading-none`}>{symbol}</span>
-          </div>
-          {/* 우하단 코너 인덱스 (180° 회전) */}
-          <div className="absolute bottom-0.5 right-1 flex flex-col items-center leading-none rotate-180" style={{ color }}>
-            <span className={`${cfg.corner} font-bold leading-none`}>{card.rank}</span>
-            <span className={`${cfg.cornerSuit} leading-none`}>{symbol}</span>
-          </div>
-          {/* 무늬 워터마크 */}
-          {cfg.showWatermark && (
-            <div
-              className={`absolute inset-0 flex items-center justify-center ${cfg.watermark}`}
-              style={{ color, opacity: 0.13 }}
-            >
-              {symbol}
+          {style === 'classic' ? (
+            <>
+              {/* 좌상단 코너 인덱스 */}
+              <div className="absolute top-0.5 left-1 flex flex-col items-center leading-none" style={{ color: glyphColor }}>
+                <span className={`${cfg.corner} font-bold leading-none ${isTen ? 'tracking-tighter' : ''}`}>{card.rank}</span>
+                <span className={`${cfg.cornerSuit} leading-none`}>{symbol}</span>
+              </div>
+              {/* 우하단 코너 인덱스 (180° 회전) */}
+              <div className="absolute bottom-0.5 right-1 flex flex-col items-center leading-none rotate-180" style={{ color: glyphColor }}>
+                <span className={`${cfg.corner} font-bold leading-none ${isTen ? 'tracking-tighter' : ''}`}>{card.rank}</span>
+                <span className={`${cfg.cornerSuit} leading-none`}>{symbol}</span>
+              </div>
+              {/* 중앙 대형 수트 */}
+              <div className="absolute inset-0 flex items-center justify-center" style={{ color: glyphColor }}>
+                <span className={`${cfg.centerSuit} leading-none`}>{symbol}</span>
+              </div>
+            </>
+          ) : (
+            /* 빅랭크(흰 배경) / 솔리드(수트색 배경): 초대형 랭크 + 그 아래 수트 */
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-[4%]" style={{ color: glyphColor }}>
+              <span className={`${cfg.bigRank} font-black leading-none ${isTen ? 'tracking-tighter scale-x-90' : ''}`}>
+                {card.rank}
+              </span>
+              <span className={`${cfg.bigSuit} leading-none`}>{symbol}</span>
             </div>
           )}
-          {/* 중앙 랭크 */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className={`${cfg.rank} font-black leading-none`} style={{ color }}>
-              {card.rank}
-            </span>
-          </div>
         </div>
 
         {/* 뒷면 */}

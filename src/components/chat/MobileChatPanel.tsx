@@ -29,7 +29,8 @@ export default function MobileChatPanel() {
       {/* Chat toggle button */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed bottom-20 right-3 z-20 w-10 h-10 rounded-full bg-purple-600/80 backdrop-blur-sm flex items-center justify-center text-white shadow-lg border border-purple-500/30"
+        className="fixed right-3 z-20 w-10 h-10 rounded-full bg-purple-600/80 backdrop-blur-sm flex items-center justify-center text-white shadow-lg border border-purple-500/30"
+        style={{ bottom: 'calc(140px + var(--safe-bottom))' }}
       >
         💬
         {chatMessages.length > 0 && (

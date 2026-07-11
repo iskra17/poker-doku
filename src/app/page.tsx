@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useGameStore } from '@/lib/store/game-store';
+import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { DEALER_CHARACTER } from '@/lib/characters';
 import LobbyHeader from '@/components/lobby/LobbyHeader';
 import RoomList from '@/components/lobby/RoomList';
 import CreateRoomModal from '@/components/lobby/CreateRoomModal';
+import JoinRoomModal from '@/components/lobby/JoinRoomModal';
 import GameRoomView from '@/components/layout/GameRoomView';
 import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
@@ -18,9 +19,14 @@ const LOBBY_BG_STYLE: React.CSSProperties = {
 };
 
 export default function Home() {
-  const { connect, connected, playerName, setPlayerName, joinRoom, leaveRoom, currentRoomId } = useGameStore();
+  const { connect, connected, playerName, setPlayerName, leaveRoom, currentRoomId, joinError, rooms } = useGameStore();
   const [nameInput, setNameInput] = useState('');
   const [hasName, setHasName] = useState(false);
+  const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
+  // 초대 링크(?room=id)로 진입한 경우 — 닉네임 입력 후 해당 방 입장 모달을 자동으로 연다
+  const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
+  );
 
   useEffect(() => {
     connect();
@@ -36,9 +42,20 @@ export default function Home() {
   const handleJoinRoom = (roomId: string) => {
     const room = useGameStore.getState().rooms.find(r => r.id === roomId);
     if (!room) return;
-    const blinds = room.blinds.split('/');
-    const bb = parseInt(blinds[1]) || 20;
-    joinRoom(roomId, bb * 50, 0);
+    setJoinTarget(room);
+  };
+
+  // 초대받은 방 (파생값 — 목록 도착 후 유효성 판단)
+  const inviteRoom = inviteRoomId ? rooms.find(r => r.id === inviteRoomId) ?? null : null;
+  const inviteNotFound = !!inviteRoomId && rooms.length > 0 && !inviteRoom;
+  const activeJoinTarget = joinTarget ?? (hasName && inviteRoom && !inviteRoom.locked ? inviteRoom : null);
+
+  const closeJoinModal = () => {
+    setJoinTarget(null);
+    if (inviteRoomId) {
+      setInviteRoomId(null);
+      window.history.replaceState(null, '', window.location.pathname);
+    }
   };
 
   // --- Table view (in-room) ---
@@ -86,9 +103,25 @@ export default function Home() {
           <span className="text-ink-dim text-sm">플레이어: </span>
           <span className="text-mystic font-bold">{playerName}</span>
         </div>
+        {joinError && (
+          <p className="text-center text-red-400 text-xs mb-3">{joinError}</p>
+        )}
+        {inviteNotFound && (
+          <p className="text-center text-red-400 text-xs mb-3">
+            초대받은 방을 찾을 수 없어요 — 이미 종료됐을 수 있어요.
+          </p>
+        )}
+        {inviteRoom?.locked && (
+          <p className="text-center text-red-400 text-xs mb-3">
+            초대받은 Sit &amp; Go가 이미 시작됐어요.
+          </p>
+        )}
         <RoomList onJoin={handleJoinRoom} />
       </div>
       <CreateRoomModal />
+      {activeJoinTarget && (
+        <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
+      )}
     </div>
   );
 }

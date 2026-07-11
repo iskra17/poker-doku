@@ -4,6 +4,11 @@ import {
   GameState, Player, PlayerAction, ActionType,
   Pot, WinResult, Card, RoomConfig,
 } from './types';
+import { SNG_PRIZE_SPLIT } from './blind-schedule';
+
+// 타임칩: N핸드 참여마다 1개 적립, 최대 보유량 제한
+export const TIME_BANK_ACCRUAL_HANDS = 10;
+export const TIME_BANK_MAX = 3;
 
 export class PokerEngine {
   private deck: Deck;
@@ -31,7 +36,110 @@ export class PokerEngine {
       turnTimer: config.turnTime,
       handNumber: 0,
       actionSeq: 0,
+      hostId: config.hostId,
+      ...(config.gameMode === 'sng'
+        ? {
+            tournament: {
+              level: 1,
+              smallBlind: config.smallBlind,
+              bigBlind: config.bigBlind,
+              nextSmallBlind: null,
+              nextBigBlind: null,
+              levelEndsAt: 0,
+              entrants: 0,
+              prizes: [],
+              finished: false,
+              results: [],
+            },
+          }
+        : {}),
     };
+  }
+
+  // --- 시트앤고 토너먼트 ---
+
+  /**
+   * 토너먼트 개시 — 첫 핸드 시작 직전에 호출.
+   * 참가 인원/상금 풀(총 칩 × 배분율)을 확정한다.
+   */
+  startTournament(levelEndsAt: number, nextSmallBlind: number | null, nextBigBlind: number | null): void {
+    const t = this.state.tournament;
+    if (!t || t.entrants > 0) return;
+    t.entrants = this.state.players.length;
+    const pool = this.state.players.reduce((sum, p) => sum + p.chips, 0);
+    t.prizes = SNG_PRIZE_SPLIT.map(ratio => Math.round(pool * ratio));
+    t.levelEndsAt = levelEndsAt;
+    t.nextSmallBlind = nextSmallBlind;
+    t.nextBigBlind = nextBigBlind;
+  }
+
+  /**
+   * 블라인드 레벨 인상 — 핸드 사이에만 호출할 것.
+   * postBlinds/minRaise가 this.config를 라이브로 읽으므로 config도 함께 갱신한다.
+   */
+  setTournamentLevel(
+    level: number,
+    smallBlind: number,
+    bigBlind: number,
+    nextSmallBlind: number | null,
+    nextBigBlind: number | null,
+    levelEndsAt: number,
+  ): void {
+    const t = this.state.tournament;
+    if (!t) return;
+    this.config.smallBlind = smallBlind;
+    this.config.bigBlind = bigBlind;
+    this.state.smallBlind = smallBlind;
+    this.state.bigBlind = bigBlind;
+    t.level = level;
+    t.smallBlind = smallBlind;
+    t.bigBlind = bigBlind;
+    t.nextSmallBlind = nextSmallBlind;
+    t.nextBigBlind = nextBigBlind;
+    t.levelEndsAt = levelEndsAt;
+  }
+
+  /** 순위 확정 기록 (상금은 표시용 — 칩에 더하지 않음) */
+  private recordFinish(player: Player, place: number): void {
+    const t = this.state.tournament;
+    if (!t || player.finishPlace) return;
+    player.finishPlace = place;
+    t.results.push({
+      playerId: player.id,
+      name: player.name,
+      place,
+      prize: t.prizes[place - 1] ?? 0,
+    });
+    t.results.sort((a, b) => a.place - b.place);
+  }
+
+  /** 이번 핸드에서 버스트된 플레이어들의 순위 확정 (동시 탈락은 핸드 시작 스택이 큰 쪽이 상위) */
+  private assignFinishPlaces(): void {
+    const t = this.state.tournament;
+    if (!t || t.finished) return;
+    const busted = this.state.players.filter(
+      p => p.chips <= 0 && !p.finishPlace && !p.pendingRemoval,
+    );
+    if (busted.length === 0) return;
+    // 작은 스택부터 낮은 순위(큰 숫자) 부여
+    busted.sort((a, b) => (a.handStartChips ?? 0) - (b.handStartChips ?? 0));
+    let place = this.state.players.filter(p => !p.finishPlace && !p.pendingRemoval).length;
+    for (const p of busted) {
+      this.recordFinish(p, place--);
+    }
+  }
+
+  /** 칩 보유자가 1명 남으면 우승 확정 + 토너먼트 종료 */
+  private checkTournamentEnd(): void {
+    const t = this.state.tournament;
+    if (!t || t.finished || t.entrants === 0) return;
+    const alive = this.state.players.filter(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    );
+    if (alive.length === 1) {
+      this.recordFinish(alive[0], 1);
+      t.finished = true;
+    }
   }
 
   addPlayer(player: Player): boolean {
@@ -50,6 +158,15 @@ export class PokerEngine {
     const idx = this.state.players.findIndex(p => p.id === playerId);
     if (idx === -1) return { player: null, handComplete: false };
     const player = this.state.players[idx];
+
+    // 시트앤고 진행 중 이탈 = 현재 순위로 탈락 확정 (기록은 results에 남아 splice와 무관)
+    const t = this.state.tournament;
+    if (t && t.entrants > 0 && !t.finished && !player.finishPlace) {
+      const alivePlace = this.state.players.filter(p => !p.finishPlace && !p.pendingRemoval).length;
+      this.recordFinish(player, alivePlace);
+      // 이탈자는 finishPlace가 생겨 alive 계산에서 빠짐 — 1명만 남으면 즉시 우승 확정
+      this.checkTournamentEnd();
+    }
 
     if (!this.state.isHandInProgress) {
       this.state.players.splice(idx, 1);
@@ -107,6 +224,7 @@ export class PokerEngine {
 
   startHand(): void {
     this.removePendingPlayers();
+    if (this.state.tournament?.finished) return; // 토너먼트 종료 후 새 핸드 금지
     if (!this.canStartHand()) return;
 
     this.deck.reset();
@@ -123,11 +241,19 @@ export class PokerEngine {
     // Reset players
     for (const player of this.state.players) {
       player.totalContributed = 0;
+      player.handStartChips = player.chips; // 동시 탈락 순위 판정용 스냅샷
       if (player.chips > 0 && player.status !== 'sitting-out') {
         player.status = 'active';
         player.holeCards = [];
         player.currentBet = 0;
         player.hasActed = false;
+        // 타임칩 적립 — 참여 핸드 수 기준 (휴먼만)
+        if (player.type === 'human') {
+          player.handsPlayed = (player.handsPlayed ?? 0) + 1;
+          if (player.handsPlayed % TIME_BANK_ACCRUAL_HANDS === 0) {
+            player.timeBankChips = Math.min(TIME_BANK_MAX, (player.timeBankChips ?? 0) + 1);
+          }
+        }
       } else {
         player.status = 'sitting-out';
       }
@@ -487,6 +613,7 @@ export class PokerEngine {
         hand: null,
         potIndex: 0,
       }];
+      this.finalizeTournamentHand();
       return;
     }
 
@@ -527,6 +654,14 @@ export class PokerEngine {
     }
 
     this.state.winners = winners;
+    this.finalizeTournamentHand();
+  }
+
+  /** 핸드 종료 후 시트앤고 탈락/종료 판정 */
+  private finalizeTournamentHand(): void {
+    if (!this.state.tournament || this.state.tournament.finished) return;
+    this.assignFinishPlaces();
+    this.checkTournamentEnd();
   }
 
   getPublicState(forPlayerId?: string): GameState {

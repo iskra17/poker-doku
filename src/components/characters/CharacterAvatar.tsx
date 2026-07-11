@@ -10,7 +10,6 @@ interface CharacterAvatarProps {
   size?: 'sm' | 'md' | 'lg';
   expression?: Expression;
   isActive?: boolean;
-  isDealer?: boolean;
 }
 
 const sizeMap = {
@@ -19,15 +18,22 @@ const sizeMap = {
   lg: 'w-20 h-20 text-3xl',
 };
 
+// 표정 전환 시 1회 재생되는 리액션 모션 — 승리(happy)는 바운스, 패배(sad)는 흔들림
+const REACTION_MOTION: Partial<Record<string, { animate: Record<string, number[]>; duration: number }>> = {
+  happy: { animate: { y: [0, -9, 0, -5, 0], scale: [1, 1.08, 1, 1.04, 1] }, duration: 0.9 },
+  confident: { animate: { y: [0, -6, 0], scale: [1, 1.06, 1] }, duration: 0.5 },
+  sad: { animate: { x: [0, -3, 3, -3, 3, 0], rotate: [0, -3, 3, -2, 0] }, duration: 0.6 },
+};
+
 export default function CharacterAvatar({
   characterId,
   size = 'md',
   expression = 'neutral',
   isActive = false,
-  isDealer = false,
 }: CharacterAvatarProps) {
   const character = getCharacterById(characterId);
   const color = character?.color || '#6366F1';
+  const reaction = REACTION_MOTION[expression];
 
   return (
     <motion.div
@@ -35,26 +41,28 @@ export default function CharacterAvatar({
       transition={isActive ? { duration: 1.5, repeat: Infinity } : {}}
       className="relative"
     >
-      <div
-        className={`${sizeMap[size]} rounded-full relative
-          ${isActive ? 'ring-2 ring-gilded ring-offset-2 ring-offset-[#0f0a1e]' : ''}
-        `}
-        style={{
-          boxShadow: isActive ? `0 0 20px ${color}40` : `0 0 10px ${color}20`,
-        }}
+      {/* 리액션 래퍼 — 표정이 바뀔 때 key가 바뀌어 모션이 1회 재생됨 */}
+      <motion.div
+        key={reaction ? expression : 'idle'}
+        animate={reaction?.animate ?? {}}
+        transition={reaction ? { duration: reaction.duration, ease: 'easeInOut' } : undefined}
       >
-        <CharacterImage
-          characterId={characterId}
-          expression={expression}
-          round
-          className="w-full h-full"
-        />
-      </div>
-      {isDealer && (
-        <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-gilded text-black text-[10px] font-bold flex items-center justify-center border border-yellow-200 shadow-md z-30">
-          D
+        <div
+          className={`${sizeMap[size]} rounded-full relative
+            ${isActive ? 'ring-2 ring-gilded ring-offset-2 ring-offset-[#0f0a1e]' : ''}
+          `}
+          style={{
+            boxShadow: isActive ? `0 0 20px ${color}40` : `0 0 10px ${color}20`,
+          }}
+        >
+          <CharacterImage
+            characterId={characterId}
+            expression={expression}
+            round
+            className="w-full h-full"
+          />
         </div>
-      )}
+      </motion.div>
     </motion.div>
   );
 }

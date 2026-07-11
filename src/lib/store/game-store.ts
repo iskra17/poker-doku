@@ -4,14 +4,32 @@ import { create } from 'zustand';
 import { io, Socket } from 'socket.io-client';
 import { GameState, ChatMessage, ActionType } from '../poker/types';
 import { diffGameState, emitGameEvent } from '../events/game-events';
+import { useSettingsStore } from './settings-store';
 
-interface RoomInfo {
+export interface RoomInfo {
   id: string;
   name: string;
   playerCount: number;
   maxPlayers: number;
   blinds: string;
   status: string;
+  mode?: string; // 'cash' | 'sng'
+  locked?: boolean; // 시작된 Sit & Go — 참가 불가
+  hasPassword?: boolean; // 비밀번호 방
+  bigBlind?: number; // 바이인 슬라이더 계산용
+  minBuyIn?: number;
+  maxBuyIn?: number;
+}
+
+// 조인 응답 타임아웃 — room-joined/error 어느 쪽도 안 오면 로비로 롤백
+let joinTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+const JOIN_TIMEOUT_MS = 8000;
+
+function clearJoinTimeout(): void {
+  if (joinTimeoutTimer) {
+    clearTimeout(joinTimeoutTimer);
+    joinTimeoutTimer = null;
+  }
 }
 
 // 재접속용 세션 토큰: localStorage에 보관하는 비밀값 (서버가 좌석/칩을 이 토큰으로 복원)
@@ -50,11 +68,14 @@ interface GameStore {
   connect: () => void;
   disconnect: () => void;
   setPlayerName: (name: string) => void;
-  joinRoom: (roomId: string, buyIn: number, seatIndex: number) => void;
+  joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
   leaveRoom: () => void;
   sendAction: (action: ActionType, amount?: number) => void;
   sendChat: (message: string) => void;
-  createRoom: (config: { name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number }) => void;
+  toggleSitOut: () => void;
+  useTimeBank: () => void;
+  sngFillBots: () => void;
+  createRoom: (config: { name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number; gameMode?: 'cash' | 'sng'; password?: string }) => void;
   setShowCreateRoom: (show: boolean) => void;
 }
 
@@ -105,6 +126,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         chatMessages: data.chatHistory,
         joinError: null,
       });
+      clearJoinTimeout();
     });
 
     socket.on('game-update', (gameState: GameState) => {
@@ -134,6 +156,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameState: null,
         joinError: data.message,
       });
+      clearJoinTimeout();
     });
 
     set({ socket });
@@ -150,12 +173,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPlayerName: (name: string) => set({ playerName: name }),
 
   // [FIX 3] joinRoom은 pendingRoomId만 설정, 실제 roomId는 room-joined에서 확정
-  joinRoom: (roomId: string, buyIn: number, seatIndex: number) => {
+  joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => {
     const { socket, playerName } = get();
     if (!socket) return;
-    socket.emit('join-room', { roomId, playerName, buyIn, seatIndex });
+    const avatar = useSettingsStore.getState().profileCharacter;
+    socket.emit('join-room', { roomId, playerName, buyIn, seatIndex, avatar, password });
     // pending 상태로 설정 — 서버 room-joined 응답 후 확정
     set({ pendingRoomId: roomId, joinError: null, currentRoomId: roomId });
+    // 응답이 없으면(서버 재시작/유실) "연결 중"에 갇히지 않게 롤백
+    clearJoinTimeout();
+    joinTimeoutTimer = setTimeout(() => {
+      joinTimeoutTimer = null;
+      if (get().pendingRoomId === roomId && !get().gameState) {
+        set({ currentRoomId: null, pendingRoomId: null, joinError: '방 입장에 실패했어요. 잠시 후 다시 시도해 주세요.' });
+      }
+    }, JOIN_TIMEOUT_MS);
   },
 
   leaveRoom: () => {
@@ -175,6 +207,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get();
     if (!socket) return;
     socket.emit('send-chat', { message });
+  },
+
+  toggleSitOut: () => {
+    get().socket?.emit('toggle-sit-out');
+  },
+
+  useTimeBank: () => {
+    get().socket?.emit('use-time-bank');
+  },
+
+  sngFillBots: () => {
+    get().socket?.emit('sng-fill-bots');
   },
 
   createRoom: (config) => {

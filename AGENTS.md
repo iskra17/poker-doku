@@ -35,18 +35,48 @@ npx tsc --noEmit
   `diffGameState()`가 prev/next를 비교해 이벤트(hand-start/action/bets-collected/winners 등)를 발행하고,
   사운드·애니메이션·액션로그·캐릭터 표정이 이 스트림을 구독한다. diff 안정성을 위해 서버가
   `handNumber`/`actionSeq` 카운터를 유지.
+- **시트앤고(SnG)**: `RoomConfig.gameMode: 'cash'|'sng'`. UI 표기는 'Sit & Go'. 구조는
+  `src/lib/poker/blind-schedule.ts` (시작 스택 1500, 3분마다 레벨 인상, 1~3위 50/30/20% 시상).
+  엔진이 `state.tournament`(레벨/상금/순위 results)를 소유하고 getPublicState로 자동 브로드캐스트.
+  순위 판정은 엔진(`finalizeTournamentHand` — 동시 탈락은 `handStartChips` 큰 쪽이 상위),
+  레벨 타이밍/공지는 RoomManager. **시작 규칙**: 자동 봇 충원 없음 — 6인이 모두 모여야 자동 시작,
+  또는 방장(`RoomConfig.hostId`, `state.hostId`로 노출)이 'sng-fill-bots'로 남는 자리를 봇 충원
+  (`RoomManager.fillWithBots`). 시작 후 재충원·중도 참가·리바이 금지. 탈락한 휴먼은 좌석 유지
+  상태로 관전(EliminationNotice가 순위 안내).
+- **방 비밀번호/초대**: `RoomConfig.password`는 서버 전용(절대 gameState로 노출 금지),
+  목록엔 `hasPassword`만 노출. join-room에서 검증. 초대 링크는 `/?room=<id>` — page.tsx가
+  파싱해 닉네임 입력 후 JoinRoomModal 자동 오픈.
+- **캐시 바이인**: 40~200BB 범위를 서버가 강제(create-room에서 min/maxBuyIn 재계산, join-room에서
+  클램프). 입장 시 JoinRoomModal 슬라이더로 선택.
 
 ## 주요 디렉토리
 
 - `src/server/` — 커스텀 서버, 소켓 핸들러, RoomManager(방/타이머/봇), SessionManager
 - `src/lib/poker/` — 순수 게임 로직 (engine, evaluator, deck, types) + 테스트
-- `src/lib/bot/` — 봇 AI (캐릭터별 성향은 `personalities.ts`)
+- `src/lib/bot/` — 봇 AI. `personalities.ts`가 아키타입 DB (사쿠라=록, 류카=LAG, 하나=TAG,
+  유키=콜링 스테이션, 아키라=매니악 — vpip/pfr/aggression/limp/threeBet/slowPlay/betSizing).
+  `bot-ai.ts`는 프리플랍 티어 + evaluator 기반 포스트플랍 강도/드로우 감지로 결정. 숏스택(≤10BB)
+  푸시/폴드 레이어는 결정론 — 테스트가 의존하므로 유지할 것.
 - `src/lib/characters/` — 캐릭터 프로필/한국어 대사 (딜러 미야코, 사쿠라, 류카, 하나, 유키, 아키라)
 - `src/lib/sound/` — Web Audio 합성 사운드 (에셋 파일 없음)
 - `src/lib/assets/character-art.ts` — 일러스트 매니페스트 (이미지 없으면 이모지 fallback)
-- `src/components/table/` — 테이블 UI. 좌석/베팅/팟 좌표는 `table-layout.ts`가 단일 소스
-- `src/components/characters/` — CharacterImage(2중 fallback), DialogueBox(VN 대사창),
-  SeatSpeechBubble, WinnerCutIn
+- `src/components/table/` — 테이블 UI. **세로형 단일 레이아웃** — 모든 화면에서 세로 타원 컬럼
+  (`max-w-[min(440px,60dvh)]`) 하나를 중앙 렌더. 좌석/베팅/팟/딜러버튼 좌표는 `table-layout.ts`가
+  단일 소스 (`getLayout()` 무인자). ActionBar는 fixed 오버레이가 아니라 GameRoomView flex 컬럼의
+  고정 높이 하단 독(`ACTION_DOCK_HEIGHT`) — 턴 여부와 무관하게 높이 상수라 테이블 % 좌표가 흔들리지
+  않음. 베팅 컨트롤은 포커룸 표준 문법: 좌측 [금액/프리셋+스테퍼/액션 버튼] 3행 + 우측 세로 벳
+  슬라이더(`ui/VerticalSlider` — 아래=최소, 포인터 드래그 + 휠, 커스텀 구현).
+- `src/components/characters/` — CharacterImage(2중 fallback), DealerCorner(우상단 딜러 미야코
+  아바타+진행 말풍선, 설정으로 개별 숨김), SeatSpeechBubble, WinnerCutIn(우측)/LoserCutIn(좌측 —
+  쇼다운 패배 봇 sad 컷인). 좌석 리액션: CharacterAvatar가 표정 변화 시 바운스/흔들림 모션,
+  table/SeatEmote가 승/패/올인 이모지 버스트.
+- **AI 상황 대사**: `src/server/ai-dialogue.ts` — 빅팟 승리/올인/SnG 탈락·우승 순간에 캐릭터
+  페르소나로 Claude(기본 `claude-haiku-4-5`) 대사 생성. `ANTHROPIC_API_KEY` 없으면 완전 비활성.
+  비용 가드: 일일 상한(`AI_DIALOGUE_DAILY_MAX`=200)·방별 쿨다운(20s)·확률 게이팅(0.6)·max_tokens 80,
+  실패/차단 시 항상 기존 스크립트 대사 폴백 (`RoomManager.botQuip`).
+- `src/lib/store/settings-store.ts` — zustand persist 사용자 설정: 음소거, 덱 스타일
+  (클래식/빅랭크)×컬러(2/4컬러), 딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
+- 카드 수트 색은 `globals.css @theme`의 `suit-*` 토큰 + `card-theme.ts` 매핑이 단일 소스.
 - `public/assets/` — Codex(gpt-image)로 생성한 캐릭터 일러스트 6명×3표정, 로고, 로비 배경
 
 ## 컨벤션
@@ -61,5 +91,9 @@ npx tsc --noEmit
 
 ## 미구현 (알려진 범위 제외)
 
-- 관전 모드, 자발적 sit-out, 리바이(칩 0이면 관전 상태로 고정)
+- 비참가자 관전 모드(방에 안 앉고 구경), 리바이(칩 0이면 관전 상태로 고정 — SnG 탈락자 관전은 구현됨),
+  멀티 테이블 동시 플레이(1세션 1테이블)
+- 멀티 테이블 토너먼트(MTT) — 시트앤고(단일 테이블)만 구현됨
+- 어드민/모니터링 도구 없음. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
+  휴먼 0명 유저 방 10분 후 자동 정리(기본 방 3개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.

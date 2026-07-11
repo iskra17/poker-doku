@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
-import { getLayout, TablePos } from './table-layout';
+import { useGameStore } from '@/lib/store/game-store';
+import { getLayout, toDisplayIndex, TablePos } from './table-layout';
 import { HAND_RANK_KO } from './HandStrengthBadge';
 import Confetti from '../effects/Confetti';
 
@@ -55,7 +56,10 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
       if (event.type !== 'winners') return;
 
       clearTimers();
-      const layout = getLayout(isMobileRef.current);
+      const layout = getLayout();
+      // 내 좌석 기준 회전 (PokerTable의 좌석 배치와 일치)
+      const storeState = useGameStore.getState();
+      const mySeat = event.players.find(p => p.id === storeState.myPlayerId)?.seatIndex ?? -1;
 
       const winners: WinnerInfo[] = event.winners
         .map(w => {
@@ -64,7 +68,7 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
           return {
             name: player.name,
             amount: w.amount,
-            seatPos: layout.seats[player.seatIndex],
+            seatPos: layout.seats[toDisplayIndex(player.seatIndex, mySeat)],
           };
         })
         .filter((w): w is WinnerInfo => w !== null);
@@ -145,7 +149,7 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9 }}
             transition={{ type: 'spring', stiffness: 320, damping: 22 }}
-            className="absolute left-1/2 top-[38%] -translate-x-1/2 -translate-y-1/2 text-center"
+            className="absolute left-1/2 top-[57%] -translate-x-1/2 -translate-y-1/2 text-center"
             style={{ x: '-50%', y: '-50%' }}
           >
             <div className="relative overflow-hidden px-6 py-1">

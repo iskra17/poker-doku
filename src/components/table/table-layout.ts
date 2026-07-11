@@ -1,6 +1,9 @@
 /**
  * 테이블 좌표 시스템 (% 기반).
  * PokerTable(정적 배치)과 AnimationLayer(칩/카드 비행)가 공유한다.
+ *
+ * 좌표계 기준은 PokerTable의 세로 좌표 컨테이너(모든 화면에서 세로형 단일 레이아웃).
+ * 히어로 하단 중앙, 상대 5명이 세로 타원 둘레에 배치되는 6-max 문법.
  */
 
 export interface TablePos {
@@ -8,63 +11,64 @@ export interface TablePos {
   y: string;
 }
 
-// Desktop: wide elliptical layout
-export const DESKTOP_SEATS: TablePos[] = [
-  { x: '50%', y: '88%' },   // 0: bottom center (hero)
-  { x: '10%', y: '65%' },   // 1: left bottom
-  { x: '10%', y: '30%' },   // 2: left top
-  { x: '50%', y: '8%' },    // 3: top center
-  { x: '90%', y: '30%' },   // 4: right top
-  { x: '90%', y: '65%' },   // 5: right bottom
+export const SEATS: TablePos[] = [
+  { x: '50%', y: '88%' },   // 0: 하단 중앙 (히어로)
+  { x: '13%', y: '66%' },   // 1: 좌하
+  { x: '13%', y: '34%' },   // 2: 좌상
+  { x: '50%', y: '15%' },   // 3: 상단 중앙
+  { x: '87%', y: '34%' },   // 4: 우상
+  { x: '87%', y: '66%' },   // 5: 우하
 ];
 
-// Mobile: compact portrait layout (히어로 카드가 커서 좌석을 약간 위로)
-export const MOBILE_SEATS: TablePos[] = [
-  { x: '50%', y: '78%' },   // 0: bottom center (hero)
-  { x: '8%',  y: '62%' },   // 1: left middle
-  { x: '8%',  y: '28%' },   // 2: left top
-  { x: '50%', y: '8%' },    // 3: top center
-  { x: '92%', y: '28%' },   // 4: right top
-  { x: '92%', y: '62%' },   // 5: right middle
+// 각 좌석에서 테이블 중앙 방향으로 오프셋된 베팅 칩 위치
+export const BET_POSITIONS: TablePos[] = [
+  { x: '50%', y: '71%' },   // 0: 히어로 → 위로 (히어로 카드 팬과 안 겹치게)
+  { x: '30%', y: '60%' },   // 1: 좌하 → 우상
+  { x: '30%', y: '38%' },   // 2: 좌상 → 우하
+  { x: '50%', y: '25%' },   // 3: 상단 → 아래로
+  { x: '70%', y: '38%' },   // 4: 우상 → 좌하
+  { x: '70%', y: '60%' },   // 5: 우하 → 좌상
 ];
 
-// 각 좌석에서 테이블 중앙 방향으로 오프셋된 칩 위치 (좌석→중앙 사이 40% 지점)
-export const DESKTOP_BET_POSITIONS: TablePos[] = [
-  { x: '40%', y: '70%' },   // 0: bottom → 히어로 아바타와 겹치지 않게 좌측으로
-  { x: '25%', y: '58%' },   // 1: left bottom → 우상
-  { x: '25%', y: '38%' },   // 2: left top → 우하
-  { x: '50%', y: '22%' },   // 3: top → 아래로
-  { x: '75%', y: '38%' },   // 4: right top → 좌하
-  { x: '75%', y: '58%' },   // 5: right bottom → 좌상
+// 딜러 버튼 위치 — 좌석 옆 펠트 위, 베팅 칩보다 살짝 바깥.
+// 주의: y 41~49%(커뮤니티 카드 라인)와 x 16~84% 교차 지역은 보드와 겹치므로 피할 것
+export const DEALER_BTN_POSITIONS: TablePos[] = [
+  { x: '35%', y: '86%' },   // 0: 히어로 → 아바타 왼쪽
+  { x: '31%', y: '68%' },   // 1: 좌하 → 베팅 칩 아래쪽
+  { x: '31%', y: '30%' },   // 2: 좌상 → 베팅 칩 위쪽
+  { x: '62%', y: '21%' },   // 3: 상단 → 오른쪽
+  { x: '69%', y: '30%' },   // 4: 우상 → 베팅 칩 위쪽
+  { x: '69%', y: '68%' },   // 5: 우하 → 베팅 칩 아래쪽
 ];
 
-export const MOBILE_BET_POSITIONS: TablePos[] = [
-  { x: '36%', y: '62%' },   // 0: bottom → 히어로 카드와 겹치지 않게 좌측으로
-  { x: '22%', y: '52%' },   // 1: left middle → 우상
-  { x: '22%', y: '34%' },   // 2: left top → 우하
-  { x: '50%', y: '18%' },   // 3: top → 아래로
-  { x: '78%', y: '34%' },   // 4: right top → 좌하
-  { x: '78%', y: '52%' },   // 5: right middle → 좌상
-];
+// 팟 위치 — 보드 위쪽 (칩 수거/푸시 애니메이션의 목적지/출발지)
+export const POT_POS: TablePos = { x: '50%', y: '36%' };
 
-// 팟 위치 (칩 수거/푸시 애니메이션의 목적지/출발지)
-export const DESKTOP_POT_POS: TablePos = { x: '50%', y: '60%' };
-export const MOBILE_POT_POS: TablePos = { x: '50%', y: '56%' };
-
-// 덱(딜러) 위치 — 딜링/폴드 카드 비행의 출발/도착점
-export const DESKTOP_DECK_POS: TablePos = { x: '50%', y: '28%' };
-export const MOBILE_DECK_POS: TablePos = { x: '50%', y: '25%' };
+// 덱(딜러) 위치 — 우상단 딜러 코너 근처. 딜링/폴드 카드 비행의 출발/도착점
+export const DECK_POS: TablePos = { x: '82%', y: '6%' };
 
 // 커뮤니티 카드 라인 (딜링 비행 목적지 근사)
-export const DESKTOP_BOARD_POS: TablePos = { x: '50%', y: '45%' };
-export const MOBILE_BOARD_POS: TablePos = { x: '50%', y: '42%' };
+export const BOARD_POS: TablePos = { x: '50%', y: '45%' };
 
-export function getLayout(isMobile: boolean) {
+export function getLayout() {
   return {
-    seats: isMobile ? MOBILE_SEATS : DESKTOP_SEATS,
-    betPositions: isMobile ? MOBILE_BET_POSITIONS : DESKTOP_BET_POSITIONS,
-    potPos: isMobile ? MOBILE_POT_POS : DESKTOP_POT_POS,
-    deckPos: isMobile ? MOBILE_DECK_POS : DESKTOP_DECK_POS,
-    boardPos: isMobile ? MOBILE_BOARD_POS : DESKTOP_BOARD_POS,
+    seats: SEATS,
+    betPositions: BET_POSITIONS,
+    dealerBtnPositions: DEALER_BTN_POSITIONS,
+    potPos: POT_POS,
+    deckPos: DECK_POS,
+    boardPos: BOARD_POS,
   };
+}
+
+/**
+ * 실제 좌석 인덱스 → 디스플레이 슬롯 인덱스.
+ * 내 좌석이 항상 하단 중앙(슬롯 0)에 오도록 테이블을 회전한다.
+ * 관전/미착석(mySeatIndex < 0)이면 회전 없음.
+ * 좌석 좌표를 쓰는 모든 곳(PokerTable/AnimationLayer/SeatSpeechBubble/WinnerSequence)이
+ * 반드시 이 함수를 거쳐야 화면이 일치한다.
+ */
+export function toDisplayIndex(seatIndex: number, mySeatIndex: number): number {
+  if (mySeatIndex < 0 || seatIndex < 0) return seatIndex;
+  return (seatIndex - mySeatIndex + SEATS.length) % SEATS.length;
 }

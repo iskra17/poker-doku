@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import { getCharacterById } from '@/lib/characters';
-import { getLayout } from '../table/table-layout';
+import { getLayout, toDisplayIndex } from '../table/table-layout';
 
 /**
  * 봇 좌석 말풍선 — 봇 채팅 메시지를 해당 좌석 옆에 3초간 표시.
@@ -13,7 +13,8 @@ import { getLayout } from '../table/table-layout';
 
 interface Bubble {
   id: string;
-  seatIndex: number;
+  /** 회전 적용된 디스플레이 슬롯 인덱스 */
+  displaySeatIndex: number;
   name: string;
   message: string;
   color: string;
@@ -36,12 +37,13 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
       lastIdRef.current = last.id;
 
       const player = state.gameState?.players.find(p => p.id === last.playerId);
-      if (!player) return; // 딜러 멘트는 DialogueBox 담당
+      if (!player) return; // 딜러 멘트는 DealerCorner 담당
 
       const character = getCharacterById(player.personalityId || '');
+      const mySeat = state.gameState?.players.find(p => p.id === state.myPlayerId)?.seatIndex ?? -1;
       setBubble({
         id: last.id,
-        seatIndex: player.seatIndex,
+        displaySeatIndex: toDisplayIndex(player.seatIndex, mySeat),
         name: player.name,
         message: last.message,
         color: character?.color || '#A78BFA',
@@ -59,22 +61,27 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
     };
   }, []);
 
-  const layout = getLayout(isMobile);
+  const layout = getLayout();
+  const seatPos = bubble ? layout.seats[bubble.displaySeatIndex] : null;
+  // 좌/우 가장자리 좌석은 말풍선이 화면 밖으로 잘리지 않게 정렬을 클램프
+  const seatXPct = seatPos ? parseFloat(seatPos.x) : 50;
+  const bubbleX = seatXPct < 25 ? '-12%' : seatXPct > 75 ? '-88%' : '-50%';
+  const tailLeft = seatXPct < 25 ? '12%' : seatXPct > 75 ? '88%' : '50%';
 
   return (
     <div className="absolute inset-0 pointer-events-none z-30">
       <AnimatePresence>
-        {bubble && (
+        {bubble && seatPos && (
           <motion.div
             key={bubble.id}
             initial={{ opacity: 0, y: 8, scale: 0.85 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, scale: 0.9 }}
-            className="absolute max-w-[160px]"
+            className="absolute max-w-[160px] w-max"
             style={{
-              left: layout.seats[bubble.seatIndex]?.x,
-              top: layout.seats[bubble.seatIndex]?.y,
-              x: '-50%',
+              left: seatPos.x,
+              top: seatPos.y,
+              x: bubbleX,
               y: isMobile ? '-135%' : '-145%',
             }}
           >
@@ -86,10 +93,10 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
                 {bubble.name}
               </div>
               <p className="text-ink text-[11px] leading-snug">{bubble.message}</p>
-              {/* 꼬리 */}
+              {/* 꼬리 — 좌석 앵커를 향하도록 클램프와 함께 이동 */}
               <div
-                className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-3 h-3 rotate-45 bg-panel/95 border-r border-b"
-                style={{ borderColor: `${bubble.color}66` }}
+                className="absolute -bottom-1.5 -translate-x-1/2 w-3 h-3 rotate-45 bg-panel/95 border-r border-b"
+                style={{ borderColor: `${bubble.color}66`, left: tailLeft }}
               />
             </div>
           </motion.div>

@@ -43,45 +43,57 @@ interface ChipSVGProps {
   showValue?: boolean;
 }
 
+/**
+ * 아이소메트릭(하단 시점) 칩 — 윗면 타원 + 두께 있는 측면.
+ * 윗면 장식은 원 기준으로 그린 뒤 scale(1, ry/rx)로 눌러 시점을 맞춘다 (텍스트는 비변형).
+ */
 export default function ChipSVG({ denom, size = 24, showValue = false }: ChipSVGProps) {
+  const squash = 11 / 18; // ry / rx
+
   return (
     <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden>
-      {/* 바깥 원 */}
-      <circle cx="20" cy="20" r="19" fill={denom.base} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
-      {/* 엣지 스트라이프 6개 */}
-      {Array.from({ length: 6 }).map((_, i) => {
-        const angle = i * 60;
-        return (
+      {/* 측면(두께): 아래 타원 + 어둡게 */}
+      <ellipse cx="20" cy="24" rx="18" ry="11" fill={denom.base} stroke="rgba(0,0,0,0.35)" strokeWidth="1" />
+      <ellipse cx="20" cy="24" rx="18" ry="11" fill="rgba(0,0,0,0.32)" />
+      {/* 앞면 엣지 스트라이프 3개 (전면 호를 따라) */}
+      <rect x="8.5" y="26" width="5" height="7.5" rx="1.2" fill={denom.edge} opacity="0.9" />
+      <rect x="17.5" y="27.5" width="5" height="7.5" rx="1.2" fill={denom.edge} opacity="0.9" />
+      <rect x="26.5" y="26" width="5" height="7.5" rx="1.2" fill={denom.edge} opacity="0.9" />
+      {/* 윗면 */}
+      <ellipse cx="20" cy="17" rx="18" ry="11" fill={denom.base} stroke="rgba(0,0,0,0.3)" strokeWidth="0.8" />
+      <g transform={`translate(20 17) scale(1 ${squash})`}>
+        {/* 림 스트라이프 6개 */}
+        {Array.from({ length: 6 }).map((_, i) => (
           <rect
             key={i}
-            x="17.2"
-            y="1"
+            x="-2.8"
+            y="-18.5"
             width="5.6"
-            height="7"
+            height="6.5"
             rx="1.4"
             fill={denom.edge}
-            transform={`rotate(${angle} 20 20)`}
+            transform={`rotate(${i * 60})`}
           />
-        );
-      })}
-      {/* 내부 링 (점선) */}
-      <circle
-        cx="20" cy="20" r="12.5"
-        fill="none"
-        stroke={denom.edge}
-        strokeWidth="1.1"
-        strokeDasharray="2.4 2.2"
-        opacity="0.9"
-      />
-      {/* 중앙 페이스 */}
-      <circle cx="20" cy="20" r="10.5" fill={denom.base} />
-      <circle cx="20" cy="20" r="10.5" fill="rgba(255,255,255,0.12)" />
+        ))}
+        {/* 내부 링 (점선) */}
+        <circle
+          r="12.5"
+          fill="none"
+          stroke={denom.edge}
+          strokeWidth="1.1"
+          strokeDasharray="2.4 2.2"
+          opacity="0.9"
+        />
+        {/* 중앙 페이스 */}
+        <circle r="10.5" fill={denom.base} />
+        <circle r="10.5" fill="rgba(255,255,255,0.14)" />
+      </g>
       {showValue && (
         <text
-          x="20" y="20"
+          x="20" y="17"
           textAnchor="middle"
           dominantBaseline="central"
-          fontSize={denom.value >= 1000 ? 9 : 11}
+          fontSize={denom.value >= 1000 ? 8 : 10}
           fontWeight="800"
           fill={denom.text}
         >
@@ -89,7 +101,7 @@ export default function ChipSVG({ denom, size = 24, showValue = false }: ChipSVG
         </text>
       )}
       {/* 하이라이트 */}
-      <ellipse cx="15" cy="13" rx="7" ry="4.5" fill="rgba(255,255,255,0.18)" transform="rotate(-25 15 13)" />
+      <ellipse cx="14" cy="12" rx="7" ry="3" fill="rgba(255,255,255,0.18)" transform="rotate(-12 14 12)" />
     </svg>
   );
 }

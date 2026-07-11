@@ -2,8 +2,13 @@ import { Server, Socket } from 'socket.io';
 import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS } from './session-manager';
 import { RoomConfig, Player, ActionType } from '../lib/poker/types';
+import { getCharacterById } from '../lib/characters';
+import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 
 const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
+const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
+const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
+const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
 
 export function setupSocketHandlers(io: Server): void {
   const sessions = new SessionManager();
@@ -37,36 +42,44 @@ export function setupSocketHandlers(io: Server): void {
     },
   );
 
-  // Create default rooms
+  // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
   roomManager.createRoom({
     name: 'Sakura Lounge',
     smallBlind: 10,
     bigBlind: 20,
-    minBuyIn: 400,
-    maxBuyIn: 2000,
+    minBuyIn: 20 * MIN_BUYIN_BB,
+    maxBuyIn: 20 * MAX_BUYIN_BB,
     maxPlayers: 6,
     turnTime: 30,
-  });
+  }, true);
 
   roomManager.createRoom({
     name: "Dragon's Den",
     smallBlind: 25,
     bigBlind: 50,
-    minBuyIn: 1000,
-    maxBuyIn: 5000,
+    minBuyIn: 50 * MIN_BUYIN_BB,
+    maxBuyIn: 50 * MAX_BUYIN_BB,
     maxPlayers: 6,
     turnTime: 30,
-  });
+  }, true);
 
   roomManager.createRoom({
     name: 'Moonlight Table',
     smallBlind: 50,
     bigBlind: 100,
-    minBuyIn: 2000,
-    maxBuyIn: 10000,
+    minBuyIn: 100 * MIN_BUYIN_BB,
+    maxBuyIn: 100 * MAX_BUYIN_BB,
     maxPlayers: 6,
     turnTime: 30,
-  });
+  }, true);
+
+  // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
+  setInterval(() => {
+    const removed = roomManager.sweepIdleRooms();
+    if (removed > 0) {
+      io.emit('room-list', roomManager.getRoomList());
+    }
+  }, 60_000);
 
   io.on('connection', (socket: Socket) => {
     const session = sessions.resolve(socket.handshake.auth?.sessionToken, socket.id);
@@ -101,8 +114,10 @@ export function setupSocketHandlers(io: Server): void {
     }
 
     // Join room
-    socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number }) => {
+    socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number; avatar?: string; password?: string }) => {
       const { roomId, playerName, buyIn, seatIndex } = data;
+      // 프로필 캐릭터 — 등록된 캐릭터 id만 허용 (그 외엔 기본 'player')
+      const avatar = data.avatar && getCharacterById(data.avatar) ? data.avatar : 'player';
 
       const room = roomManager.getRoom(roomId);
       if (!room) {
@@ -125,6 +140,19 @@ export function setupSocketHandlers(io: Server): void {
           },
           chatHistory: roomManager.getChatHistory(roomId),
         });
+        return;
+      }
+
+      // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
+      if (room.config.password && String(data.password ?? '') !== room.config.password) {
+        socket.emit('error', { message: '비밀번호가 틀렸어요.' });
+        return;
+      }
+
+      // 시트앤고: 이미 시작된(또는 끝난) 토너먼트에는 참가 불가
+      const tournament = room.engine.state.tournament;
+      if (tournament && tournament.entrants > 0) {
+        socket.emit('error', { message: '이미 시작된 Sit & Go입니다.' });
         return;
       }
 
@@ -160,18 +188,26 @@ export function setupSocketHandlers(io: Server): void {
         }
       }
 
+      // 캐시 게임 바이인은 방 범위(40~200BB)로 검증/클램프
+      const safeBuyIn = Math.min(
+        Math.max(Math.floor(Number(buyIn) || room.config.minBuyIn), room.config.minBuyIn),
+        room.config.maxBuyIn,
+      );
+
       const player: Player = {
         id: session.playerId,
         name: playerName,
         type: 'human',
-        avatar: 'player',
-        chips: buyIn,
+        avatar,
+        // 시트앤고는 바이인 무관 고정 스택
+        chips: room.config.gameMode === 'sng' ? (room.config.startingStack ?? safeBuyIn) : safeBuyIn,
         seatIndex: assignedSeat,
         holeCards: [],
         currentBet: 0,
         totalContributed: 0,
         status: 'waiting',
         hasActed: false,
+        timeBankChips: 1, // 입장 시 기본 타임칩 1개
       };
 
       const success = roomManager.joinRoom(roomId, player);
@@ -214,6 +250,18 @@ export function setupSocketHandlers(io: Server): void {
       );
     });
 
+    // 자리비움 토글
+    socket.on('toggle-sit-out', () => {
+      if (!session.roomId) return;
+      roomManager.toggleSitOut(session.roomId, session.playerId);
+    });
+
+    // 타임칩 사용
+    socket.on('use-time-bank', () => {
+      if (!session.roomId) return;
+      roomManager.useTimeBank(session.roomId, session.playerId);
+    });
+
     // Chat message
     socket.on('send-chat', (data: { message: string }) => {
       if (!session.roomId) return;
@@ -231,14 +279,51 @@ export function setupSocketHandlers(io: Server): void {
 
     // Create room
     socket.on('create-room', (config: RoomConfig) => {
+      // 운영 가드: 방 수 상한
+      if (roomManager.getRoomCount() >= MAX_ROOMS) {
+        socket.emit('error', { message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+      const isSng = config.gameMode === 'sng';
+      const password = String(config.password ?? '').trim().slice(0, 20);
+      const bigBlind = Math.max(Number(config.bigBlind) || 20, 2);
       const safeConfig: RoomConfig = {
         ...config,
         maxPlayers: 6,
         turnTime: Math.min(Math.max(Number(config.turnTime) || 30, 10), 120),
+        password: password || undefined,
+        hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
+        // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택
+        ...(isSng
+          ? {
+              gameMode: 'sng' as const,
+              smallBlind: SNG_BLIND_SCHEDULE[0].smallBlind,
+              bigBlind: SNG_BLIND_SCHEDULE[0].bigBlind,
+              startingStack: SNG_STARTING_STACK,
+              minBuyIn: SNG_STARTING_STACK,
+              maxBuyIn: SNG_STARTING_STACK,
+            }
+          : {
+              gameMode: 'cash' as const,
+              // 캐시 바이인 범위는 서버가 강제 (40~200BB)
+              bigBlind,
+              smallBlind: Math.max(Math.floor(bigBlind / 2), 1),
+              minBuyIn: bigBlind * MIN_BUYIN_BB,
+              maxBuyIn: bigBlind * MAX_BUYIN_BB,
+            }),
       };
       const roomId = roomManager.createRoom(safeConfig);
       socket.emit('room-created', { roomId });
       io.emit('room-list', roomManager.getRoomList());
+    });
+
+    // 시트앤고 대기 중 봇 채우기 (방장)
+    socket.on('sng-fill-bots', () => {
+      if (!session.roomId) return;
+      const ok = roomManager.fillWithBots(session.roomId, session.playerId);
+      if (ok) {
+        io.emit('room-list', roomManager.getRoomList());
+      }
     });
 
     // Request room list

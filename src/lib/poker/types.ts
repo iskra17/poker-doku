@@ -44,6 +44,11 @@ export interface Player {
   isDisconnected?: boolean; // 재접속 유예(grace) 중
   revealed?: boolean; // 서버가 명시하는 홀카드 공개 여부 (쇼다운 생존자만 true)
   personalityId?: string; // for bots
+  finishPlace?: number; // 시트앤고 최종 순위 (탈락/우승 시 확정)
+  handStartChips?: number; // 핸드 시작 시점 스택 — 동시 탈락 순위 판정용
+  sitOutNext?: boolean; // 자리비움 예약 — 다음 핸드부터 sitting-out
+  timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
+  handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
 }
 
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
@@ -80,7 +85,32 @@ export interface GameState {
   turnTimeRemaining?: number; // ms — 서버→클라 전용 (전송 시 주입)
   handNumber: number; // 핸드 카운터 — 클라 diff 이벤트 파생용
   actionSeq: number; // 유효 액션 카운터 — 클라 diff 이벤트 파생용
+  tournament?: TournamentState; // 시트앤고 진행 정보 (캐시 게임엔 없음)
+  hostId?: string; // 방 생성자 playerId — Sit & Go 봇 채우기 권한 판단용
 }
+
+/** 시트앤고 진행 상태 — getPublicState로 자동 브로드캐스트 */
+export interface TournamentState {
+  level: number; // 1-based 블라인드 레벨
+  smallBlind: number;
+  bigBlind: number;
+  nextSmallBlind: number | null; // 마지막 레벨이면 null
+  nextBigBlind: number | null;
+  levelEndsAt: number; // epoch ms — 다음 인상 시각 (0 = 카운트다운 없음)
+  entrants: number; // 시작 인원 (0 = 아직 미시작)
+  prizes: number[]; // 순위별 상금 (1위부터)
+  finished: boolean;
+  results: TournamentResult[];
+}
+
+export interface TournamentResult {
+  playerId: string;
+  name: string;
+  place: number; // 1-based
+  prize: number;
+}
+
+export type GameMode = 'cash' | 'sng';
 
 export interface WinResult {
   playerId: string;
@@ -97,6 +127,10 @@ export interface RoomConfig {
   maxBuyIn: number;
   maxPlayers: 6;
   turnTime: number; // seconds
+  gameMode?: GameMode; // 기본 'cash'
+  startingStack?: number; // 시트앤고 시작 스택
+  password?: string; // 방 비밀번호 — 서버 전용, 절대 gameState로 노출하지 말 것
+  hostId?: string; // 방 생성자 playerId (서버가 create-room 시 세팅)
 }
 
 export interface Room {

@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useGameStore } from '@/lib/store/game-store';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
-import { getLayout, TablePos } from './table-layout';
+import { getLayout, toDisplayIndex, TablePos } from './table-layout';
 import ChipSVG, { CHIP_DENOMS, decomposeChips } from './ChipSVG';
 
 /**
@@ -65,8 +65,13 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
     };
 
     const unsubscribe = onGameEvent(event => {
-      const layout = getLayout(isMobileRef.current);
+      const layout = getLayout();
       const compact = isMobileRef.current;
+      // 내 좌석 기준 회전 (PokerTable의 좌석 배치와 일치해야 함)
+      const storeState = useGameStore.getState();
+      const mySeat = storeState.gameState?.players.find(p => p.id === storeState.myPlayerId)?.seatIndex ?? -1;
+      const seatPos = (seatIndex: number) => layout.seats[toDisplayIndex(seatIndex, mySeat)];
+      const betPos = (seatIndex: number) => layout.betPositions[toDisplayIndex(seatIndex, mySeat)];
 
       switch (event.type) {
         // 베팅: 좌석 → 베팅 위치 칩 비행
@@ -76,8 +81,8 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
             const chips = decomposeChips(event.amount || 1, event.actionType === 'all-in' ? 3 : 2);
             spawn(chips.map((denom, i) => ({
               kind: 'chip' as const,
-              from: layout.seats[event.seatIndex],
-              to: layout.betPositions[event.seatIndex],
+              from: seatPos(event.seatIndex),
+              to: betPos(event.seatIndex),
               delayMs: i * 60,
               durationMs: 350,
               denomIndex: CHIP_DENOMS.indexOf(denom),
@@ -87,7 +92,7 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
           if (event.actionType === 'fold') {
             spawn([0, 1].map(i => ({
               kind: 'card' as const,
-              from: layout.seats[event.seatIndex],
+              from: seatPos(event.seatIndex),
               to: layout.deckPos,
               delayMs: i * 70,
               durationMs: 400,
@@ -103,7 +108,7 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
             const chips = decomposeChips(bet.amount, 2);
             return chips.map((denom, j) => ({
               kind: 'chip' as const,
-              from: layout.betPositions[bet.seatIndex],
+              from: betPos(bet.seatIndex),
               to: layout.potPos,
               delayMs: i * 40 + j * 50,
               durationMs: 400,
@@ -121,7 +126,7 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
           spawn(dealt.flatMap((p, i) => [0, 1].map(round => ({
             kind: 'card' as const,
             from: layout.deckPos,
-            to: layout.seats[p.seatIndex],
+            to: seatPos(p.seatIndex),
             delayMs: round * dealt.length * 90 + i * 90,
             durationMs: 300,
             fadeOut: true,
@@ -131,7 +136,7 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
 
         // 커뮤니티 카드 딜: 덱 → 보드 슬롯
         case 'street-dealt': {
-          const slotGap = compact ? 11 : 7; // 보드 슬롯 x 간격 (%)
+          const slotGap = compact ? 11 : 14; // 보드 슬롯 x 간격 (세로 컬럼 폭 % 기준)
           const baseX = parseFloat(layout.boardPos.x);
           const baseY = layout.boardPos.y;
           spawn(event.newCards.map((_, i) => {
@@ -159,7 +164,7 @@ export default function AnimationLayer({ isMobile }: AnimationLayerProps) {
               flights.push({
                 kind: 'chip',
                 from: layout.potPos,
-                to: layout.seats[player.seatIndex],
+                to: seatPos(player.seatIndex),
                 delayMs: 1000 + i * 60,
                 durationMs: 600,
                 fadeOut: true,

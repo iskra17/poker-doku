@@ -16,10 +16,11 @@ function formatChips(amount: number): string {
   return amount.toString();
 }
 
+// overlap = 칩 1장의 측면 두께(px) — 아이소메트릭 칩(두께 7/40)에 맞춘 수직 적층 간격
 const chipSizeConfig: Record<ChipSize, { px: number; text: string; overlap: number }> = {
-  xs: { px: 16, text: 'text-[10px]', overlap: 5 },
-  sm: { px: 20, text: 'text-xs', overlap: 6 },
-  md: { px: 26, text: 'text-sm', overlap: 8 },
+  xs: { px: 16, text: 'text-[10px]', overlap: 3 },
+  sm: { px: 20, text: 'text-xs', overlap: 4 },
+  md: { px: 26, text: 'text-sm', overlap: 5 },
 };
 
 /** 베팅 금액 칩 스택 — 액면 분해 후 겹쳐 쌓기 + 금액 라벨 */

@@ -17,7 +17,7 @@ const jua = Jua({
 });
 
 export const metadata: Metadata = {
-  title: "Poker Doku - ポーカー道場",
+  title: "Poker Doku",
   description: "Anime-style online poker room with visual novel aesthetics",
   appleWebApp: {
     capable: true,

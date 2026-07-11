@@ -52,7 +52,9 @@ export default function ActionLog() {
           break;
         }
         case 'action': {
-          const action = ACTION_KO[event.actionType] ?? event.actionType;
+          const action = event.actionType === 'raise' && event.isBet
+            ? '벳'
+            : ACTION_KO[event.actionType] ?? event.actionType;
           const amount = event.amount > 0 && event.actionType !== 'fold' && event.actionType !== 'check'
             ? ` ${event.amount.toLocaleString()}`
             : '';

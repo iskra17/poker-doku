@@ -34,12 +34,22 @@ export default function RoomList({ onJoin }: RoomListProps) {
             className="bg-panel/80 backdrop-blur-sm border border-mystic/20 rounded-xl p-3 md:p-4 flex items-center justify-between hover:border-blossom/40 transition-all active:scale-[0.98]"
           >
             <div className="flex items-center gap-3">
-              {/* Table icon */}
+              {/* Table icon — 시트앤고는 트로피, 캐시는 스페이드 */}
               <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-purple-600/30 to-pink-600/30 flex items-center justify-center text-xl md:text-2xl border border-mystic/20 shrink-0">
-                🎴
+                {room.mode === 'sng' ? '🏆' : '♠️'}
               </div>
               <div className="min-w-0">
-                <h3 className="text-white font-bold text-sm md:text-base truncate">{room.name}</h3>
+                <div className="flex items-center gap-1.5 min-w-0">
+                  {room.mode === 'sng' && (
+                    <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/40 rounded px-1 py-px">
+                      Sit &amp; Go
+                    </span>
+                  )}
+                  {room.hasPassword && (
+                    <span className="shrink-0 text-[11px]" title="비밀번호 방">🔒</span>
+                  )}
+                  <h3 className="text-white font-bold text-sm md:text-base truncate">{room.name}</h3>
+                </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
                   <span>블라인드 <span className="text-gilded">{room.blinds}</span></span>
                   <span>
@@ -55,12 +65,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
             </div>
 
             <Button
-              variant={room.playerCount >= room.maxPlayers ? 'secondary' : 'success'}
+              variant={room.locked || room.playerCount >= room.maxPlayers ? 'secondary' : 'success'}
               size="sm"
-              disabled={room.playerCount >= room.maxPlayers}
+              disabled={room.locked || room.playerCount >= room.maxPlayers}
               onClick={() => onJoin(room.id)}
             >
-              {room.playerCount >= room.maxPlayers ? '만석' : '참가'}
+              {room.locked ? '진행 중' : room.playerCount >= room.maxPlayers ? '만석' : '참가'}
             </Button>
           </motion.div>
         ))}

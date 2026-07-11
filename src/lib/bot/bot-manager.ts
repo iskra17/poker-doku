@@ -25,19 +25,19 @@ export function createBot(seatIndex: number, buyIn: number, excludeCharacterIds:
 }
 
 export function getUsedCharacterIds(engine: PokerEngine): string[] {
+  // 봇 성향 + 휴먼 프로필 아바타 모두 제외 대상 — 같은 캐릭터가 테이블에 중복 착석하지 않게
   return engine.state.players
-    .filter(p => p.type === 'bot')
-    .map(p => p.personalityId || '')
+    .map(p => (p.type === 'bot' ? p.personalityId : p.avatar) || '')
     .filter(Boolean);
 }
 
-export function fillEmptySeats(engine: PokerEngine, minPlayers: number = 3): void {
+export function fillEmptySeats(engine: PokerEngine, minPlayers: number = 3, botStack?: number): void {
   const occupiedSeats = new Set(engine.state.players.map(p => p.seatIndex));
   const usedCharacters = getUsedCharacterIds(engine);
 
   for (let seat = 0; seat < 6 && engine.state.players.length < minPlayers; seat++) {
     if (!occupiedSeats.has(seat)) {
-      const bot = createBot(seat, engine.state.bigBlind * 100, usedCharacters);
+      const bot = createBot(seat, botStack ?? engine.state.bigBlind * 100, usedCharacters);
       if (engine.addPlayer(bot)) {
         usedCharacters.push(bot.personalityId || '');
       }

@@ -53,13 +53,15 @@ export default function HandStrengthBadge({ holeCards, communityCards, compact =
     // 프리플랍: evaluateHand는 5장 미만에서 크래시하므로 자체 라벨
     if (communityCards.length < 3) {
       const [a, b] = holeCards;
+      // 포커 표준 표기: 10은 T (예: AT 오프수트, 포켓 TT)
+      const short = (r: Card['rank']) => (r === '10' ? 'T' : r);
       if (a.rank === b.rank) {
-        return { label: `포켓 ${a.rank}`, tier: 2 };
+        return { label: `포켓 ${short(a.rank)}${short(a.rank)}`, tier: 2 };
       }
       const high = rankValue(a.rank) >= rankValue(b.rank) ? a : b;
       const low = high === a ? b : a;
       const suited = a.suit === b.suit ? '수딧' : '오프수트';
-      return { label: `${high.rank}-${low.rank} ${suited}`, tier: 1 };
+      return { label: `${short(high.rank)}${short(low.rank)} ${suited}`, tier: 1 };
     }
 
     const hand = evaluateHand(holeCards, communityCards);
