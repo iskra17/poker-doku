@@ -1,6 +1,6 @@
-import { Player } from '../poker/types';
+import { GameState, Player } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
-import { decideBotAction } from './bot-ai';
+import { BotDecision, decideBotAction } from './bot-ai';
 import { getRandomBotCharacter } from '../characters';
 
 let botIdCounter = 0;
@@ -45,6 +45,29 @@ export function fillEmptySeats(engine: PokerEngine, minPlayers: number = 3, botS
   }
 }
 
+/**
+ * 결정·상황 기반 사고 시간 — 뻔한 액션은 짧게, 큰 결정은 길게.
+ * 공짜 체크/프리플랍 폴드는 즉답에 가깝고, 팟 대비 큰 콜이나 레이즈는 고민하는 척한다.
+ */
+export function botThinkDelay(decision: BotDecision, player: Player, state: GameState): number {
+  const pot = state.pots.reduce((s, p) => s + p.amount, 0);
+  const callAmount = Math.max(0, state.currentBet - player.currentBet);
+  const jitter = (base: number, spread: number) => base + Math.random() * spread;
+
+  if (decision.action === 'check') return jitter(450, 500);
+  if (decision.action === 'fold') {
+    // 걸린 게 적은 폴드(프리플랍/스몰벳)는 즉답
+    if (state.street === 'preflop' || callAmount <= state.bigBlind * 2) return jitter(500, 600);
+    return jitter(800, 900);
+  }
+  if (decision.action === 'call' && callAmount <= state.bigBlind * 2) return jitter(700, 700);
+
+  // 큰 결정일수록 오래 고민 — 콜 금액이 팟 대비 클 때 가산
+  const bigness = pot > 0 ? Math.min(1, callAmount / pot) : 0;
+  const base = decision.action === 'raise' || decision.action === 'all-in' ? 1300 : 1000;
+  return jitter(base + bigness * 700, 1000);
+}
+
 export async function processBotTurn(engine: PokerEngine): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
   const activePlayer = engine.state.players[engine.state.activePlayerIndex];
   if (!activePlayer || activePlayer.type !== 'bot') {
@@ -54,8 +77,7 @@ export async function processBotTurn(engine: PokerEngine): Promise<{ acted: bool
   const validActions = engine.getValidActions(activePlayer);
   const decision = decideBotAction(activePlayer, engine.state, validActions);
 
-  // Add a small delay to simulate thinking
-  await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+  await new Promise(resolve => setTimeout(resolve, botThinkDelay(decision, activePlayer, engine.state)));
 
   engine.processAction({
     playerId: activePlayer.id,

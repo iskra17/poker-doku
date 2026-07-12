@@ -265,6 +265,8 @@ function decidePreflopAction(
 
   // --- 레이즈 직면 ---
   const raiseSizeBB = gameState.currentBet / bb;
+  const commitFrac = callAmount / (player.chips + player.currentBet); // 콜 시 스택 커밋 비율
+  const deep = stackBB > 15;
 
   if (tier === 4) {
     if (canRaise && Math.random() < 0.8) {
@@ -274,10 +276,16 @@ function decidePreflopAction(
     if (validActions.includes('all-in')) return { action: 'all-in', amount: 0 };
   }
   if (tier === 3) {
-    if (canRaise && Math.random() < p.threeBet) {
+    // 딥스택에서 스택 40%+를 커밋하는 콜/레이즈는 프리미엄 전용 (올인 캐스케이드 차단 — 결정론)
+    if (deep && commitFrac >= 0.4) {
+      if (canCheck) return { action: 'check', amount: 0 };
+      return { action: 'fold', amount: 0 };
+    }
+    // 3벳은 상대 레이즈가 작을 때만 — JJ/AQ로 4벳 전쟁 금지
+    if (canRaise && raiseSizeBB <= 6 && Math.random() < p.threeBet) {
       return raiseTo(gameState, player, gameState.currentBet * 3);
     }
-    if (canCall && (raiseSizeBB <= 4 || Math.random() > p.foldToPressure * 0.6)) {
+    if (canCall && (raiseSizeBB <= 4 || (commitFrac <= 0.25 && Math.random() > p.foldToPressure * 0.6))) {
       return { action: 'call', amount: callAmount };
     }
     if (canCheck) return { action: 'check', amount: 0 };
@@ -318,12 +326,23 @@ function decidePostflopAction(
   const canCall = validActions.includes('call');
   const canRaise = validActions.includes('raise');
   const isRiver = gameState.communityCards.length >= 5;
+  const isFlop = gameState.communityCards.length === 3;
+
+  const stackTotal = player.chips + player.currentBet;
+  const commitFrac = callAmount > 0 ? callAmount / stackTotal : 0; // 콜 시 스택 커밋 비율
+  const deep = stackTotal / (gameState.bigBlind || 1) > 15;
+  // 이번 스트리트에 이미 액션했는데 레이즈로 되돌아옴 — 상대가 강하다는 신호, 레이즈 전쟁 금지
+  const reRaised = callAmount > 0 && player.currentBet > 0;
+  // 스트리트별 사이징: 플랍은 작게(레인지 벳), 턴/리버는 표준
+  const sizeMult = isFlop ? 0.8 : 1;
 
   // 1) 몬스터 (0.85+) — 밸류 극대화, 가끔 플랍 슬로플레이
   if (strength >= 0.85) {
     const slowPlay = !isRiver && callAmount === 0 && Math.random() < p.slowPlay;
     if (!slowPlay) {
-      if (canRaise) return raiseByPot(gameState, player, p.betSizing + Math.random() * 0.4);
+      if (canRaise) {
+        return raiseByPot(gameState, player, Math.min(p.betSizing + Math.random() * 0.4, 1) * sizeMult);
+      }
       if (validActions.includes('all-in')) return { action: 'all-in', amount: 0 };
     }
     if (canCall) return { action: 'call', amount: callAmount };
@@ -332,8 +351,10 @@ function decidePostflopAction(
 
   // 2) 강한 핸드 (0.65+) — 투페어/셋/스트레이트급
   if (strength >= 0.65) {
-    if (canRaise && Math.random() < p.aggression) {
-      return raiseByPot(gameState, player, p.betSizing);
+    // 벳은 성향껏, 벳 위 레이즈는 절반 빈도, 리레이즈/빅커밋 상황은 레이즈 금지 (콜 위주)
+    const raiseOk = canRaise && !reRaised && commitFrac < 0.35;
+    if (raiseOk && Math.random() < p.aggression * (callAmount > 0 ? 0.5 : 1)) {
+      return raiseByPot(gameState, player, p.betSizing * sizeMult);
     }
     if (callAmount > 0) {
       // 강한 핸드는 거의 접지 않음 — 오버팟 사이즈 압박에만 성향껏 폴드
@@ -349,9 +370,14 @@ function decidePostflopAction(
   if (strength >= 0.42) {
     if (callAmount === 0) {
       if (canRaise && Math.random() < p.aggression * 0.55) {
-        return raiseByPot(gameState, player, p.betSizing * 0.8);
+        return raiseByPot(gameState, player, p.betSizing * 0.8 * sizeMult);
       }
       return { action: 'check', amount: 0 };
+    }
+    // 딥스택에서 미들 페어로 스택 40%+ 커밋 금지 (결정론 — 콜링 스테이션 포함)
+    if (deep && commitFrac >= 0.4) {
+      if (canCheck) return { action: 'check', amount: 0 };
+      return { action: 'fold', amount: 0 };
     }
     // 가격이 맞으면 콜 — 콜링 스테이션은 훨씬 넓게, 록은 큰 벳에 접음
     const priceOk = potOdds <= 0.28 + p.callDown * 0.22;
@@ -365,11 +391,16 @@ function decidePostflopAction(
 
   // 4) 드로우 — 세미블러프 또는 오즈 콜
   if (draw > 0) {
-    if (canRaise && Math.random() < p.bluffFrequency + p.aggression * 0.15) {
+    // 세미블러프는 스택을 크게 커밋하지 않을 때만, 리레이즈 상황 금지
+    const semiTarget = (callAmount + pot * 0.6) / stackTotal;
+    const semiOk = canRaise && !reRaised && semiTarget < 0.35;
+    const semiFreq = (p.bluffFrequency + p.aggression * 0.15) * (callAmount > 0 ? 0.6 : 1);
+    if (semiOk && Math.random() < semiFreq) {
       return raiseByPot(gameState, player, 0.6); // 세미블러프
     }
     if (callAmount === 0) return { action: 'check', amount: 0 };
-    if (canCall && (potOdds <= draw + p.callDown * 0.1 || Math.random() < p.callDown * 0.4)) {
+    // 오즈 콜 — 성향 콜은 커밋이 작을 때만 (드로우로 스택 올인 금지)
+    if (canCall && (potOdds <= draw + p.callDown * 0.1 || (commitFrac < 0.3 && Math.random() < p.callDown * 0.4))) {
       return { action: 'call', amount: callAmount };
     }
     if (canCheck) return { action: 'check', amount: 0 };
