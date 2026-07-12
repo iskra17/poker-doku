@@ -353,6 +353,8 @@ export class PokerEngine {
   }
 
   processAction(action: PlayerAction): { valid: boolean; handComplete: boolean } {
+    // 서버 권위 하드닝: 핸드 종료~다음 핸드 시작 사이의 stale 액션을 엔진 레벨에서도 거부
+    if (!this.state.isHandInProgress) return { valid: false, handComplete: false };
     const player = this.state.players.find(p => p.id === action.playerId);
     if (!player || player.status !== 'active') return { valid: false, handComplete: false };
     if (this.state.players[this.state.activePlayerIndex]?.id !== action.playerId) {
