@@ -104,7 +104,7 @@ function DealerBubble({ text }: { text: string }) {
     >
       <div className="bg-panel/95 backdrop-blur-sm rounded-xl rounded-tr-sm px-2.5 py-1.5 border border-gilded/40 shadow-lg">
         <div className="text-[9px] font-bold mb-0.5 text-gilded" style={{ fontFamily: 'var(--font-display)' }}>
-          {DEALER_CHARACTER.nameJp} {DEALER_CHARACTER.name}
+          딜러 (미야코)
         </div>
         <p className="text-ink text-[11px] leading-snug">
           {display}

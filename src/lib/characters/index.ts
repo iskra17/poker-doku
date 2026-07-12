@@ -17,8 +17,10 @@ export interface CharacterProfile {
 
 export const DEALER_CHARACTER: CharacterProfile = {
   id: 'dealer',
-  name: '미야코',
-  nameJp: '都',
+  // 게임 전반에서 '딜러' 역할을 강조 — 채팅 발신자/좌석 라벨은 '딜러'로 노출.
+  // 개인 이름(미야코)은 인트로/코너 라벨에서 '딜러 (미야코)' 형태로만 부드럽게 병기.
+  name: '딜러',
+  nameJp: '',
   color: '#FFD700',
   colorSecondary: '#B8860B',
   emoji: '👩',

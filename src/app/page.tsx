@@ -136,7 +136,7 @@ function MiyakoGreeting() {
       </div>
       <div className="min-w-0">
         <div className="text-gilded text-xs font-bold mb-0.5" style={{ fontFamily: 'var(--font-display)' }}>
-          {DEALER_CHARACTER.nameJp} {DEALER_CHARACTER.name}
+          딜러 (미야코)
         </div>
         <p className="text-ink text-xs leading-relaxed min-h-[32px]">
           {display}

@@ -168,9 +168,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <Toggle checked={stackedPot} onToggle={toggleStackedPot} label="팟 칩 권종별 쌓기" />
         </section>
 
-        {/* 딜러 미야코 */}
+        {/* 딜러 (미야코) */}
         <section>
-          <SectionTitle>딜러 미야코</SectionTitle>
+          <SectionTitle>딜러 (미야코)</SectionTitle>
           <Toggle checked={showDealerAvatar} onToggle={toggleDealerAvatar} label="아바타 표시" />
           <Toggle checked={showDealerBubble} onToggle={toggleDealerBubble} label="말풍선 표시" />
         </section>
