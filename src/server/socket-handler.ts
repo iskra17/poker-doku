@@ -9,6 +9,9 @@ const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in']
 const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
+// 플러딩 방지 쿨다운 (연결당) — 로비/채팅 스팸으로 방 상한을 소진하거나 채팅을 도배하는 것 차단
+const ROOM_CREATE_COOLDOWN_MS = 5_000;
+const CHAT_COOLDOWN_MS = 700;
 
 export function setupSocketHandlers(io: Server): void {
   const sessions = new SessionManager();
@@ -84,6 +87,10 @@ export function setupSocketHandlers(io: Server): void {
   io.on('connection', (socket: Socket) => {
     const session = sessions.resolve(socket.handshake.auth?.sessionToken, socket.id);
     console.log(`Player connected: socket=${socket.id} player=${session.playerId}`);
+
+    // 연결당 레이트리밋 상태 (재접속 시 초기화 — 단순 플러딩 방지용)
+    let lastRoomCreateAt = 0;
+    let lastChatAt = 0;
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
@@ -280,6 +287,11 @@ export function setupSocketHandlers(io: Server): void {
     socket.on('send-chat', (data: { message: string }) => {
       if (!session.roomId) return;
 
+      // 채팅 플러딩 방지 — 쿨다운 내 메시지는 조용히 무시 (에러 피드백 루프 방지)
+      const now = Date.now();
+      if (now - lastChatAt < CHAT_COOLDOWN_MS) return;
+      lastChatAt = now;
+
       const room = roomManager.getRoom(session.roomId);
       if (!room) return;
 
@@ -293,11 +305,18 @@ export function setupSocketHandlers(io: Server): void {
 
     // Create room
     socket.on('create-room', (config: RoomConfig) => {
+      // 플러딩 방지: 연결당 방 생성 쿨다운 (로비 스팸/방 상한 소진 예방)
+      const now = Date.now();
+      if (now - lastRoomCreateAt < ROOM_CREATE_COOLDOWN_MS) {
+        socket.emit('error', { message: '방 생성은 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
       // 운영 가드: 방 수 상한
       if (roomManager.getRoomCount() >= MAX_ROOMS) {
         socket.emit('error', { message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
         return;
       }
+      lastRoomCreateAt = now;
       const isSng = config.gameMode === 'sng';
       const password = String(config.password ?? '').trim().slice(0, 20);
       const bigBlind = Math.max(Number(config.bigBlind) || 20, 2);
