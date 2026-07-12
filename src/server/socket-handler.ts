@@ -115,7 +115,9 @@ export function setupSocketHandlers(io: Server): void {
 
     // Join room
     socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number; avatar?: string; password?: string }) => {
-      const { roomId, playerName, buyIn, seatIndex } = data;
+      const { roomId, buyIn, seatIndex } = data;
+      // 입력 검증: 닉네임은 트리밍 후 24자 클램프 (빈 값이면 기본 닉네임)
+      const playerName = (String(data.playerName ?? '').trim().slice(0, 24)) || '플레이어';
       // 프로필 캐릭터 — 등록된 캐릭터 id만 허용 (그 외엔 기본 'player')
       const avatar = data.avatar && getCharacterById(data.avatar) ? data.avatar : 'player';
 
@@ -125,22 +127,33 @@ export function setupSocketHandlers(io: Server): void {
         return;
       }
 
-      // 멱등 처리: 이미 이 방에 착석 중이면 상태만 재전송
-      const existing = room.engine.state.players.find(
-        p => p.id === session.playerId && !p.pendingRemoval,
-      );
-      if (existing) {
-        socket.join(roomId);
-        session.roomId = roomId;
-        socket.emit('room-joined', {
-          roomId,
-          gameState: {
-            ...room.engine.getPublicState(session.playerId),
-            turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
-          },
-          chatHistory: roomManager.getChatHistory(roomId),
-        });
-        return;
+      // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
+      // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
+      // 동일 id의 Player가 둘 생기는 것(불변식 위반 + 새 스택 리바이 악용)을 막는다.
+      const seated = room.engine.state.players.find(p => p.id === session.playerId);
+      if (seated) {
+        const startedTournament = !!room.engine.state.tournament && room.engine.state.tournament.entrants > 0;
+        // 시작된 토너먼트에서 이탈은 탈락 확정이므로 되살리지 않고 아래 lock 체크로 넘긴다
+        if (!seated.pendingRemoval || !startedTournament) {
+          if (seated.pendingRemoval) {
+            // 예약 취소 — 기존 칩/좌석 그대로 유지 (새 바이인 무시)
+            seated.pendingRemoval = false;
+            if (seated.chips > 0 && !seated.isDisconnected && !room.engine.state.isHandInProgress) {
+              seated.status = 'waiting';
+            }
+          }
+          socket.join(roomId);
+          session.roomId = roomId;
+          socket.emit('room-joined', {
+            roomId,
+            gameState: {
+              ...room.engine.getPublicState(session.playerId),
+              turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+            },
+            chatHistory: roomManager.getChatHistory(roomId),
+          });
+          return;
+        }
       }
 
       // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
@@ -163,10 +176,11 @@ export function setupSocketHandlers(io: Server): void {
         session.roomId = null;
       }
 
-      // Find first available seat
-      let assignedSeat = seatIndex;
+      // Find first available seat — 요청 좌석은 0~5 정수만 유효, 그 외/점유 시 빈 자리 배정
+      const requestedSeat = Number.isInteger(seatIndex) && seatIndex >= 0 && seatIndex <= 5 ? seatIndex : -1;
+      let assignedSeat = requestedSeat;
       const occupiedSeats = new Set(room.engine.state.players.map(p => p.seatIndex));
-      if (occupiedSeats.has(seatIndex)) {
+      if (requestedSeat < 0 || occupiedSeats.has(requestedSeat)) {
         for (let s = 0; s < 6; s++) {
           if (!occupiedSeats.has(s)) {
             assignedSeat = s;

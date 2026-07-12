@@ -151,15 +151,21 @@ export class RoomManager {
       this.sendSystemChat(roomId, `${player.name}님이 테이블을 떠났습니다.`);
     }
 
-    // Clean up empty rooms — 제거 예약자는 휴먼 수에서 제외
+    // Clean up empty rooms — 제거 예약자는 휴먼 수에서 제외.
     const humans = room.engine.state.players.filter(p => p.type === 'human' && !p.pendingRemoval);
     if (humans.length === 0) {
       this.stopBotLoop(roomId);
       this.clearPendingStart(roomId);
       this.clearTurnTimer(roomId);
-      this.rooms.delete(roomId);
-      this.chatHistory.delete(roomId);
-      this.tournamentClocks.delete(roomId);
+      if (room.persistent) {
+        // 영속(기본 로비) 방은 삭제하지 않고 대기 상태로 리셋 — 남은 봇/진행 중 핸드를 비워
+        // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
+        this.resetRoomToIdle(roomId);
+      } else {
+        this.rooms.delete(roomId);
+        this.chatHistory.delete(roomId);
+        this.tournamentClocks.delete(roomId);
+      }
       return;
     }
 
@@ -175,6 +181,35 @@ export class RoomManager {
       } else {
         this.onUpdate(roomId, room.engine);
       }
+    }
+  }
+
+  /**
+   * 영속 방을 대기 상태로 초기화 — 휴먼이 모두 떠났을 때 호출.
+   * 남은 봇을 비우고 진행 중이던 핸드를 정리해, 다음 입장자가 새 핸드를 깨끗이 시작하게 한다.
+   */
+  private resetRoomToIdle(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const s = room.engine.state;
+    s.players = [];
+    s.isHandInProgress = false;
+    s.winners = null;
+    s.communityCards = [];
+    s.pots = [{ amount: 0, eligiblePlayerIds: [] }];
+    s.currentBet = 0;
+    s.minRaise = s.bigBlind;
+    s.activePlayerIndex = -1;
+    s.dealerIndex = 0;
+    s.street = 'preflop';
+    s.lastAction = null;
+    this.tournamentClocks.delete(roomId);
+    if (s.tournament) {
+      s.tournament.level = 1;
+      s.tournament.entrants = 0;
+      s.tournament.finished = false;
+      s.tournament.results = [];
+      s.tournament.prizes = [];
     }
   }
 
@@ -204,7 +239,9 @@ export class RoomManager {
         return;
       }
     } else {
-      fillEmptySeats(room.engine);
+      // 캐시 게임: 빈 자리를 방 정원(6인)까지 봇으로 채워 캐릭터 5명이 모두 등장하게 한다
+      // (기본값 3에서 멈추면 솔로 세션에서 봇이 2명만 붙어 캐릭터 노출이 절반으로 깎임)
+      fillEmptySeats(room.engine, room.config.maxPlayers);
     }
     this.onUpdate(roomId, room.engine);
 
