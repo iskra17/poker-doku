@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { decideBotAction } from './bot-ai';
+import { adjustForSkill, decideBotAction } from './bot-ai';
+import { BOT_PERSONALITIES } from './personalities';
 import { botThinkDelay } from './bot-manager';
 import { makePlayer, cards } from '../poker/test-helpers';
 import { GameState, ActionType } from '../poker/types';
@@ -155,6 +156,43 @@ describe('봇 딥스택 올인 캐스케이드 가드', () => {
       expect(d.action).not.toBe('raise');
       expect(d.action).not.toBe('all-in');
     }
+  });
+});
+
+describe('봇 난이도 변조 (adjustForSkill)', () => {
+  it('normal/미지정은 원본 성향을 그대로 반환한다', () => {
+    const p = BOT_PERSONALITIES['ryuka'];
+    expect(adjustForSkill(p, 'normal')).toEqual(p);
+    expect(adjustForSkill(p, undefined)).toEqual(p);
+  });
+
+  it('easy는 공격성·블러프를 줄이고 압박에 더 잘 접는다', () => {
+    for (const id of Object.keys(BOT_PERSONALITIES)) {
+      const p = BOT_PERSONALITIES[id];
+      const e = adjustForSkill(p, 'easy');
+      expect(e.aggression).toBeLessThan(p.aggression);
+      expect(e.bluffFrequency).toBeLessThanOrEqual(p.bluffFrequency);
+      expect(e.foldToPressure).toBeGreaterThanOrEqual(p.foldToPressure);
+    }
+  });
+
+  it('hard는 공격성·블러프를 키우고 잘 안 접는다 — 값은 0~1 클램프', () => {
+    for (const id of Object.keys(BOT_PERSONALITIES)) {
+      const p = BOT_PERSONALITIES[id];
+      const h = adjustForSkill(p, 'hard');
+      expect(h.aggression).toBeGreaterThanOrEqual(p.aggression);
+      expect(h.foldToPressure).toBeLessThanOrEqual(p.foldToPressure);
+      for (const v of [h.aggression, h.bluffFrequency, h.threeBet, h.foldToPressure]) {
+        expect(v).toBeGreaterThanOrEqual(0);
+        expect(v).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
+  it('캐릭터 간 상대적 개성은 유지된다 — easy에서도 akira가 sakura보다 공격적', () => {
+    const sakura = adjustForSkill(BOT_PERSONALITIES['sakura'], 'easy');
+    const akira = adjustForSkill(BOT_PERSONALITIES['akira'], 'easy');
+    expect(akira.aggression).toBeGreaterThan(sakura.aggression);
   });
 });
 

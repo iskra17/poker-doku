@@ -1,28 +1,43 @@
 'use client';
 
+import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import Button from '../ui/Button';
+import HelpModal from '../help/HelpModal';
 
 interface RoomListProps {
   onJoin: (roomId: string) => void;
 }
 
+// 난이도 배지 — normal은 표기 생략 (배지 과밀 방지)
+const DIFFICULTY_BADGES: Record<string, { label: string; className: string }> = {
+  easy: { label: '초보 환영', className: 'text-green-400 border-green-400/40' },
+  hard: { label: '고수', className: 'text-red-400 border-red-400/40' },
+};
+
 export default function RoomList({ onJoin }: RoomListProps) {
   const { rooms } = useGameStore();
+  const [helpOpen, setHelpOpen] = useState(false);
 
   return (
     <div className="max-w-3xl mx-auto px-3 md:px-4">
       <div className="flex items-center justify-between mb-3 md:mb-4">
         <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => useGameStore.getState().setShowCreateRoom(true)}
-        >
-          + 방 만들기
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setHelpOpen(true)}>
+            ❓ 도움말
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => useGameStore.getState().setShowCreateRoom(true)}
+          >
+            + 방 만들기
+          </Button>
+        </div>
       </div>
+      <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
       <div className="space-y-2 md:space-y-3">
         {rooms.map((room, i) => (
@@ -45,6 +60,11 @@ export default function RoomList({ onJoin }: RoomListProps) {
                       Sit &amp; Go
                     </span>
                   )}
+                  {room.difficulty && DIFFICULTY_BADGES[room.difficulty] && (
+                    <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${DIFFICULTY_BADGES[room.difficulty].className}`}>
+                      {DIFFICULTY_BADGES[room.difficulty].label}
+                    </span>
+                  )}
                   {room.hasPassword && (
                     <span className="shrink-0 text-[11px]" title="비밀번호 방">🔒</span>
                   )}
@@ -52,6 +72,9 @@ export default function RoomList({ onJoin }: RoomListProps) {
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
                   <span>블라인드 <span className="text-gilded">{room.blinds}</span></span>
+                  {(room.turnTime ?? 8) > 8 && (
+                    <span>턴 <span className="text-cyber">{room.turnTime}초</span></span>
+                  )}
                   <span>
                     <span className={room.playerCount >= room.maxPlayers ? 'text-red-400' : 'text-green-400'}>
                       {room.playerCount}/{room.maxPlayers}

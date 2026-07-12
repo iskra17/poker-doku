@@ -1,11 +1,16 @@
-import { GameState, Player } from '../poker/types';
+import { GameState, Player, RoomDifficulty } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { BotDecision, decideBotAction } from './bot-ai';
 import { getRandomBotCharacter } from '../characters';
 
 let botIdCounter = 0;
 
-export function createBot(seatIndex: number, buyIn: number, excludeCharacterIds: string[] = []): Player {
+export function createBot(
+  seatIndex: number,
+  buyIn: number,
+  excludeCharacterIds: string[] = [],
+  skill?: RoomDifficulty,
+): Player {
   const character = getRandomBotCharacter(excludeCharacterIds);
   botIdCounter++;
   return {
@@ -21,6 +26,7 @@ export function createBot(seatIndex: number, buyIn: number, excludeCharacterIds:
     status: 'waiting',
     hasActed: false,
     personalityId: character.id,
+    botSkill: skill,
   };
 }
 
@@ -31,13 +37,18 @@ export function getUsedCharacterIds(engine: PokerEngine): string[] {
     .filter(Boolean);
 }
 
-export function fillEmptySeats(engine: PokerEngine, minPlayers: number = 3, botStack?: number): void {
+export function fillEmptySeats(
+  engine: PokerEngine,
+  minPlayers: number = 3,
+  botStack?: number,
+  difficulty?: RoomDifficulty,
+): void {
   const occupiedSeats = new Set(engine.state.players.map(p => p.seatIndex));
   const usedCharacters = getUsedCharacterIds(engine);
 
   for (let seat = 0; seat < 6 && engine.state.players.length < minPlayers; seat++) {
     if (!occupiedSeats.has(seat)) {
-      const bot = createBot(seat, botStack ?? engine.state.bigBlind * 100, usedCharacters);
+      const bot = createBot(seat, botStack ?? engine.state.bigBlind * 100, usedCharacters, difficulty);
       if (engine.addPlayer(bot)) {
         usedCharacters.push(bot.personalityId || '');
       }

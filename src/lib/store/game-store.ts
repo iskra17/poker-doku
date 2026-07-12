@@ -19,6 +19,8 @@ export interface RoomInfo {
   bigBlind?: number; // 바이인 슬라이더 계산용
   minBuyIn?: number;
   maxBuyIn?: number;
+  difficulty?: 'easy' | 'normal' | 'hard'; // 봇 난이도
+  turnTime?: number; // 턴 시간 (초)
 }
 
 // 조인 응답 타임아웃 — room-joined/error 어느 쪽도 안 오면 로비로 롤백
@@ -75,7 +77,11 @@ interface GameStore {
   toggleSitOut: () => void;
   useTimeBank: () => void;
   sngFillBots: () => void;
-  createRoom: (config: { name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number; gameMode?: 'cash' | 'sng'; password?: string }) => void;
+  createRoom: (config: {
+    name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number;
+    gameMode?: 'cash' | 'sng'; password?: string;
+    turnTime?: number; difficulty?: 'easy' | 'normal' | 'hard';
+  }) => void;
   setShowCreateRoom: (show: boolean) => void;
 }
 
@@ -227,7 +233,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.emit('create-room', {
       ...config,
       maxPlayers: 6,
-      turnTime: 8,
+      turnTime: config.turnTime ?? 8,
     });
   },
 

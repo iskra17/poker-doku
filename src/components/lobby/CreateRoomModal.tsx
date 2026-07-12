@@ -18,6 +18,19 @@ const MIN_BUYIN_BB = 40;
 const MAX_BUYIN_BB = 200;
 
 type Mode = 'cash' | 'sng';
+type Difficulty = 'easy' | 'normal' | 'hard';
+
+const DIFFICULTIES: Array<{ id: Difficulty; label: string; desc: string }> = [
+  { id: 'easy', label: '순한 상대', desc: '블러프 적고 예측 가능' },
+  { id: 'normal', label: '보통', desc: '캐릭터 본연의 스타일' },
+  { id: 'hard', label: '거친 상대', desc: '공격적 · 블러프 많음' },
+];
+
+const TURN_TIMES = [
+  { seconds: 8, label: '8초', desc: '표준' },
+  { seconds: 15, label: '15초', desc: '여유' },
+  { seconds: 30, label: '30초', desc: '초보 추천' },
+];
 
 export default function CreateRoomModal() {
   const { showCreateRoom, setShowCreateRoom, createRoom } = useGameStore();
@@ -25,6 +38,8 @@ export default function CreateRoomModal() {
   const [mode, setMode] = useState<Mode>('cash');
   const [blindIndex, setBlindIndex] = useState(1);
   const [password, setPassword] = useState('');
+  const [difficulty, setDifficulty] = useState<Difficulty>('normal');
+  const [turnTime, setTurnTime] = useState(8);
 
   const blind = BLIND_LEVELS[blindIndex];
   const sngStart = SNG_BLIND_SCHEDULE[0];
@@ -40,6 +55,8 @@ export default function CreateRoomModal() {
       maxBuyIn: blind.bb * MAX_BUYIN_BB,
       gameMode: mode,
       password: password.trim() || undefined,
+      difficulty,
+      turnTime,
     });
     setName('');
     setPassword('');
@@ -82,6 +99,51 @@ export default function CreateRoomModal() {
             placeholder="방 이름을 입력하세요..."
             className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:border-purple-500/50"
           />
+        </div>
+
+        {/* 봇 난이도 */}
+        <div>
+          <label className="text-gray-400 text-sm block mb-2">봇 난이도</label>
+          <div className="grid grid-cols-3 gap-2">
+            {DIFFICULTIES.map(d => (
+              <button
+                key={d.id}
+                onClick={() => setDifficulty(d.id)}
+                className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                  difficulty === d.id
+                    ? 'bg-purple-600 text-white border border-purple-400'
+                    : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                }`}
+              >
+                {d.label}
+                <span className="block text-[10px] font-normal opacity-70">{d.desc}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* 턴 시간 */}
+        <div>
+          <label className="text-gray-400 text-sm block mb-2">턴 시간</label>
+          <div className="grid grid-cols-3 gap-2">
+            {TURN_TIMES.map(t => (
+              <button
+                key={t.seconds}
+                onClick={() => setTurnTime(t.seconds)}
+                className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                  turnTime === t.seconds
+                    ? 'bg-purple-600 text-white border border-purple-400'
+                    : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                }`}
+              >
+                {t.label}
+                <span className="block text-[10px] font-normal opacity-70">{t.desc}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">
+            시간이 다 되면 타임칩이 자동 사용되고, 다 쓰면 자동 체크/폴드돼요.
+          </p>
         </div>
 
         {/* 비밀번호 (선택) */}

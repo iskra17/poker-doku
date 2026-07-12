@@ -1,11 +1,12 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS } from './session-manager';
-import { RoomConfig, Player, ActionType } from '../lib/poker/types';
+import { RoomConfig, Player, ActionType, RoomDifficulty } from '../lib/poker/types';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 
 const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
+const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
@@ -46,6 +47,7 @@ export function setupSocketHandlers(io: Server): void {
   );
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
+  // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
   roomManager.createRoom({
     name: 'Sakura Lounge',
     smallBlind: 10,
@@ -53,7 +55,8 @@ export function setupSocketHandlers(io: Server): void {
     minBuyIn: 20 * MIN_BUYIN_BB,
     maxBuyIn: 20 * MAX_BUYIN_BB,
     maxPlayers: 6,
-    turnTime: 8,
+    turnTime: 20,
+    difficulty: 'easy',
   }, true);
 
   roomManager.createRoom({
@@ -64,6 +67,7 @@ export function setupSocketHandlers(io: Server): void {
     maxBuyIn: 50 * MAX_BUYIN_BB,
     maxPlayers: 6,
     turnTime: 8,
+    difficulty: 'normal',
   }, true);
 
   roomManager.createRoom({
@@ -74,6 +78,7 @@ export function setupSocketHandlers(io: Server): void {
     maxBuyIn: 100 * MAX_BUYIN_BB,
     maxPlayers: 6,
     turnTime: 8,
+    difficulty: 'hard',
   }, true);
 
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
@@ -324,6 +329,9 @@ export function setupSocketHandlers(io: Server): void {
         ...config,
         maxPlayers: 6,
         turnTime: Math.min(Math.max(Number(config.turnTime) || 8, 5), 60),
+        difficulty: VALID_DIFFICULTIES.includes(config.difficulty as RoomDifficulty)
+          ? config.difficulty
+          : 'normal',
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
         // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택

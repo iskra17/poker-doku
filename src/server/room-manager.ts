@@ -79,6 +79,7 @@ export class RoomManager {
     id: string; name: string; playerCount: number; maxPlayers: number;
     blinds: string; status: string; mode: string; locked: boolean;
     hasPassword: boolean; bigBlind: number; minBuyIn: number; maxBuyIn: number;
+    difficulty: string; turnTime: number;
   }> {
     const list: ReturnType<RoomManager['getRoomList']> = [];
     this.rooms.forEach((room, id) => {
@@ -97,6 +98,8 @@ export class RoomManager {
         bigBlind: room.config.bigBlind,
         minBuyIn: room.config.minBuyIn,
         maxBuyIn: room.config.maxBuyIn,
+        difficulty: room.config.difficulty ?? 'normal',
+        turnTime: room.config.turnTime,
       });
     });
     return list;
@@ -133,7 +136,7 @@ export class RoomManager {
     );
     if (host && host.id !== requesterId) return false;
 
-    fillEmptySeats(room.engine, room.config.maxPlayers, room.config.startingStack);
+    fillEmptySeats(room.engine, room.config.maxPlayers, room.config.startingStack, room.config.difficulty);
     this.sendSystemChat(roomId, '남는 자리를 봇으로 채웠어요 — 곧 시작합니다!');
     this.tryStartGame(roomId);
     return true;
@@ -242,7 +245,7 @@ export class RoomManager {
     } else {
       // 캐시 게임: 빈 자리를 방 정원(6인)까지 봇으로 채워 캐릭터 5명이 모두 등장하게 한다
       // (기본값 3에서 멈추면 솔로 세션에서 봇이 2명만 붙어 캐릭터 노출이 절반으로 깎임)
-      fillEmptySeats(room.engine, room.config.maxPlayers);
+      fillEmptySeats(room.engine, room.config.maxPlayers, undefined, room.config.difficulty);
     }
     this.onUpdate(roomId, room.engine);
 

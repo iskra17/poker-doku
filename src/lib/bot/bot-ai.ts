@@ -1,4 +1,4 @@
-import { Player, ActionType, GameState, Card, Rank } from '../poker/types';
+import { Player, ActionType, GameState, Card, Rank, RoomDifficulty } from '../poker/types';
 import { rankValue } from '../poker/deck';
 import { evaluateHand } from '../poker/evaluator';
 import { BotPersonality, BOT_PERSONALITIES } from './personalities';
@@ -165,12 +165,41 @@ function raiseByPot(state: GameState, player: Player, frac: number): BotDecision
   return raiseTo(state, player, target);
 }
 
+/**
+ * 방 난이도에 따른 성향 변조 — 캐릭터별 상대적 개성은 유지한 채 전체 수위만 조절.
+ * easy: 덜 공격적이고 예측 가능(블러프↓, 압박에 잘 접음) — 초보가 밸류 벳으로 이기기 쉬움.
+ * hard: 더 공격적(블러프↑, 3벳↑, 잘 안 접음).
+ */
+export function adjustForSkill(p: BotPersonality, skill?: RoomDifficulty): BotPersonality {
+  if (!skill || skill === 'normal') return p;
+  const c = (v: number) => Math.max(0, Math.min(1, v));
+  if (skill === 'easy') {
+    return {
+      ...p,
+      pfr: c(p.pfr * 0.7),
+      aggression: c(p.aggression * 0.6),
+      bluffFrequency: c(p.bluffFrequency * 0.5),
+      threeBet: c(p.threeBet * 0.5),
+      foldToPressure: c(p.foldToPressure * 1.35),
+      callDown: c(p.callDown * 1.15),
+    };
+  }
+  return {
+    ...p,
+    aggression: c(p.aggression * 1.15),
+    bluffFrequency: c(p.bluffFrequency * 1.3),
+    threeBet: c(p.threeBet * 1.25),
+    foldToPressure: c(p.foldToPressure * 0.8),
+  };
+}
+
 export function decideBotAction(
   player: Player,
   gameState: GameState,
   validActions: ActionType[],
 ): BotDecision {
-  const personality = BOT_PERSONALITIES[player.personalityId || 'hana'] || BOT_PERSONALITIES['hana'];
+  const base = BOT_PERSONALITIES[player.personalityId || 'hana'] || BOT_PERSONALITIES['hana'];
+  const personality = adjustForSkill(base, player.botSkill);
 
   if (gameState.street === 'preflop') {
     return decidePreflopAction(player, gameState, validActions, personality);

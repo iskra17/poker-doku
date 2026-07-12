@@ -44,6 +44,7 @@ export interface Player {
   isDisconnected?: boolean; // 재접속 유예(grace) 중
   revealed?: boolean; // 서버가 명시하는 홀카드 공개 여부 (쇼다운 생존자만 true)
   personalityId?: string; // for bots
+  botSkill?: RoomDifficulty; // 봇 난이도 — 방 난이도에 따라 성향 수치를 변조 (기본 normal)
   finishPlace?: number; // 시트앤고 최종 순위 (탈락/우승 시 확정)
   handStartChips?: number; // 핸드 시작 시점 스택 — 동시 탈락 순위 판정용
   sitOutNext?: boolean; // 자리비움 예약 — 다음 핸드부터 sitting-out
@@ -112,6 +113,9 @@ export interface TournamentResult {
 
 export type GameMode = 'cash' | 'sng';
 
+/** 방 난이도 — 봇들의 성향 수치를 변조한다 (easy=순하고 예측 가능, hard=공격적) */
+export type RoomDifficulty = 'easy' | 'normal' | 'hard';
+
 export interface WinResult {
   playerId: string;
   amount: number;
@@ -131,6 +135,7 @@ export interface RoomConfig {
   startingStack?: number; // 시트앤고 시작 스택
   password?: string; // 방 비밀번호 — 서버 전용, 절대 gameState로 노출하지 말 것
   hostId?: string; // 방 생성자 playerId (서버가 create-room 시 세팅)
+  difficulty?: RoomDifficulty; // 봇 난이도 (기본 'normal')
 }
 
 export interface Room {
