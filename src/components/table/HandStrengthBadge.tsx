@@ -3,21 +3,12 @@
 import { useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Card, HandRank } from '@/lib/poker/types';
-import { evaluateHand } from '@/lib/poker/evaluator';
+import { evaluateHand, HAND_RANK_KO } from '@/lib/poker/evaluator';
 import { rankValue } from '@/lib/poker/deck';
 
-export const HAND_RANK_KO: Record<HandRank, string> = {
-  'high-card': '하이카드',
-  'one-pair': '원페어',
-  'two-pair': '투페어',
-  'three-of-a-kind': '트리플',
-  straight: '스트레이트',
-  flush: '플러시',
-  'full-house': '풀하우스',
-  'four-of-a-kind': '포카드',
-  'straight-flush': '스트레이트 플러시',
-  'royal-flush': '로열 플러시',
-};
+// 한국어 랭크 표기는 evaluator(순수 모듈)를 단일 소스로 참조하고 여기서 재노출한다
+// (ActionLog·WinnerSequence가 이 모듈에서 import 중이라 계약 유지)
+export { HAND_RANK_KO };
 
 const RANK_TIER: Record<HandRank, number> = {
   'high-card': 1,

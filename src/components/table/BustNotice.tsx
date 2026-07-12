@@ -1,0 +1,62 @@
+'use client';
+
+import { useState } from 'react';
+import { motion } from 'framer-motion';
+import { useGameStore } from '@/lib/store/game-store';
+import Button from '../ui/Button';
+
+/**
+ * 캐시 게임 파산 안내 — 칩을 모두 잃은 직후(핸드 종료 시점) 1회 표시.
+ * 리바이 자체는 미구현이라, "나가서 다시 앉으면 새로 바이인" 경로를 명시적으로 안내한다.
+ * Sit & Go 탈락은 EliminationNotice가 담당하므로 여기선 캐시 게임만 다룬다.
+ */
+export default function BustNotice({ onLeave }: { onLeave: () => void }) {
+  const { gameState, myPlayerId } = useGameStore();
+  const [dismissed, setDismissed] = useState(false);
+
+  const tournament = gameState?.tournament;
+  const isCash = !tournament || tournament.entrants === 0;
+  const me = gameState?.players.find(p => p.id === myPlayerId);
+
+  if (!gameState || !isCash || !me) return null;
+  if (me.chips > 0) return null; // 아직 칩이 있으면 파산 아님
+  if (me.status === 'active' || me.status === 'all-in') return null; // 아직 이 핸드에 살아있음
+  if (gameState.isHandInProgress) return null; // 핸드가 끝난 뒤에 안내 (승리 연출과 겹치지 않게)
+  if (dismissed) return null;
+
+  return (
+    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9, y: 16 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: 'spring', stiffness: 260, damping: 22 }}
+        className="w-[min(88%,320px)] bg-elevated border border-blossom/40 rounded-2xl p-5 text-center shadow-2xl"
+      >
+        <div className="text-4xl mb-2">💸</div>
+        <h3 className="text-white font-bold text-lg mb-1">칩을 모두 잃었어요</h3>
+        <p className="text-ink-dim text-[11px] mb-4">
+          나가서 다시 앉으면 새 칩으로 바이인할 수 있어요.
+          <br />그대로 남아 다른 사람들의 승부를 지켜볼 수도 있어요.
+        </p>
+        <div className="flex gap-2">
+          <Button
+            variant="secondary"
+            size="md"
+            className="flex-1"
+            onClick={() => setDismissed(true)}
+          >
+            👀 관전
+          </Button>
+          <Button
+            variant="primary"
+            size="md"
+            className="flex-1"
+            onClick={onLeave}
+          >
+            나가서 다시 앉기
+          </Button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}

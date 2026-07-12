@@ -24,6 +24,7 @@ export default function ActionBar() {
   const betStepUnit = useSettingsStore(s => s.betStepUnit);
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [amountDraft, setAmountDraft] = useState<string | null>(null); // 금액 직접 입력 중 임시값
+  const [confirmAllIn, setConfirmAllIn] = useState(false); // 올인 오조작 방지 — 한 번 더 눌러야 확정
   const [prevRoundKey, setPrevRoundKey] = useState('');
   const isMobile = useIsMobile();
 
@@ -104,6 +105,7 @@ export default function ActionBar() {
     setPrevRoundKey(roundKey);
     setRaiseAmount(0);
     setAmountDraft(null);
+    setConfirmAllIn(false);
   }
 
   const effectiveRaise = Math.min(maxRaise, Math.max(raiseAmount, minRaise));
@@ -118,6 +120,7 @@ export default function ActionBar() {
 
   const act = (action: ActionType, amount?: number) => {
     playEffect('ui-click');
+    setConfirmAllIn(false);
     sendAction(action, amount);
   };
 
@@ -254,12 +257,20 @@ export default function ActionBar() {
 
             {myPlayer.chips > 0 && othersCanRespond && (
               <Button
-                variant="primary"
+                variant={confirmAllIn ? 'danger' : 'primary'}
                 size="md"
-                onClick={() => act('all-in')}
+                onClick={() => {
+                  // 오조작 방지: 첫 클릭은 확인 상태로 전환, 두 번째 클릭에서 실제 올인
+                  if (confirmAllIn) {
+                    act('all-in');
+                  } else {
+                    playEffect('ui-click');
+                    setConfirmAllIn(true);
+                  }
+                }}
                 className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm"
               >
-                올인
+                {confirmAllIn ? '올인 확정?' : '올인'}
               </Button>
             )}
           </div>

@@ -10,6 +10,7 @@ import ActionLog from '@/components/table/ActionLog';
 import TournamentResultOverlay from '@/components/table/TournamentResultOverlay';
 import SngWaitingOverlay from '@/components/table/SngWaitingOverlay';
 import EliminationNotice from '@/components/table/EliminationNotice';
+import BustNotice from '@/components/table/BustNotice';
 import ChatPanel from '@/components/chat/ChatPanel';
 import WinnerCutIn from '@/components/characters/WinnerCutIn';
 import LoserCutIn from '@/components/characters/LoserCutIn';
@@ -42,6 +43,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <ChatPanel />
             <SngWaitingOverlay />
             <EliminationNotice />
+            <BustNotice onLeave={onLeave} />
             <TournamentResultOverlay onLeave={onLeave} />
           </>
         ) : (

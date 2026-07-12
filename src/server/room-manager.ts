@@ -1,4 +1,5 @@
 import { PokerEngine } from '../lib/poker/engine';
+import { HAND_RANK_KO } from '../lib/poker/evaluator';
 import { RoomConfig, Player, ChatMessage, ActionType } from '../lib/poker/types';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
@@ -712,7 +713,7 @@ export class RoomManager {
       const player = room.engine.state.players.find(p => p.id === winner.playerId);
       if (!player) continue;
 
-      const handDesc = winner.hand ? ` with ${winner.hand.description}` : '';
+      const handDesc = winner.hand ? ` — ${HAND_RANK_KO[winner.hand.rank]}` : '';
       this.sendSystemChat(roomId, `${player.name}님이 ${winner.amount.toLocaleString()} 칩을 획득했습니다${handDesc}!`);
 
       // Winner character quote — 큰 팟이면 AI 상황 대사 시도, 아니면/실패 시 스크립트

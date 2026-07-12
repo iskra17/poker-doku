@@ -14,6 +14,20 @@ const HAND_RANK_VALUES: Record<HandRank, number> = {
   'royal-flush': 10,
 };
 
+/** 핸드 랭크 한국어 표기 — 서버/클라 공용 단일 소스 (시스템 채팅·배지·로그가 모두 참조) */
+export const HAND_RANK_KO: Record<HandRank, string> = {
+  'high-card': '하이카드',
+  'one-pair': '원페어',
+  'two-pair': '투페어',
+  'three-of-a-kind': '트리플',
+  straight: '스트레이트',
+  flush: '플러시',
+  'full-house': '풀하우스',
+  'four-of-a-kind': '포카드',
+  'straight-flush': '스트레이트 플러시',
+  'royal-flush': '로열 플러시',
+};
+
 function getCombinations(cards: Card[], k: number): Card[][] {
   const result: Card[][] = [];
   function combine(start: number, combo: Card[]) {
