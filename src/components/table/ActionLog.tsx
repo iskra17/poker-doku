@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { onGameEvent } from '@/lib/events/game-events';
+import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { HAND_RANK_KO } from './HandStrengthBadge';
 
 /**
@@ -33,8 +34,11 @@ const STREET_KO: Record<string, string> = {
 
 export default function ActionLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
-  const [collapsed, setCollapsed] = useState(false);
+  // null = 기기 기본값 사용 (모바일은 접힘, 데스크톱은 펼침). 사용자가 토글하면 그 의도를 고정.
+  const [userCollapsed, setUserCollapsed] = useState<boolean | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+  const collapsed = userCollapsed ?? isMobile;
 
   useEffect(() => {
     const push = (items: Omit<LogEntry, 'id'>[]) => {
@@ -78,9 +82,9 @@ export default function ActionLog() {
   }, [entries]);
 
   return (
-    <div className="absolute left-2 top-2 z-20 hidden md:block w-52">
+    <div className="absolute left-2 top-2 z-20 w-40 md:w-52">
       <button
-        onClick={() => setCollapsed(c => !c)}
+        onClick={() => setUserCollapsed(!collapsed)}
         className="w-full flex items-center justify-between bg-panel/80 backdrop-blur-sm border border-white/10 rounded-t-lg px-2.5 py-1 text-[11px] font-bold text-ink-dim hover:text-ink transition-colors"
       >
         <span>액션 로그</span>

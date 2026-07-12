@@ -215,14 +215,14 @@ export default function ActionBar() {
               <div className="flex gap-1 shrink-0">
                 <button
                   onClick={() => setRaiseAmount(Math.max(minRaise, effectiveRaise - step))}
-                  className="w-8 h-8 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-base active:scale-95 transition-transform"
+                  className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 감소`}
                 >
                   −
                 </button>
                 <button
                   onClick={() => setRaiseAmount(Math.min(maxRaise, effectiveRaise + step))}
-                  className="w-8 h-8 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-base active:scale-95 transition-transform"
+                  className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 증가`}
                 >
                   +
