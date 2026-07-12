@@ -75,9 +75,11 @@ npx tsc --noEmit
   쇼다운 패배 봇 sad 컷인). 좌석 리액션: CharacterAvatar가 표정 변화 시 바운스/흔들림 모션,
   table/SeatEmote가 승/패/올인 이모지 버스트.
 - **AI 상황 대사**: `src/server/ai-dialogue.ts` — 빅팟 승리/올인/SnG 탈락·우승 순간에 캐릭터
-  페르소나로 Claude(기본 `claude-haiku-4-5`) 대사 생성. `ANTHROPIC_API_KEY` 없으면 완전 비활성.
-  비용 가드: 일일 상한(`AI_DIALOGUE_DAILY_MAX`=200)·방별 쿨다운(20s)·확률 게이팅(0.6)·max_tokens 80,
-  실패/차단 시 항상 기존 스크립트 대사 폴백 (`RoomManager.botQuip`).
+  페르소나로 Gemini(기본 `gemini-2.5-flash-lite`, SDK 없이 raw fetch — fight club korea의
+  bot-activity.ts와 동일 패턴) 대사 생성. `GEMINI_API_KEY` 없으면 완전 비활성.
+  비용 가드: 일일 상한(`AI_DIALOGUE_DAILY_MAX`=200)·방별 쿨다운(20s)·확률 게이팅(0.6)·
+  maxOutputTokens 80·429 PerDay 감지 시 당일 중단, 실패/차단 시 항상 기존 스크립트 대사 폴백
+  (`RoomManager.botQuip`). 추후 유저↔캐릭터 상호작용 확장 시 이 모듈을 재사용할 것.
 - `src/lib/store/settings-store.ts` — zustand persist 사용자 설정: 음소거, 덱 스타일
   (클래식/빅랭크)×컬러(2/4컬러), 딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
 - 카드 수트 색은 `globals.css @theme`의 `suit-*` 토큰 + `card-theme.ts` 매핑이 단일 소스.
