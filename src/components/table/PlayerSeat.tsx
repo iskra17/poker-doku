@@ -127,28 +127,20 @@ export default function PlayerSeat({
             />
           )}
 
-          {/* 홀카드 — 아바타 옆에 살짝 겹침: 히어로 xs 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 sm */}
+          {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 xs / 상대 카드백 2xs / 쇼다운 공개 sm */}
           {showCards && (
             <div
-              className={`absolute top-1/2 -translate-y-1/2 flex pointer-events-none ${revealed ? 'z-30 gap-0.5' : 'z-20'}`}
+              className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none ${revealed ? 'z-30' : 'z-20'}`}
               style={cardAnchorStyle}
             >
               {player.holeCards.map((card, i) => (
-                <div
+                <CardComponent
                   key={i}
-                  className={
-                    revealed
-                      ? ''
-                      : i === 0 ? 'rotate-[-6deg]' : 'rotate-[6deg] -ml-1.5 translate-y-0.5'
-                  }
-                >
-                  <CardComponent
-                    card={card}
-                    hidden={!isCurrentPlayer && !player.revealed}
-                    size={isCurrentPlayer ? 'xs' : revealed ? 'sm' : '2xs'}
-                    delay={i * 0.1}
-                  />
-                </div>
+                  card={card}
+                  hidden={!isCurrentPlayer && !player.revealed}
+                  size={isCurrentPlayer ? 'xs' : revealed ? 'sm' : '2xs'}
+                  delay={i * 0.1}
+                />
               ))}
             </div>
           )}
