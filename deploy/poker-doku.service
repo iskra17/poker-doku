@@ -1,0 +1,21 @@
+[Unit]
+Description=Poker Doku game server (Next + Socket.io custom server)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=poker
+WorkingDirectory=/opt/poker-doku
+EnvironmentFile=/etc/poker-doku.env
+Environment=NODE_ENV=production
+Environment=PORT=3000
+# npm 래퍼 없이 tsx 직접 실행 — systemd 시그널이 프로세스에 바로 전달되게
+ExecStart=/opt/poker-doku/node_modules/.bin/tsx src/server/index.ts
+Restart=always
+RestartSec=3
+# 1GB VM 보호 — 런타임이 이 선을 넘으면 재시작 (게임 상태는 인메모리라 초기화됨)
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

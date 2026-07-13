@@ -1,0 +1,14 @@
+# Poker Doku 리버스 프록시 (WebSocket은 Caddy가 자동 처리)
+#
+# [기본] 도메인 없이 서버 IP로 서비스 (http://<서버IP>)
+:80 {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# [도메인 연결 시] 위 ':80' 블록을 지우고 아래 주석을 해제한 뒤
+# 도메인의 A 레코드를 서버 IP로 지정하면 HTTPS 인증서가 자동 발급됩니다.
+# 반영: systemctl reload caddy
+#
+# poker.example.com {
+# 	reverse_proxy 127.0.0.1:3000
+# }

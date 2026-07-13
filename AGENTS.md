@@ -15,7 +15,8 @@ npx tsc --noEmit
 ```
 
 `dev`/`start` 모두 `tsx src/server/index.ts` — Next 핸들러와 Socket.io를 한 HTTP 서버에 결합한
-커스텀 서버라 Vercel 서버리스에는 부적합. 배포는 Render(render.yaml) 같은 상시 프로세스 호스팅.
+커스텀 서버라 Vercel 서버리스에는 부적합. 배포는 Vultr 서울 VM 상시 프로세스 — `deploy/README.md`
+참고 (setup-server.sh 1회 셋업, deploy.sh 갱신 배포, Caddy 리버스 프록시).
 
 ## 아키텍처
 
