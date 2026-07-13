@@ -5,6 +5,7 @@ import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
 import { AIDialogue } from './ai-dialogue';
+import { DialogueManager } from './dialogue-manager';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -20,7 +21,7 @@ export class RoomManager {
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number }> = new Map();
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
-  private ai = new AIDialogue();
+  private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
 
@@ -524,7 +525,7 @@ export class RoomManager {
         const character = getCharacterById(activePlayer.personalityId || '');
         if (character && action.action === 'all-in') {
           const situation = `방금 남은 칩 전부를 걸고 올인을 선언했다 (${room.engine.state.street} 단계). 긴장감 있는 한마디.`;
-          void this.botQuip(roomId, activePlayer, situation, Math.random() < 0.4 ? character.bluffQuote : null);
+          void this.botQuip(roomId, activePlayer, 'all-in', situation, Math.random() < 0.4 ? character.bluffQuote : null);
         } else if (character && Math.random() < 0.4) {
           let msg = '';
           switch (action.action) {
@@ -631,7 +632,7 @@ export class RoomManager {
         if (character) {
           const situation = `Sit & Go 토너먼트에서 ${r.place}위로 탈락이 확정됐다`
             + (r.prize > 0 ? ` (상금 ${r.prize.toLocaleString()} 획득)` : ' (상금 없음)') + '. 퇴장 인사.';
-          void this.botQuip(roomId, busted, situation, character.loseQuote);
+          void this.botQuip(roomId, busted, r.prize > 0 ? 'sng-bust-prize' : 'sng-bust-noprize', situation, character.loseQuote);
         }
       }
     }
@@ -652,7 +653,7 @@ export class RoomManager {
         const character = getCharacterById(champPlayer.personalityId || '');
         if (character) {
           const situation = `Sit & Go 토너먼트에서 최종 우승했다 (상금 ${champ.prize.toLocaleString()}). 우승 소감 한마디.`;
-          void this.botQuip(roomId, champPlayer, situation, character.winQuote);
+          void this.botQuip(roomId, champPlayer, 'sng-champ', situation, character.winQuote);
         }
       }
     }
@@ -695,11 +696,17 @@ export class RoomManager {
   }
 
   /**
-   * 봇 상황 대사 — AI 생성 시도 후 실패/게이팅 차단 시 fallback 스크립트 대사.
+   * 봇 상황 대사 — 캐시 재사용/AI 생성(DialogueManager 3층 전략) 후 실패 시 fallback 스크립트.
    * fallback이 null이면 침묵. 비동기 응답 시점에 방/좌석이 사라졌으면 버린다.
    */
-  private async botQuip(roomId: string, player: Player, situation: string, fallback: string | null): Promise<void> {
-    const line = await this.ai.generateLine(roomId, player.personalityId || '', situation);
+  private async botQuip(
+    roomId: string,
+    player: Player,
+    situationKey: string,
+    situation: string,
+    fallback: string | null,
+  ): Promise<void> {
+    const line = await this.dialogue.getLine(roomId, player.personalityId || '', situationKey, situation);
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.players.some(p => p.id === player.id)) return;
     const text = line ?? fallback;
@@ -727,7 +734,7 @@ export class RoomManager {
           if (bigPot) {
             const situation = `방금 팟 ${winner.amount.toLocaleString()} 칩을 이겼다`
               + (winner.hand ? ` (핸드: ${winner.hand.description})` : ' (상대가 모두 폴드)') + '. 승리 한마디.';
-            void this.botQuip(roomId, player, situation, character.winQuote);
+            void this.botQuip(roomId, player, 'bigpot-win', situation, character.winQuote);
           } else {
             this.sendBotChat(roomId, player.id, player.name, character.winQuote);
           }

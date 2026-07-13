@@ -49,6 +49,12 @@ export class AIDialogue {
     return this.apiKey !== null;
   }
 
+  /** 외부(캐시 재사용 등)에서 소비한 대사를 반복 방지 버퍼에 반영 */
+  noteLine(characterId: string, line: string): void {
+    const recent = this.recentLines.get(characterId) ?? [];
+    this.recentLines.set(characterId, [...recent, line].slice(-MAX_RECENT_LINES));
+  }
+
   /** 게이팅 (키/일일 상한/쿨다운/확률) 통과 여부 — 통과 시 쿨다운/카운터를 선점한다 */
   private tryAcquire(roomId: string): boolean {
     if (!this.apiKey) return false;
@@ -139,7 +145,7 @@ export class AIDialogue {
       const line = text.trim().replace(/^["'「]|["'」]$/g, '');
       if (!line || line.length > 80) return null;
 
-      this.recentLines.set(characterId, [...recent, line].slice(-MAX_RECENT_LINES));
+      this.noteLine(characterId, line);
       return line;
     } catch (e) {
       console.warn(`[ai-dialogue] 생성 실패 (스크립트 폴백): ${e instanceof Error ? e.message : e}`);
