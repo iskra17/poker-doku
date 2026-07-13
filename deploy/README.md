@@ -30,9 +30,15 @@ fly deploy
 
 ```powershell
 fly deploy
+fly status   # ⚠️ 반드시 STATE가 'started'인지 확인
 ```
 
 재시작 시 진행 중이던 방이 초기화되므로(인메모리) 한가한 시간대 권장.
+
+**⚠️ 배포 후 머신이 `stopped`로 남는 케이스**: 배포 시점에 머신이 stopped였다면
+롤링 업데이트가 그 상태를 보존한다 ("reached stopped state ... is now in a good state").
+autostart가 켜져 있어 첫 요청이 깨우긴 하지만 그 유저는 콜드스타트(~15초)를 겪는다.
+`fly status`에서 stopped면 즉시: `fly machine start`
 
 ## 3. 운영 참고
 
