@@ -1,0 +1,9 @@
+node_modules
+.next
+.git
+.env*
+*.md
+deploy
+test-results
+.eslintcache
+npm-debug.log*

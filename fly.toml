@@ -1,0 +1,42 @@
+# Poker Doku — Fly.io 설정 (도쿄 리전, 단일 머신)
+# 최초 1회: fly launch --copy-config --no-deploy  →  fly deploy
+# 갱신 배포: fly deploy
+
+app = "poker-doku"
+primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  # AI 대사 일일 상한 — 동접 100 규모 권장값 (월 ~$3 하드캡)
+  AI_DIALOGUE_DAILY_MAX = "1500"
+  # GEMINI_API_KEY는 secrets로 주입: fly secrets set GEMINI_API_KEY=<키>
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # 게임 상태가 전부 인메모리 — 머신이 잠들면 방/좌석/칩이 전멸하므로 절대 auto stop 금지
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    # WebSocket 장기 연결 기준 — 동접 100 목표 대비 넉넉하게
+    type = "connections"
+    soft_limit = 400
+    hard_limit = 500
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "GET"
+    path = "/"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+  # 인메모리 게임 상태 보호 — 순간 스파이크에 OOM 킬 방지
+  swap_size_mb = 512

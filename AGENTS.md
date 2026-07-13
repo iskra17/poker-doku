@@ -15,8 +15,9 @@ npx tsc --noEmit
 ```
 
 `dev`/`start` 모두 `tsx src/server/index.ts` — Next 핸들러와 Socket.io를 한 HTTP 서버에 결합한
-커스텀 서버라 Vercel 서버리스에는 부적합. 배포는 Vultr 서울 VM 상시 프로세스 — `deploy/README.md`
-참고 (setup-server.sh 1회 셋업, deploy.sh 갱신 배포, Caddy 리버스 프록시).
+커스텀 서버라 Vercel 서버리스에는 부적합. 배포는 Fly.io 도쿄 단일 머신 (`fly.toml`+`Dockerfile`,
+`fly deploy`) — 인메모리 상태라 `auto_stop_machines` 금지·머신 1대 고정(수직 확장만).
+상세와 Vultr 대안은 `deploy/README.md`.
 
 ## 아키텍처
 
