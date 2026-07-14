@@ -1,6 +1,7 @@
 /**
  * 캐릭터 일러스트 에셋 매니페스트.
- * 이미지가 없어도 이모지 fallback으로 동작한다 — PNG를 추가하면 여기만 갱신하면 됨.
+ * 이미지가 없어도 이모지 fallback으로 동작한다 — 아트를 추가하면 여기만 갱신하면 됨.
+ * 서빙 포맷은 WebP (Codex 생성 원본 PNG를 640px/q82로 변환 — 장당 ~350KB→~40KB).
  */
 
 export type Expression = 'neutral' | 'happy' | 'sad' | 'thinking' | 'confident' | 'surprised';
@@ -42,5 +43,5 @@ export function getCharacterArt(characterId: string, expression: Expression = 'n
   if (!available || available.length === 0) return null;
   const resolved = available.includes(expression) ? expression : EXPRESSION_FALLBACK[expression];
   if (!available.includes(resolved)) return null;
-  return `/assets/characters/${folder}/${resolved}.png`;
+  return `/assets/characters/${folder}/${resolved}.webp`;
 }

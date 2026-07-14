@@ -13,7 +13,7 @@ import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
-  backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.jpg)',
+  backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
   backgroundSize: 'cover',
   backgroundPosition: 'center',
 };

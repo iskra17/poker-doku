@@ -21,7 +21,7 @@ export default function LobbyHeader() {
           </h1>
         ) : (
           <img
-            src="/assets/logo.png"
+            src="/assets/logo.webp"
             alt="POKER DOKU"
             // mix-blend-screen: 네온 글로우 주변의 반투명 다크 헤일로를 다크 배경에 녹인다
             className="h-28 md:h-40 w-auto mix-blend-screen drop-shadow-[0_0_24px_rgba(255,126,182,0.35)]"
