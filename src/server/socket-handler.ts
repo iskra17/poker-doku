@@ -3,6 +3,7 @@ import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty } from '../lib/poker/types';
 import { getCharacterById } from '../lib/characters';
+import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 
 const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
@@ -302,7 +303,7 @@ export function setupSocketHandlers(io: Server): void {
     });
 
     // Chat message
-    socket.on('send-chat', (data: { message: string }) => {
+    socket.on('send-chat', (data: { presetId?: string }) => {
       if (!session.roomId) return;
 
       // 채팅 플러딩 방지 — 쿨다운 내 메시지는 조용히 무시 (에러 피드백 루프 방지)
@@ -316,8 +317,10 @@ export function setupSocketHandlers(io: Server): void {
       const player = room.engine.state.players.find(p => p.id === session.playerId);
       if (!player) return;
 
-      const text = String(data.message ?? '').slice(0, 300);
-      if (!text.trim()) return;
+      // 프리셋만 허용 — 자유 텍스트는 욕설/비하 차단을 위해 받지 않는다.
+      // 클라이언트가 보낸 텍스트는 신뢰하지 않고 서버 테이블에서 id→문구를 조회한다.
+      const text = CHAT_PRESET_MAP[String(data.presetId ?? '')];
+      if (!text) return;
       roomManager.addChatMessage(session.roomId, session.playerId, player.name, text);
     });
 

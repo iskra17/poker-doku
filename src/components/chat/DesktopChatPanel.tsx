@@ -4,10 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import ChatBubble from './ChatBubble';
+import ChatPresetPicker from './ChatPresetPicker';
 
 export default function DesktopChatPanel() {
   const { chatMessages, sendChat } = useGameStore();
-  const [input, setInput] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -16,13 +16,6 @@ export default function DesktopChatPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
-
-  const handleSend = () => {
-    const msg = input.trim();
-    if (!msg) return;
-    sendChat(msg);
-    setInput('');
-  };
 
   return (
     <motion.div
@@ -57,23 +50,9 @@ export default function DesktopChatPanel() {
             )}
           </div>
 
+          {/* 프리셋 픽커 — 자유 타이핑 대신 문구/이모지 선택 */}
           <div className="p-2 border-t border-purple-500/20">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={e => setInput(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && handleSend()}
-                placeholder="Type a message..."
-                className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-1.5 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-purple-500/50"
-              />
-              <button
-                onClick={handleSend}
-                className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg px-3 py-1.5 text-sm font-bold transition-colors"
-              >
-                ↵
-              </button>
-            </div>
+            <ChatPresetPicker onSend={sendChat} />
           </div>
         </>
       )}

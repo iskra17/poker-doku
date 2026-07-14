@@ -74,7 +74,7 @@ interface GameStore {
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
   leaveRoom: () => void;
   sendAction: (action: ActionType, amount?: number) => void;
-  sendChat: (message: string) => void;
+  sendChat: (presetId: string) => void; // 프리셋 채팅 — 자유 텍스트 없음 (presets.ts)
   toggleSitOut: () => void;
   useTimeBank: () => void;
   sngFillBots: () => void;
@@ -210,10 +210,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.emit('player-action', { action, amount });
   },
 
-  sendChat: (message: string) => {
+  sendChat: (presetId: string) => {
     const { socket } = get();
     if (!socket) return;
-    socket.emit('send-chat', { message });
+    socket.emit('send-chat', { presetId });
   },
 
   toggleSitOut: () => {

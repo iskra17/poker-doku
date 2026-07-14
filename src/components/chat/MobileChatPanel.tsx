@@ -4,10 +4,10 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import ChatBubble from './ChatBubble';
+import ChatPresetPicker from './ChatPresetPicker';
 
 export default function MobileChatPanel() {
   const { chatMessages, sendChat } = useGameStore();
-  const [input, setInput] = useState('');
   const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -16,13 +16,6 @@ export default function MobileChatPanel() {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [chatMessages]);
-
-  const handleSend = () => {
-    const msg = input.trim();
-    if (!msg) return;
-    sendChat(msg);
-    setInput('');
-  };
 
   return (
     <>
@@ -81,25 +74,9 @@ export default function MobileChatPanel() {
                 )}
               </div>
 
-              {/* Input */}
+              {/* 프리셋 픽커 — 자유 타이핑 대신 문구/이모지 선택 */}
               <div className="p-3 border-t border-purple-500/20">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSend()}
-                    placeholder="Type a message..."
-                    enterKeyHint="send"
-                    className="flex-1 bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-sm text-white placeholder:text-gray-500 focus:outline-none focus:border-purple-500/50"
-                  />
-                  <button
-                    onClick={handleSend}
-                    className="bg-purple-600 hover:bg-purple-500 text-white rounded-lg px-4 py-2 text-sm font-bold transition-colors"
-                  >
-                    ↵
-                  </button>
-                </div>
+                <ChatPresetPicker onSend={sendChat} />
               </div>
             </motion.div>
           </>
