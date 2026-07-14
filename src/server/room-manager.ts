@@ -15,6 +15,8 @@ export class RoomManager {
   private rooms: Map<string, { engine: PokerEngine; config: RoomConfig; createdAt: number; persistent?: boolean }> = new Map();
   private chatHistory: Map<string, ChatMessage[]> = new Map();
   private botIntervals: Map<string, NodeJS.Timeout> = new Map();
+  /** 봇 루프 세대 — stopBotLoop마다 증가. await(사고 지연) 중이던 이전 루프가 깨어나도 진행 못 하게 한다 */
+  private botLoopEpochs: Map<string, number> = new Map();
   private pendingStartTimers: Map<string, NodeJS.Timeout> = new Map();
   private turnTimers: Map<string, NodeJS.Timeout> = new Map();
   private turnDeadlines: Map<string, number> = new Map();
@@ -63,6 +65,7 @@ export class RoomManager {
         this.rooms.delete(id);
         this.chatHistory.delete(id);
         this.tournamentClocks.delete(id);
+        this.botLoopEpochs.delete(id);
         removed++;
       }
     });
@@ -172,6 +175,7 @@ export class RoomManager {
         this.rooms.delete(roomId);
         this.chatHistory.delete(roomId);
         this.tournamentClocks.delete(roomId);
+        this.botLoopEpochs.delete(roomId);
       }
       return;
     }
@@ -302,11 +306,19 @@ export class RoomManager {
       }
     }
 
+    const prevHandNumber = room.engine.state.handNumber;
     room.engine.startHand();
 
-    // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못했으면 봇 충원 경로로 재시도
     if (!room.engine.state.isHandInProgress) {
-      this.tryStartGame(roomId);
+      if (room.engine.state.handNumber > prevHandNumber) {
+        // 딜은 됐지만 블라인드 전원 올인 런아웃으로 즉시 쇼다운까지 끝난 핸드 — 정상 종료 플로우
+        this.onUpdate(roomId, room.engine);
+        this.announceWinner(roomId);
+        this.scheduleNextHand(roomId);
+      } else {
+        // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
+        this.tryStartGame(roomId);
+      }
       return;
     }
 
@@ -428,11 +440,10 @@ export class RoomManager {
     const canCheck = activePlayer.currentBet >= room.engine.state.currentBet;
     const action: ActionType = canCheck ? 'check' : 'fold';
 
-    this.sendSystemChat(roomId, `${activePlayer.name}님 ${reason} — 자동 ${action === 'check' ? '체크' : '폴드'}되었습니다.`);
-
     const result = room.engine.processAction({ playerId, type: action, amount: 0 });
 
     if (result.valid) {
+      this.sendSystemChat(roomId, `${activePlayer.name}님 ${reason} — 자동 ${action === 'check' ? '체크' : '폴드'}되었습니다.`);
       if (result.handComplete) {
         this.onUpdate(roomId, room.engine);
         this.announceWinner(roomId);
@@ -442,6 +453,10 @@ export class RoomManager {
         this.startPlayerLoop(roomId);
         this.onUpdate(roomId, room.engine);
       }
+    } else {
+      // 자동 액션이 거부됨(그 사이 상태 변화) — 현재 액터 기준으로 루프를 재정렬해 교착 방지
+      this.startPlayerLoop(roomId);
+      this.onUpdate(roomId, room.engine);
     }
   }
 
@@ -514,19 +529,23 @@ export class RoomManager {
 
   private startBotLoop(roomId: string): void {
     this.stopBotLoop(roomId);
+    const epoch = this.botLoopEpochs.get(roomId) ?? 0;
+    const isStale = () => (this.botLoopEpochs.get(roomId) ?? 0) !== epoch;
 
     const loop = async () => {
+      if (isStale()) return;
       const room = this.rooms.get(roomId);
       if (!room || !room.engine.state.isHandInProgress) return;
 
       const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
       if (!activePlayer || activePlayer.type !== 'bot') {
-        // 다음 플레이어가 봇이 아니면 → 턴 타이머 시작
-        this.startTurnTimer(roomId);
+        // 다음 플레이어가 봇이 아니면 → 휴먼 턴 처리(타이머/접속 끊김 지연)로 위임
+        this.startPlayerLoop(roomId);
         return;
       }
 
-      const { acted, action } = await processBotTurn(room.engine);
+      const { acted, action } = await processBotTurn(room.engine, isStale);
+      if (isStale()) return; // 사고 지연 중 루프가 교체됨 — 새 루프가 진행을 소유
       if (acted && action) {
         // Bot chat based on action — 올인은 극적인 순간이라 AI 대사 시도, 나머지는 스크립트
         const character = getCharacterById(activePlayer.personalityId || '');
@@ -667,6 +686,9 @@ export class RoomManager {
   }
 
   stopBotLoop(roomId: string): void {
+    // 세대 증가 — 사고 지연(await) 중인 in-flight 루프는 타이머 클리어로 멈출 수 없으므로
+    // 깨어난 뒤 세대 불일치를 보고 스스로 중단한다 (중복 루프/이중 액션 방지)
+    this.botLoopEpochs.set(roomId, (this.botLoopEpochs.get(roomId) ?? 0) + 1);
     const interval = this.botIntervals.get(roomId);
     if (interval) {
       clearTimeout(interval);
@@ -678,16 +700,16 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return false;
 
-    // 턴 타이머 클리어 (플레이어가 행동함)
-    this.clearTurnTimer(roomId);
-
     const result = room.engine.processAction({
       playerId,
       type: actionType,
       amount,
     });
 
+    // 검증 통과 후에만 타이머 클리어 — 잘못된(또는 남의 턴) 액션이 현재 액터의 턴 시계를 죽이면
+    // 자동 체크/폴드가 사라져 게임이 멈춘다
     if (!result.valid) return false;
+    this.clearTurnTimer(roomId);
 
     if (result.handComplete) {
       this.onUpdate(roomId, room.engine);

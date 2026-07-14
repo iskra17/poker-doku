@@ -273,6 +273,14 @@ export class PokerEngine {
 
     // Set first actor (UTG, left of BB)
     this.setFirstActor();
+
+    // 블라인드 포스팅만으로 이미 액션이 불가능한 핸드(블라인드 올인 등)는 즉시 진행 —
+    // 첫 액터가 없거나(전원 올인) 베팅 라운드가 이미 완결이면 보드를 런아웃한다.
+    // 이 처리가 없으면 activePlayerIndex가 올인 좌석을 가리켜 게임이 교착된다.
+    const firstActor = this.state.players[this.state.activePlayerIndex];
+    if (!firstActor || firstActor.status !== 'active' || this.isBettingRoundComplete()) {
+      this.advanceAfterAction(false);
+    }
   }
 
   private advanceDealerButton(): void {
@@ -332,18 +340,34 @@ export class PokerEngine {
     }
   }
 
+  /** 이 핸드에 딜인된 다음 좌석 (active/all-in) — 블라인드 올인자도 포지션 계산에 포함 */
+  private getNextInHandIndex(fromIndex: number): number {
+    const n = this.state.players.length;
+    let idx = (fromIndex + 1) % n;
+    for (let k = 0; k < n; k++) {
+      const status = this.state.players[idx].status;
+      if (status === 'active' || status === 'all-in') return idx;
+      idx = (idx + 1) % n;
+    }
+    return -1;
+  }
+
   private setFirstActor(): void {
     const active = this.state.players.filter(p => p.status !== 'sitting-out');
     const dealerPos = this.state.dealerIndex;
 
     if (this.state.street === 'preflop') {
       if (active.length === 2) {
-        // Heads-up: dealer (SB) acts first preflop
-        this.state.activePlayerIndex = dealerPos;
+        // Heads-up: dealer (SB) acts first preflop.
+        // 블라인드 포스팅으로 이미 올인이면 액션 가능한 다음 좌석 (없으면 -1 — startHand가 즉시 진행 처리)
+        this.state.activePlayerIndex = this.state.players[dealerPos]?.status === 'active'
+          ? dealerPos
+          : this.getNextActiveIndex(dealerPos);
       } else {
-        // UTG: left of BB
-        const sbIdx = this.getNextActiveIndex(dealerPos);
-        const bbIdx = this.getNextActiveIndex(sbIdx);
+        // UTG: left of BB. 포지션(SB/BB)은 올인 여부와 무관하게 딜인 좌석 기준으로 계산해야
+        // 블라인드 올인 시 첫 액터가 밀리지 않는다. 첫 액터 자체는 액션 가능(active) 좌석만.
+        const sbIdx = this.getNextInHandIndex(dealerPos);
+        const bbIdx = this.getNextInHandIndex(sbIdx);
         this.state.activePlayerIndex = this.getNextActiveIndex(bbIdx);
       }
     } else {

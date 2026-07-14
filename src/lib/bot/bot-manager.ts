@@ -79,7 +79,11 @@ export function botThinkDelay(decision: BotDecision, player: Player, state: Game
   return jitter(base + bigness * 700, 1000);
 }
 
-export async function processBotTurn(engine: PokerEngine): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
+export async function processBotTurn(
+  engine: PokerEngine,
+  /** 사고 지연 중 루프가 교체됐는지 확인 — true면 액션 없이 중단 (stale 이중 액션 방지) */
+  isCancelled?: () => boolean,
+): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
   const activePlayer = engine.state.players[engine.state.activePlayerIndex];
   if (!activePlayer || activePlayer.type !== 'bot') {
     return { acted: false };
@@ -90,11 +94,23 @@ export async function processBotTurn(engine: PokerEngine): Promise<{ acted: bool
 
   await new Promise(resolve => setTimeout(resolve, botThinkDelay(decision, activePlayer, engine.state)));
 
-  engine.processAction({
+  if (isCancelled?.()) return { acted: false };
+
+  const result = engine.processAction({
     playerId: activePlayer.id,
     type: decision.action,
     amount: decision.amount,
   });
+
+  // 결정이 거부되면(사고 지연 중 상태 변화 등) 체크/폴드로 강제 진행 — 무한 재시도 교착 방지
+  if (!result.valid) {
+    const canCheck = activePlayer.currentBet >= engine.state.currentBet;
+    engine.processAction({
+      playerId: activePlayer.id,
+      type: canCheck ? 'check' : 'fold',
+      amount: 0,
+    });
+  }
 
   return { acted: true, action: decision };
 }
