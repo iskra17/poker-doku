@@ -7,8 +7,9 @@ import { getCharacterById } from '@/lib/characters';
 import { getLayout, toDisplayIndex } from '../table/table-layout';
 
 /**
- * 봇 좌석 말풍선 — 봇 채팅 메시지를 해당 좌석 옆에 3초간 표시.
+ * 좌석 말풍선 — 봇/휴먼(본인 포함) 채팅 메시지를 해당 좌석 위에 3초간 표시.
  * 채팅 패널과 병행 (놓친 메시지는 채팅에서 확인 가능).
+ * 본인 프리셋 채팅도 여기서 표시된다 — 히어로 좌석(하단 중앙) 위로 떠서 액션 독에 가리지 않음.
  */
 
 interface Bubble {
@@ -33,13 +34,16 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
     // zustand 스토어 구독 (외부 시스템 콜백에서만 setState)
     const unsubscribe = useGameStore.subscribe(state => {
       const last = state.chatMessages[state.chatMessages.length - 1];
-      if (!last || last.type !== 'bot' || last.id === lastIdRef.current) return;
+      if (!last || (last.type !== 'bot' && last.type !== 'player') || last.id === lastIdRef.current) return;
       lastIdRef.current = last.id;
 
       const player = state.gameState?.players.find(p => p.id === last.playerId);
       if (!player) return; // 딜러 멘트는 DealerCorner 담당
 
-      const character = getCharacterById(player.personalityId || '');
+      // 봇은 성향 id, 휴먼은 프로필 아바타로 캐릭터 색을 찾는다 (없으면 기본색)
+      const character = getCharacterById(
+        (player.type === 'bot' ? player.personalityId : player.avatar) || '',
+      );
       const mySeat = state.gameState?.players.find(p => p.id === state.myPlayerId)?.seatIndex ?? -1;
       setBubble({
         id: last.id,

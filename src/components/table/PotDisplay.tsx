@@ -33,8 +33,8 @@ export default function PotDisplay({ pots, compact = false }: PotDisplayProps) {
   if (totalPot <= 0) return null;
 
   const chips = decomposeChips(totalPot, stackedPot ? 16 : 5);
-  const chipPx = compact ? 20 : 26;
-  const stackOverlap = compact ? 4 : 5; // 칩 1장의 측면 두께(px)
+  const chipPx = compact ? 16 : 22;
+  const stackOverlap = compact ? 3 : 4; // 칩 1장의 측면 두께(px)
 
   return (
     <motion.div
@@ -82,9 +82,9 @@ export default function PotDisplay({ pots, compact = false }: PotDisplayProps) {
       )}
       {/* 팟 금액 (카운트업) */}
       <div className={`bg-black/50 backdrop-blur-sm rounded-full border border-gilded/40 shadow-lg shadow-gilded/10
-        ${compact ? 'px-3 py-1' : 'px-4 py-1.5'}
+        ${compact ? 'px-2.5 py-0.5' : 'px-3.5 py-1'}
       `}>
-        <span className={`text-gilded font-bold tabular ${compact ? 'text-sm' : 'text-lg'}`}>
+        <span className={`text-gilded font-bold tabular ${compact ? 'text-xs' : 'text-base'}`}>
           POT {formatChips(displayPot)}
         </span>
       </div>

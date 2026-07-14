@@ -12,11 +12,12 @@ interface CharacterAvatarProps {
   isActive?: boolean;
 }
 
+// lg/xl은 좌석 아바타 — 세로 440px 컬럼이 꽉 차 보이지 않게 한 단계 낮춘 크기 유지 (모바일 QA)
 const sizeMap = {
   sm: 'w-10 h-10 text-lg',
   md: 'w-14 h-14 text-2xl',
-  lg: 'w-20 h-20 text-3xl',
-  xl: 'w-24 h-24 text-4xl',
+  lg: 'w-16 h-16 text-2xl',
+  xl: 'w-20 h-20 text-3xl',
 };
 
 // 표정 전환 시 1회 재생되는 리액션 모션 — 승리(happy)는 바운스, 패배(sad)는 흔들림

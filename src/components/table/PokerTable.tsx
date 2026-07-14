@@ -158,7 +158,7 @@ export default function PokerTable() {
               className="absolute -translate-x-1/2 -translate-y-1/2 z-10"
               style={{ left: pos.x, top: pos.y }}
             >
-              <ChipStack amount={player.currentBet} size={isMobile ? 'sm' : 'md'} />
+              <ChipStack amount={player.currentBet} size={isMobile ? 'xs' : 'sm'} />
             </div>
           );
         })}

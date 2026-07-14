@@ -36,7 +36,7 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 
 /**
  * 좌석 — 프로필(캐릭터) 중심 레이아웃.
- * 아바타를 크게(모바일 80px/데스크탑 96px) 두고, 홀카드는 아바타 옆에 살짝 겹치는
+ * 아바타를 크게(모바일 64px/데스크탑 80px) 두고, 홀카드는 아바타 옆에 살짝 겹치는
  * 작은 배지로 처리: 히어로 xs 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 시 sm(z-30).
  * cardSide로 좌우를 정한다 (우측 열 좌석은 왼쪽 — overflow-hidden 클리핑 방지).
  * 이름/칩 플레이트는 아바타 하단 겹침(z-20), 칩 부분 터치로 칩↔BB 표기 토글.
@@ -60,7 +60,7 @@ export default function PlayerSeat({
         <button
           onClick={() => onSit?.(seatIndex)}
           className={`rounded-full border-2 border-dashed border-white/20 hover:border-purple-400/50 hover:bg-purple-500/10 transition-all flex items-center justify-center text-white/30 hover:text-purple-300 cursor-pointer
-            ${compact ? 'w-20 h-20 text-xs' : 'w-24 h-24 text-sm'}
+            ${compact ? 'w-16 h-16 text-xs' : 'w-20 h-20 text-sm'}
           `}
         >
           앉기
@@ -120,7 +120,7 @@ export default function PlayerSeat({
             <TurnTimer
               remainingMs={turnDuration}
               totalSeconds={turnTotalSeconds}
-              sizePx={compact ? 80 : 96}
+              sizePx={compact ? 64 : 80}
             />
           )}
 
@@ -147,9 +147,9 @@ export default function PlayerSeat({
         <div className={`relative z-20 -mt-3 ${isDimmed ? 'opacity-80' : ''}`}>
           <div className={`bg-black/70 backdrop-blur-sm rounded-lg text-center border
             ${isBusted ? 'border-red-500/30' : 'border-white/10'}
-            ${compact ? 'px-2.5 py-1 min-w-[84px]' : 'px-3.5 py-1 min-w-[104px]'}
+            ${compact ? 'px-2 py-0.5 min-w-[74px]' : 'px-3 py-1 min-w-[92px]'}
           `}>
-            <div className={`text-white font-bold truncate mx-auto ${compact ? 'text-[13px] max-w-[80px]' : 'text-[15px] max-w-[100px]'}`}>
+            <div className={`text-white font-bold truncate mx-auto ${compact ? 'text-[12px] max-w-[72px]' : 'text-[14px] max-w-[88px]'}`}>
               {player.name}
               {isCurrentPlayer && <span className="text-blossom ml-0.5">(나)</span>}
             </div>
@@ -159,7 +159,7 @@ export default function PlayerSeat({
               onClick={toggleChipDisplayMode}
               title="칩 ↔ BB 표기 전환"
               className={`block w-full font-semibold cursor-pointer select-none tabular-nums
-                ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-xs' : 'text-[13px]'}`}
+                ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-[11px]' : 'text-xs'}`}
             >
               {isBusted
                 ? (player.finishPlace ? `${player.finishPlace}위 탈락` : '탈락')

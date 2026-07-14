@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
+import { ACTION_DOCK_HEIGHT } from '../table/ActionBar';
 import ChatBubble from './ChatBubble';
 import ChatPresetPicker from './ChatPresetPicker';
 
@@ -10,6 +11,12 @@ export default function MobileChatPanel() {
   const { chatMessages, sendChat } = useGameStore();
   const [isOpen, setIsOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 프리셋 전송 → 시트를 닫아 테이블 위 내 말풍선이 보이게 (전송 피드백 잠깐 보여준 뒤)
+  const handleSend = (presetId: string) => {
+    sendChat(presetId);
+    setTimeout(() => setIsOpen(false), 350);
+  };
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -19,11 +26,11 @@ export default function MobileChatPanel() {
 
   return (
     <>
-      {/* Chat toggle button */}
+      {/* Chat toggle button — 액션 독(불투명, z-30)보다 위에 떠야 가려지지 않는다 */}
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="fixed right-3 z-20 w-10 h-10 rounded-full bg-purple-600/80 backdrop-blur-sm flex items-center justify-center text-white shadow-lg border border-purple-500/30"
-        style={{ bottom: 'calc(140px + var(--safe-bottom))' }}
+        className="fixed right-3 z-30 w-10 h-10 rounded-full bg-purple-600/80 backdrop-blur-sm flex items-center justify-center text-white shadow-lg border border-purple-500/30"
+        style={{ bottom: `calc(${ACTION_DOCK_HEIGHT + 12}px + var(--safe-bottom))` }}
       >
         💬
         {chatMessages.length > 0 && (
@@ -74,9 +81,9 @@ export default function MobileChatPanel() {
                 )}
               </div>
 
-              {/* 프리셋 픽커 — 자유 타이핑 대신 문구/이모지 선택 */}
+              {/* 프리셋 픽커 — 자유 타이핑 대신 문구/이모지 선택. 전송 시 시트 자동 닫힘 */}
               <div className="p-3 border-t border-purple-500/20">
-                <ChatPresetPicker onSend={sendChat} />
+                <ChatPresetPicker onSend={handleSend} />
               </div>
             </motion.div>
           </>
