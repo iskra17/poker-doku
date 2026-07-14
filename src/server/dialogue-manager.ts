@@ -85,9 +85,10 @@ export class DialogueManager {
     const poolKey = `${characterId}:${situationKey}`;
     const pool = this.pools.get(poolKey) ?? [];
 
-    // 2층: 풀이 충분하면 확률적으로 재사용 (풀이 가득할수록 재사용률 상향)
+    // 2층: 풀이 충분하면 확률적으로 재사용 (풀이 가득할수록 재사용률 상향 — 하향은 없음:
+    // reuseChance가 0.9 이상일 때 음수 보정으로 재사용률이 떨어지던 버그 방지)
     const fullness = Math.min(1, pool.length / this.opts.maxPool);
-    const reuseP = this.opts.reuseChance + fullness * (0.9 - this.opts.reuseChance);
+    const reuseP = this.opts.reuseChance + fullness * Math.max(0, 0.9 - this.opts.reuseChance);
     if (pool.length >= this.opts.minPool && Math.random() < reuseP) {
       const line = this.pickFromPool(poolKey, pool);
       if (line) return line;
