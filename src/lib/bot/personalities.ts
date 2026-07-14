@@ -9,6 +9,7 @@
  * - hana:   타이트 어그레시브 (TAG) — 정석파, 좋은 핸드만 강하게
  * - yuki:   콜링 스테이션 (루즈 패시브) — 뭐든 보고 싶어함, 거의 폴드 안 함
  * - akira:  매니악 — 초공격적, 블러프 최다
+ * - reika:  밸런스드 프로 — 모든 지표가 교과서 균형, 가끔 몬스터 슬로플레이 트랩
  */
 export interface BotPersonality {
   id: string;
@@ -82,6 +83,20 @@ export const BOT_PERSONALITIES: Record<string, BotPersonality> = {
     threeBet: 0.03,
     slowPlay: 0.15,
     betSizing: 0.40,
+  },
+  'reika': {
+    id: 'reika',
+    style: '밸런스드 프로',
+    vpip: 0.30,
+    pfr: 0.24,
+    aggression: 0.60,
+    bluffFrequency: 0.22,
+    foldToPressure: 0.30,
+    callDown: 0.40,
+    limp: 0.08,
+    threeBet: 0.16,
+    slowPlay: 0.30,
+    betSizing: 0.60,
   },
   'akira': {
     id: 'akira',

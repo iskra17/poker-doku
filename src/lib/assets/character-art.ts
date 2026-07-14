@@ -14,6 +14,8 @@ const ART_FOLDERS: Record<string, string> = {
   hana: 'hana',
   yuki: 'yuki',
   akira: 'akira',
+  // reika: 아트 미생성 — 이모지 fallback 사용 중. 일러스트 생성 후 'reika' 폴더 추가할 것
+  // (2026-07-14 기준 Codex gpt-image 403 / Gemini 무료티어 이미지 쿼터 0으로 생성 보류)
 };
 
 // 보유 중인 표정 (MVP 3종 — thinking/confident/surprised는 확장 시 추가)

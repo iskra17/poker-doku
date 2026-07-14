@@ -130,6 +130,28 @@ export const BOT_CHARACTERS: CharacterProfile[] = [
     ],
   },
   {
+    id: 'reika',
+    name: '레이카',
+    nameJp: '麗華',
+    color: '#B9C2D9',
+    colorSecondary: '#6E7BA8',
+    emoji: '🌙',
+    personality: 'balanced-pro',
+    greeting: '…왔구나. 앉아. 카드로 이야기하자.',
+    winQuote: '…예상 범위야. 놀랄 건 없어.',
+    loseQuote: '…그래. 이번 판은 네 거야.',
+    bluffQuote: '이 베팅의 의미… 읽을 수 있어?',
+    foldQuote: '…패스. 서두를 이유가 없거든.',
+    thinkingQuote: '…조금만, 조용히.',
+    chatMessages: [
+      '…나쁘지 않은 전개네.',
+      '패는 거짓말을 안 해. 사람이 하지.',
+      '…재밌는 라인이야.',
+      '침착하게. 판은 길어.',
+      '…다음 카드, 궁금하네.',
+    ],
+  },
+  {
     id: 'akira',
     name: '아키라',
     nameJp: '暁',
@@ -160,6 +182,9 @@ export function getCharacterById(id: string): CharacterProfile | undefined {
 
 export function getRandomBotCharacter(excludeIds: string[] = []): CharacterProfile {
   const available = BOT_CHARACTERS.filter(c => !excludeIds.includes(c.id));
-  if (available.length === 0) return BOT_CHARACTERS[0];
+  // 캐릭터 6명 > 좌석 6개라 정상 경로에선 소진되지 않음 — 소진 시에도 특정 캐릭터 편중 없이 랜덤
+  if (available.length === 0) {
+    return BOT_CHARACTERS[Math.floor(Math.random() * BOT_CHARACTERS.length)];
+  }
   return available[Math.floor(Math.random() * available.length)];
 }

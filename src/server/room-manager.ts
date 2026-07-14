@@ -251,7 +251,7 @@ export class RoomManager {
       }
     } else {
       // 캐시 게임: 봇은 설정 수(botCount, 기본 2)까지만 충원 — 나머지 좌석은 휴먼 몫.
-      // 솔로용 영속 방은 botCount=5로 캐릭터 5명이 모두 등장한다.
+      // 솔로용 영속 방은 botCount=5 (캐릭터 6명 중 히어로 프로필을 제외한 5명이 등장).
       const humans = room.engine.state.players.filter(p => p.type === 'human').length;
       const bots = room.engine.state.players.length - humans;
       const targetBots = Math.min(room.config.botCount ?? 2, room.config.maxPlayers - humans);

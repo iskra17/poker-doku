@@ -1,7 +1,9 @@
 # Poker Doku (ポーカー道場)
 
 일본 미소녀 연애 시뮬레이션(갸루게) 감성의 멀티플레이어 텍사스 홀덤 웹 게임.
-캐릭터(딜러 미야코 + 봇 5명)가 중심인 6-max 노리밋 홀덤. UI는 전면 한국어.
+캐릭터(딜러 미야코 + 봇 6명)가 중심인 6-max 노리밋 홀덤. UI는 전면 한국어.
+(봇 캐릭터가 좌석 수(6)보다 1명 많아 히어로 프로필과 겹치지 않고 봇 5석을 채울 수 있다 —
+캐릭터를 줄이면 6인 플레이에서 중복이 재발하니 주의.)
 
 ## 실행
 
@@ -66,10 +68,11 @@ npx tsc --noEmit
 - `src/server/` — 커스텀 서버, 소켓 핸들러, RoomManager(방/타이머/봇), SessionManager
 - `src/lib/poker/` — 순수 게임 로직 (engine, evaluator, deck, types) + 테스트
 - `src/lib/bot/` — 봇 AI. `personalities.ts`가 아키타입 DB (사쿠라=록, 류카=LAG, 하나=TAG,
-  유키=콜링 스테이션, 아키라=매니악 — vpip/pfr/aggression/limp/threeBet/slowPlay/betSizing).
+  유키=콜링 스테이션, 아키라=매니악, 레이카=밸런스드 프로 —
+  vpip/pfr/aggression/limp/threeBet/slowPlay/betSizing).
   `bot-ai.ts`는 프리플랍 티어 + evaluator 기반 포스트플랍 강도/드로우 감지로 결정. 숏스택(≤10BB)
   푸시/폴드 레이어는 결정론 — 테스트가 의존하므로 유지할 것.
-- `src/lib/characters/` — 캐릭터 프로필/한국어 대사 (딜러 미야코, 사쿠라, 류카, 하나, 유키, 아키라)
+- `src/lib/characters/` — 캐릭터 프로필/한국어 대사 (딜러 미야코, 사쿠라, 류카, 하나, 유키, 아키라, 레이카)
 - `src/lib/sound/` — Web Audio 합성 사운드 (에셋 파일 없음)
 - `src/lib/assets/character-art.ts` — 일러스트 매니페스트 (이미지 없으면 이모지 fallback)
 - `src/components/table/` — 테이블 UI. **세로형 단일 레이아웃** — 모든 화면에서 세로 타원 컬럼
@@ -97,6 +100,7 @@ npx tsc --noEmit
   (클래식/빅랭크)×컬러(2/4컬러), 딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
 - 카드 수트 색은 `globals.css @theme`의 `suit-*` 토큰 + `card-theme.ts` 매핑이 단일 소스.
 - `public/assets/` — Codex(gpt-image)로 생성한 캐릭터 일러스트 6명×3표정, 로고, 로비 배경
+  (레이카는 일러스트 보류 중 — 이모지 fallback으로 동작, 생성 경로가 복구되면 3표정 추가)
 
 ## 컨벤션
 
