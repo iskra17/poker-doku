@@ -3,6 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
+import { useGameStore } from '@/lib/store/game-store';
+import { useSettingsStore } from '@/lib/store/settings-store';
+import { formatChipAmount } from '@/lib/format-chips';
 import { HAND_RANK_KO } from './HandStrengthBadge';
 
 /**
@@ -45,6 +48,13 @@ export default function ActionLog() {
       setEntries(prev => [...prev, ...items.map(e => ({ ...e, id: nextLogId++ }))].slice(-MAX_ENTRIES));
     };
 
+    // 기록 시점의 칩/BB 표기 설정으로 포맷 (이벤트 콜백 — 스토어 직접 조회)
+    const fmt = (amount: number) => formatChipAmount(
+      amount,
+      useSettingsStore.getState().chipDisplayMode,
+      useGameStore.getState().gameState?.bigBlind ?? 0,
+    );
+
     return onGameEvent(event => {
       switch (event.type) {
         case 'hand-start':
@@ -60,7 +70,7 @@ export default function ActionLog() {
             ? '벳'
             : ACTION_KO[event.actionType] ?? event.actionType;
           const amount = event.amount > 0 && event.actionType !== 'fold' && event.actionType !== 'check'
-            ? ` ${event.amount.toLocaleString()}`
+            ? ` ${fmt(event.amount)}`
             : '';
           push([{ kind: 'action', text: `${event.playerName} ${action}${amount}` }]);
           break;
@@ -69,7 +79,7 @@ export default function ActionLog() {
           push(event.winners.map(w => {
             const name = event.players.find(p => p.id === w.playerId)?.name ?? '?';
             const hand = w.hand ? ` (${HAND_RANK_KO[w.hand.rank]})` : '';
-            return { kind: 'win' as const, text: `🏆 ${name} +${w.amount.toLocaleString()}${hand}` };
+            return { kind: 'win' as const, text: `🏆 ${name} +${fmt(w.amount)}${hand}` };
           }));
           break;
         }

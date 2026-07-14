@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { getCharacterById } from '@/lib/characters';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
 
 /**
@@ -84,6 +85,7 @@ function loserBg(color: string): string {
 
 function DesktopLoserCutIn({ data }: { data: CutInData }) {
   const { display } = useTypewriter(data.quote, 28);
+  const formatChips = useChipFormatter();
   return (
     <motion.div
       initial={{ x: '-110%', opacity: 0 }}
@@ -104,7 +106,7 @@ function DesktopLoserCutIn({ data }: { data: CutInData }) {
           >
             {data.name}
           </div>
-          <div className="text-red-400/90 text-xs font-bold tabular">-{data.amount.toLocaleString()}</div>
+          <div className="text-red-400/90 text-xs font-bold tabular">-{formatChips(data.amount)}</div>
           <p className="text-ink-dim text-xs mt-1 leading-snug">{display}</p>
         </div>
       </div>
@@ -114,6 +116,7 @@ function DesktopLoserCutIn({ data }: { data: CutInData }) {
 
 /** 모바일 — 좌상단 컴팩트 칩 (승자 컷인이 하단을 쓰므로 겹치지 않게) */
 function MobileLoserChip({ data }: { data: CutInData }) {
+  const formatChips = useChipFormatter();
   return (
     <motion.div
       initial={{ x: -80, opacity: 0 }}
@@ -131,7 +134,7 @@ function MobileLoserChip({ data }: { data: CutInData }) {
           {data.name}
         </span>
         <span className="block text-[9px] text-red-400/90 font-bold tabular">
-          -{data.amount.toLocaleString()}
+          -{formatChips(data.amount)}
         </span>
       </div>
     </motion.div>

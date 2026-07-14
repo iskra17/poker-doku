@@ -5,6 +5,7 @@ import { Player } from '@/lib/poker/types';
 import { SeatAction } from '@/lib/hooks/use-seat-actions';
 import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
 import TurnTimer from './TurnTimer';
@@ -22,8 +23,6 @@ interface PlayerSeatProps {
   seatAction?: SeatAction | null;
   /** 홀카드를 붙일 쪽 — 우측 열 좌석은 화면 클리핑 방지를 위해 왼쪽(테이블 중앙 방향) */
   cardSide?: 'left' | 'right';
-  /** 칩↔BB 표기 전환용 현재 빅블라인드 */
-  bigBlind?: number;
   onSit?: (seatIndex: number) => void;
 }
 
@@ -45,12 +44,12 @@ const actionLabels: Record<string, { text: string; color: string }> = {
  */
 export default function PlayerSeat({
   player, isCurrentPlayer, isActive, position, seatIndex, compact = false,
-  turnDuration = 0, turnTotalSeconds = 30, seatAction, cardSide = 'right', bigBlind = 0, onSit,
+  turnDuration = 0, turnTotalSeconds = 30, seatAction, cardSide = 'right', onSit,
 }: PlayerSeatProps) {
   // 훅은 early return 이전에 호출 (React 규칙)
   const expression = useSeatExpression(player?.id, isActive);
-  const chipDisplayMode = useSettingsStore(s => s.chipDisplayMode);
   const toggleChipDisplayMode = useSettingsStore(s => s.toggleChipDisplayMode);
+  const formatChips = useChipFormatter();
 
   if (!player) {
     return (
@@ -85,10 +84,8 @@ export default function PlayerSeat({
     ? { right: `calc(100% - ${cardOverlapPx}px)` }
     : { left: `calc(100% - ${cardOverlapPx}px)` };
 
-  // 칩 표기 — BB 모드면 현재 빅블라인드 기준, 소수 첫째 자리 반올림 (100.0 → "100")
-  const chipsText = chipDisplayMode === 'bb' && bigBlind > 0
-    ? `${(Math.round((player.chips / bigBlind) * 10) / 10).toLocaleString()}BB`
-    : player.chips.toLocaleString();
+  // 칩 표기 — 칩/BB 토글은 공용 포매터(useChipFormatter)가 팟·베팅액과 함께 일괄 처리
+  const chipsText = formatChips(player.chips);
 
   const badge = isAllIn
     ? actionLabels['all-in']
@@ -98,7 +95,7 @@ export default function PlayerSeat({
         : actionLabels[seatAction.type]
       : null;
   const badgeAmount = !isAllIn && seatAction && seatAction.amount > 0
-    ? ` ${seatAction.amount.toLocaleString()}`
+    ? ` ${formatChips(seatAction.amount)}`
     : '';
 
   return (

@@ -5,6 +5,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { ActionType } from '@/lib/poker/types';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import { playEffect } from '@/lib/sound/effects';
 import Button from '../ui/Button';
 import VerticalSlider from '../ui/VerticalSlider';
@@ -27,6 +28,7 @@ export default function ActionBar() {
   const [confirmAllIn, setConfirmAllIn] = useState(false); // 올인 오조작 방지 — 한 번 더 눌러야 확정
   const [prevRoundKey, setPrevRoundKey] = useState('');
   const isMobile = useIsMobile();
+  const formatChips = useChipFormatter();
 
   if (!gameState) return null;
 
@@ -245,13 +247,13 @@ export default function ActionBar() {
 
             {canCall && (
               <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
-                콜 {callAmount.toLocaleString()}
+                콜 {formatChips(callAmount)}
               </Button>
             )}
 
             {canRaise && (
               <Button variant="primary" size="md" className="flex-[1.3] min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('raise', effectiveRaise)}>
-                {aggroLabel} {effectiveRaise.toLocaleString()}
+                {aggroLabel} {formatChips(effectiveRaise)}
               </Button>
             )}
 

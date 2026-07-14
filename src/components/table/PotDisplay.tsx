@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { Pot } from '@/lib/poker/types';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import ChipSVG, { ChipDenom, decomposeChips } from './ChipSVG';
 import { useCountUp } from '@/lib/hooks/use-count-up';
 
@@ -26,6 +27,7 @@ function groupByDenom(chips: ChipDenom[]): { denom: ChipDenom; count: number }[]
 
 export default function PotDisplay({ pots, compact = false }: PotDisplayProps) {
   const stackedPot = useSettingsStore(s => s.stackedPot);
+  const formatChips = useChipFormatter();
   const totalPot = pots.reduce((sum, p) => sum + p.amount, 0);
   const displayPot = useCountUp(totalPot);
   if (totalPot <= 0) return null;
@@ -83,14 +85,14 @@ export default function PotDisplay({ pots, compact = false }: PotDisplayProps) {
         ${compact ? 'px-3 py-1' : 'px-4 py-1.5'}
       `}>
         <span className={`text-gilded font-bold tabular ${compact ? 'text-sm' : 'text-lg'}`}>
-          POT {displayPot.toLocaleString()}
+          POT {formatChips(displayPot)}
         </span>
       </div>
       {pots.length > 1 && (
         <div className="flex gap-2">
           {pots.map((pot, i) => (
             <span key={i} className={`text-gilded/60 tabular ${compact ? 'text-[10px]' : 'text-xs'}`}>
-              {i === 0 ? '메인' : `사이드 ${i}`} {pot.amount.toLocaleString()}
+              {i === 0 ? '메인' : `사이드 ${i}`} {formatChips(pot.amount)}
             </span>
           ))}
         </div>

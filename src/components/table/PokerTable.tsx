@@ -123,7 +123,6 @@ export default function PokerTable() {
               seatAction={seatActions[i] ?? null}
               // 우측 열(슬롯 4·5)은 카드가 화면 밖으로 잘리지 않게 왼쪽(중앙 방향)에 부착
               cardSide={displaySlot === 4 || displaySlot === 5 ? 'left' : 'right'}
-              bigBlind={gameState.bigBlind}
             />
           );
         })}

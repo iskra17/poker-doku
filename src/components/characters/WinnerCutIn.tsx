@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { getCharacterById } from '@/lib/characters';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
 
 /**
@@ -91,6 +92,7 @@ function stripeBg(color: string): string {
 
 function DesktopCutIn({ data }: { data: CutInData }) {
   const { display } = useTypewriter(data.quote, 28);
+  const formatChips = useChipFormatter();
   return (
     <motion.div
       initial={{ x: '110%', opacity: 0 }}
@@ -111,7 +113,7 @@ function DesktopCutIn({ data }: { data: CutInData }) {
           >
             {data.name}
           </div>
-          <div className="text-gilded text-xs font-bold tabular">+{data.amount.toLocaleString()}</div>
+          <div className="text-gilded text-xs font-bold tabular">+{formatChips(data.amount)}</div>
           <p className="text-ink text-xs mt-1 leading-snug">{display}</p>
         </div>
       </div>
@@ -121,6 +123,7 @@ function DesktopCutIn({ data }: { data: CutInData }) {
 
 function MobileCutIn({ data }: { data: CutInData }) {
   const { display } = useTypewriter(data.quote, 28);
+  const formatChips = useChipFormatter();
   return (
     <motion.div
       initial={{ y: '120%', opacity: 0 }}
@@ -139,7 +142,7 @@ function MobileCutIn({ data }: { data: CutInData }) {
             <span className="text-sm font-bold" style={{ color: data.color, fontFamily: 'var(--font-display)' }}>
               {data.name}
             </span>
-            <span className="text-gilded text-[11px] font-bold tabular">+{data.amount.toLocaleString()}</span>
+            <span className="text-gilded text-[11px] font-bold tabular">+{formatChips(data.amount)}</span>
           </div>
           <p className="text-ink text-[11px] leading-snug truncate">{display}</p>
         </div>

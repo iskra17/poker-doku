@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useGameStore } from '@/lib/store/game-store';
+import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import { getLayout, toDisplayIndex, TablePos } from './table-layout';
 import { HAND_RANK_KO } from './HandStrengthBadge';
 import Confetti from '../effects/Confetti';
@@ -33,6 +34,7 @@ interface WinnerSequenceProps {
 export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
   const [display, setDisplay] = useState<DisplayState | null>(null);
   const [phase, setPhase] = useState(0); // 1: 스포트라이트, 2: 배너, 3: 컨페티
+  const formatChips = useChipFormatter();
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const isMobileRef = useRef(isMobile);
 
@@ -173,7 +175,7 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
               />
             </div>
             <div className={`mt-1 font-bold text-gilded tabular ${isMobile ? 'text-sm' : 'text-lg'}`}>
-              {display.winners.map(w => `${w.name} +${w.amount.toLocaleString()}`).join('  ·  ')}
+              {display.winners.map(w => `${w.name} +${formatChips(w.amount)}`).join('  ·  ')}
             </div>
           </motion.div>
         )}
