@@ -111,6 +111,14 @@ export class RoomManager {
     return list;
   }
 
+  /** 좌석 복귀/리바이 후 상태 브로드캐스트 + 게임 재개 시도 (join 경로 밖 공개 래퍼) */
+  resumeRoom(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    this.onUpdate(roomId, room.engine);
+    this.tryStartGame(roomId);
+  }
+
   joinRoom(roomId: string, player: Player): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;

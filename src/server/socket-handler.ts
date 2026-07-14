@@ -107,8 +107,10 @@ export function setupSocketHandlers(io: Server): void {
     // Send room list
     socket.emit('room-list', roomManager.getRoomList());
 
-    // 재접속 복원: 세션에 방이 남아 있고 좌석이 유지되어 있으면 그대로 복귀
-    if (session.roomId) {
+    // 재접속 복원: 세션에 방이 남아 있고 좌석이 유지되어 있으면 그대로 복귀.
+    // 방/좌석이 사라졌으면(유휴 정리·grace 만료) room-lost로 클라이언트를 로비로 돌려보낸다.
+    const restoreOrEvict = (): void => {
+      if (!session.roomId) return;
       const room = roomManager.getRoom(session.roomId);
       const seated = room?.engine.state.players.find(
         p => p.id === session.playerId && !p.pendingRemoval,
@@ -126,8 +128,21 @@ export function setupSocketHandlers(io: Server): void {
         });
       } else {
         session.roomId = null;
+        socket.emit('room-lost', { message: '게임이 종료되어 로비로 돌아왔어요.' });
       }
-    }
+    };
+    restoreOrEvict();
+
+    // 클라이언트 주도 재동기화 — 소켓 재연결 직후 방 상태 확인.
+    // 서버가 재시작되면 세션이 초기화되어(roomId 없음) room-lost가 응답된다 —
+    // 이게 없으면 클라이언트가 죽은 방의 마지막 스냅샷을 든 채 얼어붙는다 (와이프 화면 버그).
+    socket.on('resync', () => {
+      if (session.roomId) {
+        restoreOrEvict();
+      } else {
+        socket.emit('room-lost', { message: '서버가 재시작되어 게임이 초기화됐어요. 다시 입장해 주세요.' });
+      }
+    });
 
     // Join room
     socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number; avatar?: string; password?: string }) => {
@@ -143,6 +158,12 @@ export function setupSocketHandlers(io: Server): void {
         return;
       }
 
+      // 캐시 게임 바이인은 방 범위(40~200BB)로 검증/클램프 (신규 입장·리바이 공용)
+      const safeBuyIn = Math.min(
+        Math.max(Math.floor(Number(buyIn) || room.config.minBuyIn), room.config.minBuyIn),
+        room.config.maxBuyIn,
+      );
+
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
       // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
       // 동일 id의 Player가 둘 생기는 것(불변식 위반 + 새 스택 리바이 악용)을 막는다.
@@ -152,9 +173,17 @@ export function setupSocketHandlers(io: Server): void {
         // 시작된 토너먼트에서 이탈은 탈락 확정이므로 되살리지 않고 아래 lock 체크로 넘긴다
         if (!seated.pendingRemoval || !startedTournament) {
           if (seated.pendingRemoval) {
-            // 예약 취소 — 기존 칩/좌석 그대로 유지 (새 바이인 무시)
+            // 예약 취소 — 좌석 유지. 칩이 남아 있으면 그대로 (새 바이인 무시)
             seated.pendingRemoval = false;
             if (seated.chips > 0 && !seated.isDisconnected && !room.engine.state.isHandInProgress) {
+              seated.status = 'waiting';
+            }
+          }
+          // 캐시 파산 좌석 복귀는 새 바이인으로 리바이 — 0칩 좌석에 고착되는 문제 방지
+          // (핸드 중이면 다음 핸드부터 딜인 — startHand가 chips>0을 waiting으로 되살린다)
+          if (room.config.gameMode !== 'sng' && seated.chips <= 0) {
+            seated.chips = safeBuyIn;
+            if (!room.engine.state.isHandInProgress && !seated.isDisconnected) {
               seated.status = 'waiting';
             }
           }
@@ -168,6 +197,8 @@ export function setupSocketHandlers(io: Server): void {
             },
             chatHistory: roomManager.getChatHistory(roomId),
           });
+          // 리바이/복귀로 게임을 재개할 수 있으면 시작 (다른 좌석에도 상태 반영)
+          roomManager.resumeRoom(roomId);
           return;
         }
       }
@@ -227,12 +258,6 @@ export function setupSocketHandlers(io: Server): void {
         room.engine.processLeave(bot.id);
         assignedSeat = bot.seatIndex;
       }
-
-      // 캐시 게임 바이인은 방 범위(40~200BB)로 검증/클램프
-      const safeBuyIn = Math.min(
-        Math.max(Math.floor(Number(buyIn) || room.config.minBuyIn), room.config.minBuyIn),
-        room.config.maxBuyIn,
-      );
 
       const player: Player = {
         id: session.playerId,

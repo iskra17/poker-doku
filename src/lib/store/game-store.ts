@@ -107,6 +107,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('connect', () => {
       set({ connected: true });
+      // 재연결 시 방 상태 재동기화 요청 — 서버가 재시작됐거나 좌석이 사라졌으면
+      // room-lost가 응답되어 로비로 복귀한다 (죽은 방 스냅샷을 든 채 얼어붙는 것 방지)
+      if (get().currentRoomId) {
+        socket.emit('resync');
+      }
     });
 
     socket.on('disconnect', () => {
@@ -153,6 +158,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('room-created', () => {
       set({ showCreateRoom: false });
+    });
+
+    // 방이 사라짐 (서버 재시작·유휴 정리·grace 만료) — 안내와 함께 로비로 복귀
+    socket.on('room-lost', (data: { message?: string } | undefined) => {
+      set({
+        currentRoomId: null,
+        pendingRoomId: null,
+        gameState: null,
+        chatMessages: [],
+        joinError: data?.message ?? '게임 연결이 초기화되어 로비로 돌아왔어요.',
+      });
+      clearJoinTimeout();
     });
 
     // [FIX 3] 에러 핸들러 — join 실패 시 상태 롤백

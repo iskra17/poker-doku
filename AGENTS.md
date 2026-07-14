@@ -33,6 +33,10 @@ npx tsc --noEmit
   `removePendingPlayers()`가 일괄 제거 (dealerIndex 보정 포함).
 - **재접속**: `src/server/session-manager.ts`. localStorage 토큰(비밀) ↔ playerId(공개) ↔ socketId
   매핑, disconnect 후 60초 grace 동안 좌석/칩 보존. 토큰을 gameState로 노출하지 말 것.
+  소켓 재연결 시 클라이언트가 `resync`를 보내고, 방/좌석이 사라졌으면(서버 재시작·유휴 정리·
+  grace 만료) 서버가 `room-lost`로 응답 → 클라이언트는 안내와 함께 로비 복귀. 이 계약이 없으면
+  서버 재시작 때 클라이언트가 죽은 방 스냅샷을 든 채 얼어붙는다. 캐시 게임에서 파산(0칩) 좌석의
+  재입장(join-room 멱등 경로)은 새 바이인으로 리바이 처리.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
   남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.
