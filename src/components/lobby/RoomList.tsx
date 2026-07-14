@@ -34,10 +34,17 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 const SORT_CYCLE: SortKey[] = ['default', 'players', 'blindAsc', 'blindDesc'];
 
+/** 만석 판정 — 캐시 게임의 봇 좌석은 만석이 아니다 (휴먼이 오면 봇이 자리를 양보) */
+function isRoomFull(room: RoomInfo): boolean {
+  if (room.playerCount < room.maxPlayers) return false;
+  if (room.mode === 'sng') return true; // SnG는 봇 양보 없음
+  return (room.humanCount ?? room.playerCount) >= room.maxPlayers;
+}
+
 function applyFilters(rooms: RoomInfo[], mode: ModeFilter, joinableOnly: boolean, sort: SortKey): RoomInfo[] {
   let list = rooms;
   if (mode !== 'all') list = list.filter(r => (r.mode ?? 'cash') === mode);
-  if (joinableOnly) list = list.filter(r => !r.locked && r.playerCount < r.maxPlayers);
+  if (joinableOnly) list = list.filter(r => !r.locked && !isRoomFull(r));
   if (sort === 'default') return list;
   return [...list].sort((a, b) => {
     if (sort === 'players') return b.playerCount - a.playerCount;
@@ -150,9 +157,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
                     <span>턴 <span className="text-cyber">{room.turnTime}초</span></span>
                   )}
                   <span>
-                    <span className={room.playerCount >= room.maxPlayers ? 'text-red-400' : 'text-green-400'}>
+                    <span className={isRoomFull(room) ? 'text-red-400' : 'text-green-400'}>
                       {room.playerCount}/{room.maxPlayers}
                     </span>
+                    {(room.humanCount ?? room.playerCount) < room.playerCount && (
+                      <span className="text-ink-dim/70"> (봇 {room.playerCount - (room.humanCount ?? 0)})</span>
+                    )}
                   </span>
                   <span className={`${room.status === 'Playing' ? 'text-green-400' : 'text-ink-dim'}`}>
                     {room.status === 'Playing' ? '게임 중' : '대기 중'}
@@ -162,12 +172,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
             </div>
 
             <Button
-              variant={room.locked || room.playerCount >= room.maxPlayers ? 'secondary' : 'success'}
+              variant={room.locked || isRoomFull(room) ? 'secondary' : 'success'}
               size="sm"
-              disabled={room.locked || room.playerCount >= room.maxPlayers}
+              disabled={room.locked || isRoomFull(room)}
               onClick={() => onJoin(room.id)}
             >
-              {room.locked ? '진행 중' : room.playerCount >= room.maxPlayers ? '만석' : '참가'}
+              {room.locked ? '진행 중' : isRoomFull(room) ? '만석' : '참가'}
             </Button>
           </motion.div>
         ))}

@@ -136,6 +136,7 @@ export interface RoomConfig {
   password?: string; // 방 비밀번호 — 서버 전용, 절대 gameState로 노출하지 말 것
   hostId?: string; // 방 생성자 playerId (서버가 create-room 시 세팅)
   difficulty?: RoomDifficulty; // 봇 난이도 (기본 'normal')
+  botCount?: number; // 캐시 게임 봇 충원 수 0~5 (기본 2) — 친구 방은 0으로 좌석 확보
 }
 
 export interface Room {

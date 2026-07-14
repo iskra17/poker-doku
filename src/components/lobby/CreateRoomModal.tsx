@@ -32,6 +32,13 @@ const TURN_TIMES = [
   { seconds: 30, label: '30초', desc: '초보 추천' },
 ];
 
+// 캐시 게임 봇 충원 수 — 친구 방은 0으로 좌석 확보
+const BOT_COUNTS = [
+  { count: 0, label: '없음', desc: '친구끼리만' },
+  { count: 2, label: '2명', desc: '기본' },
+  { count: 5, label: '5명', desc: '혼자 놀기' },
+];
+
 export default function CreateRoomModal() {
   const { showCreateRoom, setShowCreateRoom, createRoom } = useGameStore();
   const [name, setName] = useState('');
@@ -40,6 +47,7 @@ export default function CreateRoomModal() {
   const [password, setPassword] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [turnTime, setTurnTime] = useState(8);
+  const [botCount, setBotCount] = useState(2);
 
   const blind = BLIND_LEVELS[blindIndex];
   const sngStart = SNG_BLIND_SCHEDULE[0];
@@ -57,6 +65,7 @@ export default function CreateRoomModal() {
       password: password.trim() || undefined,
       difficulty,
       turnTime,
+      botCount,
     });
     setName('');
     setPassword('');
@@ -100,6 +109,32 @@ export default function CreateRoomModal() {
             className="w-full bg-gray-800/50 border border-gray-700/50 rounded-lg px-3 py-2 text-white placeholder:text-gray-500 focus:outline-none focus:border-purple-500/50"
           />
         </div>
+
+        {/* 봇 인원 (캐시 전용 — SnG는 방장이 대기 화면에서 채움) */}
+        {mode === 'cash' && (
+          <div>
+            <label className="text-gray-400 text-sm block mb-2">봇 인원</label>
+            <div className="grid grid-cols-3 gap-2">
+              {BOT_COUNTS.map(b => (
+                <button
+                  key={b.count}
+                  onClick={() => setBotCount(b.count)}
+                  className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                    botCount === b.count
+                      ? 'bg-purple-600 text-white border border-purple-400'
+                      : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                  }`}
+                >
+                  {b.label}
+                  <span className="block text-[10px] font-normal opacity-70">{b.desc}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1">
+              봇이 있어도 친구가 오면 자리를 양보해요. 남는 좌석은 항상 사람 몫!
+            </p>
+          </div>
+        )}
 
         {/* 봇 난이도 */}
         <div>

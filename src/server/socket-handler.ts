@@ -57,6 +57,7 @@ export function setupSocketHandlers(io: Server): void {
     maxPlayers: 6,
     turnTime: 20,
     difficulty: 'easy',
+    botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
   }, true);
 
   roomManager.createRoom({
@@ -68,6 +69,7 @@ export function setupSocketHandlers(io: Server): void {
     maxPlayers: 6,
     turnTime: 8,
     difficulty: 'normal',
+    botCount: 5,
   }, true);
 
   roomManager.createRoom({
@@ -79,6 +81,7 @@ export function setupSocketHandlers(io: Server): void {
     maxPlayers: 6,
     turnTime: 8,
     difficulty: 'hard',
+    botCount: 5,
   }, true);
 
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
@@ -200,18 +203,28 @@ export function setupSocketHandlers(io: Server): void {
           }
         }
       }
-      // Remove a bot to make space if table is full.
-      // 핸드 진행 중 splice는 인덱스를 밀어 핸드를 깨뜨리므로, 핸드 사이에만 허용한다.
+      // 만석이면 봇이 휴먼에게 자리를 양보한다.
+      // 핸드 진행 중 splice는 인덱스를 밀어 핸드를 깨뜨리므로, 핸드 사이에만 즉시 제거.
       if (room.engine.state.players.length >= 6) {
         if (room.engine.state.isHandInProgress) {
-          socket.emit('error', { message: 'Table is full — try again after this hand.' });
+          const bot = room.engine.state.players.find(p => p.type === 'bot' && !p.pendingRemoval);
+          if (!bot) {
+            socket.emit('error', { message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
+            return;
+          }
+          // leaveRoom 경유: 폴드로 핸드가 끝나는 경우의 승자 처리까지 위임
+          roomManager.leaveRoom(roomId, bot.id);
+          socket.emit('error', { message: `${bot.name}이(가) 이번 핸드를 끝으로 자리를 비워줘요 — 몇 초 후 다시 참가해 주세요!` });
           return;
         }
+        // 핸드 사이: 예약된 봇(pendingRemoval) 포함 아무 봇이나 즉시 정리하고 그 자리에 착석
         const bot = room.engine.state.players.find(p => p.type === 'bot');
-        if (bot) {
-          room.engine.processLeave(bot.id);
-          assignedSeat = bot.seatIndex;
+        if (!bot) {
+          socket.emit('error', { message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
+          return;
         }
+        room.engine.processLeave(bot.id);
+        assignedSeat = bot.seatIndex;
       }
 
       // 캐시 게임 바이인은 방 범위(40~200BB)로 검증/클램프
@@ -332,6 +345,8 @@ export function setupSocketHandlers(io: Server): void {
         difficulty: VALID_DIFFICULTIES.includes(config.difficulty as RoomDifficulty)
           ? config.difficulty
           : 'normal',
+        // 봇 충원 수 0~5 (기본 2) — 친구 방은 0으로 좌석 확보
+        botCount: Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 0), 5),
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
         // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택

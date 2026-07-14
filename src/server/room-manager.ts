@@ -80,7 +80,7 @@ export class RoomManager {
     id: string; name: string; playerCount: number; maxPlayers: number;
     blinds: string; status: string; mode: string; locked: boolean;
     hasPassword: boolean; bigBlind: number; minBuyIn: number; maxBuyIn: number;
-    difficulty: string; turnTime: number;
+    difficulty: string; turnTime: number; humanCount: number;
   }> {
     const list: ReturnType<RoomManager['getRoomList']> = [];
     this.rooms.forEach((room, id) => {
@@ -101,6 +101,8 @@ export class RoomManager {
         maxBuyIn: room.config.maxBuyIn,
         difficulty: room.config.difficulty ?? 'normal',
         turnTime: room.config.turnTime,
+        // 봇 좌석은 만석 판정에서 제외 — 휴먼이 오면 봇이 자리를 양보한다
+        humanCount: room.engine.state.players.filter(p => p.type === 'human').length,
       });
     });
     return list;
@@ -244,9 +246,14 @@ export class RoomManager {
         return;
       }
     } else {
-      // 캐시 게임: 빈 자리를 방 정원(6인)까지 봇으로 채워 캐릭터 5명이 모두 등장하게 한다
-      // (기본값 3에서 멈추면 솔로 세션에서 봇이 2명만 붙어 캐릭터 노출이 절반으로 깎임)
-      fillEmptySeats(room.engine, room.config.maxPlayers, undefined, room.config.difficulty);
+      // 캐시 게임: 봇은 설정 수(botCount, 기본 2)까지만 충원 — 나머지 좌석은 휴먼 몫.
+      // 솔로용 영속 방은 botCount=5로 캐릭터 5명이 모두 등장한다.
+      const humans = room.engine.state.players.filter(p => p.type === 'human').length;
+      const bots = room.engine.state.players.length - humans;
+      const targetBots = Math.min(room.config.botCount ?? 2, room.config.maxPlayers - humans);
+      if (bots < targetBots) {
+        fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
+      }
     }
     this.onUpdate(roomId, room.engine);
 

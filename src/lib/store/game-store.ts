@@ -21,6 +21,7 @@ export interface RoomInfo {
   maxBuyIn?: number;
   difficulty?: 'easy' | 'normal' | 'hard'; // 봇 난이도
   turnTime?: number; // 턴 시간 (초)
+  humanCount?: number; // 휴먼 착석 수 — 봇 좌석은 만석 판정에서 제외 (봇이 자리를 양보)
 }
 
 // 조인 응답 타임아웃 — room-joined/error 어느 쪽도 안 오면 로비로 롤백
@@ -80,7 +81,7 @@ interface GameStore {
   createRoom: (config: {
     name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number;
     gameMode?: 'cash' | 'sng'; password?: string;
-    turnTime?: number; difficulty?: 'easy' | 'normal' | 'hard';
+    turnTime?: number; difficulty?: 'easy' | 'normal' | 'hard'; botCount?: number;
   }) => void;
   setShowCreateRoom: (show: boolean) => void;
 }
