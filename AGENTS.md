@@ -103,8 +103,8 @@ npx tsc --noEmit
 - `src/lib/store/settings-store.ts` — zustand persist 사용자 설정: 음소거, 덱 스타일
   (클래식/빅랭크)×컬러(2/4컬러), 딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
 - 카드 수트 색은 `globals.css @theme`의 `suit-*` 토큰 + `card-theme.ts` 매핑이 단일 소스.
-- `public/assets/` — Codex(gpt-image)로 생성한 캐릭터 일러스트 6명×3표정, 로고, 로비 배경
-  (레이카는 일러스트 보류 중 — 이모지 fallback으로 동작, 생성 경로가 복구되면 3표정 추가)
+- `public/assets/` — Codex(gpt-image)로 생성한 캐릭터 일러스트 7명×3표정(딜러 미야코+봇 6명),
+  로고, 로비 배경
 
 ## 컨벤션
 
