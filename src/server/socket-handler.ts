@@ -527,9 +527,21 @@ export function setupSocketHandlers(
       }
 
       const roomId = session.roomId;
+      if (data.roomId !== roomId) {
+        ack?.({ ok: false, code: 'stale-state', message: '현재 테이블 상태가 바뀌었어요.' });
+        return;
+      }
       const room = roomManager.getRoom(roomId);
       const me = room?.engine.state.players.find(p => p.id === session.playerId);
       const st = room?.engine.state;
+      if (
+        !st
+        || st.handNumber !== data.expectedHandNumber
+        || st.actionSeq !== data.expectedActionSeq
+      ) {
+        ack?.({ ok: false, code: 'stale-state', message: '상태가 바뀌어 액션을 다시 선택해 주세요.' });
+        return;
+      }
       // 액션 처리 전 스냅샷 — 거부 사유를 재현하려면 '그 시점' 상태여야 한다
       const before = room && me && st
         ? {

@@ -144,4 +144,57 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(source.engine.state.players.some(player => player.id === mover.playerId)).toBe(true);
     expect(harness.runtime.roomManager.getRoom(targetId)?.engine.state.players).toHaveLength(6);
   });
+
+  it('같은 상태 버전의 중복 액션은 한 번만 처리한다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '중복 액션 방' });
+    const first = await harness.connect('double-first-1234');
+    const second = await harness.connect('double-second-1234');
+    await expect(joinRoom(first, roomId, 0, '첫째')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(second, roomId, 1, '둘째')).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    room.engine.startHand();
+
+    const clients = new Map([
+      [first.playerId, first],
+      [second.playerId, second],
+    ]);
+    const smallBlind = room.engine.state.players[room.engine.state.activePlayerIndex];
+    const callVersion = {
+      handNumber: room.engine.state.handNumber,
+      actionSeq: room.engine.state.actionSeq,
+    };
+    const call = await withAck<{ handNumber: number; actionSeq: number }>(done => {
+      clients.get(smallBlind.id)!.socket.emit('player-action', {
+        roomId,
+        action: 'call',
+        expectedHandNumber: callVersion.handNumber,
+        expectedActionSeq: callVersion.actionSeq,
+      }, done);
+    });
+    expect(call).toMatchObject({ ok: true });
+
+    const bigBlind = room.engine.state.players[room.engine.state.activePlayerIndex];
+    const checkVersion = {
+      handNumber: room.engine.state.handNumber,
+      actionSeq: room.engine.state.actionSeq,
+    };
+    const sendCheck = (): Promise<RealtimeAck<{ handNumber: number; actionSeq: number }>> => (
+      withAck(done => clients.get(bigBlind.id)!.socket.emit('player-action', {
+        roomId,
+        action: 'check',
+        expectedHandNumber: checkVersion.handNumber,
+        expectedActionSeq: checkVersion.actionSeq,
+      }, done))
+    );
+
+    const results = await Promise.all([sendCheck(), sendCheck()]);
+
+    expect(results.filter(result => result.ok)).toHaveLength(1);
+    expect(results.filter(result => !result.ok)).toEqual([
+      expect.objectContaining({ code: 'stale-state' }),
+    ]);
+    expect(room.engine.state.street).toBe('flop');
+    expect(room.engine.state.actionSeq).toBe(checkVersion.actionSeq + 1);
+  });
 });
