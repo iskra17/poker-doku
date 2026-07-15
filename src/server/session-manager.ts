@@ -15,7 +15,13 @@ export interface Session {
   graceTimer: NodeJS.Timeout | null;
 }
 
+export interface SessionResolution {
+  session: Session;
+  replacedSocketId: string | null;
+}
+
 export const GRACE_MS = 60_000;
+const SESSION_TOKEN_RE = /^[A-Za-z0-9._~-]{8,128}$/;
 
 export class SessionManager {
   private byToken = new Map<string, Session>();
@@ -26,27 +32,27 @@ export class SessionManager {
    * 접속 시 세션 확보. 같은 토큰으로 재접속하면 기존 세션(좌석/방 정보)을 되찾는다.
    * 토큰이 없는 구버전 클라이언트는 socketId를 토큰 대용으로 사용 (재접속 불가만 감수).
    */
-  resolve(token: string | undefined, socketId: string): Session {
-    const key = token && typeof token === 'string' ? token : socketId;
+  resolve(token: unknown, socketId: string): SessionResolution {
+    const stableToken = typeof token === 'string' && SESSION_TOKEN_RE.test(token)
+      ? token
+      : null;
+    const key = stableToken ?? socketId;
     let session = this.byToken.get(key);
     if (!session) {
-      session = {
-        token: key,
-        playerId: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
-        socketId: null,
-        roomId: null,
-        graceTimer: null,
-      };
-      this.byToken.set(key, session);
-      this.byPlayerId.set(session.playerId, session);
+      session = this.createSession(key);
     }
     this.clearGrace(session);
-    if (session.socketId && session.socketId !== socketId) {
-      this.bySocketId.delete(session.socketId);
-    }
+    const replacedSocketId = session.socketId && session.socketId !== socketId
+      ? session.socketId
+      : null;
+    if (replacedSocketId) this.bySocketId.delete(replacedSocketId);
     session.socketId = socketId;
     this.bySocketId.set(socketId, session);
-    return session;
+    return { session, replacedSocketId };
+  }
+
+  isCurrentSocket(playerId: string, socketId: string): boolean {
+    return this.byPlayerId.get(playerId)?.socketId === socketId;
   }
 
   getBySocketId(socketId: string): Session | undefined {
@@ -82,5 +88,18 @@ export class SessionManager {
       clearTimeout(session.graceTimer);
       session.graceTimer = null;
     }
+  }
+
+  private createSession(key: string): Session {
+    const session: Session = {
+      token: key,
+      playerId: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+      socketId: null,
+      roomId: null,
+      graceTimer: null,
+    };
+    this.byToken.set(key, session);
+    this.byPlayerId.set(session.playerId, session);
+    return session;
   }
 }
