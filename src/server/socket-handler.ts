@@ -5,6 +5,7 @@ import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../li
 import { getCharacterById } from '../lib/characters';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
+import { eventLog, tokenHint } from './event-log';
 
 const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
@@ -121,9 +122,38 @@ export function setupSocketHandlers(io: Server): void {
     }
   }, 60_000);
 
+  /** 방의 좌석 구성 스냅샷 — 중복 좌석/유령 좌석 역추적의 핵심 단서 */
+  function seatSnapshot(roomId: string): Array<Record<string, unknown>> {
+    const room = roomManager.getRoom(roomId);
+    if (!room) return [];
+    return room.engine.state.players.map(p => ({
+      id: p.id,
+      name: p.name,
+      type: p.type,
+      seat: p.seatIndex,
+      chips: p.chips,
+      status: p.status,
+      ...(p.pendingRemoval ? { pendingRemoval: true } : {}),
+      ...(p.isDisconnected ? { disconnected: true } : {}),
+      ...(p.sitOutNext ? { sitOutNext: true } : {}),
+    }));
+  }
+
   io.on('connection', (socket: Socket) => {
-    const session = sessions.resolve(socket.handshake.auth?.sessionToken, socket.id);
+    const rawToken = socket.handshake.auth?.sessionToken;
+    const session = sessions.resolve(rawToken, socket.id);
     console.log(`Player connected: socket=${socket.id} player=${session.playerId}`);
+    // 세션 재사용 여부가 중복 좌석 조사의 출발점 — 같은 사람이 새 토큰으로 들어오면
+    // 새 playerId가 발급되어 이전 좌석이 유령으로 남는다.
+    eventLog.log('connect', {
+      playerId: session.playerId,
+      data: {
+        socketId: socket.id,
+        tokenHint: tokenHint(typeof rawToken === 'string' ? rawToken : undefined),
+        hadToken: typeof rawToken === 'string' && rawToken.length > 0,
+        resumedRoomId: session.roomId ?? null,
+      },
+    });
 
     // 연결당 레이트리밋 상태 (재접속 시 초기화 — 단순 플러딩 방지용)
     let lastRoomCreateAt = 0;
@@ -182,9 +212,26 @@ export function setupSocketHandlers(io: Server): void {
 
       const room = roomManager.getRoom(roomId);
       if (!room) {
+        eventLog.log('join-room:reject', {
+          roomId, playerId: session.playerId, data: { reason: 'room-not-found' },
+        });
         socket.emit('error', { message: 'Room not found' });
         return;
       }
+
+      eventLog.log('join-room:request', {
+        roomId,
+        playerId: session.playerId,
+        data: {
+          name: playerName,
+          buyIn: Number(buyIn) || 0,
+          seatIndex,
+          mode: room.config.gameMode ?? 'cash',
+          tableType: room.config.tableType ?? 'mixed',
+          // 요청 시점의 좌석 구성 — 같은 이름/사람이 두 좌석을 잡는 순간을 여기서 짚을 수 있다
+          seats: seatSnapshot(roomId),
+        },
+      });
 
       // 캐시 게임 바이인은 방 범위(40~200BB)로 검증/클램프 (신규 입장·리바이 공용)
       const safeBuyIn = Math.min(
@@ -218,6 +265,11 @@ export function setupSocketHandlers(io: Server): void {
           // 자리비움으로 떠났던 좌석 복귀 — 좌석은 자리비움 그대로 두고(본인이 '게임 복귀'로 참여),
           // 방치 회수 유예만 취소한다. (자동 복귀 대신 명시 복귀 — UI 안내와 일치)
           roomManager.handleSeatRejoin(roomId, session.playerId);
+          eventLog.log('join-room:rejoin', {
+            roomId,
+            playerId: session.playerId,
+            data: { seat: seated.seatIndex, chips: seated.chips, status: seated.status, sitOutNext: !!seated.sitOutNext },
+          });
           socket.join(roomId);
           session.roomId = roomId;
           socket.emit('room-joined', {
@@ -236,6 +288,7 @@ export function setupSocketHandlers(io: Server): void {
 
       // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
       if (room.config.password && String(data.password ?? '') !== room.config.password) {
+        eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'bad-password' } });
         socket.emit('error', { message: '비밀번호가 틀렸어요.' });
         return;
       }
@@ -243,6 +296,7 @@ export function setupSocketHandlers(io: Server): void {
       // 시트앤고: 이미 시작된(또는 끝난) 토너먼트에는 참가 불가
       const tournament = room.engine.state.tournament;
       if (tournament && tournament.entrants > 0) {
+        eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'sng-started' } });
         socket.emit('error', { message: '이미 시작된 Sit & Go입니다.' });
         return;
       }
@@ -252,6 +306,7 @@ export function setupSocketHandlers(io: Server): void {
         room.config.tableType === 'bots'
         && room.engine.state.players.some(p => p.type === 'human' && !p.pendingRemoval && p.id !== session.playerId)
       ) {
+        eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'practice-occupied' } });
         socket.emit('error', { message: '혼자 연습하는 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.' });
         return;
       }
@@ -301,6 +356,17 @@ export function setupSocketHandlers(io: Server): void {
         assignedSeat = bot.seatIndex;
       }
 
+      // 빈 좌석 탐색이 실패하면 assignedSeat이 -1로 남는다 — 그대로 앉히면 좌석 좌표가 없는
+      // 유령 플레이어가 생겨(팟에는 참여) 테이블이 어그러진다. 여기서 끊는다.
+      if (assignedSeat < 0 || assignedSeat > 5) {
+        eventLog.log('join-room:reject', {
+          roomId, playerId: session.playerId,
+          data: { reason: 'no-seat', assignedSeat, seats: seatSnapshot(roomId) },
+        });
+        socket.emit('error', { message: '자리를 배정하지 못했어요 — 잠시 후 다시 시도해 주세요.' });
+        return;
+      }
+
       const player: Player = {
         id: session.playerId,
         name: playerName,
@@ -318,6 +384,13 @@ export function setupSocketHandlers(io: Server): void {
       };
 
       const success = roomManager.joinRoom(roomId, player);
+      eventLog.log(success ? 'join-room:seated' : 'join-room:reject', {
+        roomId,
+        playerId: session.playerId,
+        data: success
+          ? { name: playerName, seat: assignedSeat, chips: player.chips, seats: seatSnapshot(roomId) }
+          : { reason: 'engine-rejected', seat: assignedSeat, seats: seatSnapshot(roomId) },
+      });
       if (success) {
         socket.join(roomId);
         session.roomId = roomId;
@@ -337,6 +410,10 @@ export function setupSocketHandlers(io: Server): void {
     socket.on('leave-room', (data?: { mode?: string }) => {
       if (session.roomId) {
         const roomId = session.roomId;
+        eventLog.log('leave-room', {
+          roomId, playerId: session.playerId,
+          data: { mode: data?.mode === 'sitout' ? 'sitout' : 'exit', seats: seatSnapshot(roomId) },
+        });
         socket.leave(roomId);
         if (data?.mode === 'sitout') {
           roomManager.sitOutAndLeave(roomId, session.playerId);
@@ -351,14 +428,48 @@ export function setupSocketHandlers(io: Server): void {
     // Player action
     socket.on('player-action', (data: { action: string; amount?: number }) => {
       if (!session.roomId) return;
-      if (!VALID_ACTIONS.includes(data.action as ActionType)) return;
+      if (!VALID_ACTIONS.includes(data.action as ActionType)) {
+        eventLog.log('player-action:invalid', {
+          roomId: session.roomId, playerId: session.playerId, data: { action: String(data.action) },
+        });
+        return;
+      }
 
-      roomManager.processPlayerAction(
-        session.roomId,
+      const roomId = session.roomId;
+      const room = roomManager.getRoom(roomId);
+      const me = room?.engine.state.players.find(p => p.id === session.playerId);
+      const st = room?.engine.state;
+      // 액션 처리 전 스냅샷 — 거부 사유를 재현하려면 '그 시점' 상태여야 한다
+      const before = room && me && st
+        ? {
+            street: st.street,
+            handNumber: st.handNumber,
+            myChips: me.chips,
+            myBet: me.currentBet,
+            tableBet: st.currentBet,
+            minRaise: st.minRaise,
+            isMyTurn: st.players[st.activePlayerIndex]?.id === session.playerId,
+            valid: room.engine.getValidActions(me),
+          }
+        : { noSeat: true };
+
+      const accepted = roomManager.processPlayerAction(
+        roomId,
         session.playerId,
         data.action as ActionType,
         typeof data.amount === 'number' ? data.amount : 0,
       );
+      // 거부된 액션(accepted=false)이 곧 "버튼을 눌렀는데 아무 일도 안 일어남"의 정체다 —
+      // 클라 버튼 조건이 서버 getValidActions와 어긋나면 여기 남는다.
+      eventLog.log(accepted ? 'player-action' : 'player-action:rejected', {
+        roomId,
+        playerId: session.playerId,
+        data: {
+          action: data.action,
+          amount: typeof data.amount === 'number' ? data.amount : 0,
+          ...before,
+        },
+      });
     });
 
     // 자리비움 토글
@@ -476,6 +587,12 @@ export function setupSocketHandlers(io: Server): void {
     socket.on('disconnect', () => {
       const detached = sessions.detachSocket(socket.id);
       console.log(`Player disconnected: socket=${socket.id}`);
+      eventLog.log('disconnect', {
+        playerId: session.playerId,
+        ...(detached?.roomId ? { roomId: detached.roomId } : {}),
+        // detached=null이면 이미 새 소켓이 세션을 가져간 것(중복 탭) — grace를 걸지 않는 정상 경로
+        data: { socketId: socket.id, graceStarted: !!detached?.roomId },
+      });
       if (!detached?.roomId) return;
 
       const roomId = detached.roomId;
@@ -483,6 +600,9 @@ export function setupSocketHandlers(io: Server): void {
       sessions.startGrace(detached, GRACE_MS, () => {
         // 자리비움 좌석은 유지 (캐시: 미납 BB/최종 유예로 정리, SnG: 블라인드 소진에 맡김)
         const seatKept = roomManager.handleGraceExpired(roomId, detached.playerId);
+        eventLog.log('grace-expired', {
+          roomId, playerId: detached.playerId, data: { seatKept, seats: seatSnapshot(roomId) },
+        });
         if (!seatKept) detached.roomId = null;
         broadcastRoomList();
       });

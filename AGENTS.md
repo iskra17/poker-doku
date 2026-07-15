@@ -58,9 +58,13 @@ npx tsc --noEmit
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
   남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.
-- **액션 규칙**: `getValidActions`는 응수 가능한 상대(active)가 없으면(전원 올인) 레이즈/올인을
-  제공하지 않음 — 콜/폴드만 (ActionBar도 동일 조건으로 클라 측 숨김). 회귀 테스트:
-  `engine.validactions.test.ts`.
+- **액션 규칙**: `computeValidActions(state, player)` (engine.ts export)가 **단일 소스** —
+  서버 `PokerEngine.getValidActions`와 클라 `ActionBar` 버튼 노출이 **같은 함수**를 쓴다.
+  규칙을 양쪽에 각각 구현하지 말 것: 어긋나면 "버튼은 보이는데 서버가 거부하는" 먹통 버튼이 된다
+  (2026-07-15에 실제로 발생 — 클라가 숏스택 조건을 빠뜨려 올인 버튼이 먹통이었다).
+  ①응수 가능한 상대(active)가 없으면(전원 올인) 레이즈/올인 없음, ②올인은 내 전 스택이 테이블 벳을
+  **넘길 수 있을 때만**(스택 ≤ 콜 금액이면 그 올인은 곧 콜 — 콜 버튼에 '(올인)' 표기),
+  ③레이즈는 최소 레이즈액을 채울 때만(못 채우면 언더레이즈 올인). 회귀: `engine.validactions.test.ts`.
 - **클라이언트 이벤트 레이어**: 서버는 `game-update` 스냅샷만 push. `src/lib/events/game-events.ts`의
   `diffGameState()`가 prev/next를 비교해 이벤트(hand-start/action/bets-collected/winners 등)를 발행하고,
   사운드·애니메이션·액션로그·캐릭터 표정이 이 스트림을 구독한다. diff 안정성을 위해 서버가
@@ -93,6 +97,15 @@ npx tsc --noEmit
   파싱해 닉네임 입력 후 JoinRoomModal 자동 오픈.
 - **캐시 바이인**: 40~200BB 범위를 서버가 강제(create-room에서 min/maxBuyIn 재계산, join-room에서
   클램프). 입장 시 JoinRoomModal 슬라이더로 선택.
+
+- **플레이 이벤트 로그 (버그 역추적)**: `src/server/event-log.ts` — 인메모리 링 버퍼(5000개)
+  + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`
+  (`&room=&player=&type=&limit=`) — 커스텀 서버(`server/index.ts`)가 직접 처리한다
+  (Next 라우트로 옮기면 번들 경계에서 링 버퍼가 쪼개진다). `DEBUG_LOG_TOKEN` 미설정 시 403.
+  기록: connect(tokenHint로 세션 구분)·join-room(request/seated/reject+좌석 스냅샷)·leave-room·
+  player-action(거부 시 액션 전 스냅샷+valid 목록 — 먹통 버튼 추적의 핵심)·disconnect·
+  grace-expired·hand-start·hand-end(팟 불변식 potTotal/contributedTotal 검증).
+  **절대 남기지 말 것**: 세션 토큰 원문, 방 비밀번호, 홀카드. Fly엔 볼륨이 없어 재배포 시 소멸.
 
 ## 주요 디렉토리
 
@@ -162,3 +175,6 @@ npx tsc --noEmit
 - 어드민/모니터링 도구 없음. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 3개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.
+- 계정 없음 — 신원은 localStorage 세션 토큰뿐. **다른 기기·브라우저·시크릿창 = 다른 사람**이라
+  이전 좌석이 유예 동안 오프라인으로 남고 새 좌석이 생긴다("○○가 2명" 현상 — 서버 로직은 정상,
+  같은 브라우저로 돌아오면 좌석 복귀). 근본 해결엔 계정 체계가 필요하다.

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { ActionType } from '@/lib/poker/types';
+import { computeValidActions } from '@/lib/poker/engine';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import { playEffect } from '@/lib/sound/effects';
@@ -91,13 +92,13 @@ export default function ActionBar() {
   const potSize = gameState.pots.reduce((sum, p) => sum + p.amount, 0);
   const bb = gameState.bigBlind || 1;
 
-  const canCheck = myPlayer.currentBet >= gameState.currentBet;
-  const canCall = !canCheck && callAmount > 0;
-  // 응수 가능한 상대(active)가 없으면(전원 올인 등) 레이즈/올인은 데드 액션 — 콜/폴드만 노출 (표준 룰)
-  const othersCanRespond = gameState.players.some(
-    p => p.id !== myPlayerId && p.status === 'active',
-  );
-  const canRaise = maxRaise >= minRaise && othersCanRespond;
+  // 버튼 노출은 서버와 같은 판정 함수를 쓴다 — 규칙을 여기 다시 구현하면 어긋나는 순간
+  // 서버가 거부하는 먹통 버튼이 생긴다 (엔진 processAction이 getValidActions로 재검증한다).
+  const valid = computeValidActions(gameState, myPlayer);
+  const canCheck = valid.includes('check');
+  const canCall = valid.includes('call') && callAmount > 0;
+  const canRaise = valid.includes('raise');
+  const canAllIn = valid.includes('all-in');
   // 포스트플랍에서 아직 아무 베팅이 없으면 '벳', 그 외(블라인드/베팅 위)는 '레이즈'
   const aggroLabel = gameState.street !== 'preflop' && gameState.currentBet === 0 ? '벳' : '레이즈';
 
@@ -248,6 +249,8 @@ export default function ActionBar() {
             {canCall && (
               <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
                 콜 {formatChips(callAmount)}
+                {/* 스택이 콜 금액 이하면 이 콜이 곧 올인 — 별도 올인 버튼은 뜨지 않으므로 여기에 명시 */}
+                {callAmount >= myPlayer.chips && <span className="text-[10px] opacity-80"> (올인)</span>}
               </Button>
             )}
 
@@ -257,7 +260,7 @@ export default function ActionBar() {
               </Button>
             )}
 
-            {myPlayer.chips > 0 && othersCanRespond && (
+            {canAllIn && (
               <Button
                 variant={confirmAllIn ? 'danger' : 'primary'}
                 size="md"

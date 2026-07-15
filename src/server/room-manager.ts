@@ -7,6 +7,7 @@ import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/
 import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, shouldRemoveForMissedBlinds } from './sitout';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
+import { eventLog } from './event-log';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -367,6 +368,22 @@ export class RoomManager {
 
     const prevHandNumber = room.engine.state.handNumber;
     room.engine.startHand();
+
+    if (room.engine.state.handNumber > prevHandNumber) {
+      const s = room.engine.state;
+      eventLog.log('hand-start', {
+        roomId,
+        data: {
+          handNumber: s.handNumber,
+          blinds: `${s.smallBlind}/${s.bigBlind}`,
+          dealerIndex: s.dealerIndex,
+          // 딜인 구성 — "왜 저 사람이 이번 핸드에 빠졌나"를 되짚는 기준점 (홀카드는 절대 남기지 않는다)
+          players: s.players.map(p => ({
+            id: p.id, name: p.name, type: p.type, seat: p.seatIndex, chips: p.chips, status: p.status,
+          })),
+        },
+      });
+    }
 
     if (!room.engine.state.isHandInProgress) {
       if (room.engine.state.handNumber > prevHandNumber) {
@@ -969,6 +986,20 @@ export class RoomManager {
     if (!room || !room.engine.state.winners) return;
 
     const bb = room.engine.state.bigBlind || 1;
+
+    // 팟 회계 검증 로그 — 불변식 sum(pots) === sum(totalContributed)이 깨지면 여기서 잡힌다
+    const s = room.engine.state;
+    eventLog.log('hand-end', {
+      roomId,
+      data: {
+        handNumber: s.handNumber,
+        street: s.street,
+        potTotal: s.pots.reduce((sum, p) => sum + p.amount, 0),
+        contributedTotal: s.players.reduce((sum, p) => sum + p.totalContributed, 0),
+        winners: (s.winners ?? []).map(w => ({ playerId: w.playerId, amount: w.amount, rank: w.hand?.rank ?? null })),
+        stacks: s.players.map(p => ({ id: p.id, name: p.name, seat: p.seatIndex, chips: p.chips, status: p.status })),
+      },
+    });
 
     for (const winner of room.engine.state.winners) {
       const player = room.engine.state.players.find(p => p.id === winner.playerId);

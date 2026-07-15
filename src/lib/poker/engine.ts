@@ -10,6 +10,47 @@ import { SNG_PRIZE_SPLIT } from './blind-schedule';
 export const TIME_BANK_ACCRUAL_HANDS = 10;
 export const TIME_BANK_MAX = 3;
 
+/**
+ * 어떤 액션이 합법인지 판정하는 **단일 소스**. 서버(PokerEngine.getValidActions)와
+ * 클라이언트(ActionBar 버튼 노출)가 반드시 이 함수를 함께 쓴다 — 규칙을 양쪽에 각각 구현하면
+ * 어긋나는 순간 "버튼은 보이는데 눌러도 서버가 거부하는" 먹통 버튼이 생긴다 (실제로 겪은 버그).
+ *
+ * 규칙:
+ * - 콜/체크: 내 벳이 테이블 벳에 못 미치면 콜, 아니면 체크.
+ * - 레이즈/올인: 응수할 상대(active)가 남아 있어야 의미가 있다. 전원 올인이면 초과분은
+ *   아무도 콜할 수 없는 데드 액션이라 콜/폴드만 (표준 룰).
+ * - 올인: 내 전 스택이 테이블 벳을 **넘길 수 있을 때만** 별도 액션. 스택이 콜 금액 이하면
+ *   그 올인은 곧 콜(올인 콜)이라 콜이 이미 처리한다.
+ * - 레이즈: 최소 레이즈액을 채울 수 있을 때만. 못 채우면 올인(언더레이즈)만 가능.
+ */
+export function computeValidActions(
+  state: Pick<GameState, 'players' | 'currentBet' | 'minRaise'>,
+  player: Pick<Player, 'id' | 'chips' | 'currentBet'>,
+): ActionType[] {
+  const actions: ActionType[] = ['fold'];
+
+  if (player.currentBet >= state.currentBet) {
+    actions.push('check');
+  } else {
+    actions.push('call');
+  }
+
+  const othersCanRespond = state.players.some(
+    p => p.id !== player.id && p.status === 'active',
+  );
+
+  const myMaxTotal = player.chips + player.currentBet;
+  const minRaiseAmount = state.currentBet + state.minRaise;
+  if (othersCanRespond && myMaxTotal > state.currentBet) {
+    if (myMaxTotal >= minRaiseAmount) {
+      actions.push('raise');
+    }
+    actions.push('all-in');
+  }
+
+  return actions;
+}
+
 export class PokerEngine {
   private deck: Deck;
   private config: RoomConfig;
@@ -145,6 +186,9 @@ export class PokerEngine {
   addPlayer(player: Player): boolean {
     if (this.state.players.length >= this.config.maxPlayers) return false;
     if (this.state.players.find(p => p.seatIndex === player.seatIndex)) return false;
+    // 같은 id가 두 좌석을 잡으면 팟 회계(totalContributed 합산)와 턴 순서가 깨진다.
+    // 호출부(join-room)가 멱등 경로로 먼저 걸러내지만, 여기서도 최종 방어한다.
+    if (this.state.players.find(p => p.id === player.id)) return false;
     this.state.players.push(player);
     return true;
   }
@@ -497,29 +541,7 @@ export class PokerEngine {
   }
 
   getValidActions(player: Player): ActionType[] {
-    const actions: ActionType[] = ['fold'];
-
-    if (player.currentBet >= this.state.currentBet) {
-      actions.push('check');
-    } else {
-      actions.push('call');
-    }
-
-    // 레이즈/올인은 응수할 수 있는 상대(active)가 남아 있을 때만 의미가 있다.
-    // 상대 전원이 올인이면 초과분은 아무도 콜할 수 없는 데드 액션 — 콜/폴드만 제공 (표준 룰)
-    const othersCanRespond = this.state.players.some(
-      p => p.id !== player.id && p.status === 'active',
-    );
-
-    const minRaiseAmount = this.state.currentBet + this.state.minRaise;
-    if (othersCanRespond && player.chips + player.currentBet > this.state.currentBet) {
-      if (player.chips + player.currentBet >= minRaiseAmount) {
-        actions.push('raise');
-      }
-      actions.push('all-in');
-    }
-
-    return actions;
+    return computeValidActions(this.state, player);
   }
 
   getCallAmount(player: Player): number {
