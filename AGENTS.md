@@ -49,14 +49,15 @@ npx tsc --noEmit
   `expectedHandNumber`/`expectedActionSeq`를 보내며 서버 ack 전까지 중복 입력을 잠근다. 연결이 끊긴
   상태에서는 상태 변경 이벤트를 emit하지 않는다. 이 계약을 우회하면 구 탭 액션·방 상태 혼입·
   다음 스트리트 더블 액션이 재발한다. 회귀: `socket-handler.integration.test.ts`.
-- **소켓 진입 가드**: production은 origin 없는 클라이언트, 요청 host와 같은 origin,
-  `SOCKET_ALLOWED_ORIGINS`의 쉼표 구분 exact origin만 허용하고 development는 모두 허용한다.
+- **소켓 진입 가드**: production은 Origin 헤더가 없거나, Origin의 host(:port)가 요청 Host와
+  일치하거나, 쉼표로 구분한 `SOCKET_ALLOWED_ORIGINS` 중 하나와 exact origin이 일치할 때만 허용한다.
+  development는 모든 origin을 허용한다.
   요청 제한은 소켓별 sliding window로 액션 12회/2초, 입장 5회/10초, `resync`+`get-rooms` 합산
   10회/5초, 방 생성 1회/5초, 채팅 1회/700ms다. 소유권과 payload를 먼저 검증하고 로그·상태 변경 전에
   제한해, 거절 payload가 로그를 증폭하거나 상태를 바꾸지 않게 한다.
 - **방 수명주기**: 방 삭제는 idempotent한 `RoomManager.disposeRoom()`만 사용한다. 이 경로가 봇·핸드
   시작·턴·자리비움·종료 SnG 타이머와 deadline, 채팅, 토너먼트 시계, bot epoch, 방별 AI 대사 상태를
-  함께 지운다. persistent 기본 방은 마지막 휴먼이 떠나면 삭제 대신 새 `PokerEngine`으로 교체해
+  함께 지운다. persistent 기본 방은 마지막 휴먼이 완전히 나가 유효 좌석이 0개가 되면 삭제 대신 새 `PokerEngine`으로 교체해
   플레이어·채팅·`handNumber`/`actionSeq`·`lastAction`/`lastAggressorId` 등 이전 핸드 상태를 남기지 않는다.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
   '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
@@ -201,7 +202,7 @@ npx tsc --noEmit
 - 비참가자 관전 모드(방에 안 앉고 구경), 리바이(칩 0이면 관전 상태로 고정 — SnG 탈락자 관전은 구현됨),
   멀티 테이블 동시 플레이(1세션 1테이블)
 - 멀티 테이블 토너먼트(MTT) — 시트앤고(단일 테이블)만 구현됨
-- 어드민/모니터링 도구 없음. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
+- `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.
 - 계정 없음 — 신원은 localStorage 세션 토큰뿐. **다른 기기·브라우저·시크릿창 = 다른 사람**이라
