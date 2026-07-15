@@ -27,6 +27,7 @@ export class SessionManager {
   private byToken = new Map<string, Session>();
   private byPlayerId = new Map<string, Session>();
   private bySocketId = new Map<string, Session>();
+  private closed = false;
 
   /**
    * 접속 시 세션 확보. 같은 토큰으로 재접속하면 기존 세션(좌석/방 정보)을 되찾는다.
@@ -76,6 +77,7 @@ export class SessionManager {
   }
 
   startGrace(session: Session, ms: number, onExpire: () => void): void {
+    if (this.closed) return;
     this.clearGrace(session);
     session.graceTimer = setTimeout(() => {
       session.graceTimer = null;
@@ -88,6 +90,14 @@ export class SessionManager {
       clearTimeout(session.graceTimer);
       session.graceTimer = null;
     }
+  }
+
+  shutdown(): void {
+    this.closed = true;
+    for (const session of this.byToken.values()) this.clearGrace(session);
+    this.bySocketId.clear();
+    this.byPlayerId.clear();
+    this.byToken.clear();
   }
 
   private createSession(key: string): Session {

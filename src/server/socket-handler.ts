@@ -780,6 +780,7 @@ export function setupSocketHandlers(
     sessions,
     close: () => {
       if (sweepTimer) clearInterval(sweepTimer);
+      sessions.shutdown();
       roomManager.shutdown();
     },
   };

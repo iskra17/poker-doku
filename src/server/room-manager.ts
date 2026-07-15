@@ -716,6 +716,7 @@ export class RoomManager {
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player) return;
 
+    const wasDisconnected = !!player.isDisconnected;
     player.isDisconnected = false;
     // 돌아왔으니 최종 정리 유예 취소
     this.cancelSitOutAbandon(roomId, playerId);
@@ -723,7 +724,7 @@ export class RoomManager {
     if (player.status === 'sitting-out' && player.chips > 0 && !player.sitOutNext) {
       player.status = 'waiting'; // 다음 핸드 자동 참여
     }
-    this.sendSystemChat(roomId, `${player.name}님이 다시 연결됐어요!`);
+    if (wasDisconnected) this.sendSystemChat(roomId, `${player.name}님이 다시 연결됐어요!`);
     this.onUpdate(roomId, room.engine);
     this.tryStartGame(roomId);
   }

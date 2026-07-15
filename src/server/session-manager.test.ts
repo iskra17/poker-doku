@@ -97,4 +97,17 @@ describe('SessionManager', () => {
 
     expect(a.playerId).not.toBe(b.playerId);
   });
+
+  it('shutdown은 남은 grace 타이머를 모두 취소한다', () => {
+    const sm = new SessionManager();
+    const session = sm.resolve('shutdown-token-1234', 'sock-1').session;
+    const onExpire = vi.fn();
+    sm.detachSocket('sock-1');
+    sm.startGrace(session, 50, onExpire);
+
+    sm.shutdown();
+    vi.advanceTimersByTime(100);
+
+    expect(onExpire).not.toHaveBeenCalled();
+  });
 });

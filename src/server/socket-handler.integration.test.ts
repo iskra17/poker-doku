@@ -76,6 +76,22 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.runtime.sessions.isCurrentSocket(second.playerId, second.socket.id!)).toBe(true);
   });
 
+  it('교체된 소켓은 좌석을 변경하지 못하고 현재 세션에 grace를 시작하지 않는다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '세션 소유권 방' });
+    const first = await harness.connect('owned-seat-token-1234');
+    await expect(joinRoom(first, roomId, 0, '소유자')).resolves.toMatchObject({ ok: true });
+
+    const second = await harness.connect('owned-seat-token-1234');
+    first.socket.emit('leave-room', { mode: 'exit' });
+    await wait(80);
+
+    const player = harness.runtime.roomManager.getRoom(roomId)?.engine.state.players
+      .find(candidate => candidate.id === second.playerId);
+    expect(player).toMatchObject({ id: second.playerId, isDisconnected: false });
+    expect(harness.runtime.sessions.getByPlayerId(second.playerId)?.roomId).toBe(roomId);
+  });
+
   it('malformed payload를 거절한 뒤에도 소켓이 정상 응답한다', async () => {
     harness = await createSocketTestHarness();
     const client = await harness.connect('payload-token-1234');
@@ -122,7 +138,7 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(updates).toEqual([]);
   });
 
-  it('가득 찬 방으로 전환 실패해도 기존 방 좌석을 보존한다', async () => {
+  it('6인이 동시에 고유 좌석에 입장하고 7번째 전환 실패는 기존 좌석을 보존한다', async () => {
     harness = await createSocketTestHarness();
     const sourceId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '출발 방' });
     const targetId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '만석 방' });
@@ -137,6 +153,10 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       occupants.map((client, index) => joinRoom(client, targetId, index)),
     );
     expect(targetAcks.every(ack => ack.ok)).toBe(true);
+    const targetPlayers = harness.runtime.roomManager.getRoom(targetId)!.engine.state.players;
+    expect(targetPlayers).toHaveLength(6);
+    expect(new Set(targetPlayers.map(player => player.id)).size).toBe(6);
+    expect(new Set(targetPlayers.map(player => player.seatIndex)).size).toBe(6);
 
     const failed = await joinRoom(mover, targetId, 0, '이동자');
 
@@ -196,5 +216,29 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     ]);
     expect(room.engine.state.street).toBe('flop');
     expect(room.engine.state.actionSeq).toBe(checkVersion.actionSeq + 1);
+  });
+
+  it('grace 내 재접속은 좌석과 칩을 보존하고 복귀 메시지를 한 번만 남긴다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '재접속 방' });
+    const token = 'reconnect-token-1234';
+    const first = await harness.connect(token);
+    await expect(joinRoom(first, roomId, 2, '재접속자')).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const before = room.engine.state.players.find(player => player.id === first.playerId)!;
+    const original = { id: before.id, seatIndex: before.seatIndex, chips: before.chips };
+    const reconnectMessageCount = (): number => harness!.runtime.roomManager.getChatHistory(roomId)
+      .filter(message => message.message === '재접속자님이 다시 연결됐어요!').length;
+    const countBefore = reconnectMessageCount();
+
+    first.socket.disconnect();
+    const second = await harness.connect(token);
+    await wait(20);
+    const resync = await withAck(done => second.socket.emit('resync', done));
+
+    expect(resync).toMatchObject({ ok: true });
+    expect(second.playerId).toBe(original.id);
+    expect(room.engine.state.players.find(player => player.id === second.playerId)).toMatchObject(original);
+    expect(reconnectMessageCount()).toBe(countBefore + 1);
   });
 });
