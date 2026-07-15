@@ -62,20 +62,27 @@ export function setupSocketHandlers(
       const players = engine.state.players;
       for (const player of players) {
         if (player.type === 'human') {
-          const socketId = sessions.getByPlayerId(player.id)?.socketId;
-          const socket = socketId ? io.sockets.sockets.get(socketId) : undefined;
+          const targetSession = sessions.getByPlayerId(player.id);
+          if (!targetSession?.socketId || targetSession.roomId !== roomId) continue;
+          const socket = io.sockets.sockets.get(targetSession.socketId);
           if (socket) {
             socket.emit('game-update', {
-              ...engine.getPublicState(player.id),
-              turnTimeRemaining,
+              roomId,
+              state: {
+                ...engine.getPublicState(player.id),
+                turnTimeRemaining,
+              },
             });
           }
         }
       }
       // Also broadcast to spectators / general room
       io.to(roomId).emit('game-update-public', {
-        ...engine.getPublicState(),
-        turnTimeRemaining,
+        roomId,
+        state: {
+          ...engine.getPublicState(),
+          turnTimeRemaining,
+        },
       });
     },
     // onChat
@@ -213,6 +220,16 @@ export function setupSocketHandlers(
         message: '요청 형식이 올바르지 않아요.',
       });
     };
+    const commitRoomMembership = (roomId: string): void => {
+      const previousRoomId = session.roomId;
+      if (previousRoomId && previousRoomId !== roomId) {
+        roomManager.leaveRoom(previousRoomId, session.playerId);
+        socket.leave(previousRoomId);
+      }
+      roomManager.leaveAllSeatsExcept(session.playerId, roomId);
+      session.roomId = roomId;
+      socket.join(roomId);
+    };
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
@@ -333,8 +350,7 @@ export function setupSocketHandlers(
             playerId: session.playerId,
             data: { seat: seated.seatIndex, chips: seated.chips, status: seated.status, sitOutNext: !!seated.sitOutNext },
           });
-          socket.join(roomId);
-          session.roomId = roomId;
+          commitRoomMembership(roomId);
           socket.emit('room-joined', {
             roomId,
             gameState: {
@@ -378,15 +394,6 @@ export function setupSocketHandlers(
         });
         return;
       }
-
-      // 다른 방에 착석 중이면 먼저 퇴장
-      if (session.roomId && session.roomId !== roomId) {
-        socket.leave(session.roomId);
-        roomManager.leaveRoom(session.roomId, session.playerId);
-        session.roomId = null;
-      }
-      // 자리비움으로 떠나 세션에 안 잡힌 다른 방 좌석도 회수 (1세션 1테이블)
-      roomManager.leaveAllSeatsExcept(session.playerId, roomId);
 
       // Find first available seat — 요청 좌석은 0~5 정수만 유효, 그 외/점유 시 빈 자리 배정
       const requestedSeat = Number.isInteger(seatIndex) && seatIndex >= 0 && seatIndex <= 5 ? seatIndex : -1;
@@ -464,8 +471,7 @@ export function setupSocketHandlers(
           : { reason: 'engine-rejected', seat: assignedSeat, seats: seatSnapshot(roomId) },
       });
       if (success) {
-        socket.join(roomId);
-        session.roomId = roomId;
+        commitRoomMembership(roomId);
         socket.emit('room-joined', {
           roomId,
           gameState: room.engine.getPublicState(session.playerId),
