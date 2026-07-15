@@ -5,7 +5,7 @@ import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime
 import { setupSocketHandlers } from './socket-handler';
 import { createHttpRequestHandler } from './http-handler';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
-import { createServerShutdown } from './server-shutdown';
+import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -13,17 +13,45 @@ const port = parseInt(process.env.PORT || '3000', 10);
 const FORCE_EXIT_MS = 10_000;
 
 const app = next({ dev, hostname, port });
+let httpServer: ReturnType<typeof createServer> | undefined;
+let io: Server<ClientToServerEvents, ServerToClientEvents> | undefined;
+let runtime: ReturnType<typeof setupSocketHandlers> | undefined;
 
-async function startServer(): Promise<void> {
-  await app.prepare();
+const shutdown = createServerShutdown({
+  runtime: {
+    close: () => runtime?.close(),
+  },
+  io: {
+    close: callback => {
+      if (!io) {
+        callback();
+        return;
+      }
+      return io.close(callback);
+    },
+  },
+  httpServer: {
+    close: callback => {
+      if (!httpServer) {
+        callback();
+        return;
+      }
+      return httpServer.close(callback);
+    },
+  },
+  app,
+});
+
+async function listen(): Promise<void> {
   const handle = app.getRequestHandler();
-  const httpServer = createServer(createHttpRequestHandler(handle));
+  const server = createServer(createHttpRequestHandler(handle));
+  httpServer = server;
   const originOptions = {
     production: !dev,
     allowedOrigins: parseSocketAllowedOrigins(process.env.SOCKET_ALLOWED_ORIGINS),
   };
 
-  const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
+  io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
     cors: {
       origin: dev ? '*' : true,
       methods: ['GET', 'POST'],
@@ -38,58 +66,32 @@ async function startServer(): Promise<void> {
     pingTimeout: 60000,
   });
 
-  const runtime = setupSocketHandlers(io);
-  const shutdown = createServerShutdown({ runtime, io, httpServer, app });
+  runtime = setupSocketHandlers(io);
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const onError = (error: Error): void => {
-        httpServer.off('listening', onListening);
-        reject(error);
-      };
-      const onListening = (): void => {
-        httpServer.off('error', onError);
-        resolve();
-      };
+  await new Promise<void>((resolve, reject) => {
+    const onError = (error: Error): void => {
+      httpServer?.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = (): void => {
+      httpServer?.off('error', onError);
+      resolve();
+    };
 
-      httpServer.once('error', onError);
-      httpServer.once('listening', onListening);
-      httpServer.listen(port);
-    });
-  } catch (error) {
-    await shutdown('startup-error').catch(() => undefined);
-    throw error;
-  }
-
-  let shutdownStarted = false;
-  const handleSignal = (signal: NodeJS.Signals): void => {
-    if (shutdownStarted) return;
-    shutdownStarted = true;
-
-    const forceExitTimer = dev
-      ? undefined
-      : setTimeout(() => {
-          console.error(`> Poker server shutdown timed out after ${FORCE_EXIT_MS}ms`);
-          process.exit(1);
-        }, FORCE_EXIT_MS);
-
-    void shutdown(signal).then(
-      () => {
-        if (forceExitTimer) clearTimeout(forceExitTimer);
-      },
-      error => {
-        console.error(`> Poker server shutdown failed (${signal}):`, error);
-        process.exitCode = 1;
-      },
-    );
-  };
-
-  process.once('SIGTERM', handleSignal);
-  process.once('SIGINT', handleSignal);
-  console.log(`> Poker server ready on http://${hostname}:${port}`);
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port);
+  });
 }
 
-void startServer().catch(error => {
-  console.error('> Poker server failed to start:', error);
-  process.exitCode = 1;
+void startServerLifecycle({
+  prepare: () => app.prepare(),
+  listen,
+  shutdown,
+  process,
+  production: !dev,
+  forceExitMs: FORCE_EXIT_MS,
+  logger: console,
+}).then(started => {
+  if (started) console.log(`> Poker server ready on http://${hostname}:${port}`);
 });

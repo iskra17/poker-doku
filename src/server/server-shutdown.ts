@@ -14,6 +14,32 @@ export interface ServerShutdownResources {
 }
 
 export type ServerShutdown = (reason: string) => Promise<void>;
+export type ShutdownSignal = 'SIGTERM' | 'SIGINT';
+
+export interface ServerProcess {
+  exitCode?: string | number;
+  once: (
+    signal: ShutdownSignal,
+    listener: (signal: ShutdownSignal) => void,
+  ) => unknown;
+  off: (
+    signal: ShutdownSignal,
+    listener: (signal: ShutdownSignal) => void,
+  ) => unknown;
+  exit: (code: number) => unknown;
+}
+
+export interface ServerLifecycleOptions {
+  prepare: () => Promise<void>;
+  listen: () => Promise<void>;
+  shutdown: ServerShutdown;
+  process: ServerProcess;
+  production: boolean;
+  forceExitMs?: number;
+  logger: {
+    error: (message: string, error?: unknown) => void;
+  };
+}
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
@@ -93,4 +119,60 @@ export function createServerShutdown(
     shutdownPromise ??= run(reason);
     return shutdownPromise;
   };
+}
+
+export async function startServerLifecycle(
+  options: ServerLifecycleOptions,
+): Promise<boolean> {
+  try {
+    await options.prepare();
+    await options.listen();
+  } catch (startupError) {
+    let reportedError = startupError;
+    try {
+      await options.shutdown('startup-error');
+    } catch (cleanupError) {
+      reportedError = new AggregateError(
+        [startupError, cleanupError],
+        'Server startup and cleanup failed',
+      );
+    }
+    options.logger.error('> Poker server failed to start:', reportedError);
+    options.process.exitCode = 1;
+    return false;
+  }
+
+  let shutdownStarted = false;
+  const removeSignalListeners = (): void => {
+    options.process.off('SIGTERM', handleSignal);
+    options.process.off('SIGINT', handleSignal);
+  };
+  const handleSignal = (signal: ShutdownSignal): void => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    removeSignalListeners();
+
+    const forceExitTimer = options.production
+      ? setTimeout(() => {
+          options.logger.error(
+            `> Poker server shutdown timed out after ${options.forceExitMs ?? 10_000}ms`,
+          );
+          options.process.exit(1);
+        }, options.forceExitMs ?? 10_000)
+      : undefined;
+
+    void options.shutdown(signal).then(
+      () => {
+        if (forceExitTimer) clearTimeout(forceExitTimer);
+      },
+      error => {
+        options.logger.error(`> Poker server shutdown failed (${signal}):`, error);
+        options.process.exitCode = 1;
+      },
+    );
+  };
+
+  options.process.once('SIGTERM', handleSignal);
+  options.process.once('SIGINT', handleSignal);
+  return true;
 }
