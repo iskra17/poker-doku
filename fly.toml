@@ -33,7 +33,7 @@ primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
     timeout = "5s"
     grace_period = "30s"
     method = "GET"
-    path = "/"
+    path = "/healthz"
 
 [[vm]]
   size = "shared-cpu-1x"
