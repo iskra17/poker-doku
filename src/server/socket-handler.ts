@@ -17,7 +17,27 @@ const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
 const ROOM_CREATE_COOLDOWN_MS = 5_000;
 const CHAT_COOLDOWN_MS = 700;
 
-export function setupSocketHandlers(io: Server): void {
+export interface SocketRuntimeOptions {
+  createDefaultRooms?: boolean;
+  sweepIntervalMs?: number;
+  graceMs?: number;
+}
+
+export interface SocketRuntime {
+  roomManager: RoomManager;
+  sessions: SessionManager;
+  close: () => void;
+}
+
+export function setupSocketHandlers(
+  io: Server,
+  options: SocketRuntimeOptions = {},
+): SocketRuntime {
+  const {
+    createDefaultRooms = true,
+    sweepIntervalMs = 60_000,
+    graceMs = GRACE_MS,
+  } = options;
   const sessions = new SessionManager();
 
   // 방 목록은 소켓별로 개인화해 보낸다 — 보존 중인 내 좌석(mySeat)이 실려야
@@ -61,66 +81,70 @@ export function setupSocketHandlers(io: Server): void {
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
   // 봇 전용 연습 방: 휴먼 1명 제한 — 다른 사람 방해 없이 봇들과 연습 (도장의 입구)
-  roomManager.createRoom({
-    name: 'Practice Dojo',
-    smallBlind: 10,
-    bigBlind: 20,
-    minBuyIn: 20 * MIN_BUYIN_BB,
-    maxBuyIn: 20 * MAX_BUYIN_BB,
-    maxPlayers: 6,
-    turnTime: 20,
-    difficulty: 'easy',
-    botCount: 5,
-    tableType: 'bots',
-  }, true);
+  if (createDefaultRooms) {
+    roomManager.createRoom({
+      name: 'Practice Dojo',
+      smallBlind: 10,
+      bigBlind: 20,
+      minBuyIn: 20 * MIN_BUYIN_BB,
+      maxBuyIn: 20 * MAX_BUYIN_BB,
+      maxPlayers: 6,
+      turnTime: 20,
+      difficulty: 'easy',
+      botCount: 5,
+      tableType: 'bots',
+    }, true);
 
-  // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
-  roomManager.createRoom({
-    name: 'Sakura Lounge',
-    smallBlind: 10,
-    bigBlind: 20,
-    minBuyIn: 20 * MIN_BUYIN_BB,
-    maxBuyIn: 20 * MAX_BUYIN_BB,
-    maxPlayers: 6,
-    turnTime: 20,
-    difficulty: 'easy',
-    botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
-    tableType: 'mixed',
-  }, true);
+    // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
+    roomManager.createRoom({
+      name: 'Sakura Lounge',
+      smallBlind: 10,
+      bigBlind: 20,
+      minBuyIn: 20 * MIN_BUYIN_BB,
+      maxBuyIn: 20 * MAX_BUYIN_BB,
+      maxPlayers: 6,
+      turnTime: 20,
+      difficulty: 'easy',
+      botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
+      tableType: 'mixed',
+    }, true);
 
-  roomManager.createRoom({
-    name: "Dragon's Den",
-    smallBlind: 25,
-    bigBlind: 50,
-    minBuyIn: 50 * MIN_BUYIN_BB,
-    maxBuyIn: 50 * MAX_BUYIN_BB,
-    maxPlayers: 6,
-    turnTime: 8,
-    difficulty: 'normal',
-    botCount: 5,
-    tableType: 'mixed',
-  }, true);
+    roomManager.createRoom({
+      name: "Dragon's Den",
+      smallBlind: 25,
+      bigBlind: 50,
+      minBuyIn: 50 * MIN_BUYIN_BB,
+      maxBuyIn: 50 * MAX_BUYIN_BB,
+      maxPlayers: 6,
+      turnTime: 8,
+      difficulty: 'normal',
+      botCount: 5,
+      tableType: 'mixed',
+    }, true);
 
-  roomManager.createRoom({
-    name: 'Moonlight Table',
-    smallBlind: 50,
-    bigBlind: 100,
-    minBuyIn: 100 * MIN_BUYIN_BB,
-    maxBuyIn: 100 * MAX_BUYIN_BB,
-    maxPlayers: 6,
-    turnTime: 8,
-    difficulty: 'hard',
-    botCount: 5,
-    tableType: 'mixed',
-  }, true);
+    roomManager.createRoom({
+      name: 'Moonlight Table',
+      smallBlind: 50,
+      bigBlind: 100,
+      minBuyIn: 100 * MIN_BUYIN_BB,
+      maxBuyIn: 100 * MAX_BUYIN_BB,
+      maxPlayers: 6,
+      turnTime: 8,
+      difficulty: 'hard',
+      botCount: 5,
+      tableType: 'mixed',
+    }, true);
+  }
 
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
-  setInterval(() => {
-    const removed = roomManager.sweepIdleRooms();
-    if (removed > 0) {
-      broadcastRoomList();
-    }
-  }, 60_000);
+  const sweepTimer = sweepIntervalMs > 0
+    ? setInterval(() => {
+        const removed = roomManager.sweepIdleRooms();
+        if (removed > 0) {
+          broadcastRoomList();
+        }
+      }, sweepIntervalMs)
+    : null;
 
   /** 방의 좌석 구성 스냅샷 — 중복 좌석/유령 좌석 역추적의 핵심 단서 */
   function seatSnapshot(roomId: string): Array<Record<string, unknown>> {
@@ -141,7 +165,14 @@ export function setupSocketHandlers(io: Server): void {
 
   io.on('connection', (socket: Socket) => {
     const rawToken = socket.handshake.auth?.sessionToken;
-    const session = sessions.resolve(rawToken, socket.id);
+    const { session, replacedSocketId } = sessions.resolve(rawToken, socket.id);
+    if (replacedSocketId) {
+      const previousSocket = io.sockets.sockets.get(replacedSocketId);
+      previousSocket?.emit('session-replaced', {
+        message: '다른 탭에서 게임을 열어 이 연결을 종료했어요.',
+      });
+      previousSocket?.disconnect(true);
+    }
     console.log(`Player connected: socket=${socket.id} player=${session.playerId}`);
     // 세션 재사용 여부가 중복 좌석 조사의 출발점 — 같은 사람이 새 토큰으로 들어오면
     // 새 playerId가 발급되어 이전 좌석이 유령으로 남는다.
@@ -158,6 +189,7 @@ export function setupSocketHandlers(io: Server): void {
     // 연결당 레이트리밋 상태 (재접속 시 초기화 — 단순 플러딩 방지용)
     let lastRoomCreateAt = 0;
     let lastChatAt = 0;
+    const ownsSession = (): boolean => sessions.isCurrentSocket(session.playerId, socket.id);
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
@@ -204,6 +236,7 @@ export function setupSocketHandlers(io: Server): void {
 
     // Join room
     socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number; avatar?: string; password?: string }) => {
+      if (!ownsSession()) return;
       const { roomId, buyIn, seatIndex } = data;
       // 입력 검증: 닉네임은 트리밍 후 24자 클램프 (빈 값이면 기본 닉네임)
       const playerName = (String(data.playerName ?? '').trim().slice(0, 24)) || '플레이어';
@@ -408,6 +441,7 @@ export function setupSocketHandlers(io: Server): void {
 
     // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀)
     socket.on('leave-room', (data?: { mode?: string }) => {
+      if (!ownsSession()) return;
       if (session.roomId) {
         const roomId = session.roomId;
         eventLog.log('leave-room', {
@@ -427,6 +461,7 @@ export function setupSocketHandlers(io: Server): void {
 
     // Player action
     socket.on('player-action', (data: { action: string; amount?: number }) => {
+      if (!ownsSession()) return;
       if (!session.roomId) return;
       if (!VALID_ACTIONS.includes(data.action as ActionType)) {
         eventLog.log('player-action:invalid', {
@@ -474,18 +509,21 @@ export function setupSocketHandlers(io: Server): void {
 
     // 자리비움 토글
     socket.on('toggle-sit-out', () => {
+      if (!ownsSession()) return;
       if (!session.roomId) return;
       roomManager.toggleSitOut(session.roomId, session.playerId);
     });
 
     // 타임칩 사용
     socket.on('use-time-bank', () => {
+      if (!ownsSession()) return;
       if (!session.roomId) return;
       roomManager.useTimeBank(session.roomId, session.playerId);
     });
 
     // Chat message
     socket.on('send-chat', (data: { presetId?: string }) => {
+      if (!ownsSession()) return;
       if (!session.roomId) return;
 
       // 채팅 플러딩 방지 — 쿨다운 내 메시지는 조용히 무시 (에러 피드백 루프 방지)
@@ -508,6 +546,7 @@ export function setupSocketHandlers(io: Server): void {
 
     // Create room
     socket.on('create-room', (config: RoomConfig) => {
+      if (!ownsSession()) return;
       // 플러딩 방지: 연결당 방 생성 쿨다운 (로비 스팸/방 상한 소진 예방)
       const now = Date.now();
       if (now - lastRoomCreateAt < ROOM_CREATE_COOLDOWN_MS) {
@@ -571,6 +610,7 @@ export function setupSocketHandlers(io: Server): void {
 
     // 시트앤고 대기 중 봇 채우기 (방장)
     socket.on('sng-fill-bots', () => {
+      if (!ownsSession()) return;
       if (!session.roomId) return;
       const ok = roomManager.fillWithBots(session.roomId, session.playerId);
       if (ok) {
@@ -597,7 +637,7 @@ export function setupSocketHandlers(io: Server): void {
 
       const roomId = detached.roomId;
       roomManager.handleDisconnect(roomId, detached.playerId);
-      sessions.startGrace(detached, GRACE_MS, () => {
+      sessions.startGrace(detached, graceMs, () => {
         // 자리비움 좌석은 유지 (캐시: 미납 BB/최종 유예로 정리, SnG: 블라인드 소진에 맡김)
         const seatKept = roomManager.handleGraceExpired(roomId, detached.playerId);
         eventLog.log('grace-expired', {
@@ -608,4 +648,13 @@ export function setupSocketHandlers(io: Server): void {
       });
     });
   });
+
+  return {
+    roomManager,
+    sessions,
+    close: () => {
+      if (sweepTimer) clearInterval(sweepTimer);
+      roomManager.shutdown();
+    },
+  };
 }

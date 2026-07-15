@@ -935,6 +935,21 @@ export class RoomManager {
     }
   }
 
+  shutdown(): void {
+    for (const timer of this.botIntervals.values()) clearTimeout(timer);
+    for (const timer of this.pendingStartTimers.values()) clearTimeout(timer);
+    for (const timer of this.turnTimers.values()) clearTimeout(timer);
+    for (const timer of this.sitOutAbandonTimers.values()) clearTimeout(timer);
+
+    this.botIntervals.clear();
+    this.botLoopEpochs.clear();
+    this.pendingStartTimers.clear();
+    this.turnTimers.clear();
+    this.turnDeadlines.clear();
+    this.sitOutAbandonTimers.clear();
+    this.tournamentClocks.clear();
+  }
+
   processPlayerAction(roomId: string, playerId: string, actionType: ActionType, amount: number = 0): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
