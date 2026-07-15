@@ -25,10 +25,16 @@ interface GameRoomViewProps {
 
 /** 인룸 뷰 공용 컴포넌트 — page.tsx와 table/[id]/page.tsx가 공유 */
 export default function GameRoomView({ onLeave }: GameRoomViewProps) {
-  const { gameState, myPlayerId } = useGameStore();
+  const { gameState, myPlayerId, connectionState, tableNotice } = useGameStore();
   const isMobile = useIsMobile();
   const [leaveOpen, setLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
+  const connectionNotice = connectionState === 'reconnecting'
+    ? '연결이 끊겼어요. 다시 연결하는 중…'
+    : connectionState === 'replaced'
+      ? '다른 탭에서 게임을 열어 이 연결을 종료했어요.'
+      : null;
+  const visibleNotice = connectionNotice ?? tableNotice;
 
   // 나가기 확인 다이얼로그는 '지킬 좌석'이 있을 때만 — 그 외엔 바로 퇴장.
   // 올인(chips===0이지만 status='all-in')은 팟 지분이 살아 있으므로 파산이 아니다 — 좌석 유지 대상.
@@ -53,6 +59,11 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   return (
     <div className="h-dvh flex flex-col bg-abyss overflow-hidden">
       <TopBar onLeave={handleLeaveClick} />
+      {visibleNotice && (
+        <div className="flex-none border-b border-gilded/30 bg-elevated/95 px-3 py-1.5 text-center text-xs text-gilded">
+          {visibleNotice}
+        </div>
+      )}
       <LeaveRoomModal
         isOpen={leaveOpen}
         isSng={!!gameState?.tournament}

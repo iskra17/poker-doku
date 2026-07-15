@@ -8,6 +8,7 @@ import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, shouldRemoveForMissedBlinds 
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
 import { eventLog } from './event-log';
+import type { RoomListItem } from '../lib/realtime/protocol';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -92,14 +93,8 @@ export class RoomManager {
    * mySeat으로 표시한다 — 클라이언트는 이걸로 바이인/비밀번호 없이 '게임 복귀' UI를 띄운다.
    * pendingRemoval 좌석은 정리 예약이므로 내 좌석으로 치지 않는다.
    */
-  getRoomList(forPlayerId?: string): Array<{
-    id: string; name: string; playerCount: number; maxPlayers: number;
-    blinds: string; status: string; mode: string; locked: boolean;
-    hasPassword: boolean; bigBlind: number; minBuyIn: number; maxBuyIn: number;
-    difficulty: string; turnTime: number; humanCount: number; tableType: string;
-    mySeat?: { chips: number; sittingOut: boolean };
-  }> {
-    const list: ReturnType<RoomManager['getRoomList']> = [];
+  getRoomList(forPlayerId?: string): RoomListItem[] {
+    const list: RoomListItem[] = [];
     this.rooms.forEach((room, id) => {
       const tournament = room.engine.state.tournament;
       const seat = forPlayerId

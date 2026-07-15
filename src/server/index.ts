@@ -2,6 +2,7 @@ import { createServer } from 'http';
 import { parse } from 'url';
 import next from 'next';
 import { Server } from 'socket.io';
+import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { setupSocketHandlers } from './socket-handler';
 import { eventLog } from './event-log';
 
@@ -46,7 +47,7 @@ app.prepare().then(() => {
     handle(req, res, parsedUrl);
   });
 
-  const io = new Server(httpServer, {
+  const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     cors: {
       origin: '*',
       methods: ['GET', 'POST'],

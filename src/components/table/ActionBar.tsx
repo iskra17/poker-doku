@@ -22,7 +22,15 @@ import HandStrengthBadge from './HandStrengthBadge';
 export const ACTION_DOCK_HEIGHT = 176;
 
 export default function ActionBar() {
-  const { gameState, myPlayerId, sendAction, toggleSitOut, useTimeBank } = useGameStore();
+  const {
+    gameState,
+    myPlayerId,
+    connected,
+    pendingAction,
+    sendAction,
+    toggleSitOut,
+    useTimeBank,
+  } = useGameStore();
   const betStepUnit = useSettingsStore(s => s.betStepUnit);
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [amountDraft, setAmountDraft] = useState<string | null>(null); // 금액 직접 입력 중 임시값
@@ -44,21 +52,24 @@ export default function ActionBar() {
 
   const dockClass = 'flex-none relative bg-panel/95 backdrop-blur-md border-t border-mystic/20 z-30 pb-safe';
   const sittingOut = !!myPlayer && (myPlayer.sitOutNext || myPlayer.status === 'sitting-out');
+  const controlsDisabled = !connected || !!pendingAction;
 
   const sitOutButton = myPlayer && (
     <button
       onClick={toggleSitOut}
+      disabled={controlsDisabled}
       className={`absolute right-2 top-1.5 z-10 text-[10px] px-2 py-1 rounded-full border transition-colors
         ${sittingOut
           ? 'border-blossom/60 text-blossom bg-blossom/10'
-          : 'border-white/15 text-ink-dim hover:text-ink hover:bg-white/5'}`}
+          : 'border-white/15 text-ink-dim hover:text-ink hover:bg-white/5'}
+        ${controlsDisabled ? 'opacity-40 cursor-not-allowed' : ''}`}
     >
       {sittingOut ? '게임 복귀' : '자리비움'}
     </button>
   );
 
   // ---- 대기 상태 ----
-  if (!isMyTurn || !myPlayer) {
+  if (!isMyTurn || !myPlayer || pendingAction) {
     return (
       <div className={dockClass}>
         {sitOutButton}
@@ -74,7 +85,9 @@ export default function ActionBar() {
             />
           )}
           <p className="text-ink-dim text-xs">
-            {sittingOut
+            {pendingAction
+              ? '액션 확인 중…'
+              : sittingOut
               ? '자리 비움 중 — 복귀를 누르면 다음 핸드부터 참여해요.'
               : activePlayer
                 ? `${activePlayer.name}님이 생각 중...`
@@ -122,6 +135,7 @@ export default function ActionBar() {
   };
 
   const act = (action: ActionType, amount?: number) => {
+    if (controlsDisabled) return;
     playEffect('ui-click');
     setConfirmAllIn(false);
     sendAction(action, amount);
@@ -165,6 +179,7 @@ export default function ActionBar() {
             {(myPlayer.timeBankChips ?? 0) > 0 && (
               <button
                 onClick={useTimeBank}
+                disabled={controlsDisabled}
                 className="text-[10px] px-2 py-0.5 rounded-full border border-cyber/50 text-cyber hover:bg-cyber/10 transition-colors whitespace-nowrap"
                 title="타임칩 사용 — 생각할 시간 +30초"
               >
@@ -192,6 +207,7 @@ export default function ActionBar() {
                     }
                   }}
                   aria-label={`${aggroLabel} 금액 직접 입력`}
+                  disabled={controlsDisabled}
                   className="w-[96px] text-right bg-black/40 border border-white/15 rounded-lg px-2 py-0.5 font-bold text-blossom tabular text-base focus:outline-none focus:border-blossom/70 focus:bg-black/60"
                 />
                 <span className="block text-[10px] text-ink-dim tabular pr-1">
@@ -209,6 +225,7 @@ export default function ActionBar() {
                   <button
                     key={p.label}
                     onClick={() => setRaiseAmount(Math.min(p.amount, maxRaise))}
+                    disabled={controlsDisabled}
                     className="flex-1 min-w-0 rounded-lg bg-elevated/80 hover:bg-blossom-hot/30 active:bg-blossom-hot/40 text-ink-dim hover:text-white border border-white/10 transition-colors whitespace-nowrap px-1 py-1.5 text-[11px] font-bold"
                   >
                     {p.label}
@@ -218,6 +235,7 @@ export default function ActionBar() {
               <div className="flex gap-1 shrink-0">
                 <button
                   onClick={() => setRaiseAmount(Math.max(minRaise, effectiveRaise - step))}
+                  disabled={controlsDisabled}
                   className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 감소`}
                 >
@@ -225,6 +243,7 @@ export default function ActionBar() {
                 </button>
                 <button
                   onClick={() => setRaiseAmount(Math.min(maxRaise, effectiveRaise + step))}
+                  disabled={controlsDisabled}
                   className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 증가`}
                 >
@@ -236,18 +255,18 @@ export default function ActionBar() {
 
           {/* 3행: 액션 버튼 — 동일 색상(primary)으로 통일, 좁은 화면에서 세로로 깨지지 않게 flex-1 + nowrap */}
           <div className="flex items-center w-full gap-1.5">
-            <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
+            <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
               폴드
             </Button>
 
             {canCheck && (
-              <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
+              <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
                 체크
               </Button>
             )}
 
             {canCall && (
-              <Button variant="primary" size="md" className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
+              <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
                 콜 {formatChips(callAmount)}
                 {/* 스택이 콜 금액 이하면 이 콜이 곧 올인 — 별도 올인 버튼은 뜨지 않으므로 여기에 명시 */}
                 {callAmount >= myPlayer.chips && <span className="text-[10px] opacity-80"> (올인)</span>}
@@ -255,7 +274,7 @@ export default function ActionBar() {
             )}
 
             {canRaise && (
-              <Button variant="primary" size="md" className="flex-[1.3] min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('raise', effectiveRaise)}>
+              <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-[1.3] min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('raise', effectiveRaise)}>
                 {aggroLabel} {formatChips(effectiveRaise)}
               </Button>
             )}
@@ -264,6 +283,7 @@ export default function ActionBar() {
               <Button
                 variant={confirmAllIn ? 'danger' : 'primary'}
                 size="md"
+                disabled={controlsDisabled}
                 onClick={() => {
                   // 오조작 방지: 첫 클릭은 확인 상태로 전환, 두 번째 클릭에서 실제 올인
                   if (confirmAllIn) {
@@ -291,6 +311,7 @@ export default function ActionBar() {
               value={effectiveRaise}
               onChange={setRaiseAmount}
               height={ACTION_DOCK_HEIGHT - 32}
+              disabled={controlsDisabled}
             />
           </div>
         )}

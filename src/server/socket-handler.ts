@@ -6,7 +6,11 @@ import { getCharacterById } from '../lib/characters';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
-import type { AckCallback } from '../lib/realtime/protocol';
+import type {
+  AckCallback,
+  ClientToServerEvents,
+  ServerToClientEvents,
+} from '../lib/realtime/protocol';
 import {
   isRecord,
   parseCreateRoomRequest,
@@ -37,7 +41,7 @@ export interface SocketRuntime {
 }
 
 export function setupSocketHandlers(
-  io: Server,
+  io: Server<ClientToServerEvents, ServerToClientEvents>,
   options: SocketRuntimeOptions = {},
 ): SocketRuntime {
   const {
@@ -177,7 +181,7 @@ export function setupSocketHandlers(
     }));
   }
 
-  io.on('connection', (socket: Socket) => {
+  io.on('connection', (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
     const rawToken = socket.handshake.auth?.sessionToken;
     const { session, replacedSocketId } = sessions.resolve(rawToken, socket.id);
     if (replacedSocketId) {

@@ -1,41 +1,54 @@
 'use client';
 
 import { create } from 'zustand';
-import { io, Socket } from 'socket.io-client';
-import { GameState, ChatMessage, ActionType } from '../poker/types';
+import { io } from 'socket.io-client';
+import type { ActionType, ChatMessage, GameState } from '../poker/types';
+import type { PokerClientSocket, RoomListItem } from '../realtime/protocol';
 import { diffGameState, emitGameEvent } from '../events/game-events';
+import { actionFailureMessage, canSendAction, shouldApplyGameUpdate } from './realtime-state';
 import { useSettingsStore } from './settings-store';
 
-export interface RoomInfo {
-  id: string;
-  name: string;
-  playerCount: number;
-  maxPlayers: number;
-  blinds: string;
-  status: string;
-  mode?: string; // 'cash' | 'sng'
-  locked?: boolean; // 시작된 Sit & Go — 참가 불가
-  hasPassword?: boolean; // 비밀번호 방
-  bigBlind?: number; // 바이인 슬라이더 계산용
-  minBuyIn?: number;
-  maxBuyIn?: number;
-  difficulty?: 'easy' | 'normal' | 'hard'; // 봇 난이도
-  turnTime?: number; // 턴 시간 (초)
-  humanCount?: number; // 휴먼 착석 수 — 봇 좌석은 만석 판정에서 제외 (봇이 자리를 양보)
-  tableType?: 'bots' | 'mixed' | 'humans'; // 인원 구성 — bots는 휴먼 1명 전용 연습 테이블
-  /** 내가 보존 중인 좌석 (자리비움 이탈/재접속 유예) — 있으면 바이인/비밀번호 없이 복귀 가능 */
-  mySeat?: { chips: number; sittingOut: boolean };
+export type RoomInfo = RoomListItem;
+export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'replaced';
+
+interface PendingAction {
+  handNumber: number;
+  actionSeq: number;
 }
 
-// 조인 응답 타임아웃 — room-joined/error 어느 쪽도 안 오면 로비로 롤백
+interface CreateRoomConfig {
+  name: string;
+  smallBlind: number;
+  bigBlind: number;
+  minBuyIn: number;
+  maxBuyIn: number;
+  gameMode?: 'cash' | 'sng';
+  password?: string;
+  turnTime?: number;
+  difficulty?: 'easy' | 'normal' | 'hard';
+  botCount?: number;
+  tableType?: 'bots' | 'mixed' | 'humans';
+}
+
 let joinTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-const JOIN_TIMEOUT_MS = 8000;
+let actionAckTimer: ReturnType<typeof setTimeout> | null = null;
+const JOIN_TIMEOUT_MS = 8_000;
+const ACTION_ACK_TIMEOUT_MS = 3_000;
 
 function clearJoinTimeout(): void {
-  if (joinTimeoutTimer) {
-    clearTimeout(joinTimeoutTimer);
-    joinTimeoutTimer = null;
-  }
+  if (!joinTimeoutTimer) return;
+  clearTimeout(joinTimeoutTimer);
+  joinTimeoutTimer = null;
+}
+
+function clearActionAckTimeout(): void {
+  if (!actionAckTimer) return;
+  clearTimeout(actionAckTimer);
+  actionAckTimer = null;
+}
+
+function samePendingAction(a: PendingAction | null, b: PendingAction): boolean {
+  return a?.handNumber === b.handNumber && a.actionSeq === b.actionSeq;
 }
 
 // 재접속용 세션 토큰: localStorage에 보관하는 비밀값 (서버가 좌석/칩을 이 토큰으로 복원)
@@ -53,142 +66,149 @@ function getSessionToken(): string {
 }
 
 interface GameStore {
-  // Connection
-  socket: Socket | null;
+  socket: PokerClientSocket | null;
   connected: boolean;
+  connectionState: ConnectionState;
   playerName: string;
   myPlayerId: string | null;
   currentRoomId: string | null;
   pendingRoomId: string | null;
+  pendingAction: PendingAction | null;
   joinError: string | null;
+  tableNotice: string | null;
 
-  // Game
   gameState: GameState | null;
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
-
-  // UI
   showCreateRoom: boolean;
 
-  // Actions
   connect: () => void;
   disconnect: () => void;
   setPlayerName: (name: string) => void;
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
-  /** 방 나가기 — 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀) */
   leaveRoom: (mode?: 'exit' | 'sitout') => void;
   sendAction: (action: ActionType, amount?: number) => void;
-  sendChat: (presetId: string) => void; // 프리셋 채팅 — 자유 텍스트 없음 (presets.ts)
+  sendChat: (presetId: string) => void;
   toggleSitOut: () => void;
   useTimeBank: () => void;
   sngFillBots: () => void;
-  createRoom: (config: {
-    name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number;
-    gameMode?: 'cash' | 'sng'; password?: string;
-    turnTime?: number; difficulty?: 'easy' | 'normal' | 'hard'; botCount?: number;
-    tableType?: 'bots' | 'mixed' | 'humans';
-  }) => void;
+  createRoom: (config: CreateRoomConfig) => void;
   setShowCreateRoom: (show: boolean) => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
   socket: null,
   connected: false,
+  connectionState: 'connecting',
   playerName: '',
   myPlayerId: null,
   currentRoomId: null,
   pendingRoomId: null,
+  pendingAction: null,
   joinError: null,
+  tableNotice: null,
   gameState: null,
   chatMessages: [],
   rooms: [],
   showCreateRoom: false,
 
   connect: () => {
+    const existing = get().socket;
+    if (existing) {
+      if (!existing.connected && get().connectionState !== 'replaced') existing.connect();
+      return;
+    }
+
+    set({ connectionState: 'connecting' });
     const socket = io({
       transports: ['websocket', 'polling'],
       auth: { sessionToken: getSessionToken() },
-    });
+    }) as PokerClientSocket;
 
     socket.on('connect', () => {
-      set({ connected: true });
-      // 재연결 시 방 상태 재동기화 요청 — 서버가 재시작됐거나 좌석이 사라졌으면
-      // room-lost가 응답되어 로비로 복귀한다 (죽은 방 스냅샷을 든 채 얼어붙는 것 방지)
-      if (get().currentRoomId) {
-        socket.emit('resync');
-      }
+      set({ connected: true, connectionState: 'connected' });
+      if (get().currentRoomId) socket.emit('resync');
     });
 
     socket.on('disconnect', () => {
-      set({ connected: false });
+      clearActionAckTimeout();
+      const replaced = get().connectionState === 'replaced';
+      set({
+        connected: false,
+        connectionState: replaced ? 'replaced' : 'reconnecting',
+        pendingAction: null,
+      });
     });
 
-    // 서버 발급 공개 playerId (socket.id와 무관 — 재접속에도 유지됨)
-    socket.on('session', (data: { playerId: string }) => {
-      set({ myPlayerId: data.playerId });
+    socket.on('session-replaced', ({ message }) => {
+      clearActionAckTimeout();
+      set({
+        connected: false,
+        connectionState: 'replaced',
+        pendingAction: null,
+        tableNotice: message,
+      });
     });
 
-    socket.on('room-list', (rooms: RoomInfo[]) => {
+    socket.on('session', ({ playerId }) => {
+      set({ myPlayerId: playerId });
+    });
+
+    socket.on('room-list', rooms => {
       set({ rooms });
     });
 
-    // [FIX 3] room-joined 이벤트에서 currentRoomId 설정 (ack 기반)
-    // 재접속 복원 시에는 pendingRoomId가 없으므로 서버가 내려주는 roomId를 사용
-    socket.on('room-joined', (data: { roomId?: string; gameState: GameState; chatHistory: ChatMessage[] }) => {
-      const { pendingRoomId } = get();
+    socket.on('room-joined', data => {
+      clearJoinTimeout();
+      clearActionAckTimeout();
       set({
-        currentRoomId: data.roomId ?? pendingRoomId,
+        currentRoomId: data.roomId,
         pendingRoomId: null,
+        pendingAction: null,
         gameState: data.gameState,
         chatMessages: data.chatHistory,
         joinError: null,
+        tableNotice: null,
       });
-      clearJoinTimeout();
     });
 
-    socket.on('game-update', (gameState: GameState) => {
-      // 로비로 나온 뒤(자리비움 나가기 등) 서버가 좌석 보존을 위해 계속 보내는 스냅샷은 무시 —
-      // 안 그러면 로비에서 테이블 사운드/애니메이션이 튄다 (좌석은 서버가 계속 유지).
-      if (!get().currentRoomId && !get().pendingRoomId) return;
+    socket.on('game-update', ({ roomId, state }) => {
+      if (!shouldApplyGameUpdate(get().currentRoomId, roomId)) return;
       const prev = get().gameState;
-      set({ gameState });
-      // 스냅샷 diff → 게임 이벤트 발행 (사운드/애니메이션/로그가 구독)
-      for (const event of diffGameState(prev, gameState, get().myPlayerId)) {
-        emitGameEvent(event);
-      }
+      const pending = get().pendingAction;
+      const completed = !!pending
+        && (state.handNumber !== pending.handNumber || state.actionSeq > pending.actionSeq);
+      if (completed) clearActionAckTimeout();
+      set({
+        gameState: state,
+        ...(completed ? { pendingAction: null } : {}),
+      });
+      for (const event of diffGameState(prev, state, get().myPlayerId)) emitGameEvent(event);
     });
 
-    socket.on('chat-message', (message: ChatMessage) => {
+    socket.on('chat-message', message => {
+      if (message.roomId !== get().currentRoomId) return;
       set(state => ({
         chatMessages: [...state.chatMessages.slice(-99), message],
       }));
     });
 
     socket.on('room-created', () => {
-      set({ showCreateRoom: false });
+      set({ showCreateRoom: false, joinError: null });
     });
 
-    // 방이 사라짐 (서버 재시작·유휴 정리·grace 만료) — 안내와 함께 로비로 복귀
-    socket.on('room-lost', (data: { message?: string } | undefined) => {
+    socket.on('room-lost', data => {
+      clearJoinTimeout();
+      clearActionAckTimeout();
       set({
         currentRoomId: null,
         pendingRoomId: null,
+        pendingAction: null,
         gameState: null,
         chatMessages: [],
+        tableNotice: null,
         joinError: data?.message ?? '게임 연결이 초기화되어 로비로 돌아왔어요.',
       });
-      clearJoinTimeout();
-    });
-
-    // [FIX 3] 에러 핸들러 — join 실패 시 상태 롤백
-    socket.on('error', (data: { message: string }) => {
-      set({
-        currentRoomId: null,
-        pendingRoomId: null,
-        gameState: null,
-        joinError: data.message,
-      });
-      clearJoinTimeout();
     });
 
     set({ socket });
@@ -196,72 +216,165 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   disconnect: () => {
     const { socket } = get();
-    if (socket) {
-      socket.disconnect();
-      set({ socket: null, connected: false });
-    }
+    if (!socket) return;
+    clearJoinTimeout();
+    clearActionAckTimeout();
+    socket.disconnect();
+    set({
+      socket: null,
+      connected: false,
+      connectionState: 'connecting',
+      pendingRoomId: null,
+      pendingAction: null,
+    });
   },
 
-  setPlayerName: (name: string) => set({ playerName: name }),
+  setPlayerName: name => set({ playerName: name }),
 
-  // [FIX 3] joinRoom은 pendingRoomId만 설정, 실제 roomId는 room-joined에서 확정
-  joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => {
+  joinRoom: (roomId, buyIn, seatIndex, password) => {
     const { socket, playerName } = get();
-    if (!socket) return;
+    if (!socket?.connected) return;
     const avatar = useSettingsStore.getState().profileCharacter;
-    socket.emit('join-room', { roomId, playerName, buyIn, seatIndex, avatar, password });
-    // pending 상태로 설정 — 서버 room-joined 응답 후 확정
-    set({ pendingRoomId: roomId, joinError: null, currentRoomId: roomId });
-    // 응답이 없으면(서버 재시작/유실) "연결 중"에 갇히지 않게 롤백
+    set({ pendingRoomId: roomId, joinError: null });
     clearJoinTimeout();
     joinTimeoutTimer = setTimeout(() => {
       joinTimeoutTimer = null;
-      if (get().pendingRoomId === roomId && !get().gameState) {
-        set({ currentRoomId: null, pendingRoomId: null, joinError: '방 입장에 실패했어요. 잠시 후 다시 시도해 주세요.' });
-      }
+      if (get().pendingRoomId !== roomId) return;
+      set({
+        pendingRoomId: null,
+        joinError: '방 입장 응답을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
+      });
     }, JOIN_TIMEOUT_MS);
+
+    socket.emit('join-room', {
+      roomId,
+      playerName,
+      buyIn,
+      seatIndex,
+      avatar,
+      password,
+    }, ack => {
+      if (ack.ok || get().pendingRoomId !== roomId) return;
+      clearJoinTimeout();
+      set({ pendingRoomId: null, joinError: ack.message });
+    });
   },
 
-  leaveRoom: (mode?: 'exit' | 'sitout') => {
+  leaveRoom: (mode = 'exit') => {
     const { socket } = get();
-    if (!socket) return;
-    socket.emit('leave-room', mode === 'sitout' ? { mode } : undefined);
-    set({ currentRoomId: null, pendingRoomId: null, gameState: null, chatMessages: [], joinError: null });
+    if (!socket?.connected) return;
+    socket.emit('leave-room', { mode }, ack => {
+      if (!ack.ok) {
+        set({ tableNotice: ack.message });
+        return;
+      }
+      clearJoinTimeout();
+      clearActionAckTimeout();
+      set({
+        currentRoomId: null,
+        pendingRoomId: null,
+        pendingAction: null,
+        gameState: null,
+        chatMessages: [],
+        joinError: null,
+        tableNotice: null,
+      });
+    });
   },
 
-  sendAction: (action: ActionType, amount?: number) => {
-    const { socket } = get();
-    if (!socket) return;
-    socket.emit('player-action', { action, amount });
+  sendAction: (action, amount) => {
+    const { socket, currentRoomId, gameState, pendingAction } = get();
+    if (
+      !socket
+      || !currentRoomId
+      || !gameState
+      || !canSendAction(socket.connected, !!pendingAction)
+    ) return;
+
+    const version = {
+      handNumber: gameState.handNumber,
+      actionSeq: gameState.actionSeq,
+    };
+    set({ pendingAction: version, tableNotice: null });
+    clearActionAckTimeout();
+    actionAckTimer = setTimeout(() => {
+      actionAckTimer = null;
+      if (!samePendingAction(get().pendingAction, version)) return;
+      set({
+        pendingAction: null,
+        tableNotice: actionFailureMessage('join-timeout'),
+      });
+      if (socket.connected) socket.emit('resync');
+    }, ACTION_ACK_TIMEOUT_MS);
+
+    socket.emit('player-action', {
+      roomId: currentRoomId,
+      action,
+      amount,
+      expectedHandNumber: version.handNumber,
+      expectedActionSeq: version.actionSeq,
+    }, ack => {
+      if (!samePendingAction(get().pendingAction, version)) return;
+      clearActionAckTimeout();
+      if (ack.ok) {
+        set({ pendingAction: null, tableNotice: null });
+      } else {
+        set({ pendingAction: null, tableNotice: actionFailureMessage(ack.code) });
+        if (ack.code === 'stale-state' && socket.connected) socket.emit('resync');
+      }
+    });
   },
 
-  sendChat: (presetId: string) => {
-    const { socket } = get();
-    if (!socket) return;
+  sendChat: presetId => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
     socket.emit('send-chat', { presetId });
   },
 
   toggleSitOut: () => {
-    get().socket?.emit('toggle-sit-out');
-  },
-
-  useTimeBank: () => {
-    get().socket?.emit('use-time-bank');
-  },
-
-  sngFillBots: () => {
-    get().socket?.emit('sng-fill-bots');
-  },
-
-  createRoom: (config) => {
-    const { socket } = get();
-    if (!socket) return;
-    socket.emit('create-room', {
-      ...config,
-      maxPlayers: 6,
-      turnTime: config.turnTime ?? 8,
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    socket.emit('toggle-sit-out', ack => {
+      if (!ack.ok) set({ tableNotice: ack.message });
     });
   },
 
-  setShowCreateRoom: (show: boolean) => set({ showCreateRoom: show }),
+  useTimeBank: () => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    socket.emit('use-time-bank', ack => {
+      if (!ack.ok) set({ tableNotice: ack.message });
+    });
+  },
+
+  sngFillBots: () => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    socket.emit('sng-fill-bots', ack => {
+      if (!ack.ok) set({ tableNotice: ack.message });
+    });
+  },
+
+  createRoom: config => {
+    const { socket } = get();
+    if (!socket?.connected) return;
+    socket.emit('create-room', {
+      name: config.name,
+      bigBlind: config.bigBlind,
+      turnTime: config.turnTime ?? 8,
+      gameMode: config.gameMode ?? 'cash',
+      difficulty: config.difficulty ?? 'normal',
+      tableType: config.tableType ?? 'mixed',
+      botCount: config.botCount ?? 2,
+      password: config.password,
+    }, ack => {
+      if (ack.ok) {
+        set({ showCreateRoom: false, joinError: null });
+      } else {
+        set({ joinError: ack.message });
+      }
+    });
+  },
+
+  setShowCreateRoom: showCreateRoom => set({ showCreateRoom }),
 }));

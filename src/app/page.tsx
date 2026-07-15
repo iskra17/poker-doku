@@ -20,7 +20,18 @@ const LOBBY_BG_STYLE: React.CSSProperties = {
 };
 
 export default function Home() {
-  const { connect, connected, playerName, setPlayerName, leaveRoom, currentRoomId, joinError, rooms } = useGameStore();
+  const {
+    connect,
+    connected,
+    connectionState,
+    playerName,
+    setPlayerName,
+    leaveRoom,
+    currentRoomId,
+    pendingRoomId,
+    joinError,
+    rooms,
+  } = useGameStore();
   const [nameInput, setNameInput] = useState('');
   const [hasName, setHasName] = useState(false);
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
@@ -106,7 +117,13 @@ export default function Home() {
           </Button>
           <div className="flex items-center justify-center gap-2 mt-3">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
-            <span className="text-ink-dim/70 text-xs">{connected ? '서버 연결됨' : '연결 중...'}</span>
+            <span className="text-ink-dim/70 text-xs">
+              {connected
+                ? '서버 연결됨'
+                : connectionState === 'replaced'
+                  ? '다른 탭에서 연결됨'
+                  : '연결 중...'}
+            </span>
           </div>
         </div>
       </div>
@@ -124,6 +141,9 @@ export default function Home() {
         </div>
         {joinError && (
           <p className="text-center text-red-400 text-xs mb-3">{joinError}</p>
+        )}
+        {pendingRoomId && (
+          <p className="text-center text-gilded text-xs mb-3">입장 확인 중…</p>
         )}
         {inviteNotFound && (
           <p className="text-center text-red-400 text-xs mb-3">
