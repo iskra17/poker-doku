@@ -37,6 +37,12 @@ npx tsc --noEmit
   grace 만료) 서버가 `room-lost`로 응답 → 클라이언트는 안내와 함께 로비 복귀. 이 계약이 없으면
   서버 재시작 때 클라이언트가 죽은 방 스냅샷을 든 채 얼어붙는다. 캐시 게임에서 파산(0칩) 좌석의
   재입장(join-room 멱등 경로)은 새 바이인으로 리바이 처리.
+- **실시간 이벤트 격리**: 동일 세션 토큰은 최신 소켓 하나만 소유권을 가지며 구 소켓은
+  `session-replaced` 후 서버 disconnect된다. 개인 `game-update`는 `{roomId,state}` envelope이고 서버는
+  `session.roomId`, 클라는 `currentRoomId` 일치를 각각 검증한다. 플레이 액션은 클라가 본
+  `expectedHandNumber`/`expectedActionSeq`를 보내며 서버 ack 전까지 중복 입력을 잠근다. 연결이 끊긴
+  상태에서는 상태 변경 이벤트를 emit하지 않는다. 이 계약을 우회하면 구 탭 액션·방 상태 혼입·
+  다음 스트리트 더블 액션이 재발한다. 회귀: `socket-handler.integration.test.ts`.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
   '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
   + RoomManager. **공통 원칙**: 자리비움 좌석의 턴은 절대 기다리지 않는다 — 누른 순간이 본인 턴이면
@@ -65,7 +71,7 @@ npx tsc --noEmit
   ①응수 가능한 상대(active)가 없으면(전원 올인) 레이즈/올인 없음, ②올인은 내 전 스택이 테이블 벳을
   **넘길 수 있을 때만**(스택 ≤ 콜 금액이면 그 올인은 곧 콜 — 콜 버튼에 '(올인)' 표기),
   ③레이즈는 최소 레이즈액을 채울 때만(못 채우면 언더레이즈 올인). 회귀: `engine.validactions.test.ts`.
-- **클라이언트 이벤트 레이어**: 서버는 `game-update` 스냅샷만 push. `src/lib/events/game-events.ts`의
+- **클라이언트 이벤트 레이어**: 서버는 `{roomId,state}` 형태의 `game-update` 스냅샷만 push. `src/lib/events/game-events.ts`의
   `diffGameState()`가 prev/next를 비교해 이벤트(hand-start/action/bets-collected/winners 등)를 발행하고,
   사운드·애니메이션·액션로그·캐릭터 표정이 이 스트림을 구독한다. diff 안정성을 위해 서버가
   `handNumber`/`actionSeq` 카운터를 유지.
