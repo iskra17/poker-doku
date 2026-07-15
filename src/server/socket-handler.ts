@@ -252,7 +252,7 @@ export function setupSocketHandlers(io: Server): void {
         room.config.tableType === 'bots'
         && room.engine.state.players.some(p => p.type === 'human' && !p.pendingRemoval && p.id !== session.playerId)
       ) {
-        socket.emit('error', { message: '봇 전용 연습 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.' });
+        socket.emit('error', { message: '혼자 연습하는 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.' });
         return;
       }
 

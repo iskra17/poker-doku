@@ -37,8 +37,8 @@ type TableType = 'bots' | 'mixed' | 'humans';
 const TABLE_TYPES: Array<{ id: TableType; label: string; desc: string; hint: string }> = [
   {
     id: 'bots',
-    label: '🤖 봇 전용',
-    desc: '혼자 봇과 연습',
+    label: '🎯 혼자 연습',
+    desc: '나 + 봇 5명',
     hint: '봇 5명과 나만의 연습 테이블 — 다른 플레이어는 입장할 수 없어요.',
   },
   {

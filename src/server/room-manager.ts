@@ -501,10 +501,10 @@ export class RoomManager {
   }
 
   /**
-   * 자리비움 토글.
-   * 캐시: 다음 핸드부터 딜인 제외 — 현재 핸드는 그대로 마치고, 이후 대략 2오르빗(미납 BB 2회)을
-   *   넘기면 자동으로 자리 정리 (trackMissedBlinds). 현재 핸드를 강제 폴드하지 않는다.
-   * SnG: 딜인/블라인드 유지 + 턴 자동 폴드(away) — 토너먼트가 끝날 때까지 좌석 보존.
+   * 자리비움 토글. 공통: 내 턴이 오면 자동 체크/폴드 — 자리에 없는 사람을 기다리지 않는다
+   * (누른 순간이 본인 턴이면 즉시 처리, 아니면 startPlayerLoop가 턴 도래 시 처리).
+   * 캐시: 다음 핸드부터 딜인 제외 + 대략 2오르빗(미납 BB 2회)을 넘기면 자동 정리 (trackMissedBlinds).
+   * SnG: 딜인/블라인드 유지 (away) — 블라인드 소진으로 자연 탈락, 좌석은 토너먼트 종료까지 보존.
    */
   toggleSitOut(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId);
@@ -537,24 +537,23 @@ export class RoomManager {
     player.sitOutNext = true;
     const inHand = room.engine.state.isHandInProgress
       && (player.status === 'active' || player.status === 'all-in');
-    if (isSng) {
-      this.sendSystemChat(roomId, `${player.name}님이 자리를 비웁니다 — 돌아올 때까지 자동 폴드돼요 (블라인드는 계속 차감).`);
-      // SnG away는 지금이 본인 턴이면 즉시 자동 처리 (딜인 상태라 남은 플레이어가 기다리지 않게)
-      if (inHand) {
-        const active = room.engine.state.players[room.engine.state.activePlayerIndex];
-        if (active?.id === playerId) {
-          this.clearTurnTimer(roomId);
-          this.autoActFor(roomId, playerId, '자리비움');
-          return; // autoActFor가 onUpdate/루프 재개까지 처리
-        }
+    // 캐시는 핸드에 끼어 있지 않으면 즉시 자리비움 확정 (핸드 중이면 다음 핸드 딜인에서 제외된다)
+    if (!isSng && !inHand) player.status = 'sitting-out';
+    this.sendSystemChat(
+      roomId,
+      isSng
+        ? `${player.name}님이 자리를 비웁니다 — 돌아올 때까지 자동 폴드돼요 (블라인드는 계속 차감).`
+        : `${player.name}님이 자리를 비웁니다 — 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 일어나요.`,
+    );
+    // 지금이 본인 턴이면 즉시 자동 처리 — 자리에 없는 사람을 테이블이 기다리지 않게 (캐시/SnG 공통).
+    // 이게 없으면 턴 타이머 + 타임뱅크가 모두 소진될 때까지(최대 38초) 게임이 멈춘다.
+    if (inHand) {
+      const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+      if (active?.id === playerId) {
+        this.clearTurnTimer(roomId);
+        this.autoActFor(roomId, playerId, '자리비움');
+        return; // autoActFor가 onUpdate/루프 재개까지 처리
       }
-    } else {
-      // 캐시: 진행 중인 핸드에 참여 중이면 그 핸드는 그대로 마친다(강제 폴드 없음). 아니면 즉시 적용.
-      if (!inHand) player.status = 'sitting-out';
-      this.sendSystemChat(
-        roomId,
-        `${player.name}님이 자리를 비웁니다${inHand ? ' (이번 핸드까지만 진행)' : ''} — 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 일어나요.`,
-      );
     }
     this.onUpdate(roomId, room.engine);
   }
@@ -729,12 +728,11 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer) return;
 
-    // 즉시 자동 처리 대상: 접속 끊김(부재) 또는 SnG away(딜인된 채 자동 폴드).
-    // 캐시의 sitOutNext는 "이번 핸드까지는 정상 플레이" 계약이므로 강제 폴드하지 않고 일반 턴 타이머를 준다
-    // (부재 상태로 떠난 캐시 좌석은 그 핸드가 자기 턴이면 sitOutAndLeave가 이미 자동 처리했고,
-    //  아니라면 일반 타이머 만료로 폴드된다).
-    const isSngRoom = room.config.gameMode === 'sng';
-    const autoAct = activePlayer.isDisconnected || (activePlayer.sitOutNext && isSngRoom);
+    // 즉시 자동 처리 대상: 접속 끊김(부재) 또는 자리비움(캐시·SnG 공통).
+    // 자리비움은 "나는 이 자리에 없다"는 선언이므로 그 사람의 턴을 기다리지 않는다 — 기다리면
+    // 타임뱅크까지 소진되며 테이블이 최대 38초 멈춘다. 팟에 이미 넣은 칩은 체크 가능하면
+    // 체크로 지켜진다(autoActFor). 캐시/SnG 차이는 딜인 여부일 뿐 턴 처리는 동일.
+    const autoAct = activePlayer.isDisconnected || !!activePlayer.sitOutNext;
     if (activePlayer.type === 'bot') {
       this.startBotLoop(roomId);
     } else if (autoAct) {

@@ -17,9 +17,11 @@ const DIFFICULTY_BADGES: Record<string, { label: string; className: string }> = 
   hard: { label: '고수', className: 'text-red-400 border-red-400/40' },
 };
 
-// 인원 구성 배지 — 봇 전용/봇+사람/사람만 구분
+// 인원 구성 배지 — 세 태그 모두 "누가 앉는가" 축.
+// bots는 '봇 전용'이 아니라 '혼자 연습' — 전자는 AI끼리 논다는 오해를 부르고,
+// 이 방의 실제 차별점은 봇 상대가 아니라(mixed도 봇이 있다) 다른 사람이 못 낀다는 점이다.
 const TABLE_TYPE_BADGES: Record<string, { label: string; className: string }> = {
-  bots: { label: '🤖 봇 전용', className: 'text-cyber border-cyber/40' },
+  bots: { label: '🎯 혼자 연습', className: 'text-cyber border-cyber/40' },
   mixed: { label: '봇+사람', className: 'text-ink-dim border-white/20' },
   humans: { label: '사람만', className: 'text-blossom border-blossom/40' },
 };
@@ -36,7 +38,7 @@ const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
 
 const TYPE_FILTERS: Array<{ id: TypeFilter; label: string }> = [
   { id: 'all', label: '전체' },
-  { id: 'bots', label: '🤖 봇 전용' },
+  { id: 'bots', label: '🎯 혼자 연습' },
   { id: 'mixed', label: '봇+사람' },
   { id: 'humans', label: '사람만' },
 ];

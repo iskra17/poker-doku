@@ -39,13 +39,16 @@ npx tsc --noEmit
   재입장(join-room 멱등 경로)은 새 바이인으로 리바이 처리.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
   '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
-  + RoomManager. **캐시**: 자리비움은 다음 핸드부터 딜인 제외(현재 핸드는 강제 폴드 없이 마침 —
-  startPlayerLoop의 즉시 자동폴드는 접속 끊김/SnG-away 한정), 대략 2오르빗(`shouldRemoveForMissedBlinds`,
-  경과 핸드÷인원)을 넘기면 자동 정리. 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
+  + RoomManager. **공통 원칙**: 자리비움 좌석의 턴은 절대 기다리지 않는다 — 누른 순간이 본인 턴이면
+  `toggleSitOut`이 즉시 `autoActFor`(체크 가능하면 체크, 아니면 폴드), 아니면 턴 도래 시
+  `startPlayerLoop`의 autoAct가 1초 뒤 처리(`isDisconnected || sitOutNext`, 캐시/SnG 공통).
+  이 가드를 SnG로 한정하면 캐시에서 턴 타이머(8초)+타임뱅크(30초)가 소진될 때까지 테이블이 멈춘다
+  (2026-07-15 수정). **캐시**: 자리비움은 다음 핸드부터 딜인 제외, 대략 2오르빗
+  (`shouldRemoveForMissedBlinds`, 경과 핸드÷인원)을 넘기면 자동 정리. 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
   (방 자가진행 불가 시 누수 방지, 복귀 시 `handleSeatRejoin`이 취소). 재입장은 자리비움 유지 + '게임 복귀'
   버튼(명시 복귀). **SnG**: 자리비움/끊김도 딜인·블라인드 유지 + 턴 자동 폴드(away)로 블라인드 소진 →
   자연 탈락, 좌석은 토너먼트 종료까지 보존(grace 만료·`handleGraceExpired`에서 SnG는 무조건 keep). 회귀:
-  `sitout.test.ts`. 로비 복귀 후 도착하는 game-update는 클라가 무시(currentRoomId null 가드).
+  `sitout.test.ts`(정리 판정), `room-manager.sitout-turn.test.ts`(턴 비점유). 로비 복귀 후 도착하는 game-update는 클라가 무시(currentRoomId null 가드).
   **로비 재입장 UX**: room-list는 소켓별 개인화 브로드캐스트(`getRoomList(forPlayerId)` →
   `mySeat: {chips, sittingOut}`, pendingRemoval 좌석 제외) — 로비가 보존 좌석을 알아보고
   '게임 복귀' 배너/카드 버튼으로 **바이인·비밀번호 없이 즉시 재입장**(JoinRoomModal 생략,
@@ -76,9 +79,11 @@ npx tsc --noEmit
 - **캐시 방 봇 정책**: `RoomConfig.botCount`(0~5, 기본 2)까지만 충원. 봇 좌석은 만석이 아님 —
   만석 입장 시 봇이 자리를 양보한다 (핸드 사이 즉시, 핸드 중엔 pendingRemoval + 재시도 안내).
   로비 만석 판정은 humanCount 기준 (RoomList.isRoomFull).
-- **테이블 인원 구성**: `RoomConfig.tableType: 'bots'|'mixed'|'humans'` — bots(봇 전용)는
-  휴먼 1명 제한(서버 이중 가드: socket-handler join-room + RoomManager.joinRoom, 로비 표기
-  '연습 중'), mixed는 기존 봇 양보 동작, humans는 봇 충원 0. create-room에서 botCount를
+- **테이블 인원 구성**: `RoomConfig.tableType: 'bots'|'mixed'|'humans'` — UI 라벨은
+  '🎯 혼자 연습'/'봇+사람'/'사람만'. bots를 '봇 전용'으로 부르지 말 것 (AI끼리 논다는 오해를
+  부른다 — 차별점은 봇 상대가 아니라 다른 사람이 못 낀다는 점). bots는 휴먼 1명 제한
+  (서버 이중 가드: socket-handler join-room + RoomManager.joinRoom, 로비 표기 '연습 중'),
+  mixed는 기존 봇 양보 동작, humans는 봇 충원 0. create-room에서 botCount를
   구성이 결정(bots=5/mixed=1~5/humans=0), SnG는 mixed 고정. 로비에 구성 배지+필터 노출,
   기본 방에 봇 전용 'Practice Dojo' 추가(나머지 3개는 mixed). 좌석 UI는 봇에게 상시 BOT
   뱃지(PlayerSeat — `player.type`은 getPublicState로 이미 공개됨). 회귀:
