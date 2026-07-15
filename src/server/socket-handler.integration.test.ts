@@ -109,6 +109,40 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       }
     }
 
+    const invalidValues = await Promise.all([
+      withAck(done => client.socket.emit('join-room', {
+        roomId: 'room-1',
+        playerName: '유한값 검사',
+        buyIn: Infinity,
+        seatIndex: 0,
+      }, done)),
+      withAck(done => client.socket.emit('join-room', {
+        roomId: 'r'.repeat(101),
+        playerName: '길이 검사',
+        buyIn: 2000,
+        seatIndex: 0,
+      }, done)),
+      withAck(done => client.socket.emit('player-action', {
+        roomId: 'room-1',
+        action: 'raise',
+        amount: Infinity,
+        expectedHandNumber: 0,
+        expectedActionSeq: 0,
+      }, done)),
+      withAck(done => client.socket.emit('create-room', {
+        name: '비유한 블라인드',
+        bigBlind: Infinity,
+        turnTime: 8,
+        gameMode: 'cash',
+        difficulty: 'normal',
+        tableType: 'humans',
+        botCount: 0,
+      }, done)),
+    ]);
+    for (const ack of invalidValues) {
+      expect(ack).toMatchObject({ ok: false, code: 'invalid-payload' });
+    }
+
     const rooms = new Promise(resolve => client.socket.once('room-list', resolve));
     client.socket.emit('get-rooms');
     await expect(rooms).resolves.toEqual([]);

@@ -38,6 +38,15 @@ describe('Socket.IO payload runtime parsing', () => {
     }).ok).toBe(false);
   });
 
+  it('외부 roomId는 100자를 넘으면 잘라 쓰지 않고 거절한다', () => {
+    expect(parseJoinRoomRequest({
+      roomId: 'r'.repeat(101),
+      playerName: '나',
+      buyIn: 2000,
+      seatIndex: 0,
+    }).ok).toBe(false);
+  });
+
   it('player-action은 방과 상태 버전을 반드시 요구한다', () => {
     expect(parsePlayerActionRequest({ roomId: 'room-1', action: 'check' }).ok).toBe(false);
     expect(parsePlayerActionRequest({
