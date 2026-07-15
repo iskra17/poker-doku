@@ -6,8 +6,15 @@ import { getCharacterById } from '../lib/characters';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
+import type { AckCallback } from '../lib/realtime/protocol';
+import {
+  isRecord,
+  parseCreateRoomRequest,
+  parseJoinRoomRequest,
+  parseLeaveRoomRequest,
+  parsePlayerActionRequest,
+} from './socket-payload';
 
-const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
 const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
@@ -190,6 +197,22 @@ export function setupSocketHandlers(
     let lastRoomCreateAt = 0;
     let lastChatAt = 0;
     const ownsSession = (): boolean => sessions.isCurrentSocket(session.playerId, socket.id);
+    const ensureOwnership = <T>(ack?: AckCallback<T>): boolean => {
+      if (ownsSession()) return true;
+      ack?.({
+        ok: false,
+        code: 'session-replaced',
+        message: '이 연결은 더 이상 현재 게임을 제어하지 않아요.',
+      });
+      return false;
+    };
+    const invalidPayload = <T>(ack?: AckCallback<T>): void => {
+      ack?.({
+        ok: false,
+        code: 'invalid-payload',
+        message: '요청 형식이 올바르지 않아요.',
+      });
+    };
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
@@ -226,20 +249,27 @@ export function setupSocketHandlers(
     // 클라이언트 주도 재동기화 — 소켓 재연결 직후 방 상태 확인.
     // 서버가 재시작되면 세션이 초기화되어(roomId 없음) room-lost가 응답된다 —
     // 이게 없으면 클라이언트가 죽은 방의 마지막 스냅샷을 든 채 얼어붙는다 (와이프 화면 버그).
-    socket.on('resync', () => {
+    socket.on('resync', (ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
       if (session.roomId) {
         restoreOrEvict();
       } else {
         socket.emit('room-lost', { message: '서버가 재시작되어 게임이 초기화됐어요. 다시 입장해 주세요.' });
       }
+      ack?.({ ok: true });
     });
 
     // Join room
-    socket.on('join-room', (data: { roomId: string; playerName: string; buyIn: number; seatIndex: number; avatar?: string; password?: string }) => {
-      if (!ownsSession()) return;
+    socket.on('join-room', (input: unknown, ack?: AckCallback<{ roomId: string }>) => {
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseJoinRoomRequest(input);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
-      // 입력 검증: 닉네임은 트리밍 후 24자 클램프 (빈 값이면 기본 닉네임)
-      const playerName = (String(data.playerName ?? '').trim().slice(0, 24)) || '플레이어';
+      const playerName = data.playerName;
       // 프로필 캐릭터 — 등록된 캐릭터 id만 허용 (그 외엔 기본 'player')
       const avatar = data.avatar && getCharacterById(data.avatar) ? data.avatar : 'player';
 
@@ -248,7 +278,7 @@ export function setupSocketHandlers(
         eventLog.log('join-room:reject', {
           roomId, playerId: session.playerId, data: { reason: 'room-not-found' },
         });
-        socket.emit('error', { message: 'Room not found' });
+        ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
         return;
       }
 
@@ -313,6 +343,7 @@ export function setupSocketHandlers(
             },
             chatHistory: roomManager.getChatHistory(roomId),
           });
+          ack?.({ ok: true, data: { roomId } });
           // 리바이/복귀로 게임을 재개할 수 있으면 시작 (다른 좌석에도 상태 반영)
           roomManager.resumeRoom(roomId);
           return;
@@ -322,7 +353,7 @@ export function setupSocketHandlers(
       // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
       if (room.config.password && String(data.password ?? '') !== room.config.password) {
         eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'bad-password' } });
-        socket.emit('error', { message: '비밀번호가 틀렸어요.' });
+        ack?.({ ok: false, code: 'bad-password', message: '비밀번호가 틀렸어요.' });
         return;
       }
 
@@ -330,7 +361,7 @@ export function setupSocketHandlers(
       const tournament = room.engine.state.tournament;
       if (tournament && tournament.entrants > 0) {
         eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'sng-started' } });
-        socket.emit('error', { message: '이미 시작된 Sit & Go입니다.' });
+        ack?.({ ok: false, code: 'sng-started', message: '이미 시작된 Sit & Go입니다.' });
         return;
       }
 
@@ -340,7 +371,11 @@ export function setupSocketHandlers(
         && room.engine.state.players.some(p => p.type === 'human' && !p.pendingRemoval && p.id !== session.playerId)
       ) {
         eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'practice-occupied' } });
-        socket.emit('error', { message: '혼자 연습하는 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.' });
+        ack?.({
+          ok: false,
+          code: 'practice-occupied',
+          message: '혼자 연습하는 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.',
+        });
         return;
       }
 
@@ -371,18 +406,22 @@ export function setupSocketHandlers(
         if (room.engine.state.isHandInProgress) {
           const bot = room.engine.state.players.find(p => p.type === 'bot' && !p.pendingRemoval);
           if (!bot) {
-            socket.emit('error', { message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
+            ack?.({ ok: false, code: 'room-full', message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
             return;
           }
           // leaveRoom 경유: 폴드로 핸드가 끝나는 경우의 승자 처리까지 위임
           roomManager.leaveRoom(roomId, bot.id);
-          socket.emit('error', { message: `${bot.name}이(가) 이번 핸드를 끝으로 자리를 비워줘요 — 몇 초 후 다시 참가해 주세요!` });
+          ack?.({
+            ok: false,
+            code: 'bot-seat-pending',
+            message: `${bot.name}이(가) 이번 핸드를 끝으로 자리를 비워줘요 — 몇 초 후 다시 참가해 주세요!`,
+          });
           return;
         }
         // 핸드 사이: 예약된 봇(pendingRemoval) 포함 아무 봇이나 즉시 정리하고 그 자리에 착석
         const bot = room.engine.state.players.find(p => p.type === 'bot');
         if (!bot) {
-          socket.emit('error', { message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
+          ack?.({ ok: false, code: 'room-full', message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
           return;
         }
         room.engine.processLeave(bot.id);
@@ -396,7 +435,7 @@ export function setupSocketHandlers(
           roomId, playerId: session.playerId,
           data: { reason: 'no-seat', assignedSeat, seats: seatSnapshot(roomId) },
         });
-        socket.emit('error', { message: '자리를 배정하지 못했어요 — 잠시 후 다시 시도해 주세요.' });
+        ack?.({ ok: false, code: 'room-full', message: '자리를 배정하지 못했어요 — 잠시 후 다시 시도해 주세요.' });
         return;
       }
 
@@ -432,24 +471,31 @@ export function setupSocketHandlers(
           gameState: room.engine.getPublicState(session.playerId),
           chatHistory: roomManager.getChatHistory(roomId),
         });
+        ack?.({ ok: true, data: { roomId } });
         // Update room list for all
         broadcastRoomList();
       } else {
-        socket.emit('error', { message: 'Could not join room' });
+        ack?.({ ok: false, code: 'room-full', message: '방에 입장할 수 없어요.' });
       }
     });
 
     // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀)
-    socket.on('leave-room', (data?: { mode?: string }) => {
-      if (!ownsSession()) return;
+    socket.on('leave-room', (input?: unknown, ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseLeaveRoomRequest(input);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      const data = parsed.value;
       if (session.roomId) {
         const roomId = session.roomId;
         eventLog.log('leave-room', {
           roomId, playerId: session.playerId,
-          data: { mode: data?.mode === 'sitout' ? 'sitout' : 'exit', seats: seatSnapshot(roomId) },
+          data: { mode: data.mode, seats: seatSnapshot(roomId) },
         });
         socket.leave(roomId);
-        if (data?.mode === 'sitout') {
+        if (data.mode === 'sitout') {
           roomManager.sitOutAndLeave(roomId, session.playerId);
         } else {
           roomManager.leaveRoom(roomId, session.playerId);
@@ -457,16 +503,20 @@ export function setupSocketHandlers(
         session.roomId = null;
         broadcastRoomList();
       }
+      ack?.({ ok: true });
     });
 
     // Player action
-    socket.on('player-action', (data: { action: string; amount?: number }) => {
-      if (!ownsSession()) return;
-      if (!session.roomId) return;
-      if (!VALID_ACTIONS.includes(data.action as ActionType)) {
-        eventLog.log('player-action:invalid', {
-          roomId: session.roomId, playerId: session.playerId, data: { action: String(data.action) },
-        });
+    socket.on('player-action', (input: unknown, ack?: AckCallback<{ handNumber: number; actionSeq: number }>) => {
+      if (!ensureOwnership(ack)) return;
+      const parsed = parsePlayerActionRequest(input);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      const data = parsed.value;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
         return;
       }
 
@@ -505,57 +555,102 @@ export function setupSocketHandlers(
           ...before,
         },
       });
+      if (!accepted || !room) {
+        ack?.({ ok: false, code: 'action-rejected', message: '지금은 그 액션을 실행할 수 없어요.' });
+        return;
+      }
+      ack?.({
+        ok: true,
+        data: {
+          handNumber: room.engine.state.handNumber,
+          actionSeq: room.engine.state.actionSeq,
+        },
+      });
     });
 
     // 자리비움 토글
-    socket.on('toggle-sit-out', () => {
-      if (!ownsSession()) return;
-      if (!session.roomId) return;
+    socket.on('toggle-sit-out', (ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
       roomManager.toggleSitOut(session.roomId, session.playerId);
+      ack?.({ ok: true });
     });
 
     // 타임칩 사용
-    socket.on('use-time-bank', () => {
-      if (!ownsSession()) return;
-      if (!session.roomId) return;
+    socket.on('use-time-bank', (ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
       roomManager.useTimeBank(session.roomId, session.playerId);
+      ack?.({ ok: true });
     });
 
     // Chat message
-    socket.on('send-chat', (data: { presetId?: string }) => {
-      if (!ownsSession()) return;
-      if (!session.roomId) return;
+    socket.on('send-chat', (input: unknown, ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(input) || typeof input.presetId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      const text = CHAT_PRESET_MAP[input.presetId];
+      if (!text) {
+        invalidPayload(ack);
+        return;
+      }
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
 
       // 채팅 플러딩 방지 — 쿨다운 내 메시지는 조용히 무시 (에러 피드백 루프 방지)
       const now = Date.now();
-      if (now - lastChatAt < CHAT_COOLDOWN_MS) return;
+      if (now - lastChatAt < CHAT_COOLDOWN_MS) {
+        ack?.({ ok: false, code: 'rate-limited', message: '채팅은 잠시 후 다시 보내 주세요.' });
+        return;
+      }
       lastChatAt = now;
 
       const room = roomManager.getRoom(session.roomId);
-      if (!room) return;
+      if (!room) {
+        ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
+        return;
+      }
 
       const player = room.engine.state.players.find(p => p.id === session.playerId);
-      if (!player) return;
+      if (!player) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 좌석을 찾을 수 없어요.' });
+        return;
+      }
 
       // 프리셋만 허용 — 자유 텍스트는 욕설/비하 차단을 위해 받지 않는다.
       // 클라이언트가 보낸 텍스트는 신뢰하지 않고 서버 테이블에서 id→문구를 조회한다.
-      const text = CHAT_PRESET_MAP[String(data.presetId ?? '')];
-      if (!text) return;
       roomManager.addChatMessage(session.roomId, session.playerId, player.name, text);
+      ack?.({ ok: true });
     });
 
     // Create room
-    socket.on('create-room', (config: RoomConfig) => {
-      if (!ownsSession()) return;
+    socket.on('create-room', (input: unknown, ack?: AckCallback<{ roomId: string }>) => {
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseCreateRoomRequest(input);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      const config = parsed.value;
       // 플러딩 방지: 연결당 방 생성 쿨다운 (로비 스팸/방 상한 소진 예방)
       const now = Date.now();
       if (now - lastRoomCreateAt < ROOM_CREATE_COOLDOWN_MS) {
-        socket.emit('error', { message: '방 생성은 잠시 후 다시 시도해 주세요.' });
+        ack?.({ ok: false, code: 'rate-limited', message: '방 생성은 잠시 후 다시 시도해 주세요.' });
         return;
       }
       // 운영 가드: 방 수 상한
       if (roomManager.getRoomCount() >= MAX_ROOMS) {
-        socket.emit('error', { message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
+        ack?.({ ok: false, code: 'server-error', message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
         return;
       }
       lastRoomCreateAt = now;
@@ -605,22 +700,31 @@ export function setupSocketHandlers(
       };
       const roomId = roomManager.createRoom(safeConfig);
       socket.emit('room-created', { roomId });
+      ack?.({ ok: true, data: { roomId } });
       broadcastRoomList();
     });
 
     // 시트앤고 대기 중 봇 채우기 (방장)
-    socket.on('sng-fill-bots', () => {
-      if (!ownsSession()) return;
-      if (!session.roomId) return;
+    socket.on('sng-fill-bots', (ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
       const ok = roomManager.fillWithBots(session.roomId, session.playerId);
       if (ok) {
         broadcastRoomList();
+        ack?.({ ok: true });
+      } else {
+        ack?.({ ok: false, code: 'action-rejected', message: '지금은 봇으로 채울 수 없어요.' });
       }
     });
 
     // Request room list
-    socket.on('get-rooms', () => {
+    socket.on('get-rooms', (ack?: AckCallback) => {
+      if (!ensureOwnership(ack)) return;
       socket.emit('room-list', roomManager.getRoomList(session.playerId));
+      ack?.({ ok: true });
     });
 
     // Disconnect: 즉시 제거하지 않고 grace period 동안 좌석/칩 보존

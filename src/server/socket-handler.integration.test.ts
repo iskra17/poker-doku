@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { RealtimeAck } from '../lib/realtime/protocol';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { SocketTestHarness } from './socket-test-harness';
+
+function withAck<T>(
+  send: (done: (ack: RealtimeAck<T>) => void) => void,
+): Promise<RealtimeAck<T>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('ack timeout')), 1_000);
+    send(ack => {
+      clearTimeout(timer);
+      resolve(ack);
+    });
+  });
+}
 
 describe('Socket.IO 멀티클라이언트 경계', () => {
   let harness: SocketTestHarness | null = null;
@@ -28,5 +41,27 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     await expect(disconnected).resolves.toBe('io server disconnect');
     expect(first.socket.connected).toBe(false);
     expect(harness.runtime.sessions.isCurrentSocket(second.playerId, second.socket.id!)).toBe(true);
+  });
+
+  it('malformed payload를 거절한 뒤에도 소켓이 정상 응답한다', async () => {
+    harness = await createSocketTestHarness();
+    const client = await harness.connect('payload-token-1234');
+
+    for (const payload of [null, [], {}]) {
+      const acks = await Promise.all([
+        withAck(done => client.socket.emit('join-room', payload, done)),
+        withAck(done => client.socket.emit('player-action', payload, done)),
+        withAck(done => client.socket.emit('create-room', payload, done)),
+        withAck(done => client.socket.emit('send-chat', payload, done)),
+        withAck(done => client.socket.emit('leave-room', payload, done)),
+      ]);
+      for (const ack of acks) {
+        expect(ack).toMatchObject({ ok: false, code: 'invalid-payload' });
+      }
+    }
+
+    const rooms = new Promise(resolve => client.socket.once('room-list', resolve));
+    client.socket.emit('get-rooms');
+    await expect(rooms).resolves.toEqual([]);
   });
 });
