@@ -42,3 +42,6 @@ next-env.d.ts
 
 .vercel
 /data
+
+# isolated feature worktrees
+/.worktrees/
