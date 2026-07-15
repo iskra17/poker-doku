@@ -18,15 +18,13 @@ import {
   parseLeaveRoomRequest,
   parsePlayerActionRequest,
 } from './socket-payload';
+import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
 const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
-// 플러딩 방지 쿨다운 (연결당) — 로비/채팅 스팸으로 방 상한을 소진하거나 채팅을 도배하는 것 차단
-const ROOM_CREATE_COOLDOWN_MS = 5_000;
-const CHAT_COOLDOWN_MS = 700;
 
 export interface SocketRuntimeOptions {
   createDefaultRooms?: boolean;
@@ -223,9 +221,7 @@ export function setupSocketHandlers(
       },
     });
 
-    // 연결당 레이트리밋 상태 (재접속 시 초기화 — 단순 플러딩 방지용)
-    let lastRoomCreateAt = 0;
-    let lastChatAt = 0;
+    const rateLimiter = new SocketRateLimiter();
     const ownsSession = (): boolean => sessions.isCurrentSocket(session.playerId, socket.id);
     const ensureOwnership = <T>(ack?: AckCallback<T>): boolean => {
       if (ownsSession()) return true;
@@ -242,6 +238,15 @@ export function setupSocketHandlers(
         code: 'invalid-payload',
         message: '요청 형식이 올바르지 않아요.',
       });
+    };
+    const ensureRateLimit = <T>(
+      group: keyof typeof SOCKET_RATE_LIMITS,
+      message: string,
+      ack?: AckCallback<T>,
+    ): boolean => {
+      if (rateLimiter.allow(group, SOCKET_RATE_LIMITS[group])) return true;
+      ack?.({ ok: false, code: 'rate-limited', message });
+      return false;
     };
     const commitRoomMembership = (roomId: string): void => {
       const previousRoomId = session.roomId;
@@ -291,6 +296,7 @@ export function setupSocketHandlers(
     // 이게 없으면 클라이언트가 죽은 방의 마지막 스냅샷을 든 채 얼어붙는다 (와이프 화면 버그).
     socket.on('resync', (ack?: AckCallback) => {
       if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (session.roomId) {
         restoreOrEvict();
       } else {
@@ -307,6 +313,7 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
       const playerName = data.playerName;
@@ -543,6 +550,7 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      if (!ensureRateLimit('playerAction', '액션 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       const data = parsed.value;
       if (!session.roomId) {
         ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
@@ -643,18 +651,11 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      if (!ensureRateLimit('chat', '채팅은 잠시 후 다시 보내 주세요.', ack)) return;
       if (!session.roomId) {
         ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
         return;
       }
-
-      // 채팅 플러딩 방지 — 쿨다운 내 메시지는 조용히 무시 (에러 피드백 루프 방지)
-      const now = Date.now();
-      if (now - lastChatAt < CHAT_COOLDOWN_MS) {
-        ack?.({ ok: false, code: 'rate-limited', message: '채팅은 잠시 후 다시 보내 주세요.' });
-        return;
-      }
-      lastChatAt = now;
 
       const room = roomManager.getRoom(session.roomId);
       if (!room) {
@@ -682,19 +683,13 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      if (!ensureRateLimit('createRoom', '방 생성은 잠시 후 다시 시도해 주세요.', ack)) return;
       const config = parsed.value;
-      // 플러딩 방지: 연결당 방 생성 쿨다운 (로비 스팸/방 상한 소진 예방)
-      const now = Date.now();
-      if (now - lastRoomCreateAt < ROOM_CREATE_COOLDOWN_MS) {
-        ack?.({ ok: false, code: 'rate-limited', message: '방 생성은 잠시 후 다시 시도해 주세요.' });
-        return;
-      }
       // 운영 가드: 방 수 상한
       if (roomManager.getRoomCount() >= MAX_ROOMS) {
         ack?.({ ok: false, code: 'server-error', message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
         return;
       }
-      lastRoomCreateAt = now;
       const isSng = config.gameMode === 'sng';
       const password = String(config.password ?? '').trim().slice(0, 20);
       const bigBlind = Math.max(Number(config.bigBlind) || 20, 2);
@@ -764,6 +759,7 @@ export function setupSocketHandlers(
     // Request room list
     socket.on('get-rooms', (ack?: AckCallback) => {
       if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       socket.emit('room-list', roomManager.getRoomList(session.playerId));
       ack?.({ ok: true });
     });

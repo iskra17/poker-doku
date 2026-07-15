@@ -334,4 +334,82 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(lostCount).toBe(0);
     expect(harness.runtime.sessions.getByPlayerId(client.playerId)?.roomId).toBeNull();
   });
+
+  it('읽기와 액션 요청 폭주는 rate-limited 후에도 소켓 연결을 유지한다', async () => {
+    harness = await createSocketTestHarness();
+    const client = await harness.connect('rate-limit-token-1234');
+
+    const reads = await Promise.all([
+      ...Array.from({ length: 5 }, () => withAck(done => client.socket.emit('get-rooms', done))),
+      ...Array.from({ length: 5 }, () => withAck(done => client.socket.emit('resync', done))),
+      withAck(done => client.socket.emit('get-rooms', done)),
+    ]);
+    expect(reads.filter(ack => ack.ok)).toHaveLength(10);
+    expect(reads.filter(ack => !ack.ok)).toEqual([
+      expect.objectContaining({ code: 'rate-limited' }),
+    ]);
+
+    const actions = await Promise.all(Array.from({ length: 13 }, () => (
+      withAck(done => client.socket.emit('player-action', {
+        roomId: 'room-does-not-exist',
+        action: 'check',
+        expectedHandNumber: 0,
+        expectedActionSeq: 0,
+      }, done))
+    )));
+    expect(actions.filter(ack => !ack.ok && ack.code === 'action-rejected')).toHaveLength(12);
+    expect(actions.filter(ack => !ack.ok && ack.code === 'rate-limited')).toHaveLength(1);
+
+    const stillUsable = await withAck(done => client.socket.emit('leave-room', { mode: 'exit' }, done));
+    expect(stillUsable).toMatchObject({ ok: true });
+    expect(client.socket.connected).toBe(true);
+  });
+
+  it('입장·방 생성·채팅 폭주를 연결별로 제한하고 허용된 요청만 반영한다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '빈도 제한 방' });
+    const first = await harness.connect('mutation-limit-first-1234');
+
+    await expect(joinRoom(first, roomId, 0, '첫 연결')).resolves.toMatchObject({ ok: true });
+    const joins = await Promise.all([
+      ...Array.from({ length: 4 }, (_, index) => joinRoom(first, `missing-${index}`, 0)),
+      joinRoom(first, 'missing-limited', 0),
+    ]);
+    expect(joins.filter(ack => !ack.ok && ack.code === 'room-not-found')).toHaveLength(4);
+    expect(joins.filter(ack => !ack.ok && ack.code === 'rate-limited')).toHaveLength(1);
+
+    const chatCount = harness.runtime.roomManager.getChatHistory(roomId).length;
+    const chats = await Promise.all(Array.from({ length: 2 }, () => (
+      withAck(done => first.socket.emit('send-chat', { presetId: 'greet-1' }, done))
+    )));
+    expect(chats.filter(ack => ack.ok)).toHaveLength(1);
+    expect(chats.filter(ack => !ack.ok && ack.code === 'rate-limited')).toHaveLength(1);
+    expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(chatCount + 1);
+
+    const createRoom = () => withAck<{ roomId: string }>(done => first.socket.emit('create-room', {
+      name: '새 빈도 제한 방',
+      bigBlind: 20,
+      turnTime: 8,
+      gameMode: 'cash',
+      difficulty: 'normal',
+      tableType: 'humans',
+      botCount: 0,
+    }, done));
+    const creations = await Promise.all([createRoom(), createRoom()]);
+    expect(creations.filter(ack => ack.ok)).toHaveLength(1);
+    expect(creations.filter(ack => !ack.ok && ack.code === 'rate-limited')).toHaveLength(1);
+
+    const second = await harness.connect('mutation-limit-second-1234');
+    const isolatedCreation = await withAck<{ roomId: string }>(done => second.socket.emit('create-room', {
+      name: '다른 연결의 방',
+      bigBlind: 20,
+      turnTime: 8,
+      gameMode: 'cash',
+      difficulty: 'normal',
+      tableType: 'humans',
+      botCount: 0,
+    }, done));
+    expect(isolatedCreation).toMatchObject({ ok: true });
+    expect(first.socket.connected).toBe(true);
+  });
 });
