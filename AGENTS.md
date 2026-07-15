@@ -37,6 +37,15 @@ npx tsc --noEmit
   grace 만료) 서버가 `room-lost`로 응답 → 클라이언트는 안내와 함께 로비 복귀. 이 계약이 없으면
   서버 재시작 때 클라이언트가 죽은 방 스냅샷을 든 채 얼어붙는다. 캐시 게임에서 파산(0칩) 좌석의
   재입장(join-room 멱등 경로)은 새 바이인으로 리바이 처리.
+- **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
+  '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
+  + RoomManager. **캐시**: 자리비움은 다음 핸드부터 딜인 제외(현재 핸드는 강제 폴드 없이 마침 —
+  startPlayerLoop의 즉시 자동폴드는 접속 끊김/SnG-away 한정), 대략 2오르빗(`shouldRemoveForMissedBlinds`,
+  경과 핸드÷인원)을 넘기면 자동 정리. 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
+  (방 자가진행 불가 시 누수 방지, 복귀 시 `handleSeatRejoin`이 취소). 재입장은 자리비움 유지 + '게임 복귀'
+  버튼(명시 복귀). **SnG**: 자리비움/끊김도 딜인·블라인드 유지 + 턴 자동 폴드(away)로 블라인드 소진 →
+  자연 탈락, 좌석은 토너먼트 종료까지 보존(grace 만료·`handleGraceExpired`에서 SnG는 무조건 keep). 회귀:
+  `sitout.test.ts`. 로비 복귀 후 도착하는 game-update는 클라가 무시(currentRoomId null 가드).
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
   남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.
