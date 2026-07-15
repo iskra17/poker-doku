@@ -64,6 +64,30 @@ export class SessionManager {
     return this.byPlayerId.get(playerId);
   }
 
+  releaseIfIdle(session: Session): boolean {
+    if (session.socketId || session.roomId || session.graceTimer) return false;
+    if (this.byToken.get(session.token) === session) this.byToken.delete(session.token);
+    if (this.byPlayerId.get(session.playerId) === session) this.byPlayerId.delete(session.playerId);
+    return true;
+  }
+
+  releaseByPlayerId(playerId: string): boolean {
+    const session = this.byPlayerId.get(playerId);
+    return session ? this.releaseIfIdle(session) : false;
+  }
+
+  stats(): { sessions: number; sockets: number; grace: number } {
+    let grace = 0;
+    for (const session of this.byToken.values()) {
+      if (session.graceTimer) grace++;
+    }
+    return {
+      sessions: this.byToken.size,
+      sockets: this.bySocketId.size,
+      grace,
+    };
+  }
+
   /**
    * disconnect 시 소켓 바인딩 해제. 이미 새 소켓으로 교체된 경우(중복 탭 정리 등)는
    * null을 반환해 grace가 시작되지 않도록 한다.

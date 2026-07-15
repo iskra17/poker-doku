@@ -275,4 +275,21 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(room.engine.state.players.find(player => player.id === second.playerId)).toMatchObject(original);
     expect(reconnectMessageCount()).toBe(countBefore + 1);
   });
+
+  it('로비 연결과 제거된 좌석의 세션을 disconnect 수명주기에서 회수한다', async () => {
+    harness = await createSocketTestHarness();
+    const lobby = await harness.connect('lobby-prune-token-1234');
+    lobby.socket.disconnect();
+    await wait(20);
+    expect(harness.runtime.sessions.stats()).toEqual({ sessions: 0, sockets: 0, grace: 0 });
+
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'grace 만료 방' });
+    const seated = await harness.connect('seat-prune-token-1234');
+    await expect(joinRoom(seated, roomId, 0, '만료자')).resolves.toMatchObject({ ok: true });
+    seated.socket.disconnect();
+    await wait(80);
+
+    expect(harness.runtime.roomManager.getRoom(roomId)).toBeUndefined();
+    expect(harness.runtime.sessions.stats()).toEqual({ sessions: 0, sockets: 0, grace: 0 });
+  });
 });

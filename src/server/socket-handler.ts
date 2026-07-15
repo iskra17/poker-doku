@@ -759,7 +759,10 @@ export function setupSocketHandlers(
         // detached=null이면 이미 새 소켓이 세션을 가져간 것(중복 탭) — grace를 걸지 않는 정상 경로
         data: { socketId: socket.id, graceStarted: !!detached?.roomId },
       });
-      if (!detached?.roomId) return;
+      if (!detached?.roomId) {
+        if (detached) sessions.releaseIfIdle(detached);
+        return;
+      }
 
       const roomId = detached.roomId;
       roomManager.handleDisconnect(roomId, detached.playerId);
@@ -769,7 +772,10 @@ export function setupSocketHandlers(
         eventLog.log('grace-expired', {
           roomId, playerId: detached.playerId, data: { seatKept, seats: seatSnapshot(roomId) },
         });
-        if (!seatKept) detached.roomId = null;
+        if (!seatKept) {
+          detached.roomId = null;
+          sessions.releaseIfIdle(detached);
+        }
         broadcastRoomList();
       });
     });

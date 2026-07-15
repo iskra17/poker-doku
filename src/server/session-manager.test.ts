@@ -110,4 +110,30 @@ describe('SessionManager', () => {
 
     expect(onExpire).not.toHaveBeenCalled();
   });
+
+  it('소켓·방·grace가 없는 세션만 즉시 회수한다', () => {
+    const sm = new SessionManager();
+    const idle = sm.resolve('idle-token-1234', 'sock-1').session;
+    sm.detachSocket('sock-1');
+
+    expect(sm.releaseIfIdle(idle)).toBe(true);
+    expect(sm.getByPlayerId(idle.playerId)).toBeUndefined();
+
+    const seated = sm.resolve('seated-token-1234', 'sock-2').session;
+    seated.roomId = 'room-1';
+    sm.detachSocket('sock-2');
+    expect(sm.releaseIfIdle(seated)).toBe(false);
+    expect(sm.getByPlayerId(seated.playerId)).toBe(seated);
+  });
+
+  it('현재 세션·소켓·grace 수를 정확히 집계한다', () => {
+    const sm = new SessionManager();
+    const connected = sm.resolve('stats-connected-1234', 'sock-1').session;
+    const grace = sm.resolve('stats-grace-1234', 'sock-2').session;
+    sm.detachSocket('sock-2');
+    sm.startGrace(grace, 1_000, vi.fn());
+
+    expect(sm.stats()).toEqual({ sessions: 2, sockets: 1, grace: 1 });
+    expect(sm.getByPlayerId(connected.playerId)).toBe(connected);
+  });
 });
