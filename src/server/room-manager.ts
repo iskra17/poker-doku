@@ -247,26 +247,10 @@ export class RoomManager {
   private resetRoomToIdle(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
-    const s = room.engine.state;
-    s.players = [];
-    s.isHandInProgress = false;
-    s.winners = null;
-    s.communityCards = [];
-    s.pots = [{ amount: 0, eligiblePlayerIds: [] }];
-    s.currentBet = 0;
-    s.minRaise = s.bigBlind;
-    s.activePlayerIndex = -1;
-    s.dealerIndex = 0;
-    s.street = 'preflop';
-    s.lastAction = null;
+    room.engine = new PokerEngine(room.config, roomId);
+    this.chatHistory.set(roomId, []);
     this.tournamentClocks.delete(roomId);
-    if (s.tournament) {
-      s.tournament.level = 1;
-      s.tournament.entrants = 0;
-      s.tournament.finished = false;
-      s.tournament.results = [];
-      s.tournament.prizes = [];
-    }
+    this.botLoopEpochs.delete(roomId);
   }
 
   // --- [FIX 1] Hand start 중복 방지 ---
@@ -1036,56 +1020,50 @@ export class RoomManager {
     }
   }
 
-  addChatMessage(roomId: string, playerId: string, playerName: string, message: string): void {
+  addChatMessage(
+    roomId: string,
+    playerId: string,
+    playerName: string,
+    message: string,
+    type: ChatMessage['type'] = 'player',
+  ): void {
+    this.appendChatMessage({ roomId, playerId, playerName, message, type });
+  }
+
+  private appendChatMessage(input: Omit<ChatMessage, 'id' | 'timestamp'>): void {
     const chatMsg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
-      roomId,
-      playerId,
-      playerName,
-      message,
+      ...input,
       timestamp: Date.now(),
-      type: 'player',
     };
-    const history = this.chatHistory.get(roomId) || [];
+    const history = this.chatHistory.get(input.roomId) || [];
     history.push(chatMsg);
-    if (history.length > 100) history.shift();
-    this.chatHistory.set(roomId, history);
-    this.onChat(roomId, chatMsg);
+    if (history.length > 100) history.splice(0, history.length - 100);
+    this.chatHistory.set(input.roomId, history);
+    this.onChat(input.roomId, chatMsg);
   }
 
   private sendSystemChat(roomId: string, message: string): void {
-    const chatMsg: ChatMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+    this.appendChatMessage({
       roomId,
       playerId: 'system',
       playerName: 'System',
       message,
-      timestamp: Date.now(),
       type: 'system',
-    };
-    const history = this.chatHistory.get(roomId) || [];
-    history.push(chatMsg);
-    this.chatHistory.set(roomId, history);
-    this.onChat(roomId, chatMsg);
+    });
   }
 
   private sendBotChat(roomId: string, botId: string, botName: string, message: string): void {
-    const chatMsg: ChatMessage = {
-      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`,
+    this.appendChatMessage({
       roomId,
       playerId: botId,
       playerName: botName,
       message,
-      timestamp: Date.now(),
       type: 'bot',
-    };
-    const history = this.chatHistory.get(roomId) || [];
-    history.push(chatMsg);
-    this.chatHistory.set(roomId, history);
-    this.onChat(roomId, chatMsg);
+    });
   }
 
   getChatHistory(roomId: string): ChatMessage[] {
-    return this.chatHistory.get(roomId) || [];
+    return [...(this.chatHistory.get(roomId) || [])];
   }
 }
