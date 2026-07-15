@@ -72,11 +72,26 @@ describe('자리비움 — 턴을 붙잡지 않는다', () => {
     expect(st.isHandInProgress).toBe(true);
 
     const actorId = st.players[st.activePlayerIndex].id;
-    manager.toggleSitOut(roomId, actorId);
+    const applied = manager.toggleSitOut(roomId, actorId);
 
     // 타이머를 전혀 advance하지 않아도(=동기적으로) 턴이 넘어가 있어야 한다
+    expect(applied).toBe(true);
     const stillMyTurn = st.isHandInProgress && st.players[st.activePlayerIndex].id === actorId;
     expect(stillMyTurn).toBe(false);
+  });
+
+  it('본인 턴의 타임칩 사용은 성공을 반환하고 칩을 소비해 30초 연장한다', () => {
+    const roomId = startedRoom(manager);
+    const st = manager.getRoom(roomId)!.engine.state;
+    const activePlayer = st.players[st.activePlayerIndex];
+    activePlayer.timeBankChips = 1;
+    const remainingBefore = manager.getTurnTimeRemaining(roomId);
+
+    const applied = manager.useTimeBank(roomId, activePlayer.id);
+
+    expect(applied).toBe(true);
+    expect(activePlayer.timeBankChips).toBe(0);
+    expect(manager.getTurnTimeRemaining(roomId)).toBe(remainingBefore + 30_000);
   });
 
   it('캐시: 내 턴이 아닐 때 비운 자리도, 턴이 돌아오면 자동 처리되어 테이블이 멈추지 않는다', () => {

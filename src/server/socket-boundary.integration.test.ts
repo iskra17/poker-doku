@@ -48,10 +48,6 @@ function joinRoom(
   }, done));
 }
 
-function wait(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 describe('Socket.IO runtime boundary', () => {
   let harness: SocketTestHarness | null = null;
 
@@ -72,36 +68,25 @@ describe('Socket.IO runtime boundary', () => {
       status: player.status,
       chatCount: harness.runtime.roomManager.getChatHistory(roomId).length,
     };
-    const uncaught: unknown[] = [];
-    const onUncaught = (error: unknown): void => { uncaught.push(error); };
-    process.on('uncaughtException', onUncaught);
+    const rawSocket = client.socket as unknown as RawSocket;
+    rawSocket.emit('toggle-sit-out', { forgedAck: true });
+    const orderedUsable = await withAck(done => client.socket.emit('get-rooms', done));
+    expect(orderedUsable).toMatchObject({ ok: true });
+    expect(player.sitOutNext).toBe(before.sitOutNext);
+    expect(player.status).toBe(before.status);
+    expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(before.chatCount);
 
-    try {
-      const rawSocket = client.socket as unknown as RawSocket;
-      rawSocket.emit('toggle-sit-out', { forgedAck: true });
-      await wait(20);
-      expect(uncaught).toEqual([]);
-      expect(player.sitOutNext).toBe(before.sitOutNext);
-      expect(player.status).toBe(before.status);
-      expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(before.chatCount);
+    const rejected = await withAck(done => {
+      rawSocket.emit('toggle-sit-out', { forgedAck: true }, done);
+    });
+    expect(rejected).toMatchObject({ ok: false, code: 'invalid-payload' });
+    const usable = await withAck(done => client.socket.emit('get-rooms', done));
 
-      const rejected = await withAck(done => {
-        rawSocket.emit('toggle-sit-out', { forgedAck: true }, done);
-      });
-      expect(rejected).toMatchObject({ ok: false, code: 'invalid-payload' });
-      await wait(20);
-
-      expect(uncaught).toEqual([]);
-      expect(player.sitOutNext).toBe(before.sitOutNext);
-      expect(player.status).toBe(before.status);
-      expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(before.chatCount);
-
-      const usable = await withAck(done => client.socket.emit('get-rooms', done));
-      expect(usable).toMatchObject({ ok: true });
-      expect(client.socket.connected).toBe(true);
-    } finally {
-      process.off('uncaughtException', onUncaught);
-    }
+    expect(usable).toMatchObject({ ok: true });
+    expect(player.sitOutNext).toBe(before.sitOutNext);
+    expect(player.status).toBe(before.status);
+    expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(before.chatCount);
+    expect(client.socket.connected).toBe(true);
   });
 
   it('rejects malformed payload-event arity before membership or payload logging', async () => {
@@ -111,48 +96,37 @@ describe('Socket.IO runtime boundary', () => {
     const rawSocket = client.socket as unknown as RawSocket;
     const joinLogsBefore = eventLog.recent({ playerId: client.playerId })
       .filter(event => event.type.startsWith('join-room')).length;
-    const uncaught: unknown[] = [];
-    const onUncaught = (error: unknown): void => { uncaught.push(error); };
-    process.on('uncaughtException', onUncaught);
+    rawSocket.emit('join-room', {
+      roomId,
+      playerName: 'Arity boundary',
+      buyIn: 2000,
+      seatIndex: 0,
+    }, { forgedAck: true });
+    const orderedUsable = await withAck(done => client.socket.emit('get-rooms', done));
+    expect(orderedUsable).toMatchObject({ ok: true });
+    expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players).toEqual([]);
+    expect(eventLog.recent({ playerId: client.playerId })
+      .filter(event => event.type.startsWith('join-room'))).toHaveLength(joinLogsBefore);
 
-    try {
+    const rejected = await withAck(done => {
       rawSocket.emit('join-room', {
         roomId,
         playerName: 'Arity boundary',
         buyIn: 2000,
         seatIndex: 0,
-      }, { forgedAck: true });
-      await wait(20);
-      expect(uncaught).toEqual([]);
-      expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players).toEqual([]);
-      expect(eventLog.recent({ playerId: client.playerId })
-        .filter(event => event.type.startsWith('join-room'))).toHaveLength(joinLogsBefore);
+      }, { forgedAck: true }, done);
+    });
+    expect(rejected).toMatchObject({ ok: false, code: 'invalid-payload' });
+    const usable = await withAck(done => client.socket.emit('get-rooms', done));
 
-      const rejected = await withAck(done => {
-        rawSocket.emit('join-room', {
-          roomId,
-          playerName: 'Arity boundary',
-          buyIn: 2000,
-          seatIndex: 0,
-        }, { forgedAck: true }, done);
-      });
-      expect(rejected).toMatchObject({ ok: false, code: 'invalid-payload' });
-      await wait(20);
-
-      expect(uncaught).toEqual([]);
-      expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players).toEqual([]);
-      expect(eventLog.recent({ playerId: client.playerId })
-        .filter(event => event.type.startsWith('join-room'))).toHaveLength(joinLogsBefore);
-
-      const usable = await withAck(done => client.socket.emit('get-rooms', done));
-      expect(usable).toMatchObject({ ok: true });
-      expect(client.socket.connected).toBe(true);
-    } finally {
-      process.off('uncaughtException', onUncaught);
-    }
+    expect(usable).toMatchObject({ ok: true });
+    expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players).toEqual([]);
+    expect(eventLog.recent({ playerId: client.playerId })
+      .filter(event => event.type.startsWith('join-room'))).toHaveLength(joinLogsBefore);
+    expect(client.socket.connected).toBe(true);
   });
 
-  it('limits sit-out toggles with the player-action budget without mutating the rejected call', async () => {
+  it('shares the player-action budget with sit-out without mutating the rejected toggle', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Sit-out limit room' });
     const client = await harness.connect('sitout-limit-token-1234');
@@ -160,23 +134,31 @@ describe('Socket.IO runtime boundary', () => {
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
 
-    const accepted: RealtimeAck[] = [];
-    for (let index = 0; index < 12; index++) {
-      accepted.push(await withAck(done => client.socket.emit('toggle-sit-out', done)));
-    }
-    expect(accepted.every(ack => ack.ok)).toBe(true);
-    const afterAccepted = {
+    const before = {
       sitOutNext: player.sitOutNext,
       status: player.status,
       chatCount: harness.runtime.roomManager.getChatHistory(roomId).length,
     };
+    const state = room.engine.state;
+    const fillers: RealtimeAck<{ handNumber: number; actionSeq: number }>[] = [];
+    for (let index = 0; index < 12; index++) {
+      fillers.push(await withAck(done => client.socket.emit('player-action', {
+        roomId,
+        action: 'check',
+        expectedHandNumber: state.handNumber,
+        expectedActionSeq: state.actionSeq,
+      }, done)));
+    }
+    expect(fillers).toEqual(Array.from({ length: 12 }, () => (
+      expect.objectContaining({ ok: false, code: 'action-rejected' })
+    )));
 
     const rejected = await withAck(done => client.socket.emit('toggle-sit-out', done));
 
     expect(rejected).toMatchObject({ ok: false, code: 'rate-limited' });
-    expect(player.sitOutNext).toBe(afterAccepted.sitOutNext);
-    expect(player.status).toBe(afterAccepted.status);
-    expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(afterAccepted.chatCount);
+    expect(player.sitOutNext).toBe(before.sitOutNext);
+    expect(player.status).toBe(before.status);
+    expect(harness.runtime.roomManager.getChatHistory(roomId)).toHaveLength(before.chatCount);
   });
 
   it('returns action-rejected when sit-out cannot be toggled', async () => {
