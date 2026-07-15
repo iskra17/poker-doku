@@ -14,6 +14,9 @@ interface SettingsStore {
   muted: boolean;
   toggleMuted: () => void;
   setMuted: (muted: boolean) => void;
+  /** 배경음악(BGM) 음소거 — 효과음과 별개 */
+  musicMuted: boolean;
+  toggleMusicMuted: () => void;
   /** 카드 앞면 스타일 — 클래식(코너 인덱스) / 빅랭크(GG풍) / 솔리드(수트색 배경+흰 글자) */
   deckStyle: DeckStyleId;
   setDeckStyle: (style: DeckStyleId) => void;
@@ -46,6 +49,8 @@ export const useSettingsStore = create<SettingsStore>()(
       muted: false,
       toggleMuted: () => set(s => ({ muted: !s.muted })),
       setMuted: (muted) => set({ muted }),
+      musicMuted: false,
+      toggleMusicMuted: () => set(s => ({ musicMuted: !s.musicMuted })),
       deckStyle: 'classic',
       setDeckStyle: (deckStyle) => set({ deckStyle }),
       deckColor: 'four',

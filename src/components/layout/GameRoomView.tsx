@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { initSoundSystem } from '@/lib/sound/sound-manager';
+import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
 import PokerTable from '@/components/table/PokerTable';
 import ActionBar from '@/components/table/ActionBar';
 import ActionLog from '@/components/table/ActionLog';
@@ -24,10 +25,17 @@ interface GameRoomViewProps {
 export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const { gameState } = useGameStore();
   const isMobile = useIsMobile();
+  const tournamentFinished = gameState?.tournament?.finished ?? false;
 
   useEffect(() => {
     initSoundSystem();
+    initMusicSystem();
   }, []);
+
+  // 장면 BGM: 입장 시 테이블, SnG 종료 시 승리 테마 (이탈 시 로비 복귀는 page.tsx가 처리)
+  useEffect(() => {
+    setMusicScene(tournamentFinished ? 'victory' : 'table');
+  }, [tournamentFinished]);
 
   return (
     <div className="h-dvh flex flex-col bg-abyss overflow-hidden">

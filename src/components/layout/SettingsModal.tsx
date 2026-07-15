@@ -61,6 +61,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     betStepUnit, setBetStepUnit,
     stackedPot, toggleStackedPot,
     muted, toggleMuted,
+    musicMuted, toggleMusicMuted,
   } = useSettingsStore();
 
   return (
@@ -179,6 +180,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         <section>
           <SectionTitle>사운드</SectionTitle>
           <Toggle checked={!muted} onToggle={toggleMuted} label="효과음" />
+          <Toggle checked={!musicMuted} onToggle={toggleMusicMuted} label="배경음악" />
         </section>
       </div>
     </Modal>

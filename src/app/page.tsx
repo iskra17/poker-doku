@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
+import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { DEALER_CHARACTER } from '@/lib/characters';
 import LobbyHeader from '@/components/lobby/LobbyHeader';
@@ -31,6 +32,12 @@ export default function Home() {
   useEffect(() => {
     connect();
   }, [connect]);
+
+  // 로비/이름 입력 화면 BGM (인룸은 GameRoomView가 테이블 테마로 전환)
+  useEffect(() => {
+    initMusicSystem();
+    if (!currentRoomId) setMusicScene('lobby');
+  }, [currentRoomId]);
 
   const handleSetName = () => {
     const name = nameInput.trim();

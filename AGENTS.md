@@ -77,7 +77,10 @@ npx tsc --noEmit
   `bot-ai.ts`는 프리플랍 티어 + evaluator 기반 포스트플랍 강도/드로우 감지로 결정. 숏스택(≤10BB)
   푸시/폴드 레이어는 결정론 — 테스트가 의존하므로 유지할 것.
 - `src/lib/characters/` — 캐릭터 프로필/한국어 대사 (딜러 미야코, 사쿠라, 류카, 하나, 유키, 아키라, 레이카)
-- `src/lib/sound/` — Web Audio 합성 사운드 (에셋 파일 없음)
+- `src/lib/sound/` — 효과음은 Web Audio 합성(에셋 없음), BGM은 `music-manager.ts`가
+  `public/assets/music/{lobby,table,tension,victory}.mp3`(Suno 생성) 재생 — 장면 전환은
+  로비(page.tsx)/테이블·우승(GameRoomView)/올인 긴장(game-events 구독), 설정에 효과음과
+  별개 배경음악 토글(`musicMuted`)
 - `src/lib/assets/character-art.ts` — 일러스트 매니페스트 (이미지 없으면 이모지 fallback)
 - `src/components/table/` — 테이블 UI. **세로형 단일 레이아웃** — 모든 화면에서 세로 타원 컬럼
   (`max-w-[min(440px,60dvh)]`) 하나를 중앙 렌더. 좌석/베팅/팟/딜러버튼 좌표는 `table-layout.ts`가
