@@ -71,12 +71,20 @@ npx tsc --noEmit
 
 - `src/server/` — 커스텀 서버, 소켓 핸들러, RoomManager(방/타이머/봇), SessionManager
 - `src/lib/poker/` — 순수 게임 로직 (engine, evaluator, deck, types) + 테스트
-- `src/lib/bot/` — 봇 AI. `personalities.ts`가 아키타입 DB (사쿠라=록, 류카=LAG, 하나=TAG,
-  유키=콜링 스테이션, 아키라=매니악, 레이카=밸런스드 프로 —
-  vpip/pfr/aggression/limp/threeBet/slowPlay/betSizing).
-  `bot-ai.ts`는 프리플랍 티어 + evaluator 기반 포스트플랍 강도/드로우 감지로 결정. 숏스택(≤10BB)
-  푸시/폴드 레이어는 결정론 — 테스트가 의존하므로 유지할 것.
-- `src/lib/characters/` — 캐릭터 프로필/한국어 대사 (딜러 미야코, 사쿠라, 류카, 하나, 유키, 아키라, 레이카)
+- `src/lib/bot/` — 봇 AI. **HUD 스탯 기반**: `personalities.ts`가 캐릭터별 HUD DB
+  (vpip/pfr/threeBet/coldCall/foldToThreeBet/limp/steal/cbetFlop·Turn/foldToCbet/checkRaise/
+  donkBet/wtsd/riverBluff/semiBluff/slowPlay/aggression + 사이징, % 0~100) — 수치를 바꾸면
+  그 봇의 스타일이 바뀐다. 해석 계약: **레인지 스탯**(vpip/pfr/3bet/coldCall)은
+  `hand-rankings.ts`(Chen formula 169핸드 콤보 가중 백분위)와 비교한 "상위 X% 레인지",
+  **빈도 스탯**(cbet 등)은 매 상황 독립시행(`rng() < stat/100`). `bot-ai.ts`의
+  `decideBotAction(..., rng)`은 rng 주입으로 테스트 결정론화 (`bot-hud.test.ts`).
+  c벳 스팟 판정은 `GameState.lastAggressorId`(엔진이 벳/레이즈마다 갱신). 숏스택(≤10BB)
+  푸시/폴드 레이어와 딥스택 커밋 가드는 스탯 무관 결정론 — 테스트가 의존하므로 유지할 것.
+- `src/lib/characters/` — 캐릭터 프로필/배경서사/한국어 대사. 다국적 로스터: 딜러 미야코(일본),
+  사쿠라(일본·록), 아라(한국·LAG 츤데레), 하나(한국·TAG 분석가), 클로이(미국·콜링 스테이션
+  스트리머), 비비안(프랑스·매니악 前 배우), 엘레나(러시아·밸런스드 프로). 캐릭터 id가
+  아트 폴더·HUD 스탯·대사 풀의 공용 키 — id 변경 시 셋 다 함께 옮길 것 (2026-07 개편:
+  ryuka→ara, yuki→chloe, akira→vivian, reika→elena, 일러스트는 재사용).
 - `src/lib/sound/` — 효과음은 Web Audio 합성(에셋 없음), BGM은 `music-manager.ts`가
   `public/assets/music/{lobby,table,tension,victory}.mp3`(Suno 생성) 재생 — 장면 전환은
   로비(page.tsx)/테이블·우승(GameRoomView)/올인 긴장(game-events 구독), 설정에 효과음과

@@ -237,6 +237,7 @@ export class PokerEngine {
     this.state.street = 'preflop';
     this.state.winners = null;
     this.state.lastAction = null;
+    this.state.lastAggressorId = null;
 
     // Reset players
     for (const player of this.state.players) {
@@ -424,6 +425,7 @@ export class PokerEngine {
         const isFullRaise = raiseTotal >= minTotal;
         if (isFullRaise) this.state.minRaise = raiseTotal - this.state.currentBet;
         this.state.currentBet = raiseTotal;
+        this.state.lastAggressorId = player.id;
         if (player.chips === 0) player.status = 'all-in';
         if (isFullRaise) {
           for (const p of this.state.players) {
@@ -449,6 +451,7 @@ export class PokerEngine {
             }
           }
           this.state.currentBet = totalBet;
+          this.state.lastAggressorId = player.id;
         }
         player.currentBet = totalBet;
         player.totalContributed += allInAmount;

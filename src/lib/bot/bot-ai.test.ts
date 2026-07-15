@@ -111,9 +111,9 @@ function postflopState(
 
 describe('봇 딥스택 올인 캐스케이드 가드', () => {
   it('딥스택 tier3(JJ)는 스택 40%+를 커밋하는 레이즈에 폴드한다', () => {
-    // 100BB 스택, 40BB 레이즈 직면 (커밋 40%) — 폴드 결정론 (전에는 ryuka가 ~89% 콜)
+    // 100BB 스택, 40BB 레이즈 직면 (커밋 40%) — 폴드 결정론 (LAG 포함)
     const player = makePlayer('bot', 2000, 0, {
-      type: 'bot', personalityId: 'ryuka', holeCards: cards('Jh Jd'),
+      type: 'bot', personalityId: 'ara', holeCards: cards('Jh Jd'),
     });
     for (let i = 0; i < 30; i++) {
       const d = decideBotAction(player, preflopState(20, 800), ALL_ACTIONS);
@@ -124,7 +124,7 @@ describe('봇 딥스택 올인 캐스케이드 가드', () => {
   it('포스트플랍 강한 핸드도 리레이즈로 되돌아오면 다시 레이즈하지 않는다', () => {
     // 탑 투페어로 이번 스트리트 이미 벳 → 레이즈 직면: 콜만 (매니악 포함)
     const player = makePlayer('bot', 2000, 0, {
-      type: 'bot', personalityId: 'akira', holeCards: cards('Kh Qd'), currentBet: 100,
+      type: 'bot', personalityId: 'vivian', holeCards: cards('Kh Qd'), currentBet: 100,
     });
     const state = postflopState(20, 400, 900, 'Ks Qc 7h');
     for (let i = 0; i < 30; i++) {
@@ -136,7 +136,7 @@ describe('봇 딥스택 올인 캐스케이드 가드', () => {
 
   it('딥스택 미들 페어는 스택 40%+ 커밋 벳에 폴드한다 — 콜링 스테이션 포함', () => {
     const player = makePlayer('bot', 2000, 0, {
-      type: 'bot', personalityId: 'yuki', holeCards: cards('9h 8d'),
+      type: 'bot', personalityId: 'chloe', holeCards: cards('9h 8d'),
     });
     const state = postflopState(20, 900, 600, 'Kh 9c 4s'); // 미들 페어, 커밋 45%
     for (let i = 0; i < 30; i++) {
@@ -148,7 +148,7 @@ describe('봇 딥스택 올인 캐스케이드 가드', () => {
   it('드로우는 리레이즈 상황에서 세미블러프 레이즈를 하지 않는다', () => {
     // 플러시 드로우로 이번 스트리트 이미 액션 → 레이즈 직면: 콜/폴드만
     const player = makePlayer('bot', 1500, 0, {
-      type: 'bot', personalityId: 'akira', holeCards: cards('Ah 7h'), currentBet: 100,
+      type: 'bot', personalityId: 'vivian', holeCards: cards('Ah 7h'), currentBet: 100,
     });
     const state = postflopState(20, 500, 600, 'Kh 9h 2c');
     for (let i = 0; i < 30; i++) {
@@ -161,7 +161,7 @@ describe('봇 딥스택 올인 캐스케이드 가드', () => {
 
 describe('봇 난이도 변조 (adjustForSkill)', () => {
   it('normal/미지정은 원본 성향을 그대로 반환한다', () => {
-    const p = BOT_PERSONALITIES['ryuka'];
+    const p = BOT_PERSONALITIES['ara'];
     expect(adjustForSkill(p, 'normal')).toEqual(p);
     expect(adjustForSkill(p, undefined)).toEqual(p);
   });
@@ -171,28 +171,28 @@ describe('봇 난이도 변조 (adjustForSkill)', () => {
       const p = BOT_PERSONALITIES[id];
       const e = adjustForSkill(p, 'easy');
       expect(e.aggression).toBeLessThan(p.aggression);
-      expect(e.bluffFrequency).toBeLessThanOrEqual(p.bluffFrequency);
-      expect(e.foldToPressure).toBeGreaterThanOrEqual(p.foldToPressure);
+      expect(e.riverBluff).toBeLessThanOrEqual(p.riverBluff);
+      expect(e.foldToCbet).toBeGreaterThanOrEqual(p.foldToCbet);
     }
   });
 
-  it('hard는 공격성·블러프를 키우고 잘 안 접는다 — 값은 0~1 클램프', () => {
+  it('hard는 공격성·블러프를 키우고 잘 안 접는다 — 값은 0~100 클램프', () => {
     for (const id of Object.keys(BOT_PERSONALITIES)) {
       const p = BOT_PERSONALITIES[id];
       const h = adjustForSkill(p, 'hard');
       expect(h.aggression).toBeGreaterThanOrEqual(p.aggression);
-      expect(h.foldToPressure).toBeLessThanOrEqual(p.foldToPressure);
-      for (const v of [h.aggression, h.bluffFrequency, h.threeBet, h.foldToPressure]) {
+      expect(h.foldToCbet).toBeLessThanOrEqual(p.foldToCbet);
+      for (const v of [h.aggression, h.riverBluff, h.threeBet, h.foldToCbet]) {
         expect(v).toBeGreaterThanOrEqual(0);
-        expect(v).toBeLessThanOrEqual(1);
+        expect(v).toBeLessThanOrEqual(100);
       }
     }
   });
 
-  it('캐릭터 간 상대적 개성은 유지된다 — easy에서도 akira가 sakura보다 공격적', () => {
+  it('캐릭터 간 상대적 개성은 유지된다 — easy에서도 vivian이 sakura보다 공격적', () => {
     const sakura = adjustForSkill(BOT_PERSONALITIES['sakura'], 'easy');
-    const akira = adjustForSkill(BOT_PERSONALITIES['akira'], 'easy');
-    expect(akira.aggression).toBeGreaterThan(sakura.aggression);
+    const vivian = adjustForSkill(BOT_PERSONALITIES['vivian'], 'easy');
+    expect(vivian.aggression).toBeGreaterThan(sakura.aggression);
   });
 });
 

@@ -68,6 +68,19 @@ export const useSettingsStore = create<SettingsStore>()(
       chipDisplayMode: 'chips',
       toggleChipDisplayMode: () => set(s => ({ chipDisplayMode: s.chipDisplayMode === 'chips' ? 'bb' : 'chips' })),
     }),
-    { name: 'poker-doku-settings' },
+    {
+      name: 'poker-doku-settings',
+      version: 2,
+      // v2: 캐릭터 로스터 개편 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
+      migrate: (persisted) => {
+        const s = persisted as Partial<SettingsStore> | undefined;
+        if (!s) return persisted as SettingsStore;
+        const idMap: Record<string, string> = { ryuka: 'ara', yuki: 'chloe', akira: 'vivian', reika: 'elena' };
+        if (s.profileCharacter && idMap[s.profileCharacter]) {
+          s.profileCharacter = idMap[s.profileCharacter];
+        }
+        return s as SettingsStore;
+      },
+    },
   ),
 );

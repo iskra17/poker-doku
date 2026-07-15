@@ -7,25 +7,26 @@
 export type Expression = 'neutral' | 'happy' | 'sad' | 'thinking' | 'confident' | 'surprised';
 
 // 캐릭터 id → 아트 폴더 (딜러는 miyako 폴더 사용)
+// 2026-07 로스터 개편: 기존 일러스트를 새 정체성에 재사용 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
 const ART_FOLDERS: Record<string, string> = {
   dealer: 'miyako',
   sakura: 'sakura',
-  ryuka: 'ryuka',
+  ara: 'ara',
   hana: 'hana',
-  yuki: 'yuki',
-  akira: 'akira',
-  reika: 'reika',
+  chloe: 'chloe',
+  vivian: 'vivian',
+  elena: 'elena',
 };
 
 // 보유 중인 표정 (MVP 3종 — thinking/confident/surprised는 확장 시 추가)
 const AVAILABLE: Record<string, Expression[]> = {
   miyako: ['neutral', 'happy', 'sad'],
   sakura: ['neutral', 'happy', 'sad'],
-  ryuka: ['neutral', 'happy', 'sad'],
+  ara: ['neutral', 'happy', 'sad'],
   hana: ['neutral', 'happy', 'sad'],
-  yuki: ['neutral', 'happy', 'sad'],
-  akira: ['neutral', 'happy', 'sad'],
-  reika: ['neutral', 'happy', 'sad'],
+  chloe: ['neutral', 'happy', 'sad'],
+  vivian: ['neutral', 'happy', 'sad'],
+  elena: ['neutral', 'happy', 'sad'],
 };
 
 // 미보유 표정 → 유사 표정 강등
