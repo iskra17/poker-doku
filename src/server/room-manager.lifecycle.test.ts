@@ -97,4 +97,73 @@ describe('RoomManager 메모리 수명주기', () => {
     expect(reset.lastAction).toBeNull();
     expect(reset.lastAggressorId).toBeUndefined();
   });
+
+  it('disposeRoom은 방별 상태와 모든 예약 타이머를 지우며 반복 호출에도 안전하다', () => {
+    const disposed: Array<{ roomId: string; playerIds: string[]; reason: string }> = [];
+    manager.shutdown();
+    manager = new RoomManager(
+      () => {},
+      () => {},
+      undefined,
+      {
+        onRoomDisposed: (roomId, playerIds, reason) => {
+          disposed.push({ roomId, playerIds, reason });
+        },
+      },
+    );
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    manager.sitOutAndLeave(roomId, 'p1');
+    manager.addChatMessage(roomId, 'p2', '휴먼-p2', '정리될 채팅');
+    expect(manager.getRuntimeStats()).toMatchObject({
+      rooms: 1,
+      chatRooms: 1,
+      pendingStartTimers: 1,
+      sitOutTimers: 1,
+    });
+
+    expect(manager.disposeRoom(roomId)).toBe(true);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(manager.getChatHistory(roomId)).toEqual([]);
+    expect(manager.getRuntimeStats()).toEqual({
+      rooms: 0,
+      chatRooms: 0,
+      botTimers: 0,
+      pendingStartTimers: 0,
+      turnTimers: 0,
+      sitOutTimers: 0,
+      finishedRoomTimers: 0,
+      deadlines: 0,
+      epochs: 0,
+      tournamentClocks: 0,
+    });
+    expect(disposed).toEqual([{ roomId, playerIds: ['p1', 'p2'], reason: 'manual' }]);
+  });
+
+  it('종료 SnG 보존 타이머는 한 번만 예약되고 만료 시 방을 dispose한다', () => {
+    manager.shutdown();
+    manager = new RoomManager(() => {}, () => {}, undefined, { sngRetentionMs: 50 });
+    const roomId = manager.createRoom({
+      ...makeConfig(),
+      name: '종료 SnG',
+      gameMode: 'sng',
+      startingStack: 1500,
+      minBuyIn: 1500,
+      maxBuyIn: 1500,
+      tableType: 'mixed',
+    });
+    const tournament = manager.getRoom(roomId)!.engine.state.tournament!;
+    tournament.finished = true;
+
+    expect(manager.retainFinishedTournament(roomId)).toBe(true);
+    expect(manager.retainFinishedTournament(roomId)).toBe(true);
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
+    vi.advanceTimersByTime(51);
+
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(0);
+  });
 });

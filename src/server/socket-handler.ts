@@ -32,6 +32,7 @@ export interface SocketRuntimeOptions {
   createDefaultRooms?: boolean;
   sweepIntervalMs?: number;
   graceMs?: number;
+  sngRetentionMs?: number;
 }
 
 export interface SocketRuntime {
@@ -48,6 +49,7 @@ export function setupSocketHandlers(
     createDefaultRooms = true,
     sweepIntervalMs = 60_000,
     graceMs = GRACE_MS,
+    sngRetentionMs,
   } = options;
   const sessions = new SessionManager();
 
@@ -95,6 +97,26 @@ export function setupSocketHandlers(
     },
     // onRoomsChanged — 서버 내부 자동 정리(미납 블라인드/방치 회수)도 로비에 즉시 반영
     () => broadcastRoomList(),
+    {
+      sngRetentionMs,
+      onRoomDisposed: (roomId, playerIds, reason) => {
+        for (const playerId of playerIds) {
+          const session = sessions.getByPlayerId(playerId);
+          if (!session || session.roomId !== roomId) continue;
+          const socket = session.socketId
+            ? io.sockets.sockets.get(session.socketId)
+            : undefined;
+          socket?.leave(roomId);
+          if (reason === 'sng-expired') {
+            socket?.emit('room-lost', {
+              message: '종료된 Sit & Go 보존 시간이 끝나 로비로 돌아왔어요.',
+            });
+          }
+          session.roomId = null;
+          sessions.releaseIfIdle(session);
+        }
+      },
+    },
   );
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
@@ -157,10 +179,7 @@ export function setupSocketHandlers(
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
   const sweepTimer = sweepIntervalMs > 0
     ? setInterval(() => {
-        const removed = roomManager.sweepIdleRooms();
-        if (removed > 0) {
-          broadcastRoomList();
-        }
+        roomManager.sweepIdleRooms();
       }, sweepIntervalMs)
     : null;
 

@@ -13,6 +13,31 @@ import type { RoomListItem } from '../lib/realtime/protocol';
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
+const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
+
+export interface RoomManagerOptions {
+  sngRetentionMs?: number;
+  onRoomDisposed?: (
+    roomId: string,
+    playerIds: string[],
+    reason: RoomDisposeReason,
+  ) => void;
+}
+
+export type RoomDisposeReason = 'manual' | 'idle' | 'empty' | 'sng-expired' | 'shutdown';
+
+export interface RoomManagerRuntimeStats {
+  rooms: number;
+  chatRooms: number;
+  botTimers: number;
+  pendingStartTimers: number;
+  turnTimers: number;
+  sitOutTimers: number;
+  finishedRoomTimers: number;
+  deadlines: number;
+  epochs: number;
+  tournamentClocks: number;
+}
 
 export class RoomManager {
   private rooms: Map<string, { engine: PokerEngine; config: RoomConfig; createdAt: number; persistent?: boolean }> = new Map();
@@ -25,23 +50,30 @@ export class RoomManager {
   private turnDeadlines: Map<string, number> = new Map();
   /** 자리비움 후 방을 떠난 좌석의 최종 정리 타이머 — 키 `${roomId}:${playerId}` (복귀 시 취소) */
   private sitOutAbandonTimers: Map<string, NodeJS.Timeout> = new Map();
+  private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
-  private tournamentClocks: Map<string, { startedAt: number; announcedResults: number }> = new Map();
+  private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
   /** 좌석 구성이 서버 내부에서 바뀔 때(자동 정리 등) 로비 목록 재브로드캐스트 훅 */
   private onRoomsChanged?: () => void;
+  private options: Required<Pick<RoomManagerOptions, 'sngRetentionMs'>> & Omit<RoomManagerOptions, 'sngRetentionMs'>;
 
   constructor(
     onUpdate: (roomId: string, engine: PokerEngine) => void,
     onChat: (roomId: string, message: ChatMessage) => void,
     onRoomsChanged?: () => void,
+    options: RoomManagerOptions = {},
   ) {
     this.onUpdate = onUpdate;
     this.onChat = onChat;
     this.onRoomsChanged = onRoomsChanged;
+    this.options = {
+      ...options,
+      sngRetentionMs: options.sngRetentionMs ?? DEFAULT_SNG_RETENTION_MS,
+    };
   }
 
   createRoom(config: RoomConfig, persistent = false): string {
@@ -60,6 +92,68 @@ export class RoomManager {
     return this.rooms.size;
   }
 
+  getRuntimeStats(): RoomManagerRuntimeStats {
+    return {
+      rooms: this.rooms.size,
+      chatRooms: this.chatHistory.size,
+      botTimers: this.botIntervals.size,
+      pendingStartTimers: this.pendingStartTimers.size,
+      turnTimers: this.turnTimers.size,
+      sitOutTimers: this.sitOutAbandonTimers.size,
+      finishedRoomTimers: this.finishedRoomTimers.size,
+      deadlines: this.turnDeadlines.size,
+      epochs: this.botLoopEpochs.size,
+      tournamentClocks: this.tournamentClocks.size,
+    };
+  }
+
+  disposeRoom(
+    roomId: string,
+    reason: RoomDisposeReason = 'manual',
+    notify = true,
+  ): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    const playerIds = room.engine.state.players
+      .filter(player => player.type === 'human')
+      .map(player => player.id);
+
+    this.stopBotLoop(roomId);
+    this.clearPendingStart(roomId);
+    this.clearTurnTimer(roomId);
+    const finishedTimer = this.finishedRoomTimers.get(roomId);
+    if (finishedTimer) clearTimeout(finishedTimer);
+    this.finishedRoomTimers.delete(roomId);
+    for (const [key, timer] of this.sitOutAbandonTimers) {
+      if (!key.startsWith(`${roomId}:`)) continue;
+      clearTimeout(timer);
+      this.sitOutAbandonTimers.delete(key);
+    }
+
+    this.rooms.delete(roomId);
+    this.chatHistory.delete(roomId);
+    this.tournamentClocks.delete(roomId);
+    this.botLoopEpochs.delete(roomId);
+    this.dialogue.disposeScope(roomId);
+    if (notify) {
+      this.options.onRoomDisposed?.(roomId, playerIds, reason);
+      this.onRoomsChanged?.();
+    }
+    return true;
+  }
+
+  retainFinishedTournament(roomId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room?.engine.state.tournament?.finished) return false;
+    if (this.finishedRoomTimers.has(roomId)) return true;
+    const timer = setTimeout(() => {
+      this.finishedRoomTimers.delete(roomId);
+      this.disposeRoom(roomId, 'sng-expired');
+    }, this.options.sngRetentionMs);
+    this.finishedRoomTimers.set(roomId, timer);
+    return true;
+  }
+
   /** 휴먼이 없는 유저 생성 방을 유휴 시간 경과 후 정리. 삭제한 방 수 반환 */
   sweepIdleRooms(idleMs = 10 * 60_000): number {
     let removed = 0;
@@ -68,14 +162,7 @@ export class RoomManager {
       if (room.persistent) return;
       const humans = room.engine.state.players.filter(p => p.type === 'human' && !p.pendingRemoval);
       if (humans.length === 0 && now - room.createdAt > idleMs) {
-        this.stopBotLoop(id);
-        this.clearPendingStart(id);
-        this.clearTurnTimer(id);
-        this.rooms.delete(id);
-        this.chatHistory.delete(id);
-        this.tournamentClocks.delete(id);
-        this.botLoopEpochs.delete(id);
-        removed++;
+        if (this.disposeRoom(id, 'idle')) removed++;
       }
     });
     return removed;
@@ -210,14 +297,10 @@ export class RoomManager {
         // 영속(기본 로비) 방은 삭제하지 않고 대기 상태로 리셋 — 남은 봇/진행 중 핸드를 비워
         // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
         this.resetRoomToIdle(roomId);
+        if (player) this.onRoomsChanged?.();
       } else {
-        this.rooms.delete(roomId);
-        this.chatHistory.delete(roomId);
-        this.tournamentClocks.delete(roomId);
-        this.botLoopEpochs.delete(roomId);
+        this.disposeRoom(roomId, 'empty');
       }
-      // 방 삭제/리셋까지 끝난 뒤 로비 목록 반영
-      if (player) this.onRoomsChanged?.();
       return;
     }
 
@@ -312,7 +395,11 @@ export class RoomManager {
       if (tournament.finished) return;
       if (tournament.entrants === 0) {
         const startedAt = Date.now();
-        this.tournamentClocks.set(roomId, { startedAt, announcedResults: 0 });
+        this.tournamentClocks.set(roomId, {
+          startedAt,
+          announcedResults: 0,
+          finishedAnnounced: false,
+        });
         const next = SNG_BLIND_SCHEDULE[1] ?? null;
         room.engine.startTournament(
           startedAt + SNG_LEVEL_DURATION_MS,
@@ -863,27 +950,28 @@ export class RoomManager {
 
     const results = [...tournament.results].sort((a, b) => b.place - a.place); // 낮은 순위부터 공지
     const fresh = results.length - clock.announcedResults;
-    if (fresh <= 0) return;
+    if (fresh > 0) {
+      for (const r of results.slice(0, fresh)) {
+        if (r.place === 1) continue; // 우승은 아래 종합 공지에서
+        const prizeText = r.prize > 0 ? ` (상금 ${r.prize.toLocaleString()})` : '';
+        this.sendSystemChat(roomId, `${r.name}님이 ${r.place}위로 탈락했습니다${prizeText}.`);
 
-    for (const r of results.slice(0, fresh)) {
-      if (r.place === 1) continue; // 우승은 아래 종합 공지에서
-      const prizeText = r.prize > 0 ? ` (상금 ${r.prize.toLocaleString()})` : '';
-      this.sendSystemChat(roomId, `${r.name}님이 ${r.place}위로 탈락했습니다${prizeText}.`);
-
-      // 탈락한 봇의 퇴장 대사 (AI 시도 → 실패 시 loseQuote)
-      const busted = room.engine.state.players.find(p => p.id === r.playerId);
-      if (busted?.type === 'bot') {
-        const character = getCharacterById(busted.personalityId || '');
-        if (character) {
-          const situation = `Sit & Go 토너먼트에서 ${r.place}위로 탈락이 확정됐다`
-            + (r.prize > 0 ? ` (상금 ${r.prize.toLocaleString()} 획득)` : ' (상금 없음)') + '. 퇴장 인사.';
-          void this.botQuip(roomId, busted, r.prize > 0 ? 'sng-bust-prize' : 'sng-bust-noprize', situation, character.loseQuote);
+        // 탈락한 봇의 퇴장 대사 (AI 시도 → 실패 시 loseQuote)
+        const busted = room.engine.state.players.find(p => p.id === r.playerId);
+        if (busted?.type === 'bot') {
+          const character = getCharacterById(busted.personalityId || '');
+          if (character) {
+            const situation = `Sit & Go 토너먼트에서 ${r.place}위로 탈락이 확정됐다`
+              + (r.prize > 0 ? ` (상금 ${r.prize.toLocaleString()} 획득)` : ' (상금 없음)') + '. 퇴장 인사.';
+            void this.botQuip(roomId, busted, r.prize > 0 ? 'sng-bust-prize' : 'sng-bust-noprize', situation, character.loseQuote);
+          }
         }
       }
+      clock.announcedResults = results.length;
     }
-    clock.announcedResults = results.length;
 
-    if (tournament.finished) {
+    if (tournament.finished && !clock.finishedAnnounced) {
+      clock.finishedAnnounced = true;
       const podium = [...tournament.results]
         .filter(r => r.place <= 3)
         .sort((a, b) => a.place - b.place)
@@ -901,6 +989,7 @@ export class RoomManager {
           void this.botQuip(roomId, champPlayer, 'sng-champ', situation, character.winQuote);
         }
       }
+      this.retainFinishedTournament(roomId);
     }
   }
 
@@ -916,18 +1005,10 @@ export class RoomManager {
   }
 
   shutdown(): void {
-    for (const timer of this.botIntervals.values()) clearTimeout(timer);
-    for (const timer of this.pendingStartTimers.values()) clearTimeout(timer);
-    for (const timer of this.turnTimers.values()) clearTimeout(timer);
-    for (const timer of this.sitOutAbandonTimers.values()) clearTimeout(timer);
-
-    this.botIntervals.clear();
-    this.botLoopEpochs.clear();
-    this.pendingStartTimers.clear();
-    this.turnTimers.clear();
-    this.turnDeadlines.clear();
-    this.sitOutAbandonTimers.clear();
-    this.tournamentClocks.clear();
+    for (const roomId of [...this.rooms.keys()]) this.disposeRoom(roomId, 'shutdown', false);
+    for (const timer of this.finishedRoomTimers.values()) clearTimeout(timer);
+    this.finishedRoomTimers.clear();
+    this.dialogue.shutdown();
   }
 
   processPlayerAction(roomId: string, playerId: string, actionType: ActionType, amount: number = 0): boolean {

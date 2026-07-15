@@ -25,6 +25,8 @@ import { dirname } from 'path';
 export interface LineGenerator {
   generateLine(scopeId: string, characterId: string, situation: string): Promise<string | null>;
   noteLine?(characterId: string, line: string): void;
+  disposeScope?(scopeId: string): void;
+  shutdown?(): void;
 }
 
 interface CachedLine {
@@ -118,6 +120,18 @@ export class DialogueManager {
     let lines = 0;
     this.pools.forEach(p => { lines += p.length; });
     return { pools: this.pools.size, lines };
+  }
+
+  disposeScope(scopeId: string): void {
+    this.generator.disposeScope?.(scopeId);
+  }
+
+  shutdown(): void {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = null;
+    }
+    this.generator.shutdown?.();
   }
 
   private pickFromPool(poolKey: string, pool: CachedLine[]): string | null {

@@ -49,6 +49,19 @@ export class AIDialogue {
     return this.apiKey !== null;
   }
 
+  get scopeCount(): number {
+    return this.lastCallByRoom.size;
+  }
+
+  disposeScope(roomId: string): void {
+    this.lastCallByRoom.delete(roomId);
+  }
+
+  shutdown(): void {
+    this.lastCallByRoom.clear();
+    this.recentLines.clear();
+  }
+
   /** 외부(캐시 재사용 등)에서 소비한 대사를 반복 방지 버퍼에 반영 */
   noteLine(characterId: string, line: string): void {
     const recent = this.recentLines.get(characterId) ?? [];

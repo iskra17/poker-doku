@@ -21,7 +21,14 @@ export interface SocketTestHarness {
   close: () => Promise<void>;
 }
 
-export async function createSocketTestHarness(): Promise<SocketTestHarness> {
+export interface SocketTestHarnessOptions {
+  graceMs?: number;
+  sngRetentionMs?: number;
+}
+
+export async function createSocketTestHarness(
+  options: SocketTestHarnessOptions = {},
+): Promise<SocketTestHarness> {
   const httpServer = createServer();
   const io = new Server<ClientToServerEvents, ServerToClientEvents>(httpServer, {
     transports: ['websocket'],
@@ -29,7 +36,8 @@ export async function createSocketTestHarness(): Promise<SocketTestHarness> {
   const runtime = setupSocketHandlers(io, {
     createDefaultRooms: false,
     sweepIntervalMs: 0,
-    graceMs: 50,
+    graceMs: options.graceMs ?? 50,
+    sngRetentionMs: options.sngRetentionMs,
   });
   const clients = new Set<PokerClientSocket>();
 

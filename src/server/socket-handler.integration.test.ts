@@ -292,4 +292,46 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.runtime.roomManager.getRoom(roomId)).toBeUndefined();
     expect(harness.runtime.sessions.stats()).toEqual({ sessions: 0, sockets: 0, grace: 0 });
   });
+
+  it('종료 SnG 보존 만료는 참가자를 room-lost로 보내고 세션 방을 비운다', async () => {
+    harness = await createSocketTestHarness({ sngRetentionMs: 30 });
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...HUMAN_ROOM,
+      name: '만료 SnG',
+      gameMode: 'sng',
+      startingStack: 1500,
+      minBuyIn: 1500,
+      maxBuyIn: 1500,
+      tableType: 'mixed',
+    });
+    const client = await harness.connect('expired-sng-token-1234');
+    await expect(joinRoom(client, roomId, 0, '결과 관전자')).resolves.toMatchObject({ ok: true });
+    const lost = new Promise<{ message?: string } | undefined>(resolve => {
+      client.socket.once('room-lost', resolve);
+    });
+    harness.runtime.roomManager.getRoom(roomId)!.engine.state.tournament!.finished = true;
+
+    expect(harness.runtime.roomManager.retainFinishedTournament(roomId)).toBe(true);
+
+    await expect(lost).resolves.toMatchObject({ message: '종료된 Sit & Go 보존 시간이 끝나 로비로 돌아왔어요.' });
+    expect(harness.runtime.roomManager.getRoom(roomId)).toBeUndefined();
+    expect(harness.runtime.sessions.getByPlayerId(client.playerId)?.roomId).toBeNull();
+    expect(harness.runtime.roomManager.getRoomList()).toEqual([]);
+  });
+
+  it('일반 캐시 방의 정상 퇴장은 종료 SnG room-lost 안내를 보내지 않는다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: '정상 퇴장 방' });
+    const client = await harness.connect('cash-leave-token-1234');
+    await expect(joinRoom(client, roomId, 0, '퇴장자')).resolves.toMatchObject({ ok: true });
+    let lostCount = 0;
+    client.socket.on('room-lost', () => { lostCount++; });
+
+    const left = await withAck(done => client.socket.emit('leave-room', { mode: 'exit' }, done));
+    await wait(20);
+
+    expect(left).toMatchObject({ ok: true });
+    expect(lostCount).toBe(0);
+    expect(harness.runtime.sessions.getByPlayerId(client.playerId)?.roomId).toBeNull();
+  });
 });
