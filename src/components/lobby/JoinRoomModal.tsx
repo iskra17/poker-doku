@@ -10,11 +10,20 @@ interface JoinRoomModalProps {
   onClose: () => void;
 }
 
-/** 테이블 입장 모달 — 캐시는 바이인(40~200BB) 선택, Sit & Go는 고정 스택 안내. 비밀번호 방은 입력 요구 */
+/**
+ * 테이블 입장 모달 — 캐시는 바이인(40~200BB) 선택, Sit & Go는 고정 스택 안내. 비밀번호 방은 입력 요구.
+ * 보존된 내 좌석(mySeat)이 있는 방은 page.tsx가 모달 없이 즉시 복귀시키므로, 여기로 오는
+ * mySeat 케이스는 파산(0칩) 캐시 좌석의 리바이뿐 — 비밀번호는 재입장 멱등 경로라 묻지 않는다.
+ */
 export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
   const joinRoom = useGameStore(s => s.joinRoom);
+  const rooms = useGameStore(s => s.rooms);
 
   const isSng = room.mode === 'sng';
+  const isRebuyReturn = !!room.mySeat;
+  const needPassword = !!room.hasPassword && !isRebuyReturn;
+  // 다른 테이블에 보존해 둔 좌석 — 이 방에 앉는 순간 서버가 회수한다 (1세션 1테이블)
+  const otherSeatRoom = rooms.find(r => r.mySeat && r.id !== room.id);
   const bb = room.bigBlind ?? (parseInt(room.blinds.split('/')[1]) || 20);
   const minBuyIn = room.minBuyIn ?? bb * 40;
   const maxBuyIn = room.maxBuyIn ?? bb * 200;
@@ -24,7 +33,7 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
   const [password, setPassword] = useState('');
 
   const handleJoin = () => {
-    joinRoom(room.id, buyIn, 0, room.hasPassword ? password : undefined);
+    joinRoom(room.id, buyIn, 0, needPassword ? password : undefined);
     onClose();
   };
 
@@ -91,7 +100,19 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           </div>
         )}
 
-        {room.hasPassword && (
+        {isRebuyReturn && (
+          <p className="text-xs text-gilded/90 bg-gilded/10 border border-gilded/30 rounded-lg px-3 py-2 leading-relaxed">
+            🪑 좌석은 그대로 남아 있어요 — 새 바이인으로 같은 자리에서 다시 시작해요.
+          </p>
+        )}
+        {otherSeatRoom && (
+          <p className="text-xs text-red-300 bg-red-500/10 border border-red-400/30 rounded-lg px-3 py-2 leading-relaxed">
+            ⚠️ <span className="font-bold">{otherSeatRoom.name}</span>에 자리비움 중인 좌석
+            (칩 {otherSeatRoom.mySeat!.chips.toLocaleString()})은 이 테이블에 앉는 순간 정리돼요.
+          </p>
+        )}
+
+        {needPassword && (
           <div>
             <label className="text-gray-400 text-sm block mb-1">🔒 방 비밀번호</label>
             <input
@@ -111,9 +132,9 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           size="lg"
           className="w-full"
           onClick={handleJoin}
-          disabled={room.hasPassword && !password.trim()}
+          disabled={needPassword && !password.trim()}
         >
-          {isSng ? '참가하기' : '앉기'}
+          {isRebuyReturn ? '리바이하고 복귀' : isSng ? '참가하기' : '앉기'}
         </Button>
       </div>
     </Modal>

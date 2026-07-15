@@ -46,6 +46,12 @@ npx tsc --noEmit
   버튼(명시 복귀). **SnG**: 자리비움/끊김도 딜인·블라인드 유지 + 턴 자동 폴드(away)로 블라인드 소진 →
   자연 탈락, 좌석은 토너먼트 종료까지 보존(grace 만료·`handleGraceExpired`에서 SnG는 무조건 keep). 회귀:
   `sitout.test.ts`. 로비 복귀 후 도착하는 game-update는 클라가 무시(currentRoomId null 가드).
+  **로비 재입장 UX**: room-list는 소켓별 개인화 브로드캐스트(`getRoomList(forPlayerId)` →
+  `mySeat: {chips, sittingOut}`, pendingRemoval 좌석 제외) — 로비가 보존 좌석을 알아보고
+  '게임 복귀' 배너/카드 버튼으로 **바이인·비밀번호 없이 즉시 재입장**(JoinRoomModal 생략,
+  SnG 잠금·만석 무시). 파산(0칩) 캐시 좌석만 리바이 모달(비밀번호는 여전히 생략). 서버 내부
+  자동 정리(미납 BB/방치 회수)도 `onRoomsChanged` 콜백으로 로비에 즉시 반영. 다른 방에 앉으면
+  기존 보존 좌석은 회수되므로(JoinRoomModal이 경고) 주의. 회귀: `room-manager.myseat.test.ts`.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
   남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.

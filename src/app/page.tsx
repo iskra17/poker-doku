@@ -46,16 +46,28 @@ export default function Home() {
     setHasName(true);
   };
 
+  // 보존 중인 내 좌석이 있으면 이미 착석 상태 — 바이인/비밀번호를 다시 묻지 않고 즉시 복귀 가능
+  // (서버 join-room 멱등 경로가 좌석/칩을 그대로 되살린다). 단, 캐시에서 칩이 0으로
+  // 파산한 좌석은 새 바이인이 필요하므로 리바이 모달을 거친다.
+  const canFastRejoin = (room: RoomInfo) =>
+    !!room.mySeat && (room.mode === 'sng' || room.mySeat.chips > 0);
+
   const handleJoinRoom = (roomId: string) => {
     const room = useGameStore.getState().rooms.find(r => r.id === roomId);
     if (!room) return;
+    if (canFastRejoin(room)) {
+      useGameStore.getState().joinRoom(room.id, 0, 0);
+      return;
+    }
     setJoinTarget(room);
   };
 
   // 초대받은 방 (파생값 — 목록 도착 후 유효성 판단)
   const inviteRoom = inviteRoomId ? rooms.find(r => r.id === inviteRoomId) ?? null : null;
   const inviteNotFound = !!inviteRoomId && rooms.length > 0 && !inviteRoom;
-  const activeJoinTarget = joinTarget ?? (hasName && inviteRoom && !inviteRoom.locked ? inviteRoom : null);
+  // 좌석이 보존된 방(즉시 복귀 대상)은 초대 모달을 자동으로 열지 않는다 — 상단 복귀 배너로 안내
+  const activeJoinTarget = joinTarget
+    ?? (hasName && inviteRoom && !inviteRoom.locked && !canFastRejoin(inviteRoom) ? inviteRoom : null);
 
   const closeJoinModal = () => {
     setJoinTarget(null);

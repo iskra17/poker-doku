@@ -18,6 +18,14 @@ const CHAT_COOLDOWN_MS = 700;
 export function setupSocketHandlers(io: Server): void {
   const sessions = new SessionManager();
 
+  // 방 목록은 소켓별로 개인화해 보낸다 — 보존 중인 내 좌석(mySeat)이 실려야
+  // 로비에서 바이인/비밀번호 없이 '게임 복귀'가 가능하다.
+  function broadcastRoomList(): void {
+    for (const [socketId, sock] of io.sockets.sockets) {
+      sock.emit('room-list', roomManager.getRoomList(sessions.getBySocketId(socketId)?.playerId));
+    }
+  }
+
   const roomManager = new RoomManager(
     // onUpdate
     (roomId, engine) => {
@@ -45,6 +53,8 @@ export function setupSocketHandlers(io: Server): void {
     (roomId, message) => {
       io.to(roomId).emit('chat-message', message);
     },
+    // onRoomsChanged — 서버 내부 자동 정리(미납 블라인드/방치 회수)도 로비에 즉시 반영
+    () => broadcastRoomList(),
   );
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
@@ -89,7 +99,7 @@ export function setupSocketHandlers(io: Server): void {
   setInterval(() => {
     const removed = roomManager.sweepIdleRooms();
     if (removed > 0) {
-      io.emit('room-list', roomManager.getRoomList());
+      broadcastRoomList();
     }
   }, 60_000);
 
@@ -104,8 +114,8 @@ export function setupSocketHandlers(io: Server): void {
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
 
-    // Send room list
-    socket.emit('room-list', roomManager.getRoomList());
+    // Send room list — 보존 중인 내 좌석(mySeat) 포함 개인화
+    socket.emit('room-list', roomManager.getRoomList(session.playerId));
 
     // 재접속 복원: 세션에 방이 남아 있고 좌석이 유지되어 있으면 그대로 복귀.
     // 방/좌석이 사라졌으면(유휴 정리·grace 만료) room-lost로 클라이언트를 로비로 돌려보낸다.
@@ -290,7 +300,7 @@ export function setupSocketHandlers(io: Server): void {
           chatHistory: roomManager.getChatHistory(roomId),
         });
         // Update room list for all
-        io.emit('room-list', roomManager.getRoomList());
+        broadcastRoomList();
       } else {
         socket.emit('error', { message: 'Could not join room' });
       }
@@ -307,7 +317,7 @@ export function setupSocketHandlers(io: Server): void {
           roomManager.leaveRoom(roomId, session.playerId);
         }
         session.roomId = null;
-        io.emit('room-list', roomManager.getRoomList());
+        broadcastRoomList();
       }
     });
 
@@ -407,7 +417,7 @@ export function setupSocketHandlers(io: Server): void {
       };
       const roomId = roomManager.createRoom(safeConfig);
       socket.emit('room-created', { roomId });
-      io.emit('room-list', roomManager.getRoomList());
+      broadcastRoomList();
     });
 
     // 시트앤고 대기 중 봇 채우기 (방장)
@@ -415,13 +425,13 @@ export function setupSocketHandlers(io: Server): void {
       if (!session.roomId) return;
       const ok = roomManager.fillWithBots(session.roomId, session.playerId);
       if (ok) {
-        io.emit('room-list', roomManager.getRoomList());
+        broadcastRoomList();
       }
     });
 
     // Request room list
     socket.on('get-rooms', () => {
-      socket.emit('room-list', roomManager.getRoomList());
+      socket.emit('room-list', roomManager.getRoomList(session.playerId));
     });
 
     // Disconnect: 즉시 제거하지 않고 grace period 동안 좌석/칩 보존
@@ -436,7 +446,7 @@ export function setupSocketHandlers(io: Server): void {
         // 자리비움 좌석은 유지 (캐시: 미납 BB/최종 유예로 정리, SnG: 블라인드 소진에 맡김)
         const seatKept = roomManager.handleGraceExpired(roomId, detached.playerId);
         if (!seatKept) detached.roomId = null;
-        io.emit('room-list', roomManager.getRoomList());
+        broadcastRoomList();
       });
     });
   });

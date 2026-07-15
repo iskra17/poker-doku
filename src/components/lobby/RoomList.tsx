@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
+import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 import Button from '../ui/Button';
 import HelpModal from '../help/HelpModal';
 
@@ -34,6 +35,18 @@ const SORT_LABELS: Record<SortKey, string> = {
 };
 const SORT_CYCLE: SortKey[] = ['default', 'players', 'blindAsc', 'blindDesc'];
 
+/** 보존 중인 내 좌석의 상태 안내 문구 (복귀 배너용) */
+function mySeatStatusLine(room: RoomInfo): string {
+  const seat = room.mySeat!;
+  if (room.mode === 'sng') {
+    return `칩 ${seat.chips.toLocaleString()} · 블라인드가 계속 차감되고 있어요 — 서둘러 돌아오세요!`;
+  }
+  if (seat.chips <= 0) {
+    return '칩이 다 떨어졌어요 — 리바이하면 같은 자리에서 다시 시작해요.';
+  }
+  return `칩 ${seat.chips.toLocaleString()} · 자리비움 중 — 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 일어나요.`;
+}
+
 /** 만석 판정 — 캐시 게임의 봇 좌석은 만석이 아니다 (휴먼이 오면 봇이 자리를 양보) */
 function isRoomFull(room: RoomInfo): boolean {
   if (room.playerCount < room.maxPlayers) return false;
@@ -44,7 +57,8 @@ function isRoomFull(room: RoomInfo): boolean {
 function applyFilters(rooms: RoomInfo[], mode: ModeFilter, joinableOnly: boolean, sort: SortKey): RoomInfo[] {
   let list = rooms;
   if (mode !== 'all') list = list.filter(r => (r.mode ?? 'cash') === mode);
-  if (joinableOnly) list = list.filter(r => !r.locked && !isRoomFull(r));
+  // 내 좌석이 보존된 방은 잠금/만석과 무관하게 복귀 가능하므로 필터에서 제외하지 않는다
+  if (joinableOnly) list = list.filter(r => r.mySeat || (!r.locked && !isRoomFull(r)));
   if (sort === 'default') return list;
   return [...list].sort((a, b) => {
     if (sort === 'players') return b.playerCount - a.playerCount;
@@ -64,6 +78,8 @@ export default function RoomList({ onJoin }: RoomListProps) {
     () => applyFilters(rooms, modeFilter, joinableOnly, sort),
     [rooms, modeFilter, joinableOnly, sort],
   );
+  // 자리비움 등으로 좌석이 보존된 방 — 필터와 무관하게 상단 복귀 배너로 노출
+  const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
 
   return (
     <div className="max-w-3xl mx-auto px-3 md:px-4">
@@ -83,6 +99,29 @@ export default function RoomList({ onJoin }: RoomListProps) {
         </div>
       </div>
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+
+      {/* 보존 중인 내 좌석 — 자리비움으로 나온 테이블은 바이인/설정 없이 한 번에 복귀 */}
+      {myRooms.map(room => (
+        <motion.div
+          key={`mine-${room.id}`}
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-3 bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/50 rounded px-1 py-px">
+                🪑 내 자리
+              </span>
+              <span className="text-white font-bold text-sm truncate">{room.name}</span>
+            </div>
+            <p className="text-xs text-ink-dim mt-1 leading-relaxed">{mySeatStatusLine(room)}</p>
+          </div>
+          <Button variant="success" size="sm" className="shrink-0" onClick={() => onJoin(room.id)}>
+            {room.mode !== 'sng' && (room.mySeat?.chips ?? 0) <= 0 ? '리바이' : '게임 복귀'}
+          </Button>
+        </motion.div>
+      ))}
 
       {/* 필터/정렬 바 */}
       <div className="flex flex-wrap items-center gap-1.5 mb-3">
@@ -172,12 +211,13 @@ export default function RoomList({ onJoin }: RoomListProps) {
             </div>
 
             <Button
-              variant={room.locked || isRoomFull(room) ? 'secondary' : 'success'}
+              // 내 좌석이 보존된 방은 잠금(시작된 SnG)/만석과 무관하게 복귀 가능
+              variant={room.mySeat ? 'success' : room.locked || isRoomFull(room) ? 'secondary' : 'success'}
               size="sm"
-              disabled={room.locked || isRoomFull(room)}
+              disabled={!room.mySeat && (room.locked || isRoomFull(room))}
               onClick={() => onJoin(room.id)}
             >
-              {room.locked ? '진행 중' : isRoomFull(room) ? '만석' : '참가'}
+              {room.mySeat ? '복귀' : room.locked ? '진행 중' : isRoomFull(room) ? '만석' : '참가'}
             </Button>
           </motion.div>
         ))}

@@ -23,8 +23,8 @@ export default function LeaveRoomModal({ isOpen, isSng, onClose, onSitOut, onExi
           title="자리비움 하고 나가기"
           description={
             isSng
-              ? '좌석과 칩을 유지해요. 블라인드는 계속 차감되고 돌아올 때까지 자동 폴드돼요 — 같은 방에 다시 들어오면 복귀!'
-              : `좌석과 칩을 유지해요. 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 자리에서 일어나요 — 그 전에 다시 들어오면 복귀!`
+              ? '좌석과 칩을 유지해요. 블라인드는 계속 차감되고 돌아올 때까지 자동 폴드돼요 — 로비의 [게임 복귀] 버튼으로 언제든 한 번에 돌아올 수 있어요.'
+              : `좌석과 칩을 유지해요. 로비의 [게임 복귀] 버튼으로 바이인 없이 바로 돌아올 수 있어요 — 단, 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 자리에서 일어나요.`
           }
           accent="mystic"
           onClick={onSitOut}

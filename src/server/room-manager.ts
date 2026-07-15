@@ -29,13 +29,17 @@ export class RoomManager {
   private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
+  /** 좌석 구성이 서버 내부에서 바뀔 때(자동 정리 등) 로비 목록 재브로드캐스트 훅 */
+  private onRoomsChanged?: () => void;
 
   constructor(
     onUpdate: (roomId: string, engine: PokerEngine) => void,
     onChat: (roomId: string, message: ChatMessage) => void,
+    onRoomsChanged?: () => void,
   ) {
     this.onUpdate = onUpdate;
     this.onChat = onChat;
+    this.onRoomsChanged = onRoomsChanged;
   }
 
   createRoom(config: RoomConfig, persistent = false): string {
@@ -82,15 +86,24 @@ export class RoomManager {
     return Math.max(0, deadline - Date.now());
   }
 
-  getRoomList(): Array<{
+  /**
+   * 로비 방 목록. forPlayerId를 주면 그 플레이어가 보존 중인 좌석(자리비움 이탈 등)을
+   * mySeat으로 표시한다 — 클라이언트는 이걸로 바이인/비밀번호 없이 '게임 복귀' UI를 띄운다.
+   * pendingRemoval 좌석은 정리 예약이므로 내 좌석으로 치지 않는다.
+   */
+  getRoomList(forPlayerId?: string): Array<{
     id: string; name: string; playerCount: number; maxPlayers: number;
     blinds: string; status: string; mode: string; locked: boolean;
     hasPassword: boolean; bigBlind: number; minBuyIn: number; maxBuyIn: number;
     difficulty: string; turnTime: number; humanCount: number;
+    mySeat?: { chips: number; sittingOut: boolean };
   }> {
     const list: ReturnType<RoomManager['getRoomList']> = [];
     this.rooms.forEach((room, id) => {
       const tournament = room.engine.state.tournament;
+      const seat = forPlayerId
+        ? room.engine.state.players.find(p => p.id === forPlayerId && !p.pendingRemoval)
+        : undefined;
       list.push({
         id,
         name: room.config.name,
@@ -109,6 +122,14 @@ export class RoomManager {
         turnTime: room.config.turnTime,
         // 봇 좌석은 만석 판정에서 제외 — 휴먼이 오면 봇이 자리를 양보한다
         humanCount: room.engine.state.players.filter(p => p.type === 'human').length,
+        ...(seat
+          ? {
+              mySeat: {
+                chips: seat.chips,
+                sittingOut: !!seat.sitOutNext || seat.status === 'sitting-out',
+              },
+            }
+          : {}),
       });
     });
     return list;
@@ -190,8 +211,14 @@ export class RoomManager {
         this.tournamentClocks.delete(roomId);
         this.botLoopEpochs.delete(roomId);
       }
+      // 방 삭제/리셋까지 끝난 뒤 로비 목록 반영
+      if (player) this.onRoomsChanged?.();
       return;
     }
+
+    // 서버 내부 자동 정리(미납 블라인드/방치 회수 등)도 로비 목록에 즉시 반영 —
+    // 자리비움 좌석의 '게임 복귀' 배너가 죽은 좌석을 가리키지 않게 한다
+    if (player) this.onRoomsChanged?.();
 
     if (wasInProgress && player) {
       if (handComplete) {
