@@ -19,6 +19,11 @@ import {
   parsePlayerActionRequest,
 } from './socket-payload';
 import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
+import {
+  parseOptionalPayloadArgs,
+  parsePayloadlessArgs,
+  parseRequiredPayloadArgs,
+} from './socket-arguments';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -294,7 +299,13 @@ export function setupSocketHandlers(
     // 클라이언트 주도 재동기화 — 소켓 재연결 직후 방 상태 확인.
     // 서버가 재시작되면 세션이 초기화되어(roomId 없음) room-lost가 응답된다 —
     // 이게 없으면 클라이언트가 죽은 방의 마지막 스냅샷을 든 채 얼어붙는다 (와이프 화면 버그).
-    socket.on('resync', (ack?: AckCallback) => {
+    socket.on('resync', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (session.roomId) {
@@ -306,7 +317,13 @@ export function setupSocketHandlers(
     });
 
     // Join room
-    socket.on('join-room', (input: unknown, ack?: AckCallback<{ roomId: string }>) => {
+    socket.on('join-room', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ roomId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
       if (!ensureOwnership(ack)) return;
       const parsed = parseJoinRoomRequest(input);
       if (!parsed.ok) {
@@ -516,7 +533,13 @@ export function setupSocketHandlers(
     });
 
     // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀)
-    socket.on('leave-room', (input?: unknown, ack?: AckCallback) => {
+    socket.on('leave-room', (...rawArgs: unknown[]) => {
+      const args = parseOptionalPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
       if (!ensureOwnership(ack)) return;
       const parsed = parseLeaveRoomRequest(input);
       if (!parsed.ok) {
@@ -543,7 +566,13 @@ export function setupSocketHandlers(
     });
 
     // Player action
-    socket.on('player-action', (input: unknown, ack?: AckCallback<{ handNumber: number; actionSeq: number }>) => {
+    socket.on('player-action', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ handNumber: number; actionSeq: number }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
       if (!ensureOwnership(ack)) return;
       const parsed = parsePlayerActionRequest(input);
       if (!parsed.ok) {
@@ -618,29 +647,56 @@ export function setupSocketHandlers(
     });
 
     // 자리비움 토글
-    socket.on('toggle-sit-out', (ack?: AckCallback) => {
+    socket.on('toggle-sit-out', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!session.roomId) {
         ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
         return;
       }
-      roomManager.toggleSitOut(session.roomId, session.playerId);
+      if (!ensureRateLimit('playerAction', '액션 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const applied = roomManager.toggleSitOut(session.roomId, session.playerId);
+      if (!applied) {
+        ack?.({ ok: false, code: 'action-rejected', message: '지금은 자리비움 상태를 바꿀 수 없어요.' });
+        return;
+      }
       ack?.({ ok: true });
     });
 
     // 타임칩 사용
-    socket.on('use-time-bank', (ack?: AckCallback) => {
+    socket.on('use-time-bank', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!session.roomId) {
         ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
         return;
       }
-      roomManager.useTimeBank(session.roomId, session.playerId);
+      const applied = roomManager.useTimeBank(session.roomId, session.playerId);
+      if (!applied) {
+        ack?.({ ok: false, code: 'action-rejected', message: '지금은 타임뱅크를 사용할 수 없어요.' });
+        return;
+      }
       ack?.({ ok: true });
     });
 
     // Chat message
-    socket.on('send-chat', (input: unknown, ack?: AckCallback) => {
+    socket.on('send-chat', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!isRecord(input) || typeof input.presetId !== 'string') {
         invalidPayload(ack);
@@ -676,7 +732,13 @@ export function setupSocketHandlers(
     });
 
     // Create room
-    socket.on('create-room', (input: unknown, ack?: AckCallback<{ roomId: string }>) => {
+    socket.on('create-room', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ roomId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
       if (!ensureOwnership(ack)) return;
       const parsed = parseCreateRoomRequest(input);
       if (!parsed.ok) {
@@ -741,7 +803,13 @@ export function setupSocketHandlers(
     });
 
     // 시트앤고 대기 중 봇 채우기 (방장)
-    socket.on('sng-fill-bots', (ack?: AckCallback) => {
+    socket.on('sng-fill-bots', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!session.roomId) {
         ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
@@ -757,7 +825,13 @@ export function setupSocketHandlers(
     });
 
     // Request room list
-    socket.on('get-rooms', (ack?: AckCallback) => {
+    socket.on('get-rooms', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
       if (!ensureOwnership(ack)) return;
       if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       socket.emit('room-list', roomManager.getRoomList(session.playerId));

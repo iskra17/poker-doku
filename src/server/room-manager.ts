@@ -589,11 +589,11 @@ export class RoomManager {
    * 캐시: 다음 핸드부터 딜인 제외 + 대략 2오르빗(미납 BB 2회)을 넘기면 자동 정리 (trackMissedBlinds).
    * SnG: 딜인/블라인드 유지 (away) — 블라인드 소진으로 자연 탈락, 좌석은 토너먼트 종료까지 보존.
    */
-  toggleSitOut(roomId: string, playerId: string): void {
+  toggleSitOut(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
-    if (!room) return;
+    if (!room) return false;
     const player = room.engine.state.players.find(p => p.id === playerId);
-    if (!player || player.pendingRemoval) return;
+    if (!player || player.pendingRemoval) return false;
 
     const isSng = room.config.gameMode === 'sng';
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
@@ -613,7 +613,7 @@ export class RoomManager {
       }
       this.onUpdate(roomId, room.engine);
       this.tryStartGame(roomId);
-      return;
+      return true;
     }
 
     // --- 자리비움 시작 ---
@@ -635,10 +635,11 @@ export class RoomManager {
       if (active?.id === playerId) {
         this.clearTurnTimer(roomId);
         this.autoActFor(roomId, playerId, '자리비움');
-        return; // autoActFor가 onUpdate/루프 재개까지 처리
+        return true; // autoActFor가 onUpdate/루프 재개까지 처리
       }
     }
     this.onUpdate(roomId, room.engine);
+    return true;
   }
 
   /** 자리비움 상태로 방을 떠남 — 좌석/칩 유지 (leave-room mode:'sitout') */
@@ -711,18 +712,19 @@ export class RoomManager {
   }
 
   /** 타임칩 사용 — 본인 턴에 남은 시간 +30초 */
-  useTimeBank(roomId: string, playerId: string): void {
+  useTimeBank(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
-    if (!room || !room.engine.state.isHandInProgress) return;
+    if (!room || !room.engine.state.isHandInProgress) return false;
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
-    if (!activePlayer || activePlayer.id !== playerId || activePlayer.type !== 'human') return;
-    if ((activePlayer.timeBankChips ?? 0) <= 0) return;
+    if (!activePlayer || activePlayer.id !== playerId || activePlayer.type !== 'human') return false;
+    if ((activePlayer.timeBankChips ?? 0) <= 0) return false;
 
     activePlayer.timeBankChips = (activePlayer.timeBankChips ?? 0) - 1;
     const remaining = this.getTurnTimeRemaining(roomId);
     this.startTurnTimer(roomId, remaining + TIME_BANK_EXTEND_MS);
     this.sendSystemChat(roomId, `${activePlayer.name}님이 타임칩을 사용했습니다 (+${TIME_BANK_EXTEND_MS / 1000}초).`);
     this.onUpdate(roomId, room.engine);
+    return true;
   }
 
   /** 체크 가능하면 체크, 아니면 폴드로 자동 처리 (타임아웃/접속 끊김 공용) */

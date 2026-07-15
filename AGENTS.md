@@ -52,7 +52,9 @@ npx tsc --noEmit
 - **소켓 진입 가드**: production은 Origin 헤더가 없거나, Origin의 host(:port)가 요청 Host와
   일치하거나, 쉼표로 구분한 `SOCKET_ALLOWED_ORIGINS` 중 하나와 exact origin이 일치할 때만 허용한다.
   development는 모든 origin을 허용한다.
-  요청 제한은 소켓별 sliding window로 액션 12회/2초, 입장 5회/10초, `resync`+`get-rooms` 합산
+  `ClientToServerEvents` 타입은 런타임 신뢰 경계가 아니다. 모든 외부 이벤트는 먼저 payload 유무별
+  arity와 마지막 ack의 함수 여부를 정규화하고, 잘못된 인자는 상태·로그에 닿기 전에 거절한다.
+  요청 제한은 소켓별 sliding window로 `player-action`+`toggle-sit-out` 합산 12회/2초, 입장 5회/10초, `resync`+`get-rooms` 합산
   10회/5초, 방 생성 1회/5초, 채팅 1회/700ms다. 소유권과 payload를 먼저 검증하고 로그·상태 변경 전에
   제한해, 거절 payload가 로그를 증폭하거나 상태를 바꾸지 않게 한다.
 - **방 수명주기**: 방 삭제는 idempotent한 `RoomManager.disposeRoom()`만 사용한다. 이 경로가 봇·핸드
