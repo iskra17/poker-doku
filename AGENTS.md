@@ -20,6 +20,8 @@ npx tsc --noEmit
 커스텀 서버라 Vercel 서버리스에는 부적합. 배포는 Fly.io 도쿄 단일 머신 (`fly.toml`+`Dockerfile`,
 `fly deploy`) — 인메모리 상태라 `auto_stop_machines` 금지·머신 1대 고정(수직 확장만).
 상세와 Vultr 대안은 `deploy/README.md`.
+`next.config.ts`의 `turbopack.root`는 상위 경로의 lockfile을 빌드 루트로 오인하는 경고를 막기 위해
+프로젝트 루트로 명시한 것이므로 제거하지 말 것.
 
 ## 아키텍처
 
@@ -37,12 +39,25 @@ npx tsc --noEmit
   grace 만료) 서버가 `room-lost`로 응답 → 클라이언트는 안내와 함께 로비 복귀. 이 계약이 없으면
   서버 재시작 때 클라이언트가 죽은 방 스냅샷을 든 채 얼어붙는다. 캐시 게임에서 파산(0칩) 좌석의
   재입장(join-room 멱등 경로)은 새 바이인으로 리바이 처리.
+- **세션 회수**: `SessionManager.releaseIfIdle()`은 live socket·보존 room·grace timer가 모두 없을
+  때만 세션을 제거한다. 따라서 로비에서 끊긴 세션은 즉시, grace 만료로 좌석을 지키지 못한 세션은
+  `roomId`를 비운 뒤 회수하고, live socket이나 보존 좌석이 있으면 유지한다. `stats()`는 현재
+  session/socket/grace 개수만 노출해 Map 누적 여부를 관찰한다.
 - **실시간 이벤트 격리**: 동일 세션 토큰은 최신 소켓 하나만 소유권을 가지며 구 소켓은
   `session-replaced` 후 서버 disconnect된다. 개인 `game-update`는 `{roomId,state}` envelope이고 서버는
   `session.roomId`, 클라는 `currentRoomId` 일치를 각각 검증한다. 플레이 액션은 클라가 본
   `expectedHandNumber`/`expectedActionSeq`를 보내며 서버 ack 전까지 중복 입력을 잠근다. 연결이 끊긴
   상태에서는 상태 변경 이벤트를 emit하지 않는다. 이 계약을 우회하면 구 탭 액션·방 상태 혼입·
   다음 스트리트 더블 액션이 재발한다. 회귀: `socket-handler.integration.test.ts`.
+- **소켓 진입 가드**: production은 origin 없는 클라이언트, 요청 host와 같은 origin,
+  `SOCKET_ALLOWED_ORIGINS`의 쉼표 구분 exact origin만 허용하고 development는 모두 허용한다.
+  요청 제한은 소켓별 sliding window로 액션 12회/2초, 입장 5회/10초, `resync`+`get-rooms` 합산
+  10회/5초, 방 생성 1회/5초, 채팅 1회/700ms다. 소유권과 payload를 먼저 검증하고 로그·상태 변경 전에
+  제한해, 거절 payload가 로그를 증폭하거나 상태를 바꾸지 않게 한다.
+- **방 수명주기**: 방 삭제는 idempotent한 `RoomManager.disposeRoom()`만 사용한다. 이 경로가 봇·핸드
+  시작·턴·자리비움·종료 SnG 타이머와 deadline, 채팅, 토너먼트 시계, bot epoch, 방별 AI 대사 상태를
+  함께 지운다. persistent 기본 방은 마지막 휴먼이 떠나면 삭제 대신 새 `PokerEngine`으로 교체해
+  플레이어·채팅·`handNumber`/`actionSeq`·`lastAction`/`lastAggressorId` 등 이전 핸드 상태를 남기지 않는다.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
   '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
   + RoomManager. **공통 원칙**: 자리비움 좌석의 턴은 절대 기다리지 않는다 — 누른 순간이 본인 턴이면
@@ -82,10 +97,14 @@ npx tsc --noEmit
   레벨 타이밍/공지는 RoomManager. **시작 규칙**: 자동 봇 충원 없음 — 6인이 모두 모여야 자동 시작,
   또는 방장(`RoomConfig.hostId`, `state.hostId`로 노출)이 'sng-fill-bots'로 남는 자리를 봇 충원
   (`RoomManager.fillWithBots`). 시작 후 재충원·중도 참가·리바이 금지. 탈락한 휴먼은 좌석 유지
-  상태로 관전(EliminationNotice가 순위 안내).
+  상태로 관전(EliminationNotice가 순위 안내). 종료된 방은 결과 확인을 위해 10분 보존한 뒤
+  `disposeRoom()`으로 정리하며, 연결된 참가자마다 `room-lost`를 한 번 보내고 모든 참가 세션의
+  `roomId`를 비운다. 그 전에 모든 휴먼이 완전히 나가면 즉시 정리한다.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
-  신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송).
+  신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
+  시스템·봇 메시지는 모두 `appendChatMessage()`를 통과해 방별 최신 100개만 보존하고,
+  `getChatHistory()`는 내부 배열의 복사본을 반환한다.
 - **캐시 방 봇 정책**: `RoomConfig.botCount`(0~5, 기본 2)까지만 충원. 봇 좌석은 만석이 아님 —
   만석 입장 시 봇이 자리를 양보한다 (핸드 사이 즉시, 핸드 중엔 pendingRemoval + 재시도 안내).
   로비 만석 판정은 humanCount 기준 (RoomList.isRoomFull).
@@ -104,7 +123,8 @@ npx tsc --noEmit
 - **캐시 바이인**: 40~200BB 범위를 서버가 강제(create-room에서 min/maxBuyIn 재계산, join-room에서
   클램프). 입장 시 JoinRoomModal 슬라이더로 선택.
 
-- **플레이 이벤트 로그 (버그 역추적)**: `src/server/event-log.ts` — 인메모리 링 버퍼(5000개)
+- **운영 HTTP/플레이 이벤트 로그 (버그 역추적)**: 커스텀 HTTP 서버가 `GET|HEAD /healthz`를
+  Next 핸들러 없이 직접 처리한다. `src/server/event-log.ts`의 인메모리 링 버퍼(5000개)
   + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`
   (`&room=&player=&type=&limit=`) — 커스텀 서버(`server/index.ts`)가 직접 처리한다
   (Next 라우트로 옮기면 번들 경계에서 링 버퍼가 쪼개진다). `DEBUG_LOG_TOKEN` 미설정 시 403.
@@ -112,6 +132,9 @@ npx tsc --noEmit
   player-action(거부 시 액션 전 스냅샷+valid 목록 — 먹통 버튼 추적의 핵심)·disconnect·
   grace-expired·hand-start·hand-end(팟 불변식 potTotal/contributedTotal 검증).
   **절대 남기지 말 것**: 세션 토큰 원문, 방 비밀번호, 홀카드. Fly엔 볼륨이 없어 재배포 시 소멸.
+- **정상 종료**: 종료 컨트롤러는 idempotent하며 runtime(세션·방·타이머) → Socket.IO → HTTP → Next
+  순서로 닫는다. `SIGTERM`/`SIGINT` 핸들러는 listen 성공 뒤 한 번만 등록하고, production 종료가
+  10초를 넘기면 강제 실패 종료한다. 시작 실패도 생성된 자원을 같은 경로로 정리하고 nonzero로 끝낸다.
 
 ## 주요 디렉토리
 
