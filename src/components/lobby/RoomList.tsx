@@ -17,13 +17,28 @@ const DIFFICULTY_BADGES: Record<string, { label: string; className: string }> = 
   hard: { label: '고수', className: 'text-red-400 border-red-400/40' },
 };
 
+// 인원 구성 배지 — 봇 전용/봇+사람/사람만 구분
+const TABLE_TYPE_BADGES: Record<string, { label: string; className: string }> = {
+  bots: { label: '🤖 봇 전용', className: 'text-cyber border-cyber/40' },
+  mixed: { label: '봇+사람', className: 'text-ink-dim border-white/20' },
+  humans: { label: '사람만', className: 'text-blossom border-blossom/40' },
+};
+
 type ModeFilter = 'all' | 'cash' | 'sng';
+type TypeFilter = 'all' | 'bots' | 'mixed' | 'humans';
 type SortKey = 'default' | 'players' | 'blindAsc' | 'blindDesc';
 
 const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
   { id: 'all', label: '전체' },
   { id: 'cash', label: '캐시' },
   { id: 'sng', label: 'Sit & Go' },
+];
+
+const TYPE_FILTERS: Array<{ id: TypeFilter; label: string }> = [
+  { id: 'all', label: '전체' },
+  { id: 'bots', label: '🤖 봇 전용' },
+  { id: 'mixed', label: '봇+사람' },
+  { id: 'humans', label: '사람만' },
 ];
 
 // 정렬 버튼: 누를 때마다 순환
@@ -49,14 +64,17 @@ function mySeatStatusLine(room: RoomInfo): string {
 
 /** 만석 판정 — 캐시 게임의 봇 좌석은 만석이 아니다 (휴먼이 오면 봇이 자리를 양보) */
 function isRoomFull(room: RoomInfo): boolean {
+  // 봇 전용 연습 테이블은 휴먼 1명 전용 — 누가 연습 중이면 입장 불가
+  if (room.tableType === 'bots') return (room.humanCount ?? 0) >= 1;
   if (room.playerCount < room.maxPlayers) return false;
   if (room.mode === 'sng') return true; // SnG는 봇 양보 없음
   return (room.humanCount ?? room.playerCount) >= room.maxPlayers;
 }
 
-function applyFilters(rooms: RoomInfo[], mode: ModeFilter, joinableOnly: boolean, sort: SortKey): RoomInfo[] {
+function applyFilters(rooms: RoomInfo[], mode: ModeFilter, type: TypeFilter, joinableOnly: boolean, sort: SortKey): RoomInfo[] {
   let list = rooms;
   if (mode !== 'all') list = list.filter(r => (r.mode ?? 'cash') === mode);
+  if (type !== 'all') list = list.filter(r => (r.tableType ?? 'mixed') === type);
   // 내 좌석이 보존된 방은 잠금/만석과 무관하게 복귀 가능하므로 필터에서 제외하지 않는다
   if (joinableOnly) list = list.filter(r => r.mySeat || (!r.locked && !isRoomFull(r)));
   if (sort === 'default') return list;
@@ -71,12 +89,13 @@ export default function RoomList({ onJoin }: RoomListProps) {
   const { rooms } = useGameStore();
   const [helpOpen, setHelpOpen] = useState(false);
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [joinableOnly, setJoinableOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>('default');
 
   const visible = useMemo(
-    () => applyFilters(rooms, modeFilter, joinableOnly, sort),
-    [rooms, modeFilter, joinableOnly, sort],
+    () => applyFilters(rooms, modeFilter, typeFilter, joinableOnly, sort),
+    [rooms, modeFilter, typeFilter, joinableOnly, sort],
   );
   // 자리비움 등으로 좌석이 보존된 방 — 필터와 무관하게 상단 복귀 배너로 노출
   const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
@@ -140,6 +159,21 @@ export default function RoomList({ onJoin }: RoomListProps) {
             </button>
           ))}
         </div>
+        <div className="flex rounded-lg border border-mystic/20 overflow-hidden">
+          {TYPE_FILTERS.map(f => (
+            <button
+              key={f.id}
+              onClick={() => setTypeFilter(f.id)}
+              className={`px-2.5 py-1 text-xs font-bold transition-colors whitespace-nowrap ${
+                typeFilter === f.id
+                  ? 'bg-purple-600 text-white'
+                  : 'bg-panel/60 text-ink-dim hover:text-ink'
+              }`}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
         <button
           onClick={() => setJoinableOnly(v => !v)}
           className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors ${
@@ -180,6 +214,11 @@ export default function RoomList({ onJoin }: RoomListProps) {
                       Sit &amp; Go
                     </span>
                   )}
+                  {TABLE_TYPE_BADGES[room.tableType ?? 'mixed'] && (
+                    <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${TABLE_TYPE_BADGES[room.tableType ?? 'mixed'].className}`}>
+                      {TABLE_TYPE_BADGES[room.tableType ?? 'mixed'].label}
+                    </span>
+                  )}
                   {room.difficulty && DIFFICULTY_BADGES[room.difficulty] && (
                     <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${DIFFICULTY_BADGES[room.difficulty].className}`}>
                       {DIFFICULTY_BADGES[room.difficulty].label}
@@ -217,7 +256,13 @@ export default function RoomList({ onJoin }: RoomListProps) {
               disabled={!room.mySeat && (room.locked || isRoomFull(room))}
               onClick={() => onJoin(room.id)}
             >
-              {room.mySeat ? '복귀' : room.locked ? '진행 중' : isRoomFull(room) ? '만석' : '참가'}
+              {room.mySeat
+                ? '복귀'
+                : room.locked
+                  ? '진행 중'
+                  : isRoomFull(room)
+                    ? room.tableType === 'bots' ? '연습 중' : '만석'
+                    : '참가'}
             </Button>
           </motion.div>
         ))}

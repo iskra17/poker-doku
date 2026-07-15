@@ -32,11 +32,27 @@ const TURN_TIMES = [
   { seconds: 30, label: '30초', desc: '초보 추천' },
 ];
 
-// 캐시 게임 봇 충원 수 — 친구 방은 0으로 좌석 확보
-const BOT_COUNTS = [
-  { count: 0, label: '없음', desc: '친구끼리만' },
-  { count: 2, label: '2명', desc: '기본' },
-  { count: 5, label: '5명', desc: '혼자 놀기' },
+// 테이블 인원 구성 (캐시 전용) — 서버가 봇 충원 수를 함께 결정 (bots=5, mixed=2, humans=0)
+type TableType = 'bots' | 'mixed' | 'humans';
+const TABLE_TYPES: Array<{ id: TableType; label: string; desc: string; hint: string }> = [
+  {
+    id: 'bots',
+    label: '🤖 봇 전용',
+    desc: '혼자 봇과 연습',
+    hint: '봇 5명과 나만의 연습 테이블 — 다른 플레이어는 입장할 수 없어요.',
+  },
+  {
+    id: 'mixed',
+    label: '봇+사람',
+    desc: '봇 2명 + 자유 입장',
+    hint: '봇이 자리를 지키다가 사람이 오면 양보해요. 남는 좌석은 항상 사람 몫!',
+  },
+  {
+    id: 'humans',
+    label: '사람만',
+    desc: '친구끼리만',
+    hint: '봇 없이 사람만 앉아요 — 2명 이상 모이면 게임이 시작돼요.',
+  },
 ];
 
 export default function CreateRoomModal() {
@@ -47,7 +63,7 @@ export default function CreateRoomModal() {
   const [password, setPassword] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [turnTime, setTurnTime] = useState(8);
-  const [botCount, setBotCount] = useState(2);
+  const [tableType, setTableType] = useState<TableType>('mixed');
 
   const blind = BLIND_LEVELS[blindIndex];
   const sngStart = SNG_BLIND_SCHEDULE[0];
@@ -65,7 +81,8 @@ export default function CreateRoomModal() {
       password: password.trim() || undefined,
       difficulty,
       turnTime,
-      botCount,
+      tableType: mode === 'cash' ? tableType : 'mixed', // SnG는 방장 봇 채우기가 있는 혼합 고정
+      botCount: tableType === 'humans' ? 0 : tableType === 'bots' ? 5 : 2,
     });
     setName('');
     setPassword('');
@@ -110,52 +127,54 @@ export default function CreateRoomModal() {
           />
         </div>
 
-        {/* 봇 인원 (캐시 전용 — SnG는 방장이 대기 화면에서 채움) */}
+        {/* 테이블 구성 (캐시 전용 — SnG는 방장이 대기 화면에서 봇을 채우는 혼합 고정) */}
         {mode === 'cash' && (
           <div>
-            <label className="text-gray-400 text-sm block mb-2">봇 인원</label>
+            <label className="text-gray-400 text-sm block mb-2">테이블 구성</label>
             <div className="grid grid-cols-3 gap-2">
-              {BOT_COUNTS.map(b => (
+              {TABLE_TYPES.map(t => (
                 <button
-                  key={b.count}
-                  onClick={() => setBotCount(b.count)}
+                  key={t.id}
+                  onClick={() => setTableType(t.id)}
                   className={`py-2 rounded-lg text-sm font-bold transition-all ${
-                    botCount === b.count
+                    tableType === t.id
                       ? 'bg-purple-600 text-white border border-purple-400'
                       : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
                   }`}
                 >
-                  {b.label}
-                  <span className="block text-[10px] font-normal opacity-70">{b.desc}</span>
+                  {t.label}
+                  <span className="block text-[10px] font-normal opacity-70">{t.desc}</span>
                 </button>
               ))}
             </div>
             <p className="text-[11px] text-gray-500 mt-1">
-              봇이 있어도 친구가 오면 자리를 양보해요. 남는 좌석은 항상 사람 몫!
+              {TABLE_TYPES.find(t => t.id === tableType)!.hint}
             </p>
           </div>
         )}
 
-        {/* 봇 난이도 */}
-        <div>
-          <label className="text-gray-400 text-sm block mb-2">봇 난이도</label>
-          <div className="grid grid-cols-3 gap-2">
-            {DIFFICULTIES.map(d => (
-              <button
-                key={d.id}
-                onClick={() => setDifficulty(d.id)}
-                className={`py-2 rounded-lg text-sm font-bold transition-all ${
-                  difficulty === d.id
-                    ? 'bg-purple-600 text-white border border-purple-400'
-                    : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
-                }`}
-              >
-                {d.label}
-                <span className="block text-[10px] font-normal opacity-70">{d.desc}</span>
-              </button>
-            ))}
+        {/* 봇 난이도 — 사람만 테이블(캐시)엔 봇이 없어 표시하지 않음 */}
+        {!(mode === 'cash' && tableType === 'humans') && (
+          <div>
+            <label className="text-gray-400 text-sm block mb-2">봇 난이도</label>
+            <div className="grid grid-cols-3 gap-2">
+              {DIFFICULTIES.map(d => (
+                <button
+                  key={d.id}
+                  onClick={() => setDifficulty(d.id)}
+                  className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                    difficulty === d.id
+                      ? 'bg-purple-600 text-white border border-purple-400'
+                      : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                  }`}
+                >
+                  {d.label}
+                  <span className="block text-[10px] font-normal opacity-70">{d.desc}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* 턴 시간 */}
         <div>

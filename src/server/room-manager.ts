@@ -95,7 +95,7 @@ export class RoomManager {
     id: string; name: string; playerCount: number; maxPlayers: number;
     blinds: string; status: string; mode: string; locked: boolean;
     hasPassword: boolean; bigBlind: number; minBuyIn: number; maxBuyIn: number;
-    difficulty: string; turnTime: number; humanCount: number;
+    difficulty: string; turnTime: number; humanCount: number; tableType: string;
     mySeat?: { chips: number; sittingOut: boolean };
   }> {
     const list: ReturnType<RoomManager['getRoomList']> = [];
@@ -122,6 +122,8 @@ export class RoomManager {
         turnTime: room.config.turnTime,
         // 봇 좌석은 만석 판정에서 제외 — 휴먼이 오면 봇이 자리를 양보한다
         humanCount: room.engine.state.players.filter(p => p.type === 'human').length,
+        // 인원 구성 — 명시 설정이 없는 구방은 botCount로 유도 (0=사람만, 그 외=봇+사람)
+        tableType: room.config.tableType ?? ((room.config.botCount ?? 2) === 0 ? 'humans' : 'mixed'),
         ...(seat
           ? {
               mySeat: {
@@ -146,6 +148,13 @@ export class RoomManager {
   joinRoom(roomId: string, player: Player): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    // 봇 전용 연습 테이블은 휴먼 1명만 — 다른 휴먼이 이미 앉아 있으면 거절
+    if (
+      player.type === 'human' && room.config.tableType === 'bots'
+      && room.engine.state.players.some(p => p.type === 'human' && !p.pendingRemoval && p.id !== player.id)
+    ) {
+      return false;
+    }
     const success = room.engine.addPlayer(player);
     if (success) {
       this.sendSystemChat(roomId, `${player.name}님이 테이블에 앉았습니다.`);

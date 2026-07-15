@@ -76,6 +76,13 @@ npx tsc --noEmit
 - **캐시 방 봇 정책**: `RoomConfig.botCount`(0~5, 기본 2)까지만 충원. 봇 좌석은 만석이 아님 —
   만석 입장 시 봇이 자리를 양보한다 (핸드 사이 즉시, 핸드 중엔 pendingRemoval + 재시도 안내).
   로비 만석 판정은 humanCount 기준 (RoomList.isRoomFull).
+- **테이블 인원 구성**: `RoomConfig.tableType: 'bots'|'mixed'|'humans'` — bots(봇 전용)는
+  휴먼 1명 제한(서버 이중 가드: socket-handler join-room + RoomManager.joinRoom, 로비 표기
+  '연습 중'), mixed는 기존 봇 양보 동작, humans는 봇 충원 0. create-room에서 botCount를
+  구성이 결정(bots=5/mixed=1~5/humans=0), SnG는 mixed 고정. 로비에 구성 배지+필터 노출,
+  기본 방에 봇 전용 'Practice Dojo' 추가(나머지 3개는 mixed). 좌석 UI는 봇에게 상시 BOT
+  뱃지(PlayerSeat — `player.type`은 getPublicState로 이미 공개됨). 회귀:
+  `room-manager.tabletype.test.ts`.
 - **방 비밀번호/초대**: `RoomConfig.password`는 서버 전용(절대 gameState로 노출 금지),
   목록엔 `hasPassword`만 노출. join-room에서 검증. 초대 링크는 `/?room=<id>` — page.tsx가
   파싱해 닉네임 입력 후 JoinRoomModal 자동 오픈.

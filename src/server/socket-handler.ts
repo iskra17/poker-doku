@@ -1,13 +1,14 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS } from './session-manager';
-import { RoomConfig, Player, ActionType, RoomDifficulty } from '../lib/poker/types';
+import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { getCharacterById } from '../lib/characters';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 
 const VALID_ACTIONS: ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
+const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
 const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
@@ -58,6 +59,20 @@ export function setupSocketHandlers(io: Server): void {
   );
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
+  // 봇 전용 연습 방: 휴먼 1명 제한 — 다른 사람 방해 없이 봇들과 연습 (도장의 입구)
+  roomManager.createRoom({
+    name: 'Practice Dojo',
+    smallBlind: 10,
+    bigBlind: 20,
+    minBuyIn: 20 * MIN_BUYIN_BB,
+    maxBuyIn: 20 * MAX_BUYIN_BB,
+    maxPlayers: 6,
+    turnTime: 20,
+    difficulty: 'easy',
+    botCount: 5,
+    tableType: 'bots',
+  }, true);
+
   // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
   roomManager.createRoom({
     name: 'Sakura Lounge',
@@ -69,6 +84,7 @@ export function setupSocketHandlers(io: Server): void {
     turnTime: 20,
     difficulty: 'easy',
     botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
+    tableType: 'mixed',
   }, true);
 
   roomManager.createRoom({
@@ -81,6 +97,7 @@ export function setupSocketHandlers(io: Server): void {
     turnTime: 8,
     difficulty: 'normal',
     botCount: 5,
+    tableType: 'mixed',
   }, true);
 
   roomManager.createRoom({
@@ -93,6 +110,7 @@ export function setupSocketHandlers(io: Server): void {
     turnTime: 8,
     difficulty: 'hard',
     botCount: 5,
+    tableType: 'mixed',
   }, true);
 
   // 유저 생성 방 유휴 정리: 휴먼이 없는 방을 10분 후 삭제 (기본 방 제외)
@@ -226,6 +244,15 @@ export function setupSocketHandlers(io: Server): void {
       const tournament = room.engine.state.tournament;
       if (tournament && tournament.entrants > 0) {
         socket.emit('error', { message: '이미 시작된 Sit & Go입니다.' });
+        return;
+      }
+
+      // 봇 전용 연습 테이블: 휴먼 1명만 (재입장은 위 멱등 경로가 처리)
+      if (
+        room.config.tableType === 'bots'
+        && room.engine.state.players.some(p => p.type === 'human' && !p.pendingRemoval && p.id !== session.playerId)
+      ) {
+        socket.emit('error', { message: '봇 전용 연습 테이블이에요 — 지금은 다른 플레이어가 연습 중입니다.' });
         return;
       }
 
@@ -385,6 +412,12 @@ export function setupSocketHandlers(io: Server): void {
       const isSng = config.gameMode === 'sng';
       const password = String(config.password ?? '').trim().slice(0, 20);
       const bigBlind = Math.max(Number(config.bigBlind) || 20, 2);
+      // 인원 구성 검증 — SnG는 방장 봇 채우기가 있는 혼합 테이블로 고정
+      const tableType: TableType = isSng
+        ? 'mixed'
+        : VALID_TABLE_TYPES.includes(config.tableType as TableType)
+          ? (config.tableType as TableType)
+          : 'mixed';
       const safeConfig: RoomConfig = {
         ...config,
         maxPlayers: 6,
@@ -392,8 +425,13 @@ export function setupSocketHandlers(io: Server): void {
         difficulty: VALID_DIFFICULTIES.includes(config.difficulty as RoomDifficulty)
           ? config.difficulty
           : 'normal',
-        // 봇 충원 수 0~5 (기본 2) — 친구 방은 0으로 좌석 확보
-        botCount: Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 0), 5),
+        tableType,
+        // 봇 충원 수는 구성이 결정: 사람만=0, 봇 전용=5, 혼합=1~5 (기본 2)
+        botCount: tableType === 'humans'
+          ? 0
+          : tableType === 'bots'
+            ? 5
+            : Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 1), 5),
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
         // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택

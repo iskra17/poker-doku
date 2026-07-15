@@ -22,6 +22,7 @@ export interface RoomInfo {
   difficulty?: 'easy' | 'normal' | 'hard'; // 봇 난이도
   turnTime?: number; // 턴 시간 (초)
   humanCount?: number; // 휴먼 착석 수 — 봇 좌석은 만석 판정에서 제외 (봇이 자리를 양보)
+  tableType?: 'bots' | 'mixed' | 'humans'; // 인원 구성 — bots는 휴먼 1명 전용 연습 테이블
   /** 내가 보존 중인 좌석 (자리비움 이탈/재접속 유예) — 있으면 바이인/비밀번호 없이 복귀 가능 */
   mySeat?: { chips: number; sittingOut: boolean };
 }
@@ -85,6 +86,7 @@ interface GameStore {
     name: string; smallBlind: number; bigBlind: number; minBuyIn: number; maxBuyIn: number;
     gameMode?: 'cash' | 'sng'; password?: string;
     turnTime?: number; difficulty?: 'easy' | 'normal' | 'hard'; botCount?: number;
+    tableType?: 'bots' | 'mixed' | 'humans';
   }) => void;
   setShowCreateRoom: (show: boolean) => void;
 }

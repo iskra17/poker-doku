@@ -146,6 +146,14 @@ export default function PlayerSeat({
 
         {/* 이름/칩 플레이트 — 아바타 하단에 겹침, 폴드여도 가독 유지 */}
         <div className={`relative z-20 -mt-3 ${isDimmed ? 'opacity-80' : ''}`}>
+          {/* BOT 뱃지 — 봇 플레이어 상시 표기 (플레이트 좌상단, 액션 배지와 대칭) */}
+          {player.type === 'bot' && (
+            <div className={`absolute -top-2 -left-2 z-30 bg-black/80 border border-cyber/60 text-cyber font-bold rounded-full tracking-wider
+              ${compact ? 'text-[8px] px-1.5 py-px' : 'text-[9px] px-2 py-px'}
+            `}>
+              BOT
+            </div>
+          )}
           <div className={`bg-black/70 backdrop-blur-sm rounded-lg text-center border
             ${isBusted ? 'border-red-500/30' : 'border-white/10'}
             ${compact ? 'px-2 py-0.5 min-w-[74px]' : 'px-3 py-1 min-w-[92px]'}

@@ -119,6 +119,14 @@ export type GameMode = 'cash' | 'sng';
 /** 방 난이도 — 봇들의 성향 수치를 변조한다 (easy=순하고 예측 가능, hard=공격적) */
 export type RoomDifficulty = 'easy' | 'normal' | 'hard';
 
+/**
+ * 테이블 인원 구성.
+ * - bots: 봇 전용 연습 — 휴먼 1명만 착석 가능 (서버가 강제), 봇 5명 충원
+ * - mixed: 봇+사람 — 봇이 충원되지만 휴먼이 오면 자리를 양보 (기존 기본 동작)
+ * - humans: 사람만 — 봇 충원 없음
+ */
+export type TableType = 'bots' | 'mixed' | 'humans';
+
 export interface WinResult {
   playerId: string;
   amount: number;
@@ -140,6 +148,7 @@ export interface RoomConfig {
   hostId?: string; // 방 생성자 playerId (서버가 create-room 시 세팅)
   difficulty?: RoomDifficulty; // 봇 난이도 (기본 'normal')
   botCount?: number; // 캐시 게임 봇 충원 수 0~5 (기본 2) — 친구 방은 0으로 좌석 확보
+  tableType?: TableType; // 인원 구성 (기본 'mixed') — 'bots'는 휴먼 1명 제한
 }
 
 export interface Room {
