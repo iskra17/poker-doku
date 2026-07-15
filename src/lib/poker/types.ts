@@ -47,7 +47,8 @@ export interface Player {
   botSkill?: RoomDifficulty; // 봇 난이도 — 방 난이도에 따라 성향 수치를 변조 (기본 normal)
   finishPlace?: number; // 시트앤고 최종 순위 (탈락/우승 시 확정)
   handStartChips?: number; // 핸드 시작 시점 스택 — 동시 탈락 순위 판정용
-  sitOutNext?: boolean; // 자리비움 예약 — 다음 핸드부터 sitting-out
+  sitOutNext?: boolean; // 자리비움 — 캐시: 다음 핸드부터 sitting-out / SnG: 딜인 유지 + 자동 폴드(away)
+  sitOutSinceHand?: number; // 캐시 자리비움 시작 시점의 handNumber — 경과 핸드로 미납 블라인드(≈오르빗) 산정
   timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
 }

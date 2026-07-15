@@ -24,8 +24,8 @@ export default function TablePage() {
     }
   }, [connected, playerName, currentRoomId, roomId, joinRoom]);
 
-  const handleLeave = () => {
-    leaveRoom();
+  const handleLeave = (mode?: 'exit' | 'sitout') => {
+    leaveRoom(mode);
     window.location.href = '/';
   };
 

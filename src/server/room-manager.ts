@@ -4,6 +4,7 @@ import { RoomConfig, Player, ChatMessage, ActionType } from '../lib/poker/types'
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
+import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, shouldRemoveForMissedBlinds } from './sitout';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
 
@@ -20,6 +21,8 @@ export class RoomManager {
   private pendingStartTimers: Map<string, NodeJS.Timeout> = new Map();
   private turnTimers: Map<string, NodeJS.Timeout> = new Map();
   private turnDeadlines: Map<string, number> = new Map();
+  /** 자리비움 후 방을 떠난 좌석의 최종 정리 타이머 — 키 `${roomId}:${playerId}` (복귀 시 취소) */
+  private sitOutAbandonTimers: Map<string, NodeJS.Timeout> = new Map();
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number }> = new Map();
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
@@ -163,6 +166,8 @@ export class RoomManager {
     const wasInProgress = room.engine.state.isHandInProgress;
     // 이탈자 턴에 걸려 있던 stale 타이머 제거 (아니어도 아래 startPlayerLoop가 재설정)
     this.clearTurnTimer(roomId);
+    // 좌석이 정리되므로 남아 있던 자리비움 최종 정리 타이머도 취소 (orphan 방지)
+    this.cancelSitOutAbandon(roomId, playerId);
 
     const { player, handComplete } = room.engine.processLeave(playerId);
     if (player) {
@@ -307,10 +312,20 @@ export class RoomManager {
       }
     }
 
-    // Reset folded/waiting players — 접속 끊김(grace)·자리비움 예약자는 새 핸드에 딜인하지 않음
+    // Reset folded/waiting players.
+    // 캐시: 접속 끊김(grace)·자리비움은 새 핸드에 딜인하지 않음 (미납 BB 카운트로 정리).
+    // SnG: 자리비움/끊김도 딜인 유지 — 블라인드는 계속 나가고 턴은 자동 폴드 (블라인드 회피 방지).
+    const isSng = !!tournament;
     for (const p of room.engine.state.players) {
       if (p.chips > 0) {
-        p.status = (p.isDisconnected || p.sitOutNext) ? 'sitting-out' : 'waiting';
+        const out = !isSng && (p.isDisconnected || p.sitOutNext);
+        p.status = out ? 'sitting-out' : 'waiting';
+        // 캐시 자리비움 시작 시점 기록 (미납 오르빗 산정 기준). 복귀하면 clear.
+        if (out) {
+          if (p.sitOutSinceHand === undefined) p.sitOutSinceHand = room.engine.state.handNumber;
+        } else {
+          p.sitOutSinceHand = undefined;
+        }
       }
     }
 
@@ -338,6 +353,30 @@ export class RoomManager {
     // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
     this.startPlayerLoop(roomId);
     this.onUpdate(roomId, room.engine);
+
+    // 캐시: 자리비움 좌석이 대략 2오르빗(미납 BB 2회)을 넘기면 자동 정리
+    if (!isSng) this.trackMissedBlinds(roomId);
+  }
+
+  /** 캐시 자리비움 좌석의 경과 핸드를 오르빗으로 환산해, 한도 초과 시 자리를 정리한다 */
+  private trackMissedBlinds(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const st = room.engine.state;
+    // 한 오르빗 ≈ 참여했다면 로테이션에 들어갔을 좌석 수 (칩 보유 인원)
+    const orbitSize = st.players.filter(p => p.chips > 0 && !p.pendingRemoval).length;
+
+    const toRemove: Player[] = [];
+    for (const p of st.players) {
+      if (p.type !== 'human' || p.pendingRemoval || p.chips <= 0) continue;
+      if (p.status !== 'sitting-out' || p.sitOutSinceHand === undefined) continue;
+      const handsSatOut = st.handNumber - p.sitOutSinceHand;
+      if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize)) toRemove.push(p);
+    }
+    for (const p of toRemove) {
+      this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 걸러 자리에서 일어납니다.`);
+      this.leaveRoom(roomId, p.id);
+    }
   }
 
   // --- [FIX 2] 서버 턴 타이머 ---
@@ -392,33 +431,165 @@ export class RoomManager {
     this.turnTimers.set(roomId, timer);
   }
 
-  /** 자리비움 토글 — 핸드 중이면 다음 핸드부터 적용, 아니면 즉시 */
+  // --- 자리비움 후 이탈 좌석의 최종 정리 타이머 ---
+
+  private abandonKey(roomId: string, playerId: string): string {
+    return `${roomId}:${playerId}`;
+  }
+
+  /** 자리비움 상태로 자리를 떠난 좌석에 최종 정리 유예를 건다 (캐시 전용 — SnG는 블라인드 소진에 맡김) */
+  private scheduleSitOutAbandon(roomId: string, playerId: string): void {
+    const key = this.abandonKey(roomId, playerId);
+    const existing = this.sitOutAbandonTimers.get(key);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.sitOutAbandonTimers.delete(key);
+      const r = this.rooms.get(roomId);
+      const p = r?.engine.state.players.find(pl => pl.id === playerId);
+      if (p && (p.sitOutNext || p.status === 'sitting-out')) {
+        this.sendSystemChat(roomId, `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`);
+        this.leaveRoom(roomId, p.id);
+      }
+    }, SITOUT_ABANDON_MS);
+    this.sitOutAbandonTimers.set(key, timer);
+  }
+
+  /** 좌석 복귀/제거 시 최종 정리 타이머 취소 */
+  private cancelSitOutAbandon(roomId: string, playerId: string): void {
+    const key = this.abandonKey(roomId, playerId);
+    const t = this.sitOutAbandonTimers.get(key);
+    if (t) {
+      clearTimeout(t);
+      this.sitOutAbandonTimers.delete(key);
+    }
+  }
+
+  /**
+   * 자리비움 토글.
+   * 캐시: 다음 핸드부터 딜인 제외 — 현재 핸드는 그대로 마치고, 이후 대략 2오르빗(미납 BB 2회)을
+   *   넘기면 자동으로 자리 정리 (trackMissedBlinds). 현재 핸드를 강제 폴드하지 않는다.
+   * SnG: 딜인/블라인드 유지 + 턴 자동 폴드(away) — 토너먼트가 끝날 때까지 좌석 보존.
+   */
   toggleSitOut(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return;
 
+    const isSng = room.config.gameMode === 'sng';
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
     if (sittingOut) {
+      // --- 게임 복귀 ---
       player.sitOutNext = false;
+      player.sitOutSinceHand = undefined;
+      this.cancelSitOutAbandon(roomId, playerId);
       if (player.status === 'sitting-out' && player.chips > 0 && !player.isDisconnected) {
         player.status = 'waiting';
       }
       this.sendSystemChat(roomId, `${player.name}님이 게임에 복귀했습니다.`);
+      // SnG away 상태에서 내 턴 자동 폴드 타이머가 걸려 있었다면, 복귀 즉시 정상 턴으로 되돌린다
+      const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+      if (room.engine.state.isHandInProgress && active?.id === playerId) {
+        this.startPlayerLoop(roomId);
+      }
       this.onUpdate(roomId, room.engine);
       this.tryStartGame(roomId);
-    } else {
-      player.sitOutNext = true;
-      // 진행 중인 핸드에 참여하고 있지 않으면 즉시 적용
-      const inHand = room.engine.state.isHandInProgress
-        && (player.status === 'active' || player.status === 'all-in');
-      if (!inHand) {
-        player.status = 'sitting-out';
-      }
-      this.sendSystemChat(roomId, `${player.name}님이 자리를 비웁니다${inHand ? ' (다음 핸드부터)' : ''}.`);
-      this.onUpdate(roomId, room.engine);
+      return;
     }
+
+    // --- 자리비움 시작 ---
+    player.sitOutNext = true;
+    const inHand = room.engine.state.isHandInProgress
+      && (player.status === 'active' || player.status === 'all-in');
+    if (isSng) {
+      this.sendSystemChat(roomId, `${player.name}님이 자리를 비웁니다 — 돌아올 때까지 자동 폴드돼요 (블라인드는 계속 차감).`);
+      // SnG away는 지금이 본인 턴이면 즉시 자동 처리 (딜인 상태라 남은 플레이어가 기다리지 않게)
+      if (inHand) {
+        const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+        if (active?.id === playerId) {
+          this.clearTurnTimer(roomId);
+          this.autoActFor(roomId, playerId, '자리비움');
+          return; // autoActFor가 onUpdate/루프 재개까지 처리
+        }
+      }
+    } else {
+      // 캐시: 진행 중인 핸드에 참여 중이면 그 핸드는 그대로 마친다(강제 폴드 없음). 아니면 즉시 적용.
+      if (!inHand) player.status = 'sitting-out';
+      this.sendSystemChat(
+        roomId,
+        `${player.name}님이 자리를 비웁니다${inHand ? ' (이번 핸드까지만 진행)' : ''} — 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 일어나요.`,
+      );
+    }
+    this.onUpdate(roomId, room.engine);
+  }
+
+  /** 자리비움 상태로 방을 떠남 — 좌석/칩 유지 (leave-room mode:'sitout') */
+  sitOutAndLeave(roomId: string, playerId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const player = room.engine.state.players.find(p => p.id === playerId);
+    if (!player || player.pendingRemoval) return;
+
+    const already = player.sitOutNext || player.status === 'sitting-out';
+    if (!already) this.toggleSitOut(roomId, playerId);
+
+    // 떠난 뒤 지금이 본인 턴이면(핸드 중 이탈) 즉시 자동 처리 — 남은 플레이어가 기다리지 않게
+    if (room.engine.state.isHandInProgress) {
+      const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+      if (active?.id === playerId) {
+        this.clearTurnTimer(roomId);
+        this.autoActFor(roomId, playerId, '자리비움');
+      }
+    }
+
+    // 캐시: 돌아오지 않아도 확실히 회수되도록 최종 정리 유예 (SnG는 블라인드 소진 → 자연 탈락)
+    if (room.config.gameMode !== 'sng') {
+      this.scheduleSitOutAbandon(roomId, playerId);
+    }
+  }
+
+  /**
+   * 재접속 grace 만료 처리. 좌석을 유지하면 true.
+   * - SnG: 무조건 좌석 보존 (자리비움 여부 무관) — 딜인 유지로 블라인드 소진 → 자연 탈락에 맡긴다.
+   * - 캐시 자리비움: 유지하되, 핸드가 돌지 않는 방까지 위해 최종 정리 유예를 건다.
+   * - 캐시 비자리비움: 즉시 이탈.
+   */
+  handleGraceExpired(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    const player = room?.engine.state.players.find(p => p.id === playerId);
+    if (!room || !player) {
+      this.leaveRoom(roomId, playerId);
+      return false;
+    }
+    const isSng = room.config.gameMode === 'sng';
+    const sittingOut = player.sitOutNext || player.status === 'sitting-out';
+    const keep = isSng || sittingOut;
+    if (!keep) {
+      this.leaveRoom(roomId, playerId);
+      return false;
+    }
+    // 캐시 자리비움 이탈: 최종 정리 유예 (SnG는 유예 없이 블라인드 소진에 맡김)
+    if (!isSng) this.scheduleSitOutAbandon(roomId, playerId);
+    return true;
+  }
+
+  /**
+   * 자리비움 좌석으로 재입장(join-room 멱등 경로)했을 때의 처리.
+   * 좌석은 자리비움 상태 그대로 두고(본인이 '게임 복귀'를 눌러 참여), 최종 정리 유예만 취소한다 —
+   * 다시 자리에 앉아 있으니 방치로 회수되면 안 된다. (복귀는 toggleSitOut이 담당)
+   */
+  handleSeatRejoin(roomId: string, playerId: string): void {
+    this.cancelSitOutAbandon(roomId, playerId);
+  }
+
+  /** 다른 방에 남아 있는 좌석 정리 — 새 방 착석 시 자리비움 좌석 회수 (1세션 1테이블) */
+  leaveAllSeatsExcept(playerId: string, exceptRoomId: string): void {
+    this.rooms.forEach((room, id) => {
+      if (id === exceptRoomId) return;
+      if (room.engine.state.players.some(p => p.id === playerId && !p.pendingRemoval)) {
+        this.leaveRoom(id, playerId);
+      }
+    });
   }
 
   /** 타임칩 사용 — 본인 턴에 남은 시간 +30초 */
@@ -499,7 +670,10 @@ export class RoomManager {
     if (!player) return;
 
     player.isDisconnected = false;
-    if (player.status === 'sitting-out' && player.chips > 0) {
+    // 돌아왔으니 최종 정리 유예 취소
+    this.cancelSitOutAbandon(roomId, playerId);
+    // 명시적 자리비움(sitOutNext)은 재접속만으로 해제하지 않는다 — 본인이 복귀 버튼을 눌러야 함
+    if (player.status === 'sitting-out' && player.chips > 0 && !player.sitOutNext) {
       player.status = 'waiting'; // 다음 핸드 자동 참여
     }
     this.sendSystemChat(roomId, `${player.name}님이 다시 연결됐어요!`);
@@ -519,14 +693,20 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer) return;
 
+    // 즉시 자동 처리 대상: 접속 끊김(부재) 또는 SnG away(딜인된 채 자동 폴드).
+    // 캐시의 sitOutNext는 "이번 핸드까지는 정상 플레이" 계약이므로 강제 폴드하지 않고 일반 턴 타이머를 준다
+    // (부재 상태로 떠난 캐시 좌석은 그 핸드가 자기 턴이면 sitOutAndLeave가 이미 자동 처리했고,
+    //  아니라면 일반 타이머 만료로 폴드된다).
+    const isSngRoom = room.config.gameMode === 'sng';
+    const autoAct = activePlayer.isDisconnected || (activePlayer.sitOutNext && isSngRoom);
     if (activePlayer.type === 'bot') {
       this.startBotLoop(roomId);
-    } else if (activePlayer.isDisconnected) {
-      // 끊긴 플레이어의 턴: 풀 타이머 대신 짧은 지연 후 자동 처리 (다른 플레이어 대기 방지)
+    } else if (autoAct) {
       this.clearTurnTimer(roomId);
+      const reason = activePlayer.isDisconnected ? '접속 끊김' : '자리비움';
       const timer = setTimeout(() => {
         this.turnTimers.delete(roomId);
-        this.autoActFor(roomId, activePlayer.id, '접속 끊김');
+        this.autoActFor(roomId, activePlayer.id, reason);
       }, DISCONNECTED_AUTO_ACT_MS);
       this.turnTimers.set(roomId, timer);
     } else {

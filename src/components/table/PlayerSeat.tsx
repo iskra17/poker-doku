@@ -71,7 +71,8 @@ export default function PlayerSeat({
 
   const isFolded = player.status === 'folded';
   const isAllIn = player.status === 'all-in';
-  const isSittingOut = player.status === 'sitting-out';
+  // SnG away는 딜인 유지(status는 active) 상태로 자동 폴드되므로 sitOutNext 플래그로도 표시
+  const isSittingOut = player.status === 'sitting-out' || !!player.sitOutNext;
   const isBusted = player.chips <= 0 && !isAllIn;
   const isDimmed = isFolded || isSittingOut || isBusted;
   const avatarSize = compact ? 'lg' : 'xl';

@@ -72,7 +72,8 @@ interface GameStore {
   disconnect: () => void;
   setPlayerName: (name: string) => void;
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
-  leaveRoom: () => void;
+  /** 방 나가기 — 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀) */
+  leaveRoom: (mode?: 'exit' | 'sitout') => void;
   sendAction: (action: ActionType, amount?: number) => void;
   sendChat: (presetId: string) => void; // 프리셋 채팅 — 자유 텍스트 없음 (presets.ts)
   toggleSitOut: () => void;
@@ -142,6 +143,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     socket.on('game-update', (gameState: GameState) => {
+      // 로비로 나온 뒤(자리비움 나가기 등) 서버가 좌석 보존을 위해 계속 보내는 스냅샷은 무시 —
+      // 안 그러면 로비에서 테이블 사운드/애니메이션이 튄다 (좌석은 서버가 계속 유지).
+      if (!get().currentRoomId && !get().pendingRoomId) return;
       const prev = get().gameState;
       set({ gameState });
       // 스냅샷 diff → 게임 이벤트 발행 (사운드/애니메이션/로그가 구독)
@@ -214,10 +218,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }, JOIN_TIMEOUT_MS);
   },
 
-  leaveRoom: () => {
+  leaveRoom: (mode?: 'exit' | 'sitout') => {
     const { socket } = get();
     if (!socket) return;
-    socket.emit('leave-room');
+    socket.emit('leave-room', mode === 'sitout' ? { mode } : undefined);
     set({ currentRoomId: null, pendingRoomId: null, gameState: null, chatMessages: [], joinError: null });
   },
 

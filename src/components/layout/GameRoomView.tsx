@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { initSoundSystem } from '@/lib/sound/sound-manager';
@@ -11,6 +11,7 @@ import ActionLog from '@/components/table/ActionLog';
 import TournamentResultOverlay from '@/components/table/TournamentResultOverlay';
 import SngWaitingOverlay from '@/components/table/SngWaitingOverlay';
 import EliminationNotice from '@/components/table/EliminationNotice';
+import LeaveRoomModal from '@/components/table/LeaveRoomModal';
 import BustNotice from '@/components/table/BustNotice';
 import ChatPanel from '@/components/chat/ChatPanel';
 import WinnerCutIn from '@/components/characters/WinnerCutIn';
@@ -18,14 +19,26 @@ import LoserCutIn from '@/components/characters/LoserCutIn';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
-  onLeave: () => void;
+  /** 방 나가기 — 'sitout'이면 좌석/칩 유지 (game-store.leaveRoom과 시그니처 호환) */
+  onLeave: (mode?: 'exit' | 'sitout') => void;
 }
 
 /** 인룸 뷰 공용 컴포넌트 — page.tsx와 table/[id]/page.tsx가 공유 */
 export default function GameRoomView({ onLeave }: GameRoomViewProps) {
-  const { gameState } = useGameStore();
+  const { gameState, myPlayerId } = useGameStore();
   const isMobile = useIsMobile();
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
+
+  // 나가기 확인 다이얼로그는 '지킬 좌석'이 있을 때만 — 그 외엔 바로 퇴장.
+  // 올인(chips===0이지만 status='all-in')은 팟 지분이 살아 있으므로 파산이 아니다 — 좌석 유지 대상.
+  const myPlayer = gameState?.players.find(p => p.id === myPlayerId);
+  const busted = !!myPlayer && myPlayer.chips <= 0 && myPlayer.status !== 'all-in';
+  const canSitOut = !!myPlayer && !busted && !myPlayer.finishPlace && !tournamentFinished;
+  const handleLeaveClick = () => {
+    if (canSitOut) setLeaveOpen(true);
+    else onLeave();
+  };
 
   useEffect(() => {
     initSoundSystem();
@@ -39,7 +52,14 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
 
   return (
     <div className="h-dvh flex flex-col bg-abyss overflow-hidden">
-      <TopBar onLeave={onLeave} />
+      <TopBar onLeave={handleLeaveClick} />
+      <LeaveRoomModal
+        isOpen={leaveOpen}
+        isSng={!!gameState?.tournament}
+        onClose={() => setLeaveOpen(false)}
+        onSitOut={() => { setLeaveOpen(false); onLeave('sitout'); }}
+        onExit={() => { setLeaveOpen(false); onLeave(); }}
+      />
 
       <div className="flex-1 relative overflow-hidden">
         {gameState ? (

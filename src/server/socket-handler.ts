@@ -187,6 +187,9 @@ export function setupSocketHandlers(io: Server): void {
               seated.status = 'waiting';
             }
           }
+          // 자리비움으로 떠났던 좌석 복귀 — 좌석은 자리비움 그대로 두고(본인이 '게임 복귀'로 참여),
+          // 방치 회수 유예만 취소한다. (자동 복귀 대신 명시 복귀 — UI 안내와 일치)
+          roomManager.handleSeatRejoin(roomId, session.playerId);
           socket.join(roomId);
           session.roomId = roomId;
           socket.emit('room-joined', {
@@ -222,6 +225,8 @@ export function setupSocketHandlers(io: Server): void {
         roomManager.leaveRoom(session.roomId, session.playerId);
         session.roomId = null;
       }
+      // 자리비움으로 떠나 세션에 안 잡힌 다른 방 좌석도 회수 (1세션 1테이블)
+      roomManager.leaveAllSeatsExcept(session.playerId, roomId);
 
       // Find first available seat — 요청 좌석은 0~5 정수만 유효, 그 외/점유 시 빈 자리 배정
       const requestedSeat = Number.isInteger(seatIndex) && seatIndex >= 0 && seatIndex <= 5 ? seatIndex : -1;
@@ -291,12 +296,16 @@ export function setupSocketHandlers(io: Server): void {
       }
     });
 
-    // Leave room
-    socket.on('leave-room', () => {
+    // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀)
+    socket.on('leave-room', (data?: { mode?: string }) => {
       if (session.roomId) {
         const roomId = session.roomId;
         socket.leave(roomId);
-        roomManager.leaveRoom(roomId, session.playerId);
+        if (data?.mode === 'sitout') {
+          roomManager.sitOutAndLeave(roomId, session.playerId);
+        } else {
+          roomManager.leaveRoom(roomId, session.playerId);
+        }
         session.roomId = null;
         io.emit('room-list', roomManager.getRoomList());
       }
@@ -424,8 +433,9 @@ export function setupSocketHandlers(io: Server): void {
       const roomId = detached.roomId;
       roomManager.handleDisconnect(roomId, detached.playerId);
       sessions.startGrace(detached, GRACE_MS, () => {
-        roomManager.leaveRoom(roomId, detached.playerId);
-        detached.roomId = null;
+        // 자리비움 좌석은 유지 (캐시: 미납 BB/최종 유예로 정리, SnG: 블라인드 소진에 맡김)
+        const seatKept = roomManager.handleGraceExpired(roomId, detached.playerId);
+        if (!seatKept) detached.roomId = null;
         io.emit('room-list', roomManager.getRoomList());
       });
     });
