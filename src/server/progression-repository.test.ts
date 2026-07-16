@@ -4,6 +4,7 @@ import {
   PLAYABLE_CHARACTER_IDS,
   ProgressionPersistenceError,
   ProgressionRepository,
+  PROGRESSION_SUMMARY_LIMITS,
   type PlayableCharacterId,
   type ProgressionCounters,
   type ProgressionCore,
@@ -256,6 +257,234 @@ describe('ProgressionRepository', () => {
     expect(rowCount(database, 'progression_events')).toBe(1);
   });
 
+  it('returns duplicate or conflict before inspecting a caller retry summary', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+    database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: 'event-a',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: { stored: true },
+        createdAt: 2_000,
+      });
+    });
+    let inspected = false;
+    const hostileRetry = new Proxy<Record<string, unknown>>({}, {
+      ownKeys() {
+        inspected = true;
+        throw new Error('sensitive-retry-summary');
+      },
+      getPrototypeOf() {
+        inspected = true;
+        throw new Error('sensitive-retry-prototype');
+      },
+    });
+
+    const duplicate = database.transaction(() => (
+      repository.insertProgressionEvent({
+        idempotencyKey: 'event-a',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: hostileRetry,
+        createdAt: Number.NaN,
+      })
+    ));
+    expect(duplicate).toMatchObject({
+      status: 'duplicate',
+      event: { summary: { stored: true } },
+    });
+    expect(inspected).toBe(false);
+
+    const conflict = captureError(() => database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: 'event-a',
+        profileId: 'profile-a',
+        eventType: 'sng-finish',
+        balanceVersion: 1,
+        summary: hostileRetry,
+        createdAt: Number.NaN,
+      });
+    }), 'PROGRESSION_EVENT_CONFLICT');
+    expect(conflict.message).not.toContain('sensitive');
+    expect(inspected).toBe(false);
+  });
+
+  it('canonicalizes only bounded data descriptors without executing user code', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+    let getterCalled = false;
+    const accessorSummary: Record<string, unknown> = {};
+    Object.defineProperty(accessorSummary, 'secret', {
+      enumerable: true,
+      get() {
+        getterCalled = true;
+        throw new Error('sensitive-getter-message');
+      },
+    });
+    const accessorError = captureError(
+      () => insertEvent(repository, database, 'accessor', accessorSummary),
+      'PROGRESSION_VALUE_INVALID',
+    );
+    expect(getterCalled).toBe(false);
+    expect(accessorError.message).not.toContain('sensitive');
+
+    let toJsonCalled = false;
+    const toJsonSummary = { safe: true } as Record<string, unknown>;
+    Object.defineProperty(toJsonSummary, 'toJSON', {
+      enumerable: false,
+      value: () => {
+        toJsonCalled = true;
+        return { replaced: true };
+      },
+    });
+    captureError(
+      () => insertEvent(repository, database, 'to-json', toJsonSummary),
+      'PROGRESSION_VALUE_INVALID',
+    );
+    expect(toJsonCalled).toBe(false);
+
+    const symbolSummary: Record<string, unknown> = { safe: true };
+    Object.defineProperty(symbolSummary, Symbol('hidden'), {
+      enumerable: true,
+      value: 1,
+    });
+    captureError(
+      () => insertEvent(repository, database, 'symbol', symbolSummary),
+      'PROGRESSION_VALUE_INVALID',
+    );
+
+    const nonEnumerableSummary: Record<string, unknown> = { safe: true };
+    Object.defineProperty(nonEnumerableSummary, 'hidden', {
+      enumerable: false,
+      value: 1,
+    });
+    captureError(
+      () => insertEvent(
+        repository,
+        database,
+        'non-enumerable',
+        nonEnumerableSummary,
+      ),
+      'PROGRESSION_VALUE_INVALID',
+    );
+
+    for (const dangerousKey of ['__proto__', 'constructor', 'prototype']) {
+      const dangerousSummary = Object.create(null) as Record<string, unknown>;
+      Object.defineProperty(dangerousSummary, dangerousKey, {
+        enumerable: true,
+        configurable: true,
+        writable: true,
+        value: 'blocked',
+      });
+      captureError(
+        () => insertEvent(
+          repository,
+          database,
+          `dangerous-${dangerousKey}`,
+          dangerousSummary,
+        ),
+        'PROGRESSION_VALUE_INVALID',
+      );
+    }
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('normalizes Proxy traps, cycles, and summary resource limits', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+    for (const [key, summary] of [
+      [
+        'proxy-prototype',
+        new Proxy({}, {
+          getPrototypeOf() {
+            throw new Error('sensitive-proxy-prototype');
+          },
+        }),
+      ],
+      [
+        'proxy-own-keys',
+        new Proxy({}, {
+          ownKeys() {
+            throw new ProgressionPersistenceError(
+              'PROGRESSION_PROFILE_NOT_FOUND',
+            );
+          },
+        }),
+      ],
+    ] as const) {
+      const error = captureError(
+        () => insertEvent(repository, database, key, summary),
+        'PROGRESSION_VALUE_INVALID',
+      );
+      expect(error.message).not.toContain('sensitive');
+    }
+
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    captureError(
+      () => insertEvent(repository, database, 'cycle', cyclic),
+      'PROGRESSION_VALUE_INVALID',
+    );
+
+    const tooDeep: Record<string, unknown> = {};
+    let cursor = tooDeep;
+    for (let depth = 0; depth < 15_000; depth += 1) {
+      const next: Record<string, unknown> = {};
+      cursor.next = next;
+      cursor = next;
+    }
+    captureError(
+      () => insertEvent(repository, database, 'deep', tooDeep),
+      'PROGRESSION_VALUE_INVALID',
+    );
+
+    const tooManyNodes = {
+      values: Array.from(
+        { length: PROGRESSION_SUMMARY_LIMITS.maxNodes },
+        (_, index) => index,
+      ),
+    };
+    captureError(
+      () => insertEvent(repository, database, 'nodes', tooManyNodes),
+      'PROGRESSION_VALUE_INVALID',
+    );
+    const tooManyBytes = {
+      text: '한'.repeat(PROGRESSION_SUMMARY_LIMITS.maxUtf8Bytes),
+    };
+    captureError(
+      () => insertEvent(repository, database, 'bytes', tooManyBytes),
+      'PROGRESSION_VALUE_INVALID',
+    );
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('stores deterministic sorted JSON and returns an immutable canonical clone', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+
+    const inserted = database.transaction(() => (
+      repository.insertProgressionEvent({
+        idempotencyKey: 'canonical-event',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: { z: 1, a: { y: 2, b: 3 } },
+        createdAt: 2_000,
+      })
+    ));
+
+    expect(database.db.prepare(`
+      SELECT summary_json FROM progression_events
+      WHERE idempotency_key = 'canonical-event'
+    `).get()).toEqual({ summary_json: '{"a":{"b":3,"y":2},"z":1}' });
+    expect(inserted.event.summary).toEqual({ a: { b: 3, y: 2 }, z: 1 });
+    expect(Object.isFrozen(inserted.event.summary)).toBe(true);
+    expect(Object.isFrozen(inserted.event.summary.a)).toBe(true);
+  });
+
   it('validates and compare-and-swaps core, counters, and affinity rows', () => {
     insertProfile(database, 'profile-a');
     repository.getOrCreate('profile-a', 'sakura', 1_000);
@@ -329,10 +558,12 @@ describe('ProgressionRepository', () => {
     insertProfile(database, 'profile-a');
     repository.getOrCreate('profile-a', 'sakura', 1_000);
 
+    database.db.exec('PRAGMA ignore_check_constraints = ON;');
     database.db.prepare(`
       UPDATE progression_profiles SET practice_date = '2026-02-30'
       WHERE profile_id = 'profile-a'
     `).run();
+    database.db.exec('PRAGMA ignore_check_constraints = OFF;');
     expectErrorCode(
       () => repository.getOrCreate('profile-a', 'sakura', 2_000),
       'PROGRESSION_PERSISTENCE_INVALID',
@@ -421,6 +652,122 @@ describe('ProgressionRepository', () => {
       'PROGRESSION_PERSISTENCE_INVALID',
     );
   });
+
+  it('normalizes every unexpected write failure and fully rolls back', () => {
+    insertProfile(database, 'trigger-public-init');
+    database.db.exec(`
+      CREATE TRIGGER fail_public_init
+      BEFORE INSERT ON progression_profiles
+      BEGIN SELECT RAISE(ABORT, 'sensitive-public-init'); END;
+    `);
+    expectSafePersistenceFailure(() => {
+      repository.getOrCreate('trigger-public-init', 'sakura', 1_000);
+    });
+    expect(rowCount(database, 'progression_profiles', 'trigger-public-init'))
+      .toBe(0);
+    database.db.exec('DROP TRIGGER fail_public_init;');
+
+    insertProfile(database, 'trigger-scoped-init');
+    database.db.exec(`
+      CREATE TRIGGER fail_scoped_init
+      BEFORE INSERT ON profile_equipment
+      BEGIN SELECT RAISE(ABORT, 'sensitive-scoped-init'); END;
+    `);
+    expectSafePersistenceFailure(() => database.transaction(() => {
+      repository.getOrCreateInTransaction(
+        'trigger-scoped-init',
+        'sakura',
+        1_000,
+      );
+    }));
+    expect(rowCount(database, 'progression_profiles', 'trigger-scoped-init'))
+      .toBe(0);
+    expect(rowCount(database, 'streak_state', 'trigger-scoped-init')).toBe(0);
+    database.db.exec('DROP TRIGGER fail_scoped_init;');
+
+    insertProfile(database, 'trigger-writes');
+    repository.getOrCreate('trigger-writes', 'sakura', 1_000);
+    database.db.exec(`
+      CREATE TRIGGER fail_core
+      BEFORE INSERT ON character_affinity
+      WHEN NEW.character_id = 'hana'
+      BEGIN SELECT RAISE(ABORT, 'sensitive-core-followup'); END;
+    `);
+    expectSafePersistenceFailure(() => database.transaction(() => {
+      repository.compareAndUpdateProgressionInTransaction({
+        profileId: 'trigger-writes',
+        expected: core(1, 0, 'sakura'),
+        next: core(2, 0, 'hana'),
+        updatedAt: 2_000,
+      });
+    }));
+    database.db.exec('DROP TRIGGER fail_core;');
+
+    database.db.exec(`
+      CREATE TRIGGER fail_counters
+      BEFORE UPDATE OF completed_hands ON progression_profiles
+      BEGIN SELECT RAISE(ABORT, 'sensitive-counter-update'); END;
+    `);
+    expectSafePersistenceFailure(() => database.transaction(() => {
+      repository.compareAndUpdateCountersInTransaction({
+        profileId: 'trigger-writes',
+        expected: counters(null, 0, 0, 0, 0, 0, 0),
+        next: counters(null, 0, 1, 1, 0, 0, 0),
+        updatedAt: 2_000,
+      });
+    }));
+    database.db.exec('DROP TRIGGER fail_counters;');
+
+    database.db.exec(`
+      CREATE TRIGGER fail_affinity
+      BEFORE UPDATE ON character_affinity
+      BEGIN SELECT RAISE(ABORT, 'sensitive-affinity-update'); END;
+    `);
+    expectSafePersistenceFailure(() => database.transaction(() => {
+      repository.compareAndUpdateAffinityInTransaction({
+        profileId: 'trigger-writes',
+        characterId: 'sakura',
+        expected: { level: 1, xpMilli: 0 },
+        next: { level: 2, xpMilli: 0 },
+      });
+    }));
+    database.db.exec('DROP TRIGGER fail_affinity;');
+
+    database.db.exec(`
+      CREATE TRIGGER fail_event
+      BEFORE INSERT ON progression_events
+      BEGIN SELECT RAISE(ABORT, 'sensitive-event-insert'); END;
+    `);
+    expectSafePersistenceFailure(() => database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: 'trigger-event',
+        profileId: 'trigger-writes',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: {},
+        createdAt: 2_000,
+      });
+    }));
+    database.db.exec('DROP TRIGGER fail_event;');
+
+    const snapshot = repository.getOrCreate('trigger-writes', 'sakura', 3_000);
+    expect(snapshot.profile).toMatchObject({
+      dojoLevel: 1,
+      dojoXpMilli: 0,
+      completedHands: 0,
+      cashHands: 0,
+      updatedAt: 1_000,
+    });
+    expect(snapshot.affinities).toEqual([
+      {
+        profileId: 'trigger-writes',
+        characterId: 'sakura',
+        level: 1,
+        xpMilli: 0,
+      },
+    ]);
+    expect(rowCount(database, 'progression_events', 'trigger-writes')).toBe(0);
+  });
 });
 
 function core(
@@ -480,7 +827,28 @@ function rowCount(
   return row.count;
 }
 
-function expectErrorCode(work: () => unknown, expectedCode: string): void {
+function insertEvent(
+  repository: ProgressionRepository,
+  database: PokerDatabase,
+  key: string,
+  summary: Record<string, unknown>,
+): void {
+  database.transaction(() => {
+    repository.insertProgressionEvent({
+      idempotencyKey: key,
+      profileId: 'profile-a',
+      eventType: 'completed-hand',
+      balanceVersion: 1,
+      summary,
+      createdAt: 2_000,
+    });
+  });
+}
+
+function captureError(
+  work: () => unknown,
+  expectedCode: string,
+): ProgressionPersistenceError {
   let thrown: unknown;
   try {
     work();
@@ -488,5 +856,18 @@ function expectErrorCode(work: () => unknown, expectedCode: string): void {
     thrown = error;
   }
   expect(thrown).toBeInstanceOf(ProgressionPersistenceError);
-  expect((thrown as ProgressionPersistenceError).code).toBe(expectedCode);
+  const progressionError = thrown as ProgressionPersistenceError;
+  expect(progressionError.code).toBe(expectedCode);
+  expect(progressionError.message).toBe(expectedCode);
+  expect('cause' in progressionError).toBe(false);
+  return progressionError;
+}
+
+function expectSafePersistenceFailure(work: () => unknown): void {
+  const error = captureError(work, 'PROGRESSION_PERSISTENCE_INVALID');
+  expect(String(error)).not.toContain('sensitive');
+}
+
+function expectErrorCode(work: () => unknown, expectedCode: string): void {
+  captureError(work, expectedCode);
 }

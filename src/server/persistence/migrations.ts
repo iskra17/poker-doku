@@ -175,7 +175,9 @@ export const migrations: readonly Migration[] = [
         profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
         balance_version INTEGER NOT NULL CHECK (balance_version > 0),
         dojo_level INTEGER NOT NULL CHECK (dojo_level BETWEEN 1 AND 50),
-        dojo_xp_milli INTEGER NOT NULL CHECK (dojo_xp_milli >= 0),
+        dojo_xp_milli INTEGER NOT NULL CHECK (
+          dojo_xp_milli >= 0 AND (dojo_level < 50 OR dojo_xp_milli = 0)
+        ),
         selected_character_id TEXT NOT NULL CHECK (
           selected_character_id IN ('sakura','ara','hana','chloe','vivian','elena')
         ),
@@ -183,6 +185,8 @@ export const migrations: readonly Migration[] = [
           practice_date IS NULL OR (
             length(practice_date) = 10
             AND practice_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+            AND CAST(substr(practice_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+            AND COALESCE(date(practice_date, '+0 days') = practice_date, 0)
           )
         ),
         practice_hands INTEGER NOT NULL DEFAULT 0 CHECK (practice_hands >= 0),
@@ -201,7 +205,9 @@ export const migrations: readonly Migration[] = [
           character_id IN ('sakura','ara','hana','chloe','vivian','elena')
         ),
         level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 20),
-        xp_milli INTEGER NOT NULL CHECK (xp_milli >= 0),
+        xp_milli INTEGER NOT NULL CHECK (
+          xp_milli >= 0 AND (level < 20 OR xp_milli = 0)
+        ),
         PRIMARY KEY (profile_id, character_id)
       ) STRICT;
 
@@ -210,6 +216,8 @@ export const migrations: readonly Migration[] = [
         mission_date TEXT NOT NULL CHECK (
           length(mission_date) = 10
           AND mission_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND CAST(substr(mission_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+          AND COALESCE(date(mission_date, '+0 days') = mission_date, 0)
         ),
         slot INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 2),
         mission_id TEXT NOT NULL CHECK (length(mission_id) > 0),
@@ -233,10 +241,20 @@ export const migrations: readonly Migration[] = [
           last_qualified_date IS NULL OR (
             length(last_qualified_date) = 10
             AND last_qualified_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+            AND CAST(substr(last_qualified_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+            AND COALESCE(
+              date(last_qualified_date, '+0 days') = last_qualified_date,
+              0
+            )
           )
         ),
         last_week_key TEXT CHECK (
-          last_week_key IS NULL OR length(last_week_key) BETWEEN 7 AND 10
+          last_week_key IS NULL OR (
+            length(last_week_key) = 8
+            AND last_week_key GLOB '[0-9][0-9][0-9][0-9]-W[0-9][0-9]'
+            AND CAST(substr(last_week_key, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+            AND CAST(substr(last_week_key, 7, 2) AS INTEGER) BETWEEN 1 AND 53
+          )
         ),
         created_at INTEGER NOT NULL CHECK (created_at >= 0),
         updated_at INTEGER NOT NULL CHECK (updated_at >= 0)

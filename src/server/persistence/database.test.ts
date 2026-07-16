@@ -353,6 +353,88 @@ describe('PokerDatabase migrations', () => {
     `).run()).toThrow();
   });
 
+  it('enforces max-level XP and real canonical progression dates in V5', () => {
+    database = openPokerDatabase(':memory:');
+    const db = database.db;
+    insertProfile(database, 'durable-constraints');
+    db.prepare(`
+      INSERT INTO progression_profiles (
+        profile_id, balance_version, dojo_level, dojo_xp_milli,
+        selected_character_id, practice_date, practice_hands,
+        completed_hands, cash_hands, practice_hands_total, sng_completions,
+        best_streak, created_at, updated_at
+      ) VALUES (?, 1, 1, 0, 'sakura', '2024-02-29', 1, 0, 0, 0, 0, 0, 1, 1)
+    `).run('durable-constraints');
+    db.prepare(`
+      INSERT INTO character_affinity VALUES (
+        'durable-constraints', 'sakura', 1, 0
+      )
+    `).run();
+    db.prepare(`
+      INSERT INTO daily_missions (
+        profile_id, mission_date, slot, mission_id, target, progress,
+        balance_version, reroll_count, assigned_at, completed_at, rewarded_at
+      ) VALUES (
+        'durable-constraints', '2024-02-29', 0, 'mission-leap', 1, 0,
+        1, 0, 1, NULL, NULL
+      )
+    `).run();
+    db.prepare(`
+      INSERT INTO streak_state VALUES (
+        'durable-constraints', 1, 0, '2024-02-29', '2026-W53', 1, 1
+      )
+    `).run();
+
+    for (const invalidDate of [
+      '2026-02-30',
+      '2026-99-01',
+      '2026-01-00',
+      '0000-01-01',
+    ]) {
+      expect(() => db.prepare(`
+        UPDATE progression_profiles SET practice_date = ?
+        WHERE profile_id = 'durable-constraints'
+      `).run(invalidDate)).toThrow();
+      expect(() => db.prepare(`
+        UPDATE daily_missions SET mission_date = ?
+        WHERE profile_id = 'durable-constraints'
+      `).run(invalidDate)).toThrow();
+      expect(() => db.prepare(`
+        UPDATE streak_state SET last_qualified_date = ?
+        WHERE profile_id = 'durable-constraints'
+      `).run(invalidDate)).toThrow();
+    }
+    for (const invalidWeek of [
+      '2026-W00', '2026-W54', '2026-W1', 'not-a-week', '0000-W01',
+    ]) {
+      expect(() => db.prepare(`
+        UPDATE streak_state SET last_week_key = ?
+        WHERE profile_id = 'durable-constraints'
+      `).run(invalidWeek)).toThrow();
+    }
+    expect(() => db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 50, dojo_xp_milli = 1
+      WHERE profile_id = 'durable-constraints'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE character_affinity SET level = 20, xp_milli = 1
+      WHERE profile_id = 'durable-constraints' AND character_id = 'sakura'
+    `).run()).toThrow();
+
+    db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 50, dojo_xp_milli = 0
+      WHERE profile_id = 'durable-constraints'
+    `).run();
+    db.prepare(`
+      UPDATE character_affinity SET level = 20, xp_milli = 0
+      WHERE profile_id = 'durable-constraints' AND character_id = 'sakura'
+    `).run();
+    expect(db.prepare(`
+      SELECT dojo_level, dojo_xp_milli FROM progression_profiles
+      WHERE profile_id = 'durable-constraints'
+    `).get()).toEqual({ dojo_level: 50, dojo_xp_milli: 0 });
+  });
+
   it('rolls back all V5 tables and its version when a middle object conflicts', () => {
     const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
     temporaryDirectories.push(directory);
