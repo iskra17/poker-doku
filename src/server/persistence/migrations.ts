@@ -319,6 +319,54 @@ export const migrations: readonly Migration[] = [
     version: 6,
     name: 'durable_daily_mission_mode_sets',
     sql: `
+      CREATE TABLE v6_daily_mission_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v6_daily_mission_validation (invalid)
+      SELECT 1
+      FROM daily_missions
+      WHERE
+        balance_version != 1
+        OR NOT (
+          (mission_id = 'COMPLETE_HANDS_ANY_10' AND target = 10)
+          OR (mission_id = 'COMPLETE_HANDS_CASH_10' AND target = 10)
+          OR (mission_id = 'COMPLETE_HANDS_PRACTICE_10' AND target = 10)
+          OR (mission_id = 'COMPLETE_HANDS_ANY_20' AND target = 20)
+          OR (mission_id = 'COMPLETE_ONE_SNG' AND target = 1)
+          OR (mission_id = 'COMPLETE_TWO_MODES' AND target = 2)
+        )
+        OR progress > target
+        OR reroll_count NOT IN (0, 1)
+        OR (
+          (progress < target AND (
+            completed_at IS NOT NULL OR rewarded_at IS NOT NULL
+          ))
+          OR (progress = target AND (
+            completed_at IS NULL
+            OR rewarded_at IS NULL
+            OR rewarded_at != completed_at
+          ))
+        )
+      LIMIT 1;
+
+      INSERT INTO v6_daily_mission_validation (invalid)
+      SELECT 1
+      FROM (
+        SELECT
+          profile_id,
+          mission_date,
+          COUNT(*) AS mission_count,
+          SUM(slot) AS slot_sum,
+          SUM(reroll_count) AS reroll_total
+        FROM daily_missions
+        GROUP BY profile_id, mission_date
+      )
+      WHERE mission_count != 3 OR slot_sum != 3 OR reroll_total > 1
+      LIMIT 1;
+
+      DROP TABLE v6_daily_mission_validation;
+
       CREATE TABLE daily_mission_modes (
         profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
         mission_date TEXT NOT NULL CHECK (
@@ -378,6 +426,27 @@ export const migrations: readonly Migration[] = [
         NEW.profile_id != OLD.profile_id
         OR NEW.mission_date != OLD.mission_date
         OR NEW.slot != OLD.slot
+        OR (
+          NEW.reroll_count != OLD.reroll_count
+          AND NOT (
+            OLD.reroll_count = 0
+            AND NEW.reroll_count = 1
+            AND OLD.completed_at IS NULL
+            AND OLD.rewarded_at IS NULL
+            AND NEW.mission_id != OLD.mission_id
+            AND NEW.progress = 0
+            AND NEW.completed_at IS NULL
+            AND NEW.rewarded_at IS NULL
+          )
+        )
+        OR (
+          (
+            NEW.mission_id != OLD.mission_id
+            OR NEW.target != OLD.target
+            OR NEW.assigned_at != OLD.assigned_at
+          )
+          AND NOT (OLD.reroll_count = 0 AND NEW.reroll_count = 1)
+        )
         OR NEW.balance_version != 1
         OR NOT (
           (NEW.mission_id = 'COMPLETE_HANDS_ANY_10' AND NEW.target = 10)

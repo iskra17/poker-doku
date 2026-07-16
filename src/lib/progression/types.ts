@@ -1,3 +1,5 @@
+import type { MissionId } from './missions';
+
 export const PROGRESSION_CHARACTER_IDS = [
   'sakura',
   'ara',
@@ -70,7 +72,7 @@ export interface ProgressionSnapshot {
 
 /** A completed mission's immutable reward receipt. */
 export interface MissionCompletion {
-  missionId: string;
+  missionId: MissionId;
   slot: number;
   dojoXpMilli: number;
 }

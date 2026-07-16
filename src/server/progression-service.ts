@@ -5,7 +5,10 @@ import {
   scaleReward,
   type ProgressionBalance,
 } from '@/lib/progression/balance';
-import { selectRerollMission } from '@/lib/progression/missions';
+import {
+  getMissionDefinition,
+  selectRerollMission,
+} from '@/lib/progression/missions';
 import type {
   MissionCompletion,
   ProgressionRewardSummary,
@@ -29,7 +32,6 @@ const EVENT_TYPE_SNG_FINISH = 'sng-finish';
 const MAX_EVENT_ID_COMPONENT_LENGTH = 128;
 const MAX_EVENT_ID_LENGTH = 384;
 const INTERNAL_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const MISSION_ID_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
 const CATALOG_ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const REQUIRED_SUMMARY_KEYS = [
   'eventId',
@@ -679,7 +681,10 @@ function parseStoredSummary(
         .includes(value.characterId)
       || !isNonnegativeSafeInteger(value.affinityMilli)
       || !isConsecutiveLevelArray(value.affinityLevelsGained, 20)
-      || !isMissionCompletionArray(value.missionCompletions)
+      || !isMissionCompletionArray(
+        value.missionCompletions,
+        event.balanceVersion,
+      )
       || !isUniqueCatalogItemIdArray(value.grantedItemIds)
       || (hasOwn(value, 'streak') && !isStreakChange(value.streak))
     ) {
@@ -724,8 +729,17 @@ function hasExactSummaryKeys(value: unknown): value is Record<string, unknown> {
     ));
 }
 
-function isMissionCompletionArray(value: unknown): boolean {
+function isMissionCompletionArray(
+  value: unknown,
+  balanceVersion: number,
+): value is MissionCompletion[] {
   if (!Array.isArray(value)) return false;
+  let expectedReward: number;
+  try {
+    expectedReward = getBalance(balanceVersion).dojoXpPerMission;
+  } catch {
+    return false;
+  }
   const missionIds = new Set<string>();
   const slots = new Set<number>();
   return value.every(item => {
@@ -733,20 +747,22 @@ function isMissionCompletionArray(value: unknown): boolean {
       return false;
     }
     const { missionId, slot, dojoXpMilli } = item;
+    const definition = typeof missionId === 'string'
+      ? getMissionDefinition(missionId)
+      : null;
     if (
-      typeof missionId !== 'string'
-      || !MISSION_ID_PATTERN.test(missionId)
-      || missionIds.has(missionId)
+      !definition
+      || missionIds.has(definition.id)
       || typeof slot !== 'number'
       || !Number.isSafeInteger(slot)
       || slot < 0
       || slot > 2
       || slots.has(slot)
-      || !isNonnegativeSafeInteger(dojoXpMilli)
+      || dojoXpMilli !== expectedReward
     ) {
       return false;
     }
-    missionIds.add(missionId);
+    missionIds.add(definition.id);
     slots.add(slot);
     return true;
   });

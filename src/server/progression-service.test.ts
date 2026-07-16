@@ -327,6 +327,21 @@ describe('ProgressionService', () => {
         dojoXpMilli: 100_000,
       }] },
       { missionCompletions: [{
+        missionId: 'COMPLETE_FAKE_MISSION',
+        slot: 0,
+        dojoXpMilli: 100_000,
+      }] },
+      { missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_ANY_10',
+        slot: 0,
+        dojoXpMilli: 99_999,
+      }] },
+      { missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_ANY_10',
+        slot: 0,
+        dojoXpMilli: 0,
+      }] },
+      { missionCompletions: [{
         missionId: 'BAD\u0000MISSION',
         slot: 0,
         dojoXpMilli: 100_000,

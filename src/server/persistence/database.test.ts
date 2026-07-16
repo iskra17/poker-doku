@@ -499,6 +499,9 @@ describe('PokerDatabase migrations', () => {
     temporaryDirectories.push(directory);
     const path = join(directory, 'poker.sqlite');
     createV5Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV5MissionDay(rawDatabase);
+    rawDatabase.close();
 
     database = openPokerDatabase(path);
 
@@ -516,6 +519,15 @@ describe('PokerDatabase migrations', () => {
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
     `).get()).toEqual({ alias: 'v1-marker-alias' });
+    expect(database.db.prepare(`
+      SELECT slot, mission_id, target FROM daily_missions
+      WHERE profile_id = 'v1-marker' AND mission_date = '2026-07-17'
+      ORDER BY slot
+    `).all()).toEqual([
+      { slot: 0, mission_id: 'COMPLETE_HANDS_ANY_10', target: 10 },
+      { slot: 1, mission_id: 'COMPLETE_HANDS_CASH_10', target: 10 },
+      { slot: 2, mission_id: 'COMPLETE_ONE_SNG', target: 1 },
+    ]);
   });
 
   it('rolls back every V6 object and version when its table conflicts', () => {
@@ -542,6 +554,86 @@ describe('PokerDatabase migrations', () => {
       expect(reopened.prepare(`
         SELECT name FROM sqlite_schema
         WHERE type = 'trigger' AND name LIKE 'validate_daily_mission_%'
+      `).all()).toEqual([]);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it.each([
+    [
+      'unknown catalog id',
+      `UPDATE daily_missions
+       SET mission_id = 'COMPLETE_FAKE_MISSION'
+       WHERE slot = 0`,
+    ],
+    [
+      'catalog target mismatch',
+      `UPDATE daily_missions SET target = 11 WHERE slot = 0`,
+    ],
+    [
+      'unsupported balance version',
+      `UPDATE daily_missions SET balance_version = 2 WHERE slot = 0`,
+    ],
+    [
+      'more than one reroll in a day',
+      `UPDATE daily_missions SET reroll_count = 1 WHERE slot IN (0, 1)`,
+    ],
+    [
+      'invalid per-row reroll count',
+      `UPDATE daily_missions SET reroll_count = 2 WHERE slot = 0`,
+    ],
+    [
+      'partial three-slot day',
+      `DELETE FROM daily_missions WHERE slot = 2`,
+    ],
+    [
+      'progress beyond target',
+      `UPDATE daily_missions SET progress = target + 1 WHERE slot = 0`,
+    ],
+    [
+      'incomplete reward timestamps',
+      `UPDATE daily_missions
+       SET progress = target, completed_at = 2, rewarded_at = NULL
+       WHERE slot = 0`,
+    ],
+  ])('atomically rejects V5 mission data with %s during V6 upgrade', (
+    _label,
+    corruption,
+  ) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV5Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV5MissionDay(rawDatabase);
+    rawDatabase.exec(corruption);
+    rawDatabase.close();
+
+    let unexpectedlyOpened: PokerDatabase | undefined;
+    try {
+      expect(() => {
+        unexpectedlyOpened = openPokerDatabase(path);
+      }).toThrow();
+    } finally {
+      unexpectedlyOpened?.close();
+    }
+
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT version FROM schema_migrations ORDER BY version
+      `).all()).toEqual([
+        { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+        { version: 5 },
+      ]);
+      expect(reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE name IN (
+          'v6_daily_mission_validation',
+          'daily_mission_modes', 'validate_daily_mission_insert',
+          'validate_daily_mission_update'
+        )
       `).all()).toEqual([]);
     } finally {
       reopened.close();
@@ -580,6 +672,41 @@ describe('PokerDatabase migrations', () => {
       SET mission_id = 'COMPLETE_HANDS_PRACTICE_10', reroll_count = 1
       WHERE profile_id = 'mission-v6-constraints' AND slot = 0
     `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET reroll_count = 0
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions
+      SET mission_id = 'COMPLETE_HANDS_ANY_20', target = 20
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET assigned_at = 2
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    database.db.prepare(`
+      UPDATE daily_missions SET progress = 1
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run();
+    database.db.prepare(`
+      UPDATE daily_missions
+      SET progress = target, completed_at = 3, rewarded_at = 3
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run();
+    expect(database.db.prepare(`
+      SELECT mission_id, reroll_count, assigned_at, progress,
+             completed_at, rewarded_at
+      FROM daily_missions
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).get()).toEqual({
+      mission_id: 'COMPLETE_HANDS_PRACTICE_10',
+      reroll_count: 1,
+      assigned_at: 1,
+      progress: 10,
+      completed_at: 3,
+      rewarded_at: 3,
+    });
     expect(() => database?.db.prepare(`
       UPDATE daily_missions
       SET mission_id = 'COMPLETE_HANDS_ANY_20', target = 20, reroll_count = 1
@@ -1138,6 +1265,27 @@ function createV5Database(path: string): void {
   } finally {
     rawDatabase.close();
   }
+}
+
+function insertValidV5MissionDay(database: DatabaseSync): void {
+  database.exec(`
+    INSERT INTO daily_missions (
+      profile_id, mission_date, slot, mission_id, target, progress,
+      balance_version, reroll_count, assigned_at, completed_at, rewarded_at
+    ) VALUES
+      (
+        'v1-marker', '2026-07-17', 0, 'COMPLETE_HANDS_ANY_10', 10, 0,
+        1, 0, 1, NULL, NULL
+      ),
+      (
+        'v1-marker', '2026-07-17', 1, 'COMPLETE_HANDS_CASH_10', 10, 0,
+        1, 0, 1, NULL, NULL
+      ),
+      (
+        'v1-marker', '2026-07-17', 2, 'COMPLETE_ONE_SNG', 1, 0,
+        1, 0, 1, NULL, NULL
+      );
+  `);
 }
 
 function insertProfile(database: PokerDatabase, id: string): void {
