@@ -123,6 +123,7 @@ export class ProfileRepository {
   rotateSecrets(
     profileId: string,
     rotation: StoredSecretRotation,
+    expectedRecoveryLookup: string,
   ): PublicProfile | null {
     return this.database.transaction(() => {
       const result = this.database.db.prepare(`
@@ -133,7 +134,7 @@ export class ProfileRepository {
           recovery_hash = ?,
           recovery_lookup = ?,
           updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND recovery_lookup = ?
       `).run(
         rotation.credentialHash,
         rotation.credentialLookup,
@@ -141,8 +142,11 @@ export class ProfileRepository {
         rotation.recoveryLookup,
         rotation.now,
         profileId,
+        expectedRecoveryLookup,
       );
-      return result.changes === 0 ? null : this.getPublicProfile(profileId);
+      return result.changes === 0
+        ? null
+        : this.requirePublicProfile(profileId);
     });
   }
 
@@ -164,7 +168,9 @@ export class ProfileRepository {
         rotation.now,
         profileId,
       );
-      return result.changes === 0 ? null : this.getPublicProfile(profileId);
+      return result.changes === 0
+        ? null
+        : this.requirePublicProfile(profileId);
     });
   }
 
@@ -237,6 +243,12 @@ export class ProfileRepository {
       WHERE profiles.id = ?
     `).get(profileId) as PublicProfileRow | undefined;
     return row ? mapPublicProfile(row) : null;
+  }
+
+  private requirePublicProfile(profileId: string): PublicProfile {
+    const profile = this.getPublicProfile(profileId);
+    if (!profile) throw new Error('PROFILE_PERSISTENCE_INVARIANT');
+    return profile;
   }
 
   private hasValue(

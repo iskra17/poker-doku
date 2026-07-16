@@ -1,9 +1,13 @@
-import { createHash } from 'node:crypto';
+import { createHash, scrypt } from 'node:crypto';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist as koreanWordlist } from '@scure/bip39/wordlists/korean.js';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
-import { ProfileManager, type ProfileEntropy } from './profile-manager';
+import {
+  ProfileManager,
+  type ProfileEntropy,
+  type ProfileKdf,
+} from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 
 describe('ProfileManager', () => {
@@ -17,10 +21,11 @@ describe('ProfileManager', () => {
 
   afterEach(() => {
     database.close();
+    vi.restoreAllMocks();
   });
 
-  it('creates a safe anonymous profile with a wallet and starting ledger entry', () => {
-    const created = manager.create({
+  it('creates a safe anonymous profile with a wallet and starting ledger entry', async () => {
+    const created = await manager.create({
       avatarId: 'sakura',
       adultConfirmed: true,
     });
@@ -46,8 +51,8 @@ describe('ProfileManager', () => {
     }]);
   });
 
-  it('stores only lookup digests and salted scrypt verifiers', () => {
-    const created = manager.create({
+  it('stores only lookup digests and salted scrypt verifiers', async () => {
+    const created = await manager.create({
       avatarId: 'hana',
       adultConfirmed: true,
     });
@@ -70,11 +75,11 @@ describe('ProfileManager', () => {
     expect(stored.recovery_lookup).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
-  it('requires explicit adult confirmation without writing any rows', () => {
-    expect(() => manager.create({
+  it('requires explicit adult confirmation without writing any rows', async () => {
+    await expect(manager.create({
       avatarId: 'sakura',
       adultConfirmed: false,
-    })).toThrow(expect.objectContaining({
+    })).rejects.toEqual(expect.objectContaining({
       code: 'ADULT_CONFIRMATION_REQUIRED',
     }));
     expect(economyRowCounts(database)).toEqual({
@@ -84,11 +89,11 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('rejects avatars outside the six playable characters without writing rows', () => {
-    expect(() => manager.create({
+  it('rejects avatars outside the six playable characters without writing rows', async () => {
+    await expect(manager.create({
       avatarId: 'miyako',
       adultConfirmed: true,
-    })).toThrow(expect.objectContaining({ code: 'INVALID_AVATAR' }));
+    })).rejects.toEqual(expect.objectContaining({ code: 'INVALID_AVATAR' }));
     expect(economyRowCounts(database)).toEqual({
       profiles: 0,
       wallets: 0,
@@ -96,35 +101,36 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('authenticates a valid credential and safely rejects invalid input or storage', () => {
-    const created = manager.create({
+  it('authenticates a valid credential and safely rejects invalid input or storage', async () => {
+    const created = await manager.create({
       avatarId: 'elena',
       adultConfirmed: true,
     });
 
-    expect(manager.authenticateCredential(created.credential)).toEqual(
+    expect(await manager.authenticateCredential(created.credential)).toEqual(
       created.profile,
     );
-    expect(manager.authenticateCredential(
+    expect(await manager.authenticateCredential(
       Buffer.alloc(32, 7).toString('base64url'),
     )).toBeNull();
-    expect(manager.authenticateCredential('not-base64url!')).toBeNull();
+    expect(await manager.authenticateCredential('not-base64url!')).toBeNull();
 
     database.db.prepare(`
       UPDATE profiles SET credential_hash = '$scrypt$v1$malformed'
       WHERE id = ?
     `).run(created.profile.id);
-    expect(() => manager.authenticateCredential(created.credential)).not.toThrow();
-    expect(manager.authenticateCredential(created.credential)).toBeNull();
+    await expect(
+      manager.authenticateCredential(created.credential),
+    ).resolves.toBeNull();
   });
 
-  it('retries a deterministic alias collision and then succeeds', () => {
+  it('retries a deterministic alias collision and then succeeds', async () => {
     const repository = new ProfileRepository(database);
-    const first = new ProfileManager(
+    const first = await new ProfileManager(
       repository,
       makeEntropy([0, 0, 1234], 'first-profile'),
     ).create({ avatarId: 'sakura', adultConfirmed: true });
-    const second = new ProfileManager(
+    const second = await new ProfileManager(
       repository,
       makeEntropy([0, 0, 1234, 1, 1, 5678], 'second-profile'),
     ).create({ avatarId: 'ara', adultConfirmed: true });
@@ -138,9 +144,9 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('stops after twenty alias collisions without partial rows', () => {
+  it('stops after twenty alias collisions without partial rows', async () => {
     const repository = new ProfileRepository(database);
-    new ProfileManager(
+    await new ProfileManager(
       repository,
       makeEntropy([0, 0, 4321], 'existing-profile'),
     ).create({ avatarId: 'sakura', adultConfirmed: true });
@@ -149,10 +155,10 @@ describe('ProfileManager', () => {
       'colliding-profile',
     );
 
-    expect(() => new ProfileManager(repository, collidingEntropy).create({
+    await expect(new ProfileManager(repository, collidingEntropy).create({
       avatarId: 'hana',
       adultConfirmed: true,
-    })).toThrow(expect.objectContaining({
+    })).rejects.toEqual(expect.objectContaining({
       code: 'ALIAS_GENERATION_EXHAUSTED',
     }));
     expect(collidingEntropy.integerCalls).toBe(60);
@@ -163,7 +169,7 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('rolls back profile and wallet inserts when starting ledger creation fails', () => {
+  it('rolls back profile and wallet inserts when starting ledger creation fails', async () => {
     database.db.exec(`
       CREATE TRIGGER reject_profile_start
       BEFORE INSERT ON chip_ledger
@@ -173,10 +179,10 @@ describe('ProfileManager', () => {
       END;
     `);
 
-    expect(() => manager.create({
+    await expect(manager.create({
       avatarId: 'chloe',
       adultConfirmed: true,
-    })).toThrowError('induced profile start failure');
+    })).rejects.toThrowError('induced profile start failure');
     expect(economyRowCounts(database)).toEqual({
       profiles: 0,
       wallets: 0,
@@ -184,13 +190,13 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('recovers a profile while atomically replacing both one-time secrets', () => {
-    const created = manager.create({
+  it('recovers a profile while atomically replacing both one-time secrets', async () => {
+    const created = await manager.create({
       avatarId: 'vivian',
       adultConfirmed: true,
     });
 
-    const recovered = manager.recover(created.recoveryWords);
+    const recovered = await manager.recover(created.recoveryWords);
 
     expect(recovered).not.toBeNull();
     expect(recovered?.profile).toEqual(created.profile);
@@ -200,15 +206,15 @@ describe('ProfileManager', () => {
       recovered?.recoveryWords ?? '',
       koreanWordlist,
     )).toBe(true);
-    expect(manager.authenticateCredential(created.credential)).toBeNull();
-    expect(manager.recover(created.recoveryWords)).toBeNull();
-    expect(manager.authenticateCredential(recovered?.credential ?? '')).toEqual(
+    expect(await manager.authenticateCredential(created.credential)).toBeNull();
+    expect(await manager.recover(created.recoveryWords)).toBeNull();
+    expect(await manager.authenticateCredential(recovered?.credential ?? '')).toEqual(
       created.profile,
     );
   });
 
-  it('accepts equivalent NFKC and collapsed-whitespace recovery input', () => {
-    const created = manager.create({
+  it('accepts equivalent NFKC and collapsed-whitespace recovery input', async () => {
+    const created = await manager.create({
       avatarId: 'ara',
       adultConfirmed: true,
     });
@@ -217,30 +223,32 @@ describe('ProfileManager', () => {
       .split(' ')
       .join(' \n\t ')}  `;
 
-    expect(manager.recover(equivalentInput)?.profile.id).toBe(
+    expect((await manager.recover(equivalentInput))?.profile.id).toBe(
       created.profile.id,
     );
   });
 
-  it('rotates only recovery words while preserving the credential', () => {
-    const created = manager.create({
+  it('rotates only recovery words while preserving the credential', async () => {
+    const created = await manager.create({
       avatarId: 'hana',
       adultConfirmed: true,
     });
 
-    const recoveryWords = manager.rotateRecovery(created.profile.id);
+    const recoveryWords = await manager.rotateRecovery(created.profile.id);
 
     expect(recoveryWords).not.toBe(created.recoveryWords);
     expect(validateMnemonic(recoveryWords, koreanWordlist)).toBe(true);
-    expect(manager.recover(created.recoveryWords)).toBeNull();
-    expect(manager.authenticateCredential(created.credential)).toEqual(
+    expect(await manager.recover(created.recoveryWords)).toBeNull();
+    expect(await manager.authenticateCredential(created.credential)).toEqual(
       created.profile,
     );
-    expect(manager.recover(recoveryWords)?.profile.id).toBe(created.profile.id);
+    expect((await manager.recover(recoveryWords))?.profile.id).toBe(
+      created.profile.id,
+    );
   });
 
-  it('regenerates creation secrets after a credential lookup collision', () => {
-    const existing = manager.create({
+  it('regenerates creation secrets after a credential lookup collision', async () => {
+    const existing = await manager.create({
       avatarId: 'sakura',
       adultConfirmed: true,
     });
@@ -256,7 +264,7 @@ describe('ProfileManager', () => {
       seed: 'creation-lookup-collision',
     });
 
-    const created = new ProfileManager(
+    const created = await new ProfileManager(
       new ProfileRepository(database),
       entropy,
     ).create({ avatarId: 'elena', adultConfirmed: true });
@@ -270,12 +278,12 @@ describe('ProfileManager', () => {
     });
   });
 
-  it('regenerates both recovery credentials after a lookup collision', () => {
-    const first = manager.create({
+  it('regenerates both recovery credentials after a lookup collision', async () => {
+    const first = await manager.create({
       avatarId: 'chloe',
       adultConfirmed: true,
     });
-    const second = manager.create({
+    const second = await manager.create({
       avatarId: 'vivian',
       adultConfirmed: true,
     });
@@ -285,24 +293,24 @@ describe('ProfileManager', () => {
       seed: 'recovery-lookup-collision',
     });
 
-    const recovered = new ProfileManager(
+    const recovered = await new ProfileManager(
       new ProfileRepository(database),
       entropy,
     ).recover(first.recoveryWords);
 
     expect(recovered?.recoveryWords).toBe(uniqueRecovery);
     expect(recovered?.credential).not.toBe(first.credential);
-    expect(manager.authenticateCredential(first.credential)).toBeNull();
-    expect(manager.authenticateCredential(recovered?.credential ?? '')?.id).toBe(
+    expect(await manager.authenticateCredential(first.credential)).toBeNull();
+    expect((await manager.authenticateCredential(recovered?.credential ?? ''))?.id).toBe(
       first.profile.id,
     );
-    expect(manager.recover(second.recoveryWords)?.profile.id).toBe(
+    expect((await manager.recover(second.recoveryWords))?.profile.id).toBe(
       second.profile.id,
     );
   });
 
-  it('guards active escrow deletion and cascades settled profile economy data', () => {
-    const created = manager.create({
+  it('guards active escrow deletion and cascades settled profile economy data', async () => {
+    const created = await manager.create({
       avatarId: 'sakura',
       adultConfirmed: true,
     });
@@ -320,7 +328,7 @@ describe('ProfileManager', () => {
       ) VALUES (?, ?, ?, 'cash', 750, 750, 3, 'active', ?)
     `).run('escrow-delete-guard', created.profile.id, 'room-guard', Date.now());
 
-    expect(manager.authenticateCredential(created.credential)?.wallet).toEqual({
+    expect((await manager.authenticateCredential(created.credential))?.wallet).toEqual({
       balance: 10_000,
       activeEscrow: 750,
     });
@@ -345,16 +353,16 @@ describe('ProfileManager', () => {
       chipLedger: 0,
     });
     expect(countRows(database, 'seat_escrows')).toBe(0);
-    expect(manager.authenticateCredential(created.credential)).toBeNull();
+    expect(await manager.authenticateCredential(created.credential)).toBeNull();
   });
 
-  it('never serializes secret or verifier fields in public profiles', () => {
-    const created = manager.create({
+  it('never serializes secret or verifier fields in public profiles', async () => {
+    const created = await manager.create({
       avatarId: 'elena',
       adultConfirmed: true,
     });
-    const authenticated = manager.authenticateCredential(created.credential);
-    const recovered = manager.recover(created.recoveryWords);
+    const authenticated = await manager.authenticateCredential(created.credential);
+    const recovered = await manager.recover(created.recoveryWords);
 
     for (const profile of [created.profile, authenticated, recovered?.profile]) {
       const serialized = JSON.stringify(profile);
@@ -363,6 +371,145 @@ describe('ProfileManager', () => {
         'alias', 'avatarId', 'id', 'wallet',
       ]);
     }
+  });
+
+  it('waits for asynchronous KDF work before writing profile data', async () => {
+    const pending: Array<(value: Uint8Array) => void> = [];
+    const kdf: ProfileKdf = {
+      derive: () => new Promise(resolve => pending.push(resolve)),
+    };
+    const asynchronousManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeEntropy([0, 0, 2468], 'async-kdf'),
+      () => 123,
+      kdf,
+    );
+
+    const creation = asynchronousManager.create({
+      avatarId: 'sakura',
+      adultConfirmed: true,
+    });
+    await Promise.resolve();
+
+    expect(creation).toBeInstanceOf(Promise);
+    expect(pending).toHaveLength(1);
+    expect(economyRowCounts(database)).toEqual({
+      profiles: 0,
+      wallets: 0,
+      chipLedger: 0,
+    });
+
+    pending.shift()?.(Buffer.alloc(32, 1));
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(pending).toHaveLength(1);
+    pending.shift()?.(Buffer.alloc(32, 2));
+
+    await expect(creation).resolves.toMatchObject({
+      profile: { alias: '벚꽃여우#2468' },
+    });
+  });
+
+  it('rolls back recovery-only rotation when its public profile invariant is broken', async () => {
+    const created = await manager.create({
+      avatarId: 'hana',
+      adultConfirmed: true,
+    });
+    const before = storedSecretState(database, created.profile.id);
+    database.db.prepare('DELETE FROM wallets WHERE profile_id = ?')
+      .run(created.profile.id);
+
+    await expect(manager.rotateRecovery(created.profile.id)).rejects.toThrowError(
+      'PROFILE_PERSISTENCE_INVARIANT',
+    );
+
+    expect(storedSecretState(database, created.profile.id)).toEqual(before);
+  });
+
+  it('rolls back combined secret rotation when its public profile invariant is broken', async () => {
+    const created = await manager.create({
+      avatarId: 'vivian',
+      adultConfirmed: true,
+    });
+    const before = storedSecretState(database, created.profile.id);
+    database.db.prepare('DELETE FROM wallets WHERE profile_id = ?')
+      .run(created.profile.id);
+    const repository = new ProfileRepository(database);
+
+    expect(() => repository.rotateSecrets(created.profile.id, {
+      credentialHash: 'replacement-credential-hash',
+      credentialLookup: 'replacement-credential-lookup',
+      recoveryHash: 'replacement-recovery-hash',
+      recoveryLookup: 'replacement-recovery-lookup',
+      now: 456,
+    }, before.recovery_lookup)).toThrowError('PROFILE_PERSISTENCE_INVARIANT');
+
+    expect(storedSecretState(database, created.profile.id)).toEqual(before);
+  });
+
+  it('bounds recovery input before Unicode normalization', async () => {
+    const created = await manager.create({
+      avatarId: 'ara',
+      adultConfirmed: true,
+    });
+    const boundaryInput = created.recoveryWords.padEnd(1_024, ' ');
+
+    expect((await manager.recover(boundaryInput))?.profile.id).toBe(
+      created.profile.id,
+    );
+
+    const normalizeSpy = vi.spyOn(String.prototype, 'normalize');
+    expect(await manager.recover(' '.repeat(1_025))).toBeNull();
+    expect(normalizeSpy).not.toHaveBeenCalled();
+  });
+
+  it('allows the same recovery phrase to rotate secrets only once concurrently', async () => {
+    const created = await manager.create({
+      avatarId: 'chloe',
+      adultConfirmed: true,
+    });
+    let verificationCalls = 0;
+    let releaseVerification = (): void => undefined;
+    const verificationGate = new Promise<void>(resolve => {
+      releaseVerification = resolve;
+    });
+    let candidateCalls = 0;
+    let releaseCandidates = (): void => undefined;
+    const candidateGate = new Promise<void>(resolve => {
+      releaseCandidates = resolve;
+    });
+    const kdf: ProfileKdf = {
+      derive: async (secret, salt) => {
+        if (secret === created.recoveryWords) {
+          verificationCalls += 1;
+          await verificationGate;
+          return deriveScrypt(secret, salt);
+        }
+        candidateCalls += 1;
+        if (candidateCalls === 2) releaseCandidates();
+        if (candidateCalls <= 2) await candidateGate;
+        return createHash('sha256').update(salt).digest();
+      },
+    };
+    const concurrentManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeScriptedEntropy({
+        recoveryWords: [
+          generateMnemonic(koreanWordlist, 128),
+          generateMnemonic(koreanWordlist, 128),
+        ],
+        seed: 'concurrent-recovery',
+      }),
+      Date.now,
+      kdf,
+    );
+
+    const first = concurrentManager.recover(created.recoveryWords);
+    const second = concurrentManager.recover(created.recoveryWords);
+    expect(verificationCalls).toBe(2);
+    releaseVerification();
+
+    const recovered = await Promise.all([first, second]);
+    expect(recovered.filter(result => result !== null)).toHaveLength(1);
   });
 });
 
@@ -392,6 +539,16 @@ function countRows(
       count: number;
     }
   ).count;
+}
+
+function storedSecretState(
+  database: PokerDatabase,
+  profileId: string,
+): Record<string, string> {
+  return database.db.prepare(`
+    SELECT credential_hash, credential_lookup, recovery_hash, recovery_lookup
+    FROM profiles WHERE id = ?
+  `).get(profileId) as Record<string, string>;
 }
 
 function makeEntropy(
@@ -458,4 +615,19 @@ function makeScriptedEntropy(options: {
       return value;
     },
   };
+}
+
+function deriveScrypt(
+  secret: string,
+  salt: Uint8Array,
+): Promise<Uint8Array> {
+  return new Promise((resolve, reject) => {
+    scrypt(secret, Buffer.from(salt), 32, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  });
 }

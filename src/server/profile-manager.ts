@@ -2,7 +2,7 @@ import {
   createHash,
   randomBytes,
   randomInt,
-  scryptSync,
+  scrypt,
   timingSafeEqual,
 } from 'node:crypto';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
@@ -21,6 +21,7 @@ const ALIAS_ANIMALS = [
 const PLAYABLE_AVATARS = new Set([
   'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena',
 ]);
+const MAX_RECOVERY_INPUT_LENGTH = 1_024;
 
 export type ProfileErrorCode =
   | 'ADULT_CONFIRMATION_REQUIRED'
@@ -43,6 +44,10 @@ export interface ProfileEntropy {
   recoveryWords(): string;
 }
 
+export interface ProfileKdf {
+  derive(secret: string, salt: Uint8Array): Promise<Uint8Array>;
+}
+
 export interface CreatedProfile {
   profile: PublicProfile;
   credential: string;
@@ -55,17 +60,30 @@ const secureEntropy: ProfileEntropy = {
   recoveryWords: () => generateMnemonic(koreanWordlist, 128),
 };
 
+const asynchronousScrypt: ProfileKdf = {
+  derive: (secret, salt) => new Promise((resolve, reject) => {
+    scrypt(secret, Buffer.from(salt), 32, (error, derivedKey) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(derivedKey);
+    });
+  }),
+};
+
 export class ProfileManager {
   constructor(
     private readonly repository: ProfileRepository,
     private readonly entropy: ProfileEntropy = secureEntropy,
     private readonly now: () => number = Date.now,
+    private readonly kdf: ProfileKdf = asynchronousScrypt,
   ) {}
 
-  create(input: {
+  async create(input: {
     avatarId: string;
     adultConfirmed: boolean;
-  }): CreatedProfile {
+  }): Promise<CreatedProfile> {
     if (input.adultConfirmed !== true) {
       throw new ProfileDomainError('ADULT_CONFIRMATION_REQUIRED');
     }
@@ -76,28 +94,36 @@ export class ProfileManager {
     for (let aliasAttempt = 0; aliasAttempt < 20; aliasAttempt += 1) {
       const alias = this.createAlias();
       if (this.repository.hasAlias(alias)) continue;
-      const created = this.createWithAlias(alias, input.avatarId);
+      const created = await this.createWithAlias(alias, input.avatarId);
       if (created) return created;
     }
     throw new ProfileDomainError('ALIAS_GENERATION_EXHAUSTED');
   }
 
-  authenticateCredential(credential: string): PublicProfile | null {
+  async authenticateCredential(credential: string): Promise<PublicProfile | null> {
     if (!isCanonicalCredential(credential)) return null;
     const stored = this.repository.findByCredentialLookup(
       digestSecret(credential),
     );
-    if (!stored || !verifySecret(credential, stored.verifier)) return null;
+    if (
+      !stored
+      || !await verifySecret(credential, stored.verifier, this.kdf)
+    ) {
+      return null;
+    }
     return stored.profile;
   }
 
-  recover(recoveryWords: string): CreatedProfile | null {
+  async recover(recoveryWords: string): Promise<CreatedProfile | null> {
     const canonical = canonicalRecoveryWords(recoveryWords);
     if (!canonical) return null;
+    const presentedRecoveryLookup = digestSecret(canonical);
     const stored = this.repository.findByRecoveryLookup(
-      digestSecret(canonical),
+      presentedRecoveryLookup,
     );
-    if (!stored || !verifySecret(canonical, stored.verifier)) return null;
+    if (!stored || !await verifySecret(canonical, stored.verifier, this.kdf)) {
+      return null;
+    }
 
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const credential = this.randomBytes(32).toString('base64url');
@@ -106,22 +132,26 @@ export class ProfileManager {
         this.entropy.recoveryWords(),
       );
       if (!nextRecoveryWords) continue;
-      const recoveryLookup = digestSecret(nextRecoveryWords);
+      const nextRecoveryLookup = digestSecret(nextRecoveryWords);
       if (
         this.repository.hasCredentialLookup(credentialLookup)
-        || this.repository.hasRecoveryLookup(recoveryLookup)
+        || this.repository.hasRecoveryLookup(nextRecoveryLookup)
       ) {
         continue;
       }
       try {
-        const profile = this.repository.rotateSecrets(stored.profile.id, {
-          credentialHash: this.hashSecret(credential),
-          credentialLookup,
-          recoveryHash: this.hashSecret(nextRecoveryWords),
-          recoveryLookup,
-          now: this.now(),
-        });
-        if (!profile) throw new ProfileDomainError('PROFILE_NOT_FOUND');
+        const profile = this.repository.rotateSecrets(
+          stored.profile.id,
+          {
+            credentialHash: await this.hashSecret(credential),
+            credentialLookup,
+            recoveryHash: await this.hashSecret(nextRecoveryWords),
+            recoveryLookup: nextRecoveryLookup,
+            now: this.now(),
+          },
+          presentedRecoveryLookup,
+        );
+        if (!profile) return null;
         return {
           profile,
           credential,
@@ -134,7 +164,7 @@ export class ProfileManager {
     throw new ProfileDomainError('PROFILE_SECRET_GENERATION_EXHAUSTED');
   }
 
-  rotateRecovery(profileId: string): string {
+  async rotateRecovery(profileId: string): Promise<string> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const recoveryWords = canonicalRecoveryWords(
         this.entropy.recoveryWords(),
@@ -144,7 +174,7 @@ export class ProfileManager {
       if (this.repository.hasRecoveryLookup(recoveryLookup)) continue;
       try {
         const profile = this.repository.rotateRecovery(profileId, {
-          recoveryHash: this.hashSecret(recoveryWords),
+          recoveryHash: await this.hashSecret(recoveryWords),
           recoveryLookup,
           now: this.now(),
         });
@@ -171,9 +201,10 @@ export class ProfileManager {
     return `${prefix}${animal}#${suffix}`;
   }
 
-  private hashSecret(secret: string): string {
+  private async hashSecret(secret: string): Promise<string> {
     const salt = this.randomBytes(16);
-    const hash = scryptSync(secret, salt, 32);
+    const hash = Buffer.from(await this.kdf.derive(secret, salt));
+    if (hash.length !== 32) throw new Error('PROFILE_KDF_INVALID');
     return `$scrypt$v1$${salt.toString('base64url')}$${hash.toString('base64url')}`;
   }
 
@@ -185,7 +216,10 @@ export class ProfileManager {
     return value;
   }
 
-  private createWithAlias(alias: string, avatarId: string): CreatedProfile | null {
+  private async createWithAlias(
+    alias: string,
+    avatarId: string,
+  ): Promise<CreatedProfile | null> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const id = `p_${this.randomBytes(16).toString('base64url')}`;
       if (this.repository.hasProfileId(id)) continue;
@@ -202,9 +236,9 @@ export class ProfileManager {
       try {
         const profile = this.repository.createWithWallet({
           id,
-          credentialHash: this.hashSecret(credential),
+          credentialHash: await this.hashSecret(credential),
           credentialLookup,
-          recoveryHash: this.hashSecret(recoveryWords),
+          recoveryHash: await this.hashSecret(recoveryWords),
           recoveryLookup,
           alias,
           avatarId,
@@ -229,7 +263,12 @@ function normalizeRecoveryWords(value: string): string {
 }
 
 function canonicalRecoveryWords(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
+  if (
+    typeof value !== 'string'
+    || value.length > MAX_RECOVERY_INPUT_LENGTH
+  ) {
+    return null;
+  }
   const normalized = normalizeRecoveryWords(value);
   if (
     normalized.split(' ').length !== 12
@@ -251,7 +290,11 @@ function isCanonicalCredential(value: unknown): value is string {
   return decoded.length === 32 && decoded.toString('base64url') === value;
 }
 
-function verifySecret(secret: string, verifier: string): boolean {
+async function verifySecret(
+  secret: string,
+  verifier: string,
+  kdf: ProfileKdf,
+): Promise<boolean> {
   const match = /^\$scrypt\$v1\$([A-Za-z0-9_-]{22})\$([A-Za-z0-9_-]{43})$/.exec(
     verifier,
   );
@@ -266,7 +309,8 @@ function verifySecret(secret: string, verifier: string): boolean {
   ) {
     return false;
   }
-  const actual = scryptSync(secret, salt, 32);
+  const actual = Buffer.from(await kdf.derive(secret, salt));
+  if (actual.length !== 32) return false;
   return timingSafeEqual(actual, expected);
 }
 
