@@ -102,6 +102,12 @@ export class PokerDatabase {
     }
   }
 
+  assertTransactionActive(): void {
+    if (!this.transactionActive) {
+      throw new Error('PokerDatabase transaction is required');
+    }
+  }
+
   close(): void {
     this.db.close();
   }

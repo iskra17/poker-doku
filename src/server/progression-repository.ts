@@ -1,0 +1,873 @@
+import type { PokerDatabase } from './persistence/database';
+
+export const PLAYABLE_CHARACTER_IDS = [
+  'sakura',
+  'ara',
+  'hana',
+  'chloe',
+  'vivian',
+  'elena',
+] as const;
+
+export type PlayableCharacterId = typeof PLAYABLE_CHARACTER_IDS[number];
+export type EquipmentSlot = 'title' | 'frame' | 'skin' | 'cutin';
+
+const EQUIPMENT_SLOTS: readonly EquipmentSlot[] = [
+  'title',
+  'frame',
+  'skin',
+  'cutin',
+];
+const SUPPORTED_BALANCE_VERSION = 1;
+const CANONICAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const WEEK_KEY_PATTERN = /^(\d{4})-W(\d{2})$/;
+
+export type ProgressionErrorCode =
+  | 'PROGRESSION_PROFILE_NOT_FOUND'
+  | 'PROGRESSION_CHARACTER_INVALID'
+  | 'PROGRESSION_TIME_INVALID'
+  | 'PROGRESSION_VALUE_INVALID'
+  | 'PROGRESSION_TRANSACTION_REQUIRED'
+  | 'PROGRESSION_CONFLICT'
+  | 'PROGRESSION_EVENT_CONFLICT'
+  | 'PROGRESSION_PERSISTENCE_INVALID';
+
+export class ProgressionPersistenceError extends Error {
+  constructor(readonly code: ProgressionErrorCode) {
+    super(code);
+    this.name = 'ProgressionPersistenceError';
+  }
+}
+
+export interface ProgressionCore {
+  balanceVersion: number;
+  dojoLevel: number;
+  dojoXpMilli: number;
+  selectedCharacterId: PlayableCharacterId;
+}
+
+export interface ProgressionCounters {
+  practiceDate: string | null;
+  practiceHands: number;
+  completedHands: number;
+  cashHands: number;
+  practiceHandsTotal: number;
+  sngCompletions: number;
+  bestStreak: number;
+}
+
+export interface ProgressionProfile extends ProgressionCore, ProgressionCounters {
+  profileId: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CharacterAffinity {
+  profileId: string;
+  characterId: PlayableCharacterId;
+  level: number;
+  xpMilli: number;
+}
+
+export interface StreakState {
+  profileId: string;
+  currentStreak: number;
+  restPasses: number;
+  lastQualifiedDate: string | null;
+  lastWeekKey: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface InventoryItem {
+  profileId: string;
+  itemId: string;
+  quantity: number;
+  grantedAt: number;
+  updatedAt: number;
+}
+
+export interface ProgressionSnapshot {
+  profile: ProgressionProfile;
+  affinities: CharacterAffinity[];
+  streak: StreakState;
+  inventory: InventoryItem[];
+  equipment: Record<EquipmentSlot, string | null>;
+}
+
+export interface ProgressionEvent {
+  idempotencyKey: string;
+  profileId: string;
+  eventType: string;
+  balanceVersion: number;
+  summary: Record<string, unknown>;
+  createdAt: number;
+}
+
+export type NewProgressionEvent = ProgressionEvent;
+
+export type InsertProgressionEventResult =
+  | { status: 'inserted'; event: ProgressionEvent }
+  | { status: 'duplicate'; event: ProgressionEvent };
+
+export interface ProgressionCoreUpdate {
+  profileId: string;
+  expected: ProgressionCore;
+  next: ProgressionCore;
+  updatedAt: number;
+}
+
+export interface ProgressionCountersUpdate {
+  profileId: string;
+  expected: ProgressionCounters;
+  next: ProgressionCounters;
+  updatedAt: number;
+}
+
+export interface AffinityUpdate {
+  profileId: string;
+  characterId: string;
+  expected: Pick<CharacterAffinity, 'level' | 'xpMilli'>;
+  next: Pick<CharacterAffinity, 'level' | 'xpMilli'>;
+}
+
+interface ProgressionProfileRow {
+  profile_id: string;
+  balance_version: number;
+  dojo_level: number;
+  dojo_xp_milli: number;
+  selected_character_id: string;
+  practice_date: string | null;
+  practice_hands: number;
+  completed_hands: number;
+  cash_hands: number;
+  practice_hands_total: number;
+  sng_completions: number;
+  best_streak: number;
+  created_at: number;
+  updated_at: number;
+}
+
+interface CharacterAffinityRow {
+  profile_id: string;
+  character_id: string;
+  level: number;
+  xp_milli: number;
+}
+
+interface StreakStateRow {
+  profile_id: string;
+  current_streak: number;
+  rest_passes: number;
+  last_qualified_date: string | null;
+  last_week_key: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+interface InventoryItemRow {
+  profile_id: string;
+  item_id: string;
+  quantity: number;
+  granted_at: number;
+  updated_at: number;
+}
+
+interface EquipmentRow {
+  profile_id: string;
+  slot: string;
+  item_id: string | null;
+  updated_at: number;
+}
+
+interface ProgressionEventRow {
+  idempotency_key: string;
+  profile_id: string;
+  event_type: string;
+  balance_version: number;
+  summary_json: string;
+  created_at: number;
+}
+
+export class ProgressionRepository {
+  constructor(private readonly database: PokerDatabase) {}
+
+  getOrCreate(
+    profileId: string,
+    selectedCharacterId: string,
+    at = Date.now(),
+  ): ProgressionSnapshot {
+    assertProfileId(profileId);
+    assertPlayableCharacter(selectedCharacterId);
+    assertTimestamp(at, 'PROGRESSION_TIME_INVALID');
+    return this.database.transaction(() => this.getOrCreateInTransaction(
+      profileId,
+      selectedCharacterId,
+      at,
+    ));
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  getOrCreateInTransaction(
+    profileId: string,
+    selectedCharacterId: string,
+    at = Date.now(),
+  ): ProgressionSnapshot {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    const characterId = assertPlayableCharacter(selectedCharacterId);
+    assertTimestamp(at, 'PROGRESSION_TIME_INVALID');
+    if (!this.profileExists(profileId)) {
+      throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+    }
+
+    const inserted = this.database.db.prepare(`
+      INSERT INTO progression_profiles (
+        profile_id, balance_version, dojo_level, dojo_xp_milli,
+        selected_character_id, practice_date, practice_hands,
+        completed_hands, cash_hands, practice_hands_total, sng_completions,
+        best_streak, created_at, updated_at
+      ) VALUES (?, 1, 1, 0, ?, NULL, 0, 0, 0, 0, 0, 0, ?, ?)
+      ON CONFLICT(profile_id) DO NOTHING
+    `).run(profileId, characterId, at, at);
+
+    if (inserted.changes === 1) {
+      this.database.db.prepare(`
+        INSERT INTO streak_state (
+          profile_id, current_streak, rest_passes, last_qualified_date,
+          last_week_key, created_at, updated_at
+        ) VALUES (?, 0, 0, NULL, NULL, ?, ?)
+      `).run(profileId, at, at);
+      const insertEquipment = this.database.db.prepare(`
+        INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
+        VALUES (?, ?, NULL, ?)
+      `);
+      for (const slot of EQUIPMENT_SLOTS) {
+        insertEquipment.run(profileId, slot, at);
+      }
+    }
+
+    this.database.db.prepare(`
+      INSERT INTO character_affinity (
+        profile_id, character_id, level, xp_milli
+      ) VALUES (?, ?, 1, 0)
+      ON CONFLICT(profile_id, character_id) DO NOTHING
+    `).run(profileId, characterId);
+
+    return this.getSnapshotInTransaction(profileId);
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  getSnapshotInTransaction(profileId: string): ProgressionSnapshot {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    try {
+      const profileRow = this.database.db.prepare(`
+      SELECT
+        profile_id, balance_version, dojo_level, dojo_xp_milli,
+        selected_character_id, practice_date, practice_hands,
+        completed_hands, cash_hands, practice_hands_total, sng_completions,
+        best_streak, created_at, updated_at
+      FROM progression_profiles WHERE profile_id = ?
+    `).get(profileId) as ProgressionProfileRow | undefined;
+      if (!profileRow) {
+        throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+      }
+      const profile = mapProgressionProfile(profileRow);
+
+      const affinityRows = this.database.db.prepare(`
+      SELECT profile_id, character_id, level, xp_milli
+      FROM character_affinity
+      WHERE profile_id = ?
+      ORDER BY character_id
+    `).all(profileId) as unknown as CharacterAffinityRow[];
+      const affinities = affinityRows.map(mapCharacterAffinity);
+      if (
+        affinities.length === 0
+        || !affinities.some(value => (
+          value.characterId === profile.selectedCharacterId
+        ))
+      ) {
+        throw persistenceInvalid();
+      }
+
+      const streakRow = this.database.db.prepare(`
+      SELECT
+        profile_id, current_streak, rest_passes, last_qualified_date,
+        last_week_key, created_at, updated_at
+      FROM streak_state WHERE profile_id = ?
+    `).get(profileId) as StreakStateRow | undefined;
+      if (!streakRow) throw persistenceInvalid();
+      const streak = mapStreakState(streakRow);
+      if (streak.currentStreak > profile.bestStreak) throw persistenceInvalid();
+
+      const inventoryRows = this.database.db.prepare(`
+      SELECT profile_id, item_id, quantity, granted_at, updated_at
+      FROM inventory_items WHERE profile_id = ? ORDER BY item_id
+    `).all(profileId) as unknown as InventoryItemRow[];
+      const inventory = inventoryRows.map(mapInventoryItem);
+      const ownedItems = new Set(inventory.map(item => item.itemId));
+
+      const equipmentRows = this.database.db.prepare(`
+      SELECT profile_id, slot, item_id, updated_at
+      FROM profile_equipment WHERE profile_id = ? ORDER BY slot
+    `).all(profileId) as unknown as EquipmentRow[];
+      const equipment = emptyEquipment();
+      const seenSlots = new Set<EquipmentSlot>();
+      for (const row of equipmentRows) {
+        if (
+          row.profile_id !== profileId
+          || !isEquipmentSlot(row.slot)
+          || seenSlots.has(row.slot)
+          || (row.item_id !== null && (
+            typeof row.item_id !== 'string'
+            || row.item_id.length === 0
+            || !ownedItems.has(row.item_id)
+          ))
+        ) {
+          throw persistenceInvalid();
+        }
+        assertStoredTimestamp(row.updated_at);
+        seenSlots.add(row.slot);
+        equipment[row.slot] = row.item_id;
+      }
+      if (seenSlots.size !== EQUIPMENT_SLOTS.length) throw persistenceInvalid();
+
+      return { profile, affinities, streak, inventory, equipment };
+    } catch (error) {
+      if (error instanceof ProgressionPersistenceError) throw error;
+      throw persistenceInvalid();
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  compareAndUpdateProgressionInTransaction(
+    update: ProgressionCoreUpdate,
+  ): void {
+    this.assertTransaction();
+    assertProfileId(update.profileId);
+    assertProgressionCore(update.expected, 'PROGRESSION_VALUE_INVALID');
+    assertProgressionCore(update.next, 'PROGRESSION_VALUE_INVALID');
+    assertTimestamp(update.updatedAt, 'PROGRESSION_TIME_INVALID');
+    const result = this.database.db.prepare(`
+      UPDATE progression_profiles
+      SET balance_version = ?, dojo_level = ?, dojo_xp_milli = ?,
+          selected_character_id = ?, updated_at = ?
+      WHERE profile_id = ?
+        AND balance_version = ?
+        AND dojo_level = ?
+        AND dojo_xp_milli = ?
+        AND selected_character_id = ?
+    `).run(
+      update.next.balanceVersion,
+      update.next.dojoLevel,
+      update.next.dojoXpMilli,
+      update.next.selectedCharacterId,
+      update.updatedAt,
+      update.profileId,
+      update.expected.balanceVersion,
+      update.expected.dojoLevel,
+      update.expected.dojoXpMilli,
+      update.expected.selectedCharacterId,
+    );
+    if (result.changes !== 1) {
+      throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+    }
+    this.database.db.prepare(`
+      INSERT INTO character_affinity (
+        profile_id, character_id, level, xp_milli
+      ) VALUES (?, ?, 1, 0)
+      ON CONFLICT(profile_id, character_id) DO NOTHING
+    `).run(update.profileId, update.next.selectedCharacterId);
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  compareAndUpdateCountersInTransaction(
+    update: ProgressionCountersUpdate,
+  ): void {
+    this.assertTransaction();
+    assertProfileId(update.profileId);
+    assertProgressionCounters(update.expected, 'PROGRESSION_VALUE_INVALID');
+    assertProgressionCounters(update.next, 'PROGRESSION_VALUE_INVALID');
+    assertTimestamp(update.updatedAt, 'PROGRESSION_TIME_INVALID');
+    const result = this.database.db.prepare(`
+      UPDATE progression_profiles
+      SET practice_date = ?, practice_hands = ?, completed_hands = ?,
+          cash_hands = ?, practice_hands_total = ?, sng_completions = ?,
+          best_streak = ?, updated_at = ?
+      WHERE profile_id = ?
+        AND practice_date IS ?
+        AND practice_hands = ?
+        AND completed_hands = ?
+        AND cash_hands = ?
+        AND practice_hands_total = ?
+        AND sng_completions = ?
+        AND best_streak = ?
+    `).run(
+      update.next.practiceDate,
+      update.next.practiceHands,
+      update.next.completedHands,
+      update.next.cashHands,
+      update.next.practiceHandsTotal,
+      update.next.sngCompletions,
+      update.next.bestStreak,
+      update.updatedAt,
+      update.profileId,
+      update.expected.practiceDate,
+      update.expected.practiceHands,
+      update.expected.completedHands,
+      update.expected.cashHands,
+      update.expected.practiceHandsTotal,
+      update.expected.sngCompletions,
+      update.expected.bestStreak,
+    );
+    if (result.changes !== 1) {
+      throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  compareAndUpdateAffinityInTransaction(update: AffinityUpdate): void {
+    this.assertTransaction();
+    assertProfileId(update.profileId);
+    const characterId = assertPlayableCharacter(update.characterId);
+    assertAffinityValue(update.expected, 'PROGRESSION_VALUE_INVALID');
+    assertAffinityValue(update.next, 'PROGRESSION_VALUE_INVALID');
+    const result = this.database.db.prepare(`
+      UPDATE character_affinity
+      SET level = ?, xp_milli = ?
+      WHERE profile_id = ? AND character_id = ?
+        AND level = ? AND xp_milli = ?
+    `).run(
+      update.next.level,
+      update.next.xpMilli,
+      update.profileId,
+      characterId,
+      update.expected.level,
+      update.expected.xpMilli,
+    );
+    if (result.changes !== 1) {
+      throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  getProgressionEvent(idempotencyKey: string): ProgressionEvent | null {
+    this.assertTransaction();
+    assertNonemptyString(idempotencyKey, 'PROGRESSION_VALUE_INVALID');
+    try {
+      const row = this.database.db.prepare(`
+        SELECT
+          idempotency_key, profile_id, event_type, balance_version,
+          summary_json, created_at
+        FROM progression_events WHERE idempotency_key = ?
+      `).get(idempotencyKey) as ProgressionEventRow | undefined;
+      return row ? mapProgressionEvent(row) : null;
+    } catch (error) {
+      if (error instanceof ProgressionPersistenceError) throw error;
+      throw persistenceInvalid();
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  insertProgressionEvent(
+    event: NewProgressionEvent,
+  ): InsertProgressionEventResult {
+    this.assertTransaction();
+    assertNonemptyString(event.idempotencyKey, 'PROGRESSION_VALUE_INVALID');
+    assertProfileId(event.profileId);
+    assertNonemptyString(event.eventType, 'PROGRESSION_VALUE_INVALID');
+    assertPositiveSafeInteger(
+      event.balanceVersion,
+      'PROGRESSION_VALUE_INVALID',
+    );
+    assertTimestamp(event.createdAt, 'PROGRESSION_TIME_INVALID');
+    const summaryJson = serializeSummary(event.summary);
+    const existing = this.getProgressionEvent(event.idempotencyKey);
+    if (existing) {
+      if (
+        existing.profileId !== event.profileId
+        || existing.eventType !== event.eventType
+        || existing.balanceVersion !== event.balanceVersion
+      ) {
+        throw new ProgressionPersistenceError('PROGRESSION_EVENT_CONFLICT');
+      }
+      return { status: 'duplicate', event: existing };
+    }
+    if (event.balanceVersion !== SUPPORTED_BALANCE_VERSION) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    if (!this.profileExists(event.profileId)) {
+      throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+    }
+    this.database.db.prepare(`
+      INSERT INTO progression_events (
+        idempotency_key, profile_id, event_type, balance_version,
+        summary_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      event.idempotencyKey,
+      event.profileId,
+      event.eventType,
+      event.balanceVersion,
+      summaryJson,
+      event.createdAt,
+    );
+    const inserted = this.getProgressionEvent(event.idempotencyKey);
+    if (!inserted) throw persistenceInvalid();
+    return { status: 'inserted', event: inserted };
+  }
+
+  private assertTransaction(): void {
+    try {
+      this.database.assertTransactionActive();
+    } catch {
+      throw new ProgressionPersistenceError(
+        'PROGRESSION_TRANSACTION_REQUIRED',
+      );
+    }
+  }
+
+  private profileExists(profileId: string): boolean {
+    return this.database.db.prepare(`
+      SELECT 1 FROM profiles WHERE id = ?
+    `).get(profileId) !== undefined;
+  }
+}
+
+function mapProgressionProfile(row: ProgressionProfileRow): ProgressionProfile {
+  if (typeof row.profile_id !== 'string' || row.profile_id.length === 0) {
+    throw persistenceInvalid();
+  }
+  const core: ProgressionCore = {
+    balanceVersion: row.balance_version,
+    dojoLevel: row.dojo_level,
+    dojoXpMilli: row.dojo_xp_milli,
+    selectedCharacterId: row.selected_character_id as PlayableCharacterId,
+  };
+  const counters: ProgressionCounters = {
+    practiceDate: row.practice_date,
+    practiceHands: row.practice_hands,
+    completedHands: row.completed_hands,
+    cashHands: row.cash_hands,
+    practiceHandsTotal: row.practice_hands_total,
+    sngCompletions: row.sng_completions,
+    bestStreak: row.best_streak,
+  };
+  assertProgressionCore(core, 'PROGRESSION_PERSISTENCE_INVALID');
+  assertProgressionCounters(counters, 'PROGRESSION_PERSISTENCE_INVALID');
+  assertStoredTimestamp(row.created_at);
+  assertStoredTimestamp(row.updated_at);
+  if (row.updated_at < row.created_at) throw persistenceInvalid();
+  return {
+    profileId: row.profile_id,
+    ...core,
+    ...counters,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapCharacterAffinity(row: CharacterAffinityRow): CharacterAffinity {
+  if (typeof row.profile_id !== 'string' || row.profile_id.length === 0) {
+    throw persistenceInvalid();
+  }
+  let characterId: PlayableCharacterId;
+  try {
+    characterId = assertPlayableCharacter(row.character_id);
+    assertAffinityValue(
+      { level: row.level, xpMilli: row.xp_milli },
+      'PROGRESSION_PERSISTENCE_INVALID',
+    );
+  } catch {
+    throw persistenceInvalid();
+  }
+  return {
+    profileId: row.profile_id,
+    characterId,
+    level: row.level,
+    xpMilli: row.xp_milli,
+  };
+}
+
+function mapStreakState(row: StreakStateRow): StreakState {
+  if (
+    typeof row.profile_id !== 'string'
+    || row.profile_id.length === 0
+    || !isNonnegativeSafeInteger(row.current_streak)
+    || !Number.isSafeInteger(row.rest_passes)
+    || row.rest_passes < 0
+    || row.rest_passes > 1
+    || !isCanonicalNullableDate(row.last_qualified_date)
+    || !isCanonicalNullableWeekKey(row.last_week_key)
+  ) {
+    throw persistenceInvalid();
+  }
+  assertStoredTimestamp(row.created_at);
+  assertStoredTimestamp(row.updated_at);
+  if (row.updated_at < row.created_at) throw persistenceInvalid();
+  return {
+    profileId: row.profile_id,
+    currentStreak: row.current_streak,
+    restPasses: row.rest_passes,
+    lastQualifiedDate: row.last_qualified_date,
+    lastWeekKey: row.last_week_key,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapInventoryItem(row: InventoryItemRow): InventoryItem {
+  if (
+    typeof row.profile_id !== 'string'
+    || row.profile_id.length === 0
+    || typeof row.item_id !== 'string'
+    || row.item_id.length === 0
+    || !Number.isSafeInteger(row.quantity)
+    || row.quantity <= 0
+  ) {
+    throw persistenceInvalid();
+  }
+  assertStoredTimestamp(row.granted_at);
+  assertStoredTimestamp(row.updated_at);
+  if (row.updated_at < row.granted_at) throw persistenceInvalid();
+  return {
+    profileId: row.profile_id,
+    itemId: row.item_id,
+    quantity: row.quantity,
+    grantedAt: row.granted_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapProgressionEvent(row: ProgressionEventRow): ProgressionEvent {
+  if (
+    typeof row.idempotency_key !== 'string'
+    || row.idempotency_key.length === 0
+    || typeof row.profile_id !== 'string'
+    || row.profile_id.length === 0
+    || typeof row.event_type !== 'string'
+    || row.event_type.length === 0
+    || row.balance_version !== SUPPORTED_BALANCE_VERSION
+  ) {
+    throw persistenceInvalid();
+  }
+  assertStoredTimestamp(row.created_at);
+  let summary: unknown;
+  try {
+    summary = JSON.parse(row.summary_json);
+  } catch {
+    throw persistenceInvalid();
+  }
+  if (!isJsonObject(summary)) throw persistenceInvalid();
+  return {
+    idempotencyKey: row.idempotency_key,
+    profileId: row.profile_id,
+    eventType: row.event_type,
+    balanceVersion: row.balance_version,
+    summary,
+    createdAt: row.created_at,
+  };
+}
+
+function assertProgressionCore(
+  value: ProgressionCore,
+  code: ProgressionErrorCode,
+): void {
+  if (
+    value.balanceVersion !== SUPPORTED_BALANCE_VERSION
+    || !Number.isSafeInteger(value.dojoLevel)
+    || value.dojoLevel < 1
+    || value.dojoLevel > 50
+    || !isNonnegativeSafeInteger(value.dojoXpMilli)
+    || (value.dojoLevel === 50 && value.dojoXpMilli !== 0)
+  ) {
+    throw new ProgressionPersistenceError(code);
+  }
+  try {
+    assertPlayableCharacter(value.selectedCharacterId);
+  } catch {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertProgressionCounters(
+  value: ProgressionCounters,
+  code: ProgressionErrorCode,
+): void {
+  if (
+    !isCanonicalNullableDate(value.practiceDate)
+    || !isNonnegativeSafeInteger(value.practiceHands)
+    || !isNonnegativeSafeInteger(value.completedHands)
+    || !isNonnegativeSafeInteger(value.cashHands)
+    || !isNonnegativeSafeInteger(value.practiceHandsTotal)
+    || !isNonnegativeSafeInteger(value.sngCompletions)
+    || !isNonnegativeSafeInteger(value.bestStreak)
+    || (value.practiceDate === null && value.practiceHands !== 0)
+  ) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertAffinityValue(
+  value: Pick<CharacterAffinity, 'level' | 'xpMilli'>,
+  code: ProgressionErrorCode,
+): void {
+  if (
+    !Number.isSafeInteger(value.level)
+    || value.level < 1
+    || value.level > 20
+    || !isNonnegativeSafeInteger(value.xpMilli)
+    || (value.level === 20 && value.xpMilli !== 0)
+  ) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertPlayableCharacter(value: string): PlayableCharacterId {
+  if (!(PLAYABLE_CHARACTER_IDS as readonly string[]).includes(value)) {
+    throw new ProgressionPersistenceError('PROGRESSION_CHARACTER_INVALID');
+  }
+  return value as PlayableCharacterId;
+}
+
+function assertProfileId(value: string): void {
+  assertNonemptyString(value, 'PROGRESSION_VALUE_INVALID');
+}
+
+function assertNonemptyString(
+  value: string,
+  code: ProgressionErrorCode,
+): void {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertTimestamp(value: number, code: ProgressionErrorCode): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new ProgressionPersistenceError(code);
+  }
+  const date = new Date(value);
+  if (
+    !Number.isFinite(date.getTime())
+    || date.getUTCFullYear() < 1
+    || date.getUTCFullYear() > 9_999
+  ) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertStoredTimestamp(value: number): void {
+  assertTimestamp(value, 'PROGRESSION_PERSISTENCE_INVALID');
+}
+
+function assertPositiveSafeInteger(
+  value: number,
+  code: ProgressionErrorCode,
+): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function isNonnegativeSafeInteger(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function isCanonicalNullableDate(value: string | null): boolean {
+  return value === null || isCanonicalDate(value);
+}
+
+function isCanonicalDate(value: string): boolean {
+  if (typeof value !== 'string') return false;
+  const match = CANONICAL_DATE_PATTERN.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || year > 9_999 || month < 1 || month > 12) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  return day >= 1 && day <= days[month - 1];
+}
+
+function isCanonicalNullableWeekKey(value: string | null): boolean {
+  if (value === null) return true;
+  if (typeof value !== 'string') return false;
+  const match = WEEK_KEY_PATTERN.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const week = Number(match[2]);
+  return year >= 1 && year <= 9_999 && week >= 1 && week <= 53;
+}
+
+function emptyEquipment(): Record<EquipmentSlot, string | null> {
+  return { title: null, frame: null, skin: null, cutin: null };
+}
+
+function isEquipmentSlot(value: string): value is EquipmentSlot {
+  return (EQUIPMENT_SLOTS as readonly string[]).includes(value);
+}
+
+function serializeSummary(summary: Record<string, unknown>): string {
+  if (!isJsonObject(summary)) {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+  try {
+    return JSON.stringify(summary);
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  if (
+    value === null
+    || typeof value !== 'object'
+    || Array.isArray(value)
+    || (Object.getPrototypeOf(value) !== Object.prototype
+      && Object.getPrototypeOf(value) !== null)
+  ) {
+    return false;
+  }
+  return isJsonValue(value, new Set<object>());
+}
+
+function isJsonValue(value: unknown, ancestors: Set<object>): boolean {
+  if (
+    value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+  ) {
+    return true;
+  }
+  if (typeof value === 'number') return Number.isSafeInteger(value);
+  if (typeof value !== 'object') return false;
+  if (ancestors.has(value)) return false;
+  ancestors.add(value);
+  const valid = Array.isArray(value)
+    ? value.every(item => isJsonValue(item, ancestors))
+    : (Object.getPrototypeOf(value) === Object.prototype
+      || Object.getPrototypeOf(value) === null)
+      && Object.values(value).every(item => isJsonValue(item, ancestors));
+  ancestors.delete(value);
+  return valid;
+}
+
+function persistenceInvalid(): ProgressionPersistenceError {
+  return new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+}

@@ -43,7 +43,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(4);
+    expect(migration.version).toBe(5);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -54,6 +54,13 @@ describe('PokerDatabase migrations', () => {
         'rescue_claims',
         'sng_entries',
         'cash_hand_settlements',
+        'progression_profiles',
+        'character_affinity',
+        'daily_missions',
+        'streak_state',
+        'inventory_items',
+        'profile_equipment',
+        'progression_events',
       ]),
     );
     expect(profileColumns).toEqual(
@@ -78,7 +85,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(4);
+    expect(result.count).toBe(5);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -104,6 +111,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(versions).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 5 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -123,6 +131,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 5 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -161,7 +170,184 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 5 },
     ]);
+  });
+
+  it('upgrades V4 data through V5 exactly once without rewriting prior migrations', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV4Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO cash_hand_settlements (
+        room_id, settlement_seq, engine_hand_number, start_fingerprint,
+        settlement_fingerprint, status, updated_at
+      ) VALUES (
+        'v4-room', 1, 1,
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        NULL, 'prepared', 4
+      );
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, created_at, updated_at
+      ) VALUES (
+        'v4-entry', 'v4-tournament', 'v4-sng-room', 'v1-marker',
+        1500, 150, 'reserved', NULL, 0, 0, 4, 4
+      );
+    `);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+    database.close();
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT version FROM schema_migrations ORDER BY version
+    `).all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 5 },
+    ]);
+    expect(database.db.prepare(`
+      SELECT alias FROM profiles WHERE id = 'v1-marker'
+    `).get()).toEqual({ alias: 'v1-marker-alias' });
+    expect(database.db.prepare(`
+      SELECT status FROM cash_hand_settlements WHERE room_id = 'v4-room'
+    `).get()).toEqual({ status: 'prepared' });
+    expect(database.db.prepare(`
+      SELECT status FROM sng_entries WHERE id = 'v4-entry'
+    `).get()).toEqual({ status: 'reserved' });
+  });
+
+  it('creates constrained STRICT progression tables with useful indexes', () => {
+    database = openPokerDatabase(':memory:');
+
+    const tableSql = database.db.prepare(`
+      SELECT name, sql FROM sqlite_schema
+      WHERE type = 'table' AND name IN (
+        'progression_profiles', 'character_affinity', 'daily_missions',
+        'streak_state', 'inventory_items', 'profile_equipment',
+        'progression_events'
+      )
+      ORDER BY name
+    `).all() as Array<{ name: string; sql: string }>;
+    const foreignKeys = database.db.prepare(`
+      PRAGMA foreign_key_list(progression_profiles)
+    `).all() as Array<{ table: string; on_delete: string }>;
+    const indexes = database.db.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'index' AND name LIKE 'idx_progression_%'
+      ORDER BY name
+    `).all().map(row => (row as { name: string }).name);
+
+    expect(tableSql).toHaveLength(7);
+    expect(tableSql.every(table => table.sql.endsWith('STRICT'))).toBe(true);
+    expect(foreignKeys).toEqual(expect.arrayContaining([
+      expect.objectContaining({ table: 'profiles', on_delete: 'CASCADE' }),
+    ]));
+    expect(indexes).toEqual(expect.arrayContaining([
+      'idx_progression_daily_date_profile',
+      'idx_progression_events_profile_created_at_desc',
+      'idx_progression_inventory_item_profile',
+    ]));
+
+    insertProfile(database, 'progression-constraints');
+    expect(() => database?.db.prepare(`
+      INSERT INTO progression_profiles (
+        profile_id, balance_version, dojo_level, dojo_xp_milli,
+        selected_character_id, practice_date, practice_hands,
+        completed_hands, cash_hands, practice_hands_total, sng_completions,
+        best_streak, created_at, updated_at
+      ) VALUES (?, 1, 51, 0, 'sakura', NULL, 0, 0, 0, 0, 0, 0, 1, 1)
+    `).run('progression-constraints')).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
+      VALUES (?, 'weapon', NULL, 1)
+    `).run('progression-constraints')).toThrow();
+  });
+
+  it('rolls back all V5 tables and its version when a middle object conflicts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV4Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`CREATE TABLE daily_missions (id TEXT) STRICT;`);
+    rawDatabase.close();
+
+    let unexpectedlyOpened: PokerDatabase | undefined;
+    try {
+      expect(() => {
+        unexpectedlyOpened = openPokerDatabase(path);
+      }).toThrowError('table daily_missions already exists');
+    } finally {
+      unexpectedlyOpened?.close();
+    }
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT version FROM schema_migrations ORDER BY version
+      `).all()).toEqual([
+        { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      ]);
+      const tables = reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name LIKE 'progression_%'
+      `).all().map(row => (row as { name: string }).name);
+      expect(tables).toEqual([]);
+      expect(reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'table' AND name = 'character_affinity'
+      `).get()).toBeUndefined();
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('cascades profile deletion through every progression table', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'progression-cascade');
+    database.db.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'progression-cascade', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+      INSERT INTO character_affinity VALUES (
+        'progression-cascade', 'sakura', 1, 0
+      );
+      INSERT INTO daily_missions (
+        profile_id, mission_date, slot, mission_id, target, progress,
+        balance_version, reroll_count, assigned_at, completed_at, rewarded_at
+      ) VALUES (
+        'progression-cascade', '2026-07-17', 0, 'mission-a', 10, 0,
+        1, 0, 1, NULL, NULL
+      );
+      INSERT INTO streak_state VALUES (
+        'progression-cascade', 0, 0, NULL, NULL, 1, 1
+      );
+      INSERT INTO inventory_items VALUES (
+        'progression-cascade', 'frame-a', 1, 1, 1
+      );
+      INSERT INTO profile_equipment VALUES (
+        'progression-cascade', 'frame', 'frame-a', 1
+      );
+      INSERT INTO progression_events VALUES (
+        'event-a', 'progression-cascade', 'test', 1, '{}', 1
+      );
+      DELETE FROM profiles WHERE id = 'progression-cascade';
+    `);
+
+    for (const table of [
+      'progression_profiles', 'character_affinity', 'daily_missions',
+      'streak_state', 'inventory_items', 'profile_equipment',
+      'progression_events',
+    ]) {
+      const row = database.db.prepare(
+        `SELECT COUNT(*) AS count FROM ${table}`,
+      ).get() as { count: number };
+      expect(row.count).toBe(0);
+    }
   });
 
   it('rolls back the V4 SNG table replacement and version when migration conflicts', () => {
@@ -624,6 +810,22 @@ function createV3Database(path: string): void {
       ${migrations[2].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (3, 'durable_cash_hand_settlement_identity', 3);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV4Database(path: string): void {
+  createV3Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[3].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (4, 'durable_sng_tournament_incarnations', 4);
       COMMIT;
     `);
   } finally {

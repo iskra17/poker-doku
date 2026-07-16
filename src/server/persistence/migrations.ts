@@ -167,6 +167,119 @@ export const migrations: readonly Migration[] = [
         ON sng_entries(room_id, status, tournament_id);
     `,
   },
+  {
+    version: 5,
+    name: 'progression_persistence_schema',
+    sql: `
+      CREATE TABLE progression_profiles (
+        profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+        balance_version INTEGER NOT NULL CHECK (balance_version > 0),
+        dojo_level INTEGER NOT NULL CHECK (dojo_level BETWEEN 1 AND 50),
+        dojo_xp_milli INTEGER NOT NULL CHECK (dojo_xp_milli >= 0),
+        selected_character_id TEXT NOT NULL CHECK (
+          selected_character_id IN ('sakura','ara','hana','chloe','vivian','elena')
+        ),
+        practice_date TEXT CHECK (
+          practice_date IS NULL OR (
+            length(practice_date) = 10
+            AND practice_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          )
+        ),
+        practice_hands INTEGER NOT NULL DEFAULT 0 CHECK (practice_hands >= 0),
+        completed_hands INTEGER NOT NULL DEFAULT 0 CHECK (completed_hands >= 0),
+        cash_hands INTEGER NOT NULL DEFAULT 0 CHECK (cash_hands >= 0),
+        practice_hands_total INTEGER NOT NULL DEFAULT 0 CHECK (practice_hands_total >= 0),
+        sng_completions INTEGER NOT NULL DEFAULT 0 CHECK (sng_completions >= 0),
+        best_streak INTEGER NOT NULL DEFAULT 0 CHECK (best_streak >= 0),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+      ) STRICT;
+
+      CREATE TABLE character_affinity (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL CHECK (
+          character_id IN ('sakura','ara','hana','chloe','vivian','elena')
+        ),
+        level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 20),
+        xp_milli INTEGER NOT NULL CHECK (xp_milli >= 0),
+        PRIMARY KEY (profile_id, character_id)
+      ) STRICT;
+
+      CREATE TABLE daily_missions (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        mission_date TEXT NOT NULL CHECK (
+          length(mission_date) = 10
+          AND mission_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        ),
+        slot INTEGER NOT NULL CHECK (slot BETWEEN 0 AND 2),
+        mission_id TEXT NOT NULL CHECK (length(mission_id) > 0),
+        target INTEGER NOT NULL CHECK (target > 0),
+        progress INTEGER NOT NULL CHECK (progress >= 0),
+        balance_version INTEGER NOT NULL CHECK (balance_version > 0),
+        reroll_count INTEGER NOT NULL DEFAULT 0 CHECK (reroll_count >= 0),
+        assigned_at INTEGER NOT NULL CHECK (assigned_at >= 0),
+        completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
+        rewarded_at INTEGER CHECK (rewarded_at IS NULL OR rewarded_at >= 0),
+        PRIMARY KEY (profile_id, mission_date, slot),
+        UNIQUE (profile_id, mission_date, mission_id),
+        CHECK (rewarded_at IS NULL OR completed_at IS NOT NULL)
+      ) STRICT;
+
+      CREATE TABLE streak_state (
+        profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
+        current_streak INTEGER NOT NULL CHECK (current_streak >= 0),
+        rest_passes INTEGER NOT NULL CHECK (rest_passes BETWEEN 0 AND 1),
+        last_qualified_date TEXT CHECK (
+          last_qualified_date IS NULL OR (
+            length(last_qualified_date) = 10
+            AND last_qualified_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          )
+        ),
+        last_week_key TEXT CHECK (
+          last_week_key IS NULL OR length(last_week_key) BETWEEN 7 AND 10
+        ),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0)
+      ) STRICT;
+
+      CREATE TABLE inventory_items (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL CHECK (length(item_id) > 0),
+        quantity INTEGER NOT NULL CHECK (quantity > 0),
+        granted_at INTEGER NOT NULL CHECK (granted_at >= 0),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, item_id)
+      ) STRICT;
+
+      CREATE TABLE profile_equipment (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        slot TEXT NOT NULL CHECK (slot IN ('title','frame','skin','cutin')),
+        item_id TEXT,
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, slot)
+      ) STRICT;
+
+      CREATE TABLE progression_events (
+        idempotency_key TEXT PRIMARY KEY CHECK (length(idempotency_key) > 0),
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        event_type TEXT NOT NULL CHECK (length(event_type) > 0),
+        balance_version INTEGER NOT NULL CHECK (balance_version > 0),
+        summary_json TEXT NOT NULL CHECK (
+          json_valid(summary_json) AND json_type(summary_json) = 'object'
+        ),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0)
+      ) STRICT;
+
+      CREATE INDEX idx_progression_daily_date_profile
+        ON daily_missions(mission_date, profile_id);
+
+      CREATE INDEX idx_progression_events_profile_created_at_desc
+        ON progression_events(profile_id, created_at DESC);
+
+      CREATE INDEX idx_progression_inventory_item_profile
+        ON inventory_items(item_id, profile_id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {
