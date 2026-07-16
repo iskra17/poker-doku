@@ -100,6 +100,41 @@ describe('ProgressionRepository', () => {
     expect(rowCount(database, 'profile_equipment')).toBe(4);
   });
 
+  it('repairs only a missing streak child without recreating progression siblings', () => {
+    insertProfile(database, 'repair-streak-child');
+    const before = repository.getOrCreate(
+      'repair-streak-child',
+      'sakura',
+      1_000,
+    );
+    database.db.prepare(`
+      DELETE FROM streak_state WHERE profile_id = 'repair-streak-child'
+    `).run();
+
+    const repaired = repository.getOrCreate(
+      'repair-streak-child',
+      'sakura',
+      2_000,
+    );
+
+    expect(repaired.profile).toEqual(before.profile);
+    expect(repaired.streak).toEqual({
+      profileId: 'repair-streak-child',
+      currentStreak: 0,
+      restPasses: 0,
+      lastQualifiedDate: null,
+      lastWeekKey: null,
+      createdAt: before.profile.createdAt,
+      updatedAt: before.profile.updatedAt,
+    });
+    expect(rowCount(database, 'progression_profiles', 'repair-streak-child'))
+      .toBe(1);
+    expect(rowCount(database, 'character_affinity', 'repair-streak-child'))
+      .toBe(1);
+    expect(rowCount(database, 'profile_equipment', 'repair-streak-child'))
+      .toBe(4);
+  });
+
   it('accepts only the six approved playable characters', () => {
     expect(PLAYABLE_CHARACTER_IDS).toEqual([
       'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena',
@@ -194,7 +229,8 @@ describe('ProgressionRepository', () => {
         balanceVersion: 1,
         grantedAt: 1_000,
         source: 'streak',
-        sourceRef: 'event-a',
+        sourceRef: 'streak-fragment:profile-a:1970-01-01',
+        sourceEventId: 'event-a',
         sourceDate: '1970-01-01',
       }),
       'PROGRESSION_TRANSACTION_REQUIRED',
@@ -1106,13 +1142,20 @@ describe('ProgressionRepository', () => {
         createdAt: grantedAt,
       });
     });
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress (
+        profile_id, kst_date, hands, sngs, qualified_at
+      ) VALUES (?, '2026-07-17', 0, 1, ?)
+    `).run(profileId, grantedAt);
     database.db.exec('DROP TRIGGER sync_fragment_inventory_insert;');
     database.db.prepare(`
       INSERT INTO progression_item_grants (
         idempotency_key, profile_id, item_id, source, source_ref,
-        source_date, quantity, granted_at
-      ) VALUES (?, ?, 'streak-fragment', 'streak', ?, '2026-07-17', 1, ?)
-    `).run(key, profileId, 'corrupt-main-event', grantedAt);
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (
+        ?, ?, 'streak-fragment', 'streak', ?, ?, '2026-07-17', 1, ?
+      )
+    `).run(key, profileId, key, 'corrupt-main-event', grantedAt);
 
     expectErrorCode(() => database.transaction(() => {
       repository.grantStackableInventoryItemInTransaction({
@@ -1122,7 +1165,8 @@ describe('ProgressionRepository', () => {
         balanceVersion: 1,
         grantedAt,
         source: 'streak',
-        sourceRef: 'corrupt-main-event',
+        sourceRef: key,
+        sourceEventId: 'corrupt-main-event',
         sourceDate: '2026-07-17',
       });
     }), 'PROGRESSION_PERSISTENCE_INVALID');
@@ -1144,6 +1188,15 @@ describe('ProgressionRepository', () => {
         createdAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
       });
     });
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress (
+        profile_id, kst_date, hands, sngs, qualified_at
+      ) VALUES (?, ?, 0, 1, ?)
+    `).run(
+      profileId,
+      sourceDate,
+      Date.parse(`${sourceDate}T12:00:00+09:00`),
+    );
 
     const first = database.transaction(() => (
       repository.grantStackableInventoryItemInTransaction({
@@ -1153,7 +1206,8 @@ describe('ProgressionRepository', () => {
         balanceVersion: 1,
         grantedAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
         source: 'streak',
-        sourceRef: 'completed-hand:source-event',
+        sourceRef: key,
+        sourceEventId: 'completed-hand:source-event',
         sourceDate,
       })
     ));
@@ -1165,7 +1219,8 @@ describe('ProgressionRepository', () => {
         balanceVersion: 1,
         grantedAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
         source: 'streak',
-        sourceRef: 'completed-hand:source-event',
+        sourceRef: key,
+        sourceEventId: 'completed-hand:source-event',
         sourceDate,
       })
     ));
@@ -1173,12 +1228,14 @@ describe('ProgressionRepository', () => {
     expect(first).toBe(true);
     expect(duplicate).toBe(false);
     expect(database.db.prepare(`
-      SELECT idempotency_key, source, source_ref, source_date, quantity
+      SELECT idempotency_key, source, source_ref, source_event_id,
+             source_date, quantity
       FROM progression_item_grants WHERE profile_id = ?
     `).get(profileId)).toEqual({
       idempotency_key: key,
       source: 'streak',
-      source_ref: 'completed-hand:source-event',
+      source_ref: key,
+      source_event_id: 'completed-hand:source-event',
       source_date: sourceDate,
       quantity: 1,
     });
@@ -1196,6 +1253,20 @@ describe('ProgressionRepository', () => {
     `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
     expect(() => database?.db.prepare(`
       UPDATE inventory_items SET updated_at = 9007199254740992
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
+    expect(() => database?.db.prepare(`
+      DELETE FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET item_id = 'renamed-fragment'
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
+    insertProfile(database, 'fragment-identity-target');
+    repository.getOrCreate('fragment-identity-target', 'sakura', 1_000);
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET profile_id = 'fragment-identity-target'
       WHERE profile_id = ? AND item_id = 'streak-fragment'
     `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
     expect(() => database?.db.prepare(`

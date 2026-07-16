@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { ProfileRepository } from './profile-repository';
 import {
   assignDailyMissions,
   getMissionDefinition,
@@ -288,7 +289,7 @@ describe('ProgressionService', () => {
         currentStreak: 6,
         restPassUsed: false,
       },
-      grantedItemIds: ['dojo-title-2'],
+      grantedItemIds: [],
     });
     insertRawRewardEvent(database, 'semantic-profile', eventId, summary);
 
@@ -411,6 +412,7 @@ describe('ProgressionService', () => {
       { dojoLevelsGained: [2, 4] },
       { affinityLevelsGained: [3, 2] },
       { grantedItemIds: ['item-a', 'item-a'] },
+      { grantedItemIds: ['unknown-cosmetic'] },
       { grantedItemIds: ['bad\u0000item'] },
       { grantedItemIds: [`bad${String.fromCharCode(0xd800)}`] },
       { grantedItemIds: ['x'.repeat(129)] },
@@ -1421,7 +1423,7 @@ describe('ProgressionService', () => {
     const profileId = 'fragment-duplicate-proof';
     const start = Date.parse('2026-07-06T12:00:00+09:00');
     insertProfile(database, profileId);
-    let seventh;
+    let seventh: ReturnType<ProgressionService['recordSngFinish']> | undefined;
     for (let index = 0; index < 7; index += 1) {
       seventh = service.recordSngFinish({
         profileId,
@@ -1469,6 +1471,47 @@ describe('ProgressionService', () => {
       selectedCharacterId: 'sakura',
       completedAt: start + 6 * 24 * 60 * 60 * 1_000,
     }), 'PROGRESSION_STORED_SUMMARY_INVALID');
+  });
+
+  it('deletes a fragment-bearing profile while protecting its source event directly', () => {
+    const profileId = 'fragment-profile-delete';
+    const start = Date.parse('2026-07-06T12:00:00+09:00');
+    insertProfile(database, profileId);
+    let seventh: ReturnType<ProgressionService['recordSngFinish']> | undefined;
+    for (let index = 0; index < 7; index += 1) {
+      seventh = service.recordSngFinish({
+        profileId,
+        roomId: `fragment-delete-${index + 1}`,
+        place: 6,
+        selectedCharacterId: 'sakura',
+        completedAt: start + index * 24 * 60 * 60 * 1_000,
+      });
+    }
+    expect(seventh?.grantedItemIds).toEqual(['streak-fragment']);
+    if (!seventh) throw new Error('expected seventh-day summary');
+    expect(() => database?.db.prepare(`
+      DELETE FROM progression_events WHERE idempotency_key = ?
+    `).run(seventh.eventId)).toThrow();
+
+    expect(new ProfileRepository(database).deleteProfile(profileId))
+      .toBe('deleted');
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM profiles WHERE id = ?
+    `).get(profileId)).toEqual({ count: 0 });
+    for (const table of [
+      'progression_profiles',
+      'streak_state',
+      'streak_daily_progress',
+      'character_affinity',
+      'daily_missions',
+      'daily_mission_modes',
+      'profile_equipment',
+      'progression_events',
+      'progression_item_grants',
+      'inventory_items',
+    ]) {
+      expect(rowCount(database, table, profileId)).toBe(0);
+    }
   });
 });
 

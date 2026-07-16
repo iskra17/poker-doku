@@ -222,6 +222,7 @@ export interface StackableInventoryGrant {
   grantedAt: number;
   source: 'streak';
   sourceRef: string;
+  sourceEventId: string;
   sourceDate: string;
 }
 
@@ -231,6 +232,7 @@ export interface ProgressionItemGrantReceipt {
   itemId: string;
   source: 'streak';
   sourceRef: string;
+  sourceEventId: string;
   sourceDate: string;
   quantity: 1;
   grantedAt: number;
@@ -329,6 +331,7 @@ interface ProgressionItemGrantRow {
   item_id: string;
   source: string;
   source_ref: string;
+  source_event_id: string;
   source_date: string;
   quantity: number;
   granted_at: number;
@@ -390,6 +393,17 @@ export class ProgressionRepository {
           insertEquipment.run(profileId, slot, at);
         }
       }
+
+      this.database.db.prepare(`
+      INSERT INTO streak_state (
+        profile_id, current_streak, rest_passes, last_qualified_date,
+        last_week_key, created_at, updated_at
+      )
+      SELECT profile_id, 0, 0, NULL, NULL, created_at, updated_at
+      FROM progression_profiles
+      WHERE profile_id = ?
+      ON CONFLICT(profile_id) DO NOTHING
+    `).run(profileId);
 
       this.database.db.prepare(`
       INSERT INTO character_affinity (
@@ -1054,12 +1068,20 @@ export class ProgressionRepository {
       throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
     }
     assertNonemptyString(safe.sourceRef, 'PROGRESSION_VALUE_INVALID');
+    assertNonemptyString(safe.sourceEventId, 'PROGRESSION_VALUE_INVALID');
     assertMissionDate(safe.sourceDate);
     assertTimestamp(safe.grantedAt, 'PROGRESSION_TIME_INVALID');
+    const expectedSourceRef = `streak-fragment:${safe.profileId}:${safe.sourceDate}`;
+    if (
+      safe.idempotencyKey !== expectedSourceRef
+      || safe.sourceRef !== expectedSourceRef
+    ) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
     try {
       const existingRow = this.database.db.prepare(`
         SELECT idempotency_key, profile_id, item_id, source, source_ref,
-               source_date, quantity, granted_at
+               source_event_id, source_date, quantity, granted_at
         FROM progression_item_grants WHERE idempotency_key = ?
       `).get(safe.idempotencyKey) as ProgressionItemGrantRow | undefined;
       if (existingRow) {
@@ -1069,6 +1091,7 @@ export class ProgressionRepository {
           || existing.itemId !== safe.itemId
           || existing.source !== safe.source
           || existing.sourceRef !== safe.sourceRef
+          || existing.sourceEventId !== safe.sourceEventId
           || existing.sourceDate !== safe.sourceDate
           || existing.grantedAt !== safe.grantedAt
         ) {
@@ -1081,14 +1104,15 @@ export class ProgressionRepository {
       this.database.db.prepare(`
         INSERT INTO progression_item_grants (
           idempotency_key, profile_id, item_id, source, source_ref,
-          source_date, quantity, granted_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+          source_event_id, source_date, quantity, granted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
       `).run(
         safe.idempotencyKey,
         safe.profileId,
         safe.itemId,
         safe.source,
         safe.sourceRef,
+        safe.sourceEventId,
         safe.sourceDate,
         safe.grantedAt,
       );
@@ -1100,21 +1124,21 @@ export class ProgressionRepository {
   }
 
   /** Must be called inside a caller-owned PokerDatabase transaction. */
-  getFragmentGrantForSourceInTransaction(
+  getFragmentGrantForEventInTransaction(
     profileId: string,
-    sourceRef: string,
+    sourceEventId: string,
   ): ProgressionItemGrantReceipt | null {
     this.assertTransaction();
     assertProfileId(profileId);
-    assertNonemptyString(sourceRef, 'PROGRESSION_VALUE_INVALID');
+    assertNonemptyString(sourceEventId, 'PROGRESSION_VALUE_INVALID');
     try {
       const row = this.database.db.prepare(`
         SELECT idempotency_key, profile_id, item_id, source, source_ref,
-               source_date, quantity, granted_at
+               source_event_id, source_date, quantity, granted_at
         FROM progression_item_grants
         WHERE profile_id = ? AND item_id = 'streak-fragment'
-          AND source = 'streak' AND source_ref = ?
-      `).get(profileId, sourceRef) as ProgressionItemGrantRow | undefined;
+          AND source = 'streak' AND source_event_id = ?
+      `).get(profileId, sourceEventId) as ProgressionItemGrantRow | undefined;
       if (!row) return null;
       const receipt = mapProgressionItemGrant(row);
       this.assertFragmentInventoryCorrespondence(profileId, receipt.itemId);
@@ -1411,6 +1435,7 @@ function copyStackableInventoryGrant(
       grantedAt: grant.grantedAt,
       source: grant.source,
       sourceRef: grant.sourceRef,
+      sourceEventId: grant.sourceEventId,
       sourceDate: grant.sourceDate,
     };
   } catch {
@@ -1707,6 +1732,8 @@ function mapProgressionItemGrant(
     || row.source !== 'streak'
     || typeof row.source_ref !== 'string'
     || row.source_ref.length === 0
+    || typeof row.source_event_id !== 'string'
+    || row.source_event_id.length === 0
     || !isCanonicalDate(row.source_date)
     || row.quantity !== 1
   ) {
@@ -1719,6 +1746,7 @@ function mapProgressionItemGrant(
     itemId: row.item_id,
     source: 'streak',
     sourceRef: row.source_ref,
+    sourceEventId: row.source_event_id,
     sourceDate: row.source_date,
     quantity: 1,
     grantedAt: row.granted_at,

@@ -1318,6 +1318,388 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 9,
+    name: 'repair_streak_children_and_canonicalize_grant_sources',
+    sql: `
+      CREATE TABLE v9_progression_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v9_progression_validation (invalid)
+      SELECT 1 FROM progression_profiles
+      WHERE created_at NOT BETWEEN 0 AND 253402300799999
+        OR updated_at NOT BETWEEN created_at AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v9_progression_validation (invalid)
+      SELECT 1 FROM streak_state
+      WHERE created_at NOT BETWEEN 0 AND 253402300799999
+        OR updated_at NOT BETWEEN created_at AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v9_progression_validation (invalid)
+      SELECT 1 FROM streak_daily_progress
+      WHERE qualified_at IS NOT NULL
+        AND qualified_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v9_progression_validation (invalid)
+      SELECT 1 FROM inventory_items
+      WHERE item_id = 'streak-fragment'
+        AND (
+          granted_at NOT BETWEEN 0 AND 253402300799999
+          OR updated_at NOT BETWEEN granted_at AND 253402300799999
+        )
+      LIMIT 1;
+
+      INSERT INTO v9_progression_validation (invalid)
+      SELECT 1
+      FROM progression_item_grants AS grant_row
+      LEFT JOIN progression_events AS source_event
+        ON source_event.idempotency_key = grant_row.source_ref
+      LEFT JOIN streak_daily_progress AS daily
+        ON daily.profile_id = grant_row.profile_id
+        AND daily.kst_date = grant_row.source_date
+      WHERE
+        grant_row.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR grant_row.idempotency_key != (
+          'streak-fragment:' || grant_row.profile_id || ':' || grant_row.source_date
+        )
+        OR grant_row.item_id != 'streak-fragment'
+        OR grant_row.source != 'streak'
+        OR grant_row.quantity != 1
+        OR source_event.idempotency_key IS NULL
+        OR source_event.profile_id != grant_row.profile_id
+        OR source_event.event_type NOT IN ('completed-hand', 'sng-finish')
+        OR source_event.created_at != grant_row.granted_at
+        OR source_event.created_at NOT BETWEEN 0 AND 253402300799999
+        OR daily.qualified_at IS NULL
+        OR daily.qualified_at != grant_row.granted_at
+      LIMIT 1;
+
+      DROP TRIGGER cleanup_orphaned_progression_after_streak_delete;
+      DROP TRIGGER validate_progression_profile_safe_insert;
+      DROP TRIGGER validate_progression_profile_safe_update;
+      DROP TRIGGER validate_fragment_inventory_insert;
+      DROP TRIGGER validate_fragment_inventory_update;
+      DROP TRIGGER sync_fragment_inventory_insert;
+      DROP TRIGGER reject_fragment_grant_update;
+      DROP TRIGGER reject_fragment_grant_delete;
+      DROP TRIGGER sync_fragment_inventory_delete;
+
+      CREATE UNIQUE INDEX progression_event_profile_identity
+        ON progression_events(idempotency_key, profile_id);
+
+      ALTER TABLE progression_item_grants
+        RENAME TO progression_item_grants_v8_backup;
+
+      CREATE TABLE progression_item_grants (
+        idempotency_key TEXT PRIMARY KEY CHECK (
+          idempotency_key = source_ref
+        ),
+        profile_id TEXT NOT NULL
+          REFERENCES progression_profiles(profile_id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL CHECK (item_id = 'streak-fragment'),
+        source TEXT NOT NULL CHECK (source = 'streak'),
+        source_ref TEXT NOT NULL CHECK (
+          source_ref = (
+            'streak-fragment:' || profile_id || ':' || source_date
+          )
+        ),
+        source_event_id TEXT NOT NULL CHECK (length(source_event_id) > 0),
+        source_date TEXT NOT NULL CHECK (
+          length(source_date) = 10
+          AND source_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND CAST(substr(source_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+          AND COALESCE(date(source_date, '+0 days') = source_date, 0)
+        ),
+        quantity INTEGER NOT NULL CHECK (quantity = 1),
+        granted_at INTEGER NOT NULL CHECK (
+          granted_at BETWEEN 0 AND 253402300799999
+          AND COALESCE(
+            date(granted_at / 1000.0, 'unixepoch', '+9 hours') = source_date,
+            0
+          )
+        ),
+        UNIQUE (profile_id, item_id, source, source_event_id),
+        UNIQUE (profile_id, item_id, source, source_date),
+        FOREIGN KEY (source_event_id, profile_id)
+          REFERENCES progression_events(idempotency_key, profile_id)
+          ON DELETE NO ACTION
+          DEFERRABLE INITIALLY DEFERRED,
+        FOREIGN KEY (profile_id, source_date)
+          REFERENCES streak_daily_progress(profile_id, kst_date)
+          ON DELETE NO ACTION
+          DEFERRABLE INITIALLY DEFERRED
+      ) STRICT;
+
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      )
+      SELECT
+        idempotency_key, profile_id, item_id, source, idempotency_key,
+        source_ref, source_date, quantity, granted_at
+      FROM progression_item_grants_v8_backup;
+
+      DROP TABLE progression_item_grants_v8_backup;
+      DROP TABLE v9_progression_validation;
+
+      CREATE TRIGGER validate_progression_profile_safe_insert
+      BEFORE INSERT ON progression_profiles
+      WHEN
+        NEW.balance_version NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.dojo_level NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.dojo_xp_milli NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.practice_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.completed_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.cash_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.practice_hands_total NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.sng_completions NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.best_streak NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.created_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.created_at AND 253402300799999
+        OR (NEW.practice_date IS NULL AND NEW.practice_hands != 0)
+      BEGIN
+        SELECT RAISE(ABORT, 'unsafe progression profile');
+      END;
+
+      CREATE TRIGGER validate_progression_profile_safe_update
+      BEFORE UPDATE ON progression_profiles
+      WHEN
+        NEW.balance_version NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.dojo_level NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.dojo_xp_milli NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.practice_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.completed_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.cash_hands NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.practice_hands_total NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.sng_completions NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.best_streak NOT BETWEEN 0 AND 9007199254740991
+        OR NEW.created_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.created_at AND 253402300799999
+        OR (NEW.practice_date IS NULL AND NEW.practice_hands != 0)
+      BEGIN
+        SELECT RAISE(ABORT, 'unsafe progression profile');
+      END;
+
+      CREATE TRIGGER validate_streak_service_time_insert
+      BEFORE INSERT ON streak_state
+      WHEN NEW.created_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.created_at AND 253402300799999
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak service time');
+      END;
+
+      CREATE TRIGGER validate_streak_service_time_update
+      BEFORE UPDATE ON streak_state
+      WHEN NEW.created_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.created_at AND 253402300799999
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak service time');
+      END;
+
+      CREATE TRIGGER validate_daily_service_time_insert
+      BEFORE INSERT ON streak_daily_progress
+      WHEN NEW.qualified_at IS NOT NULL
+        AND NEW.qualified_at NOT BETWEEN 0 AND 253402300799999
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak daily service time');
+      END;
+
+      CREATE TRIGGER validate_daily_service_time_update
+      BEFORE UPDATE ON streak_daily_progress
+      WHEN NEW.qualified_at IS NOT NULL
+        AND NEW.qualified_at NOT BETWEEN 0 AND 253402300799999
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak daily service time');
+      END;
+
+      CREATE TRIGGER validate_progression_item_grant_insert
+      BEFORE INSERT ON progression_item_grants
+      WHEN
+        NEW.idempotency_key != (
+          'streak-fragment:' || NEW.profile_id || ':' || NEW.source_date
+        )
+        OR NEW.source_ref != NEW.idempotency_key
+        OR NEW.item_id != 'streak-fragment'
+        OR NEW.source != 'streak'
+        OR NEW.quantity != 1
+        OR NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR NOT EXISTS (
+          SELECT 1 FROM streak_daily_progress AS daily
+          WHERE daily.profile_id = NEW.profile_id
+            AND daily.kst_date = NEW.source_date
+            AND daily.qualified_at = NEW.granted_at
+        )
+        OR (
+          EXISTS (
+            SELECT 1 FROM progression_events
+            WHERE idempotency_key = NEW.source_event_id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM progression_events AS source_event
+            WHERE source_event.idempotency_key = NEW.source_event_id
+              AND source_event.profile_id = NEW.profile_id
+              AND source_event.event_type IN ('completed-hand', 'sng-finish')
+              AND source_event.created_at = NEW.granted_at
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid progression item grant source');
+      END;
+
+      CREATE TRIGGER validate_fragment_source_event_insert
+      BEFORE INSERT ON progression_events
+      WHEN EXISTS (
+        SELECT 1 FROM progression_item_grants AS grant_row
+        WHERE grant_row.source_event_id = NEW.idempotency_key
+          AND (
+            grant_row.profile_id != NEW.profile_id
+            OR NEW.event_type NOT IN ('completed-hand', 'sng-finish')
+            OR grant_row.granted_at != NEW.created_at
+          )
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid fragment source event');
+      END;
+
+      CREATE TRIGGER reject_fragment_source_event_update
+      BEFORE UPDATE ON progression_events
+      WHEN EXISTS (
+        SELECT 1 FROM progression_item_grants
+        WHERE source_event_id = OLD.idempotency_key
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable fragment source event');
+      END;
+
+      CREATE TRIGGER validate_fragment_inventory_insert
+      BEFORE INSERT ON inventory_items
+      WHEN NEW.item_id = 'streak-fragment'
+        AND (
+          NEW.quantity != (
+            SELECT COUNT(*) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.granted_at != (
+            SELECT MIN(granted_at) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.updated_at != (
+            SELECT MAX(granted_at) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+          OR NEW.updated_at NOT BETWEEN NEW.granted_at AND 253402300799999
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'fragment inventory receipt mismatch');
+      END;
+
+      CREATE TRIGGER validate_fragment_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN
+        OLD.item_id = 'streak-fragment'
+        OR NEW.item_id = 'streak-fragment'
+      BEGIN
+        SELECT CASE WHEN
+          NEW.profile_id != OLD.profile_id
+          OR NEW.item_id != OLD.item_id
+          OR NEW.quantity != (
+            SELECT COUNT(*) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.granted_at != (
+            SELECT MIN(granted_at) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.updated_at != (
+            SELECT MAX(granted_at) FROM progression_item_grants
+            WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id
+          )
+          OR NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+          OR NEW.updated_at NOT BETWEEN NEW.granted_at AND 253402300799999
+        THEN RAISE(ABORT, 'fragment inventory receipt mismatch') END;
+      END;
+
+      CREATE TRIGGER validate_fragment_inventory_delete
+      BEFORE DELETE ON inventory_items
+      WHEN OLD.item_id = 'streak-fragment'
+        AND EXISTS (
+          SELECT 1 FROM progression_item_grants
+          WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+        )
+        AND EXISTS (
+          SELECT 1 FROM profiles WHERE id = OLD.profile_id
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'fragment inventory receipt mismatch');
+      END;
+
+      CREATE TRIGGER sync_fragment_inventory_insert
+      AFTER INSERT ON progression_item_grants
+      BEGIN
+        INSERT INTO inventory_items (
+          profile_id, item_id, quantity, granted_at, updated_at
+        ) VALUES (
+          NEW.profile_id, NEW.item_id,
+          (SELECT COUNT(*) FROM progression_item_grants
+           WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id),
+          (SELECT MIN(granted_at) FROM progression_item_grants
+           WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id),
+          (SELECT MAX(granted_at) FROM progression_item_grants
+           WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id)
+        )
+        ON CONFLICT(profile_id, item_id) DO UPDATE SET
+          quantity = excluded.quantity,
+          granted_at = excluded.granted_at,
+          updated_at = excluded.updated_at;
+      END;
+
+      CREATE TRIGGER reject_fragment_grant_update
+      BEFORE UPDATE ON progression_item_grants
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable progression item grant');
+      END;
+
+      CREATE TRIGGER reject_fragment_grant_delete
+      BEFORE DELETE ON progression_item_grants
+      WHEN EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = OLD.profile_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'immutable progression item grant');
+      END;
+
+      CREATE TRIGGER sync_fragment_inventory_delete
+      AFTER DELETE ON progression_item_grants
+      BEGIN
+        DELETE FROM inventory_items
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+          AND NOT EXISTS (
+            SELECT 1 FROM progression_item_grants
+            WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+          );
+        UPDATE inventory_items
+        SET
+          quantity = (
+            SELECT COUNT(*) FROM progression_item_grants
+            WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+          ),
+          granted_at = (
+            SELECT MIN(granted_at) FROM progression_item_grants
+            WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+          ),
+          updated_at = (
+            SELECT MAX(granted_at) FROM progression_item_grants
+            WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+          )
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id;
+      END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

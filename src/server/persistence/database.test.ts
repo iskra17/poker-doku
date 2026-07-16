@@ -43,7 +43,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(8);
+    expect(migration.version).toBe(9);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -88,7 +88,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(8);
+    expect(result.count).toBe(9);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -115,6 +115,7 @@ describe('PokerDatabase migrations', () => {
     expect(versions).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -135,6 +136,7 @@ describe('PokerDatabase migrations', () => {
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -174,6 +176,7 @@ describe('PokerDatabase migrations', () => {
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
   });
 
@@ -211,6 +214,7 @@ describe('PokerDatabase migrations', () => {
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -517,6 +521,7 @@ describe('PokerDatabase migrations', () => {
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -763,6 +768,7 @@ describe('PokerDatabase migrations', () => {
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
+      { version: 9 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1024,7 +1030,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 8 });
+    `).get()).toEqual({ version: 9 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -1088,14 +1094,7 @@ describe('PokerDatabase migrations', () => {
     expect(database.db.prepare(`
       SELECT COUNT(*) AS count FROM progression_profiles
       WHERE profile_id = 'v8-owned'
-    `).get()).toEqual({ count: 0 });
-
-    database.db.exec(`
-      INSERT INTO progression_profiles VALUES (
-        'v8-owned', 1, 1, 0, 'sakura', NULL,
-        0, 0, 0, 0, 0, 0, 2, 2
-      );
-    `);
+    `).get()).toEqual({ count: 1 });
 
     database.db.prepare(`
       INSERT INTO streak_daily_progress VALUES (
@@ -1246,7 +1245,7 @@ describe('PokerDatabase migrations', () => {
       profile_id: 'v1-marker',
       item_id: 'streak-fragment',
       source: 'streak',
-      source_ref: 'sng-finish:legacy-main',
+      source_ref: 'streak-fragment:v1-marker:2026-07-17',
       source_date: '2026-07-17',
       quantity: 1,
     });
@@ -1351,6 +1350,170 @@ describe('PokerDatabase migrations', () => {
     } finally {
       reopened.close();
     }
+  });
+
+  it('upgrades V8 grant sources to canonical V9 references without data loss', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV7FragmentGrant(rawDatabase, 1);
+    rawDatabase.close();
+    applyV8Migration(path);
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT MAX(version) AS version FROM schema_migrations
+    `).get()).toEqual({ version: 9 });
+    expect(database.db.prepare(`
+      SELECT source_ref, source_event_id, source_date, granted_at
+      FROM progression_item_grants
+    `).get()).toEqual({
+      source_ref: 'streak-fragment:v1-marker:2026-07-17',
+      source_event_id: 'sng-finish:legacy-main',
+      source_date: '2026-07-17',
+      granted_at: Date.parse('2026-07-17T12:00:00+09:00'),
+    });
+  });
+
+  it('rejects V8 timestamps outside the service Date range atomically', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v1-marker', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 300000000000000, 300000000000000
+      );
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 8 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rolls V9 grant rebuild and version back on a middle-name conflict', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      CREATE TABLE progression_item_grants_v8_backup (id TEXT) STRICT;
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 8 });
+      expect(reopened.prepare(`
+        SELECT name FROM pragma_table_info('progression_item_grants')
+      `).all().map(row => (row as { name: string }).name))
+        .not.toContain('source_event_id');
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects cross-profile, non-game, and noncanonical V9 grant sources', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'grant-source-a');
+    insertProfile(database, 'grant-source-b');
+    const at = Date.parse('2026-07-17T12:00:00+09:00');
+    for (const profileId of ['grant-source-a', 'grant-source-b']) {
+      database.db.prepare(`
+        INSERT INTO progression_profiles VALUES (
+          ?, 1, 1, 0, 'sakura', NULL, 0, 0, 0, 0, 0, 1, ?, ?
+        )
+      `).run(profileId, at, at);
+      database.db.prepare(`
+        INSERT INTO streak_daily_progress VALUES (
+          ?, '2026-07-17', 0, 1, ?
+        )
+      `).run(profileId, at);
+    }
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'source-a-game', 'grant-source-a', 'sng-finish', 1, '{}', ?
+      )
+    `).run(at);
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'source-b-game', 'grant-source-b', 'sng-finish', 1, '{}', ?
+      )
+    `).run(at);
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'source-a-test', 'grant-source-a', 'test', 1, '{}', ?
+      )
+    `).run(at);
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'source-a-wrong-time', 'grant-source-a', 'sng-finish', 1, '{}', ?
+      )
+    `).run(at - 1);
+
+    const insertGrant = database.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (?, 'grant-source-a', 'streak-fragment', 'streak', ?, ?,
+                '2026-07-17', 1, ?)
+    `);
+    expect(() => insertGrant.run(
+      'wrong-ref',
+      'wrong-ref',
+      'source-a-game',
+      at,
+    )).toThrow();
+    expect(() => insertGrant.run(
+      'streak-fragment:grant-source-a:2026-07-17',
+      'streak-fragment:grant-source-a:2026-07-17',
+      'source-b-game',
+      at,
+    )).toThrow();
+    expect(() => insertGrant.run(
+      'streak-fragment:grant-source-a:2026-07-17',
+      'streak-fragment:grant-source-a:2026-07-17',
+      'source-a-test',
+      at,
+    )).toThrow();
+    expect(() => insertGrant.run(
+      'streak-fragment:grant-source-a:2026-07-17',
+      'streak-fragment:grant-source-a:2026-07-17',
+      'source-a-wrong-time',
+      at,
+    )).toThrow();
+
+    database.db.prepare(`
+      DELETE FROM streak_daily_progress
+      WHERE profile_id = 'grant-source-a' AND kst_date = '2026-07-17'
+    `).run();
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'grant-source-a', '2026-07-17', 0, 1, ?
+      )
+    `).run(at - 1);
+    expect(() => insertGrant.run(
+      'streak-fragment:grant-source-a:2026-07-17',
+      'streak-fragment:grant-source-a:2026-07-17',
+      'source-a-game',
+      at,
+    )).toThrow();
   });
 
   it('cascades profile deletion through every progression table', () => {
@@ -1928,6 +2091,26 @@ function createV7Database(path: string): void {
       ${migrations[6].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (7, 'durable_streak_daily_progress', 7);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV8Database(path: string): void {
+  createV7Database(path);
+  applyV8Migration(path);
+}
+
+function applyV8Migration(path: string): void {
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[7].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (8, 'harden_streak_ownership_and_grant_receipts', 8);
       COMMIT;
     `);
   } finally {

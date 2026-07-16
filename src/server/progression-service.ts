@@ -13,7 +13,10 @@ import {
   advanceStreakDay,
   reconcileWeeklyRestPass,
 } from '@/lib/progression/streak';
-import { STREAK_FRAGMENT_ITEM } from '@/lib/collection/catalog';
+import {
+  getCollectionItemDefinition,
+  STREAK_FRAGMENT_ITEM,
+} from '@/lib/collection/catalog';
 import type {
   MissionCompletion,
   ProgressionRewardSummary,
@@ -39,7 +42,6 @@ const EVENT_TYPE_SNG_FINISH = 'sng-finish';
 const MAX_EVENT_ID_COMPONENT_LENGTH = 128;
 const MAX_EVENT_ID_LENGTH = 384;
 const INTERNAL_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const CATALOG_ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const REQUIRED_SUMMARY_KEYS = [
   'eventId',
   'dojoXpMilli',
@@ -466,14 +468,16 @@ export class ProgressionService {
 
     const grantedItemIds: string[] = [];
     if (advanced.fragmentDue) {
+      const grantId = `streak-fragment:${snapshot.profile.profileId}:${kstDate}`;
       const granted = this.repository.grantStackableInventoryItemInTransaction({
-        idempotencyKey: `streak-fragment:${snapshot.profile.profileId}:${kstDate}`,
+        idempotencyKey: grantId,
         profileId: snapshot.profile.profileId,
         itemId: STREAK_FRAGMENT_ITEM.id,
         balanceVersion: snapshot.profile.balanceVersion,
         grantedAt: completedAt,
         source: 'streak',
-        sourceRef: eventId,
+        sourceRef: grantId,
+        sourceEventId: eventId,
         sourceDate: kstDate,
       });
       if (granted) grantedItemIds.push(STREAK_FRAGMENT_ITEM.id);
@@ -567,7 +571,7 @@ export class ProgressionService {
       if (claimsFragment !== fragmentDue) {
         throw new Error('fragment summary mismatch');
       }
-      const receipt = this.repository.getFragmentGrantForSourceInTransaction(
+      const receipt = this.repository.getFragmentGrantForEventInTransaction(
         event.profileId,
         event.idempotencyKey,
       );
@@ -576,15 +580,15 @@ export class ProgressionService {
         return;
       }
       const sourceDate = getKstDateKey(event.createdAt);
+      const sourceRef = `streak-fragment:${event.profileId}:${sourceDate}`;
       if (
         receipt === null
         || receipt.itemId !== STREAK_FRAGMENT_ITEM.id
         || receipt.source !== 'streak'
-        || receipt.sourceRef !== event.idempotencyKey
+        || receipt.sourceRef !== sourceRef
+        || receipt.sourceEventId !== event.idempotencyKey
         || receipt.sourceDate !== sourceDate
-        || receipt.idempotencyKey !== (
-          `streak-fragment:${event.profileId}:${sourceDate}`
-        )
+        || receipt.idempotencyKey !== sourceRef
         || receipt.quantity !== 1
         || receipt.grantedAt !== event.createdAt
       ) {
@@ -1058,7 +1062,7 @@ function isUniqueCatalogItemIdArray(value: unknown): value is string[] {
   return value.every(item => {
     if (
       typeof item !== 'string'
-      || !CATALOG_ITEM_ID_PATTERN.test(item)
+      || getCollectionItemDefinition(item) === null
       || seen.has(item)
     ) {
       return false;

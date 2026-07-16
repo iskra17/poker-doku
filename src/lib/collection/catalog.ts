@@ -20,3 +20,13 @@ export const STREAK_FRAGMENT_ITEM: CollectionItemDefinition = Object.freeze({
 
 export const COLLECTION_CATALOG: readonly CollectionItemDefinition[] =
   Object.freeze([STREAK_FRAGMENT_ITEM]);
+
+const COLLECTION_ITEMS_BY_ID = new Map(
+  COLLECTION_CATALOG.map(item => [item.id, item] as const),
+);
+
+export function getCollectionItemDefinition(
+  itemId: string,
+): CollectionItemDefinition | null {
+  return COLLECTION_ITEMS_BY_ID.get(itemId) ?? null;
+}
