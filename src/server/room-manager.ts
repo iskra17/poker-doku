@@ -60,6 +60,9 @@ export class RoomManager {
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
   /** 영속 정산 실패 방은 현재 엔진 스냅샷을 보존한 채 다음 핸드를 시작하지 않는다. */
   private economyBlockedRooms = new Set<string>();
+  /** 이탈 정산 실패가 만든 방 잠금을 재시도 성공 때만 안전하게 해제하기 위한 추적. */
+  private economyLeaveBlockedPlayers = new Map<string, Set<string>>();
+  private economyLeaveBlockWasPreexisting = new Set<string>();
   /** 완료된 엔진 핸드의 DB 정산이 확정되지 않아 cashout/void가 금지된 방. */
   private unresolvedSettlementRooms = new Set<string>();
   private handSettlementStatus = new Map<string, {
@@ -181,6 +184,8 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
+    this.economyLeaveBlockedPlayers.delete(roomId);
+    this.economyLeaveBlockWasPreexisting.delete(roomId);
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
@@ -325,12 +330,13 @@ export class RoomManager {
     return true;
   }
 
-  leaveRoom(roomId: string, playerId: string): void {
+  leaveRoom(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
-    if (!room) return;
+    if (!room) return true;
 
     const wasInProgress = room.engine.state.isHandInProgress;
     const leavingPlayer = room.engine.state.players.find(p => p.id === playerId);
+    let economicLeaveCommitted = false;
     if (
       leavingPlayer?.type === 'human'
       && this.isWalletSng(room)
@@ -338,10 +344,11 @@ export class RoomManager {
     ) {
       try {
         this.requireEconomy().cancelWaitingSng(roomId, leavingPlayer);
+        economicLeaveCommitted = true;
       } catch {
-        this.economyBlockedRooms.add(roomId);
+        this.blockEconomicLeave(roomId, playerId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
-        return;
+        return false;
       }
     }
     if (
@@ -351,12 +358,21 @@ export class RoomManager {
     ) {
       try {
         this.requireEconomy().settleExit(roomId, leavingPlayer);
+        economicLeaveCommitted = true;
       } catch {
-        this.economyBlockedRooms.add(roomId);
+        this.blockEconomicLeave(roomId, playerId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
-        return;
+        return false;
       }
     }
+    if (
+      !wasInProgress
+      && this.isWalletSng(room)
+      && room.engine.state.tournament?.finished
+    ) {
+      if (!this.settleFinishedWalletTournament(roomId)) return false;
+    }
+    if (economicLeaveCommitted) this.clearEconomicLeaveBlock(roomId, playerId);
     // 이탈자 턴에 걸려 있던 stale 타이머 제거 (아니어도 아래 startPlayerLoop가 재설정)
     this.clearTurnTimer(roomId);
     // 좌석이 정리되므로 남아 있던 자리비움 최종 정리 타이머도 취소 (orphan 방지)
@@ -372,7 +388,6 @@ export class RoomManager {
       && this.isWalletSng(room)
       && room.engine.state.tournament?.finished
     ) {
-      if (!this.settleFinishedWalletTournament(roomId)) return;
       this.announceTournamentProgress(roomId);
       this.onUpdate(roomId, room.engine);
     }
@@ -387,10 +402,10 @@ export class RoomManager {
       if (wasInProgress && handComplete) {
         this.handleCompletedHand(roomId);
         this.cleanupEmptyRoom(roomId, player !== null);
-        return;
+        return true;
       }
       this.cleanupEmptyRoom(roomId, player !== null);
-      return;
+      return true;
     }
 
     // 서버 내부 자동 정리(미납 블라인드/방치 회수 등)도 로비 목록에 즉시 반영 —
@@ -407,6 +422,31 @@ export class RoomManager {
       } else {
         this.onUpdate(roomId, room.engine);
       }
+    }
+    return true;
+  }
+
+  private blockEconomicLeave(roomId: string, playerId: string): void {
+    let players = this.economyLeaveBlockedPlayers.get(roomId);
+    if (!players) {
+      players = new Set<string>();
+      this.economyLeaveBlockedPlayers.set(roomId, players);
+      if (this.economyBlockedRooms.has(roomId)) {
+        this.economyLeaveBlockWasPreexisting.add(roomId);
+      }
+    }
+    players.add(playerId);
+    this.economyBlockedRooms.add(roomId);
+  }
+
+  private clearEconomicLeaveBlock(roomId: string, playerId: string): void {
+    const players = this.economyLeaveBlockedPlayers.get(roomId);
+    if (!players) return;
+    players.delete(playerId);
+    if (players.size > 0) return;
+    this.economyLeaveBlockedPlayers.delete(roomId);
+    if (!this.economyLeaveBlockWasPreexisting.delete(roomId)) {
+      this.economyBlockedRooms.delete(roomId);
     }
   }
 
@@ -454,6 +494,8 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
+    this.economyLeaveBlockedPlayers.delete(roomId);
+    this.economyLeaveBlockWasPreexisting.delete(roomId);
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
@@ -707,8 +749,9 @@ export class RoomManager {
       if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize)) toRemove.push(p);
     }
     for (const p of toRemove) {
-      this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 걸러 자리에서 일어납니다.`);
-      this.leaveRoom(roomId, p.id);
+      if (this.leaveRoom(roomId, p.id)) {
+        this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 걸러 자리에서 일어납니다.`);
+      }
     }
   }
 
@@ -780,8 +823,9 @@ export class RoomManager {
       const r = this.rooms.get(roomId);
       const p = r?.engine.state.players.find(pl => pl.id === playerId);
       if (p && (p.sitOutNext || p.status === 'sitting-out')) {
-        this.sendSystemChat(roomId, `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`);
-        this.leaveRoom(roomId, p.id);
+        if (this.leaveRoom(roomId, p.id)) {
+          this.sendSystemChat(roomId, `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`);
+        }
       }
     }, SITOUT_ABANDON_MS);
     this.sitOutAbandonTimers.set(key, timer);
@@ -898,8 +942,7 @@ export class RoomManager {
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
     const keep = isSng || sittingOut;
     if (!keep) {
-      this.leaveRoom(roomId, playerId);
-      return false;
+      return !this.leaveRoom(roomId, playerId);
     }
     // 캐시 자리비움 이탈: 최종 정리 유예 (SnG는 유예 없이 블라인드 소진에 맡김)
     if (!isSng) this.scheduleSitOutAbandon(roomId, playerId);
@@ -961,13 +1004,14 @@ export class RoomManager {
   }
 
   /** 다른 방에 남아 있는 좌석 정리 — 새 방 착석 시 자리비움 좌석 회수 (1세션 1테이블) */
-  leaveAllSeatsExcept(playerId: string, exceptRoomId: string): void {
-    this.rooms.forEach((room, id) => {
-      if (id === exceptRoomId) return;
+  leaveAllSeatsExcept(playerId: string, exceptRoomId: string): boolean {
+    for (const [id, room] of this.rooms) {
+      if (id === exceptRoomId) continue;
       if (room.engine.state.players.some(p => p.id === playerId && !p.pendingRemoval)) {
-        this.leaveRoom(id, playerId);
+        if (!this.leaveRoom(id, playerId)) return false;
       }
-    });
+    }
+    return true;
   }
 
   /** 타임칩 사용 — 본인 턴에 남은 시간 +30초 */

@@ -1735,19 +1735,30 @@ export class EconomyRepository {
     fee: number,
   ): void {
     let persisted: SngResult[];
+    const persistedBuyIn = entries[0]?.buyIn;
+    const persistedFee = entries[0]?.fee;
     try {
+      if (persistedBuyIn === undefined || persistedFee === undefined) {
+        throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+      }
+      this.assertSngAmounts(persistedBuyIn, persistedFee);
       this.assertExactSngProfiles(
         entries,
         entries.map(entry => entry.profileId),
         'ECONOMY_PERSISTENCE_INVALID',
       );
-      this.assertSngTournamentRows(entries, buyIn, fee, 'settled');
+      this.assertSngTournamentRows(
+        entries,
+        persistedBuyIn,
+        persistedFee,
+        'settled',
+      );
       persisted = entries.map(entry => ({
         playerId: entry.profileId,
         place: entry.place as number,
         prize: entry.prize,
       }));
-      this.assertSngResults(persisted, buyIn, fee);
+      this.assertSngResults(persisted, persistedBuyIn, persistedFee);
     } catch (error) {
       if (
         error instanceof EconomyDomainError
@@ -1758,6 +1769,9 @@ export class EconomyRepository {
       throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
     }
 
+    if (buyIn !== persistedBuyIn || fee !== persistedFee) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
+    }
     try {
       this.assertSngResults(results, buyIn, fee);
     } catch {

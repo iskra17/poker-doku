@@ -981,6 +981,24 @@ describe('EconomyService casual wallet Sit & Go', () => {
       `).get() as { count: number }).count).toBe(settledLedgerCount);
     }
 
+    for (const retry of [
+      { label: 'buy-in mismatch', buyIn: BUY_IN + 1, fee: FEE },
+      { label: 'fee mismatch', buyIn: BUY_IN, fee: FEE + 1 },
+    ]) {
+      const error = expectEconomyError(
+        () => service.settleSngTournament(
+          'sng-room', results, retry.buyIn, retry.fee,
+        ),
+        'SNG_SETTLEMENT_CONFLICT',
+      );
+      expect(error.message, retry.label).toBe('SNG_SETTLEMENT_CONFLICT');
+      expect(entrants.map(profileId => walletBalance(profileId)))
+        .toEqual(settledWallets);
+      expect((database.db.prepare(`
+        SELECT COUNT(*) AS count FROM chip_ledger
+      `).get() as { count: number }).count).toBe(settledLedgerCount);
+    }
+
     expect(() => service.settleSngTournament(
       'sng-room', [...results].reverse(), BUY_IN, FEE,
     )).not.toThrow();

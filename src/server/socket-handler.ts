@@ -422,15 +422,17 @@ export function setupSocketHandlers(
       ack?.({ ok: false, code: 'rate-limited', message });
       return false;
     };
-    const commitRoomMembership = (roomId: string): void => {
+    const commitRoomMembership = (roomId: string): boolean => {
       const previousRoomId = session.roomId;
       if (previousRoomId && previousRoomId !== roomId) {
-        roomManager.leaveRoom(previousRoomId, session.playerId);
+        if (!roomManager.leaveRoom(previousRoomId, session.playerId)) return false;
         socket.leave(previousRoomId);
+        session.roomId = null;
       }
-      roomManager.leaveAllSeatsExcept(session.playerId, roomId);
+      if (!roomManager.leaveAllSeatsExcept(session.playerId, roomId)) return false;
       session.roomId = roomId;
       socket.join(roomId);
+      return true;
     };
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
@@ -673,7 +675,14 @@ export function setupSocketHandlers(
             playerId: session.playerId,
             data: { seat: seated.seatIndex, chips: seated.chips, status: seated.status, sitOutNext: !!seated.sitOutNext },
           });
-          commitRoomMembership(roomId);
+          if (!commitRoomMembership(roomId)) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+            });
+            return;
+          }
           socket.emit('room-joined', {
             roomId,
             gameState: {
@@ -745,7 +754,14 @@ export function setupSocketHandlers(
             return;
           }
           // leaveRoom 경유: 폴드로 핸드가 끝나는 경우의 승자 처리까지 위임
-          roomManager.leaveRoom(roomId, bot.id);
+          if (!roomManager.leaveRoom(roomId, bot.id)) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '좌석 정리를 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+            });
+            return;
+          }
           ack?.({
             ok: false,
             code: 'bot-seat-pending',
@@ -825,7 +841,15 @@ export function setupSocketHandlers(
             });
             return;
           }
-          roomManager.leaveRoom(previousRoomId, session.playerId);
+          const previousRoomLeft = roomManager.leaveRoom(previousRoomId, session.playerId);
+          if (!previousRoomLeft) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '기존 좌석 저장을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+            });
+            return;
+          }
           const previousSeatStillExists = roomManager.getRoom(previousRoomId)
             ?.engine.state.players.some(player => (
               player.id === session.playerId && !player.pendingRemoval
@@ -865,7 +889,14 @@ export function setupSocketHandlers(
           });
           return;
         }
-        roomManager.leaveAllSeatsExcept(session.playerId, roomId);
+        if (!roomManager.leaveAllSeatsExcept(session.playerId, roomId)) {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '기존 좌석 저장을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
         const preservedElsewhere = roomManager.getRoomList(session.playerId)
           .some(item => item.id !== roomId && item.mySeat !== undefined);
         if (preservedElsewhere) {
@@ -938,7 +969,21 @@ export function setupSocketHandlers(
           : { reason: 'engine-rejected', seat: assignedSeat, seats: seatSnapshot(roomId) },
       });
       if (success) {
-        commitRoomMembership(roomId);
+        if (!commitRoomMembership(roomId)) {
+          if (!roomManager.leaveRoom(roomId, session.playerId)) {
+            eventLog.log('join-room:compensation-failed', {
+              roomId,
+              playerId: session.playerId,
+              data: { reason: 'economy-unavailable' },
+            });
+          }
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
         socket.emit('room-joined', {
           roomId,
           gameState: room.engine.getPublicState(session.playerId),
@@ -973,11 +1018,19 @@ export function setupSocketHandlers(
           roomId, playerId: session.playerId,
           data: { mode: data.mode, seats: seatSnapshot(roomId) },
         });
-        socket.leave(roomId);
         if (data.mode === 'sitout') {
+          socket.leave(roomId);
           roomManager.sitOutAndLeave(roomId, session.playerId);
         } else {
-          roomManager.leaveRoom(roomId, session.playerId);
+          if (!roomManager.leaveRoom(roomId, session.playerId)) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+            });
+            return;
+          }
+          socket.leave(roomId);
         }
         session.roomId = null;
         broadcastRoomList();

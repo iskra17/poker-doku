@@ -57,6 +57,7 @@ export interface SocketTestHarness {
   getServerSocketCookie: (socketId: string) => string | undefined;
   getServerSocketRawHeaders: (socketId: string) => string[] | undefined;
   getServerSocketAuth: (socketId: string) => Record<string, unknown> | undefined;
+  getServerSocketRooms: (socketId: string) => string[];
   recentEvents: () => LogEvent[];
   walletState: (profileId: string) => {
     balance: number;
@@ -218,6 +219,9 @@ export async function createSocketTestHarness(
       .get(socketId)?.request.rawHeaders,
     getServerSocketAuth: socketId => io.sockets.sockets
       .get(socketId)?.handshake.auth as Record<string, unknown> | undefined,
+    getServerSocketRooms: socketId => [
+      ...(io.sockets.sockets.get(socketId)?.rooms ?? []),
+    ],
     recentEvents: () => eventLog.recent(),
     walletState: profileId => {
       const row = database.db.prepare(`

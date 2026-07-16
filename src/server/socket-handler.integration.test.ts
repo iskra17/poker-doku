@@ -437,6 +437,100 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
   });
 
+  it('keeps socket and session membership when a waiting SNG refund fails, then retries once', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('sng-failed-exit-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    const chats: string[] = [];
+    client.socket.on('chat-message', message => chats.push(message.message));
+    vi.spyOn(harness.economyRuntime, 'cancelWaitingSng')
+      .mockImplementationOnce(() => { throw new Error('storage unavailable'); });
+
+    const failed = await withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ));
+    await wait(10);
+
+    expect(failed).toEqual({
+      ok: false,
+      code: 'server-error',
+      message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+    });
+    expect(harness.runtime.sessions.getByPlayerId(created.profile.id)?.roomId)
+      .toBe(roomId);
+    expect(harness.getServerSocketRooms(client.socket.id!)).toContain(roomId);
+    expect(chats).toContain('저장 연결을 확인 중이에요');
+    expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players)
+      .toEqual([expect.objectContaining({ id: created.profile.id })]);
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 8_350,
+      activeEscrow: 1_650,
+      activeRoomId: roomId,
+    });
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.runtime.sessions.getByPlayerId(created.profile.id)?.roomId)
+      .toBeNull();
+    expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(roomId);
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id).balance).toBe(10_000);
+  });
+
+  it('does not desync a wallet cash seat when cash-out persistence fails', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('cash-failed-exit-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    vi.spyOn(harness.economyRuntime, 'settleExit')
+      .mockImplementationOnce(() => { throw new Error('storage unavailable'); });
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toEqual({
+      ok: false,
+      code: 'server-error',
+      message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+    });
+    expect(harness.runtime.sessions.getByPlayerId(created.profile.id)?.roomId)
+      .toBe(roomId);
+    expect(harness.getServerSocketRooms(client.socket.id!)).toContain(roomId);
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 6_000,
+      activeEscrow: 4_000,
+      activeRoomId: roomId,
+    });
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+  });
+
   it('starts only after six paid humans, keeps started exits charged, and settles exact prizes', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
