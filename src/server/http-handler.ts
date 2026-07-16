@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
 import { eventLog } from './event-log';
-import {
+import type {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
 } from './http-rate-limit';
@@ -18,14 +18,27 @@ export type NextRequestHandler = (
   parsedUrl: UrlWithParsedQuery,
 ) => void | Promise<void>;
 
-export interface HttpHandlerOptions {
+interface HttpHandlerCommonOptions {
   debugToken?: string;
   database?: PokerDatabase;
-  profileManager?: ProfileHttpManager;
-  profileRateLimiter?: TransientHttpRateLimiter;
-  profileConcurrencyGate?: TransientHttpConcurrencyGate;
   production?: boolean;
 }
+
+interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
+  profileManager?: undefined;
+  profileRateLimiter?: undefined;
+  profileConcurrencyGate?: undefined;
+}
+
+interface HttpHandlerWithProfileOptions extends HttpHandlerCommonOptions {
+  profileManager: ProfileHttpManager;
+  profileRateLimiter: TransientHttpRateLimiter;
+  profileConcurrencyGate?: TransientHttpConcurrencyGate;
+}
+
+export type HttpHandlerOptions =
+  | HttpHandlerWithoutProfileOptions
+  | HttpHandlerWithProfileOptions;
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
@@ -56,10 +69,13 @@ export function createHttpRequestHandler(
   options: HttpHandlerOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const debugToken = options.debugToken ?? process.env.DEBUG_LOG_TOKEN;
+  if (options.profileManager && !options.profileRateLimiter) {
+    throw new Error('PROFILE_RATE_LIMITER_REQUIRED');
+  }
   const profileHandler = options.profileManager
     ? createProfileHttpHandler({
         manager: options.profileManager,
-        rateLimiter: options.profileRateLimiter ?? new TransientHttpRateLimiter(),
+        rateLimiter: options.profileRateLimiter,
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
       })

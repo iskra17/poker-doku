@@ -1,12 +1,18 @@
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createHttpRequestHandler } from './http-handler';
+import {
+  createHttpRequestHandler,
+  type HttpHandlerOptions,
+  type NextRequestHandler,
+} from './http-handler';
+import type { ProfileHttpManager } from './profile-http';
 
 describe('커스텀 서버 HTTP 경계', () => {
   const servers: ReturnType<typeof createServer>[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await Promise.all(servers.splice(0).map(server => new Promise<void>(resolve => {
       server.close(() => resolve());
     })));
@@ -43,5 +49,30 @@ describe('커스텀 서버 HTTP 경계', () => {
     expect(page.status).toBe(200);
     expect(await page.text()).toBe('next');
     expect(nextHandler).toHaveBeenCalledTimes(1);
+  });
+
+  it('profile manager without an owned limiter fails before creating a timer', () => {
+    const nextHandler = vi.fn<NextRequestHandler>();
+    const profileManager = {} as ProfileHttpManager;
+    const intervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const unsafeOptions = { profileManager } as HttpHandlerOptions;
+
+    expect(() => createHttpRequestHandler(nextHandler, unsafeOptions)).toThrowError(
+      'PROFILE_RATE_LIMITER_REQUIRED',
+    );
+    expect(intervalSpy).not.toHaveBeenCalled();
+  });
+
+  it('requires caller-owned rate limiter at the TypeScript boundary', () => {
+    const nextHandler = vi.fn<NextRequestHandler>();
+    const profileManager = {} as ProfileHttpManager;
+
+    const createWithoutLimiter = (): unknown => createHttpRequestHandler(
+      nextHandler,
+      // @ts-expect-error profileManager requires profileRateLimiter ownership.
+      { profileManager },
+    );
+
+    expect(createWithoutLimiter).toBeTypeOf('function');
   });
 });
