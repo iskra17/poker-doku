@@ -12,6 +12,10 @@ import {
   type ProgressionMode,
 } from '@/lib/progression/missions';
 import { isStreakFragmentSourceSummary } from '@/lib/progression/reward-summary';
+import {
+  getCollectionItemDefinition,
+  type CollectionRewardSource,
+} from '@/lib/collection/catalog';
 
 export type {
   DailyMission,
@@ -239,6 +243,22 @@ export interface ProgressionItemGrantReceipt {
   grantedAt: number;
 }
 
+export interface PermanentInventoryGrant {
+  profileId: string;
+  itemId: string;
+  sourceEventId: string;
+  source: Exclude<CollectionRewardSource, { kind: 'streak' }>;
+  grantedAt: number;
+}
+
+export interface EquipmentUpdate {
+  profileId: string;
+  slot: EquipmentSlot;
+  expectedItemId: string | null;
+  nextItemId: string | null;
+  updatedAt: number;
+}
+
 interface ProgressionProfileRow {
   profile_id: string;
   balance_version: number;
@@ -335,6 +355,14 @@ interface ProgressionItemGrantRow {
   source_event_id: string;
   source_date: string;
   quantity: number;
+  granted_at: number;
+}
+
+interface PermanentProgressionGrantRow {
+  item_id: string;
+  source_kind: string;
+  source_level: number;
+  source_character_id: string | null;
   granted_at: number;
 }
 
@@ -546,6 +574,45 @@ export class ProgressionRepository {
       ) VALUES (?, ?, 1, 0)
       ON CONFLICT(profile_id, character_id) DO NOTHING
       `).run(safeUpdate.profileId, safeUpdate.next.selectedCharacterId);
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  compareAndUpdateEquipmentInTransaction(update: EquipmentUpdate): void {
+    this.assertTransaction();
+    let safe: EquipmentUpdate;
+    try {
+      safe = { ...update };
+    } catch {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertProfileId(safe.profileId);
+    if (!isEquipmentSlot(safe.slot)) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    for (const itemId of [safe.expectedItemId, safe.nextItemId]) {
+      if (itemId !== null && !CATALOG_ITEM_ID_PATTERN.test(itemId)) {
+        throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+      }
+    }
+    assertTimestamp(safe.updatedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const result = this.database.db.prepare(`
+        UPDATE profile_equipment
+        SET item_id = ?, updated_at = ?
+        WHERE profile_id = ? AND slot = ? AND item_id IS ?
+      `).run(
+        safe.nextItemId,
+        safe.updatedAt,
+        safe.profileId,
+        safe.slot,
+        safe.expectedItemId,
+      );
+      if (result.changes !== 1) {
+        throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+      }
     } catch (error) {
       rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
     }
@@ -1045,6 +1112,116 @@ export class ProgressionRepository {
         becameQualified: current?.qualifiedAt === null
           ? qualifiedAt !== null
           : current === null && qualifiedAt !== null,
+      });
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  grantPermanentInventoryItemInTransaction(
+    grant: PermanentInventoryGrant,
+  ): boolean {
+    this.assertTransaction();
+    let safe: PermanentInventoryGrant;
+    try {
+      safe = {
+        profileId: grant.profileId,
+        itemId: grant.itemId,
+        sourceEventId: grant.sourceEventId,
+        source: { ...grant.source },
+        grantedAt: grant.grantedAt,
+      };
+    } catch {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertProfileId(safe.profileId);
+    assertNonemptyString(safe.sourceEventId, 'PROGRESSION_VALUE_INVALID');
+    assertTimestamp(safe.grantedAt, 'PROGRESSION_TIME_INVALID');
+    const definition = getCollectionItemDefinition(safe.itemId);
+    if (
+      !definition
+      || definition.stackable
+      || definition.source.kind === 'streak'
+      || definition.source.kind !== safe.source.kind
+      || definition.source.level !== safe.source.level
+      || (definition.source.kind === 'affinity-level'
+        && safe.source.kind === 'affinity-level'
+        && definition.source.characterId !== safe.source.characterId)
+    ) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    try {
+      const result = this.database.db.prepare(`
+        INSERT INTO permanent_progression_grants (
+          profile_id, item_id, source_event_id, source_kind,
+          source_level, source_character_id, granted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(profile_id, item_id) DO NOTHING
+      `).run(
+        safe.profileId,
+        safe.itemId,
+        safe.sourceEventId,
+        safe.source.kind,
+        safe.source.level,
+        safe.source.kind === 'affinity-level'
+          ? safe.source.characterId
+          : null,
+        safe.grantedAt,
+      );
+      const inventory = this.database.db.prepare(`
+        SELECT quantity, granted_at, updated_at FROM inventory_items
+        WHERE profile_id = ? AND item_id = ?
+      `).get(safe.profileId, safe.itemId) as {
+        quantity: number;
+        granted_at: number;
+        updated_at: number;
+      } | undefined;
+      if (
+        !inventory
+        || inventory.quantity !== 1
+        || inventory.granted_at !== safe.grantedAt
+        || inventory.updated_at !== safe.grantedAt
+      ) {
+        throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+      }
+      return result.changes === 1;
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  getPermanentGrantItemIdsForEventInTransaction(
+    profileId: string,
+    sourceEventId: string,
+  ): string[] {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    assertNonemptyString(sourceEventId, 'PROGRESSION_VALUE_INVALID');
+    try {
+      const rows = this.database.db.prepare(`
+        SELECT item_id, source_kind, source_level, source_character_id,
+               granted_at
+        FROM permanent_progression_grants
+        WHERE profile_id = ? AND source_event_id = ?
+        ORDER BY item_id
+      `).all(profileId, sourceEventId) as unknown as PermanentProgressionGrantRow[];
+      return rows.map(row => {
+        const definition = getCollectionItemDefinition(row.item_id);
+        if (
+          !definition
+          || definition.source.kind === 'streak'
+          || definition.source.kind !== row.source_kind
+          || definition.source.level !== row.source_level
+          || (definition.source.kind === 'affinity-level'
+            ? definition.source.characterId !== row.source_character_id
+            : row.source_character_id !== null)
+        ) {
+          throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+        }
+        assertStoredTimestamp(row.granted_at);
+        return row.item_id;
       });
     } catch (error) {
       rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');

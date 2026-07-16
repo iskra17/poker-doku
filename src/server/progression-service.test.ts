@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { ProfileRepository } from './profile-repository';
+import { getCollectionItemDefinition } from '@/lib/collection/catalog';
 import {
   assignDailyMissions,
   getMissionDefinition,
@@ -78,6 +79,186 @@ describe('ProgressionService', () => {
       balance_version: 1,
     });
     expect(rowCount(database, 'wallets')).toBe(0);
+  });
+
+  it('grants every newly crossed dojo and affinity cosmetic exactly once', () => {
+    const profileId = findProfileWithMission('COMPLETE_ONE_SNG');
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1);
+    database.db.prepare(`
+      UPDATE progression_profiles
+      SET dojo_level = 4, dojo_xp_milli = 174000
+      WHERE profile_id = ?
+    `).run(profileId);
+    database.db.prepare(`
+      UPDATE character_affinity
+      SET level = 4, xp_milli = 84999
+      WHERE profile_id = ? AND character_id = 'sakura'
+    `).run(profileId);
+
+    const input = {
+      profileId,
+      roomId: 'reward-room',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    } as const;
+    const first = service.recordSngFinish(input);
+    const duplicate = service.recordSngFinish(input);
+
+    expect(first.dojoLevelsGained).toEqual([5, 6]);
+    expect(first.affinityLevelsGained).toEqual([5]);
+    expect(first.grantedItemIds).toEqual([
+      'dojo-frame-cherry-blossom',
+      'affinity-sakura-dialogue-pack',
+    ]);
+    expect(duplicate).toEqual(first);
+    expect(database.db.prepare(`
+      SELECT item_id, quantity FROM inventory_items
+      WHERE profile_id = ? ORDER BY item_id
+    `).all(profileId)).toEqual([
+      { item_id: 'affinity-sakura-dialogue-pack', quantity: 1 },
+      { item_id: 'dojo-frame-cherry-blossom', quantity: 1 },
+    ]);
+    expect(database.db.prepare(`
+      SELECT item_id, source_kind, source_level, source_character_id,
+             source_event_id
+      FROM permanent_progression_grants
+      WHERE profile_id = ? ORDER BY item_id
+    `).all(profileId)).toEqual([
+      {
+        item_id: 'affinity-sakura-dialogue-pack',
+        source_kind: 'affinity-level',
+        source_level: 5,
+        source_character_id: 'sakura',
+        source_event_id: first.eventId,
+      },
+      {
+        item_id: 'dojo-frame-cherry-blossom',
+        source_kind: 'dojo-level',
+        source_level: 5,
+        source_character_id: null,
+        source_event_id: first.eventId,
+      },
+    ]);
+  });
+
+  it('rolls permanent grants back when the source event cannot commit', () => {
+    insertProfile(database, 'rollback-reward');
+    repository.getOrCreate('rollback-reward', 'sakura', 1);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 1, dojo_xp_milli = 99999
+      WHERE profile_id = 'rollback-reward'
+    `).run();
+    database.db.exec(`
+      CREATE TRIGGER reject_reward_source
+      BEFORE INSERT ON progression_events
+      WHEN NEW.profile_id = 'rollback-reward'
+      BEGIN SELECT RAISE(ABORT, 'injected event failure'); END;
+    `);
+
+    expect(() => service.recordCompletedHand({
+      profileId: 'rollback-reward',
+      roomId: 'rollback-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    })).toThrow();
+    expect(rowCount(database, 'inventory_items', 'rollback-reward')).toBe(0);
+    expect(rowCount(database, 'permanent_progression_grants', 'rollback-reward')).toBe(0);
+  });
+
+  it('selects only approved characters and lazily creates their affinity', () => {
+    insertProfile(database, 'character-profile');
+    service.getSnapshot('character-profile', 'sakura', 1);
+
+    expect(service.selectCharacter('character-profile', 'ara', 2).profile)
+      .toMatchObject({ selectedCharacterId: 'ara' });
+    expect(repository.getOrCreate('character-profile', 'ara', 3).affinities)
+      .toContainEqual({
+        profileId: 'character-profile',
+        characterId: 'ara',
+        level: 1,
+        xpMilli: 0,
+      });
+    expect(() => service.selectCharacter('character-profile', 'miyako', 4))
+      .toThrowError(ProgressionServiceError);
+  });
+
+  it('equips only owned catalog items in their exact slot and unequips', () => {
+    insertProfile(database, 'equipment-profile');
+    service.getSnapshot('equipment-profile', 'sakura', 1);
+    grantPermanentForTest(
+      database,
+      repository,
+      'equipment-profile',
+      'dojo-frame-cherry-blossom',
+      1,
+    );
+
+    expect(service.setEquipment(
+      'equipment-profile',
+      'frame',
+      'dojo-frame-cherry-blossom',
+      2,
+    ).equipment.frame).toBe('dojo-frame-cherry-blossom');
+    expect(() => service.setEquipment(
+      'equipment-profile',
+      'title',
+      'dojo-frame-cherry-blossom',
+      3,
+    )).toThrowError(ProgressionServiceError);
+    expect(() => service.setEquipment(
+      'equipment-profile',
+      'frame',
+      'dojo-frame-clear-sky',
+      3,
+    )).toThrowError(ProgressionServiceError);
+    expect(service.setEquipment('equipment-profile', 'frame', null, 4)
+      .equipment.frame).toBeNull();
+  });
+
+  it('rejects a skin for a character other than the selected character', () => {
+    insertProfile(database, 'skin-profile');
+    service.getSnapshot('skin-profile', 'sakura', 1);
+    grantPermanentForTest(
+      database,
+      repository,
+      'skin-profile',
+      'affinity-ara-skin',
+      1,
+    );
+
+    expectServiceError(() => service.setEquipment(
+      'skin-profile',
+      'skin',
+      'affinity-ara-skin',
+      2,
+    ), 'PROGRESSION_SKIN_CHARACTER_MISMATCH');
+  });
+
+  it('unequips an incompatible skin when the selected character changes', () => {
+    insertProfile(database, 'skin-switch-profile');
+    service.getSnapshot('skin-switch-profile', 'sakura', 1);
+    grantPermanentForTest(
+      database,
+      repository,
+      'skin-switch-profile',
+      'affinity-sakura-skin',
+      1,
+    );
+    service.setEquipment(
+      'skin-switch-profile',
+      'skin',
+      'affinity-sakura-skin',
+      2,
+    );
+
+    const changed = service.selectCharacter('skin-switch-profile', 'ara', 3);
+
+    expect(changed.profile.selectedCharacterId).toBe('ara');
+    expect(changed.equipment.skin).toBeNull();
   });
 
   it('applies full practice rewards for 30 hands and reduced exact rewards later', () => {
@@ -1400,15 +1581,17 @@ describe('ProgressionService', () => {
       selectedCharacterId: 'chloe',
       completedAt: start + 6 * 24 * 60 * 60 * 1_000,
     })).toThrowError(ProgressionPersistenceError);
-    expect(service.getSnapshot(
+    const snapshotAfterRollback = service.getSnapshot(
       profileId,
       'chloe',
       start + 6 * 24 * 60 * 60 * 1_000,
-    )).toMatchObject({
+    );
+    expect(snapshotAfterRollback).toMatchObject({
       profile: { bestStreak: 6 },
       streak: { currentStreak: 6 },
-      inventory: [],
     });
+    expect(snapshotAfterRollback.inventory.map(item => item.itemId))
+      .not.toContain('streak-fragment');
     expect(database.db.prepare(`
       SELECT COUNT(*) AS count FROM progression_events
       WHERE idempotency_key = ?
@@ -1533,6 +1716,49 @@ function insertProfile(database: PokerDatabase, id: string): void {
     `recovery-lookup-${id}`,
     `alias-${id}`,
   );
+}
+
+function grantPermanentForTest(
+  database: PokerDatabase,
+  repository: ProgressionRepository,
+  profileId: string,
+  itemId: string,
+  grantedAt: number,
+): void {
+  const definition = getCollectionItemDefinition(itemId);
+  if (!definition || definition.source.kind === 'streak') {
+    throw new Error(`Not a permanent reward: ${itemId}`);
+  }
+  const source = definition.source;
+  const sourceEventId = `test-grant-${itemId}-${profileId}`;
+  database.transaction(() => {
+    repository.grantPermanentInventoryItemInTransaction({
+      profileId,
+      itemId,
+      sourceEventId,
+      source,
+      grantedAt,
+    });
+    repository.insertProgressionEvent({
+      idempotencyKey: sourceEventId,
+      profileId,
+      eventType: 'completed-hand',
+      balanceVersion: 1,
+      summary: validStoredSummary(sourceEventId, { grantedItemIds: [itemId] }),
+      createdAt: grantedAt,
+    });
+  });
+}
+
+function findProfileWithMission(missionId: MissionId): string {
+  for (let index = 0; index < 10_000; index += 1) {
+    const profileId = `mission-reward-${index}`;
+    if (assignDailyMissions(profileId, '1970-01-01', 1)
+      .some(mission => mission.id === missionId)) {
+      return profileId;
+    }
+  }
+  throw new Error(`Could not find deterministic mission assignment for ${missionId}`);
 }
 
 function rowCount(

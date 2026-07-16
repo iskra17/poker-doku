@@ -2092,6 +2092,131 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 11,
+    name: 'add_permanent_progression_reward_receipts',
+    sql: `
+      CREATE TABLE v11_progression_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+      INSERT INTO v11_progression_validation(invalid)
+      SELECT 1 FROM inventory_items WHERE item_id != 'streak-fragment';
+
+      CREATE TABLE permanent_progression_grants (
+        profile_id TEXT NOT NULL
+          REFERENCES progression_profiles(profile_id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL CHECK (
+          length(item_id) BETWEEN 1 AND 128
+          AND item_id NOT GLOB '*[^A-Za-z0-9_-]*'
+          AND item_id != 'streak-fragment'
+        ),
+        source_event_id TEXT NOT NULL CHECK (length(source_event_id) > 0),
+        source_kind TEXT NOT NULL CHECK (
+          source_kind IN ('dojo-level', 'affinity-level')
+        ),
+        source_level INTEGER NOT NULL CHECK (source_level BETWEEN 1 AND 50),
+        source_character_id TEXT CHECK (
+          (source_kind = 'dojo-level' AND source_character_id IS NULL)
+          OR (source_kind = 'affinity-level' AND source_character_id IN (
+            'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+          ))
+        ),
+        granted_at INTEGER NOT NULL CHECK (
+          granted_at BETWEEN 0 AND 253402300799999
+        ),
+        PRIMARY KEY (profile_id, item_id),
+        FOREIGN KEY (source_event_id, profile_id)
+          REFERENCES progression_events(idempotency_key, profile_id)
+          ON DELETE NO ACTION DEFERRABLE INITIALLY DEFERRED
+      ) STRICT;
+
+      CREATE INDEX idx_permanent_progression_grants_source_event
+        ON permanent_progression_grants(source_event_id, profile_id);
+
+      DROP TABLE v11_progression_validation;
+
+      CREATE TRIGGER validate_permanent_grant_insert
+      BEFORE INSERT ON permanent_progression_grants
+      WHEN EXISTS (
+        SELECT 1 FROM progression_events WHERE idempotency_key = NEW.source_event_id
+      ) AND NOT EXISTS (
+        SELECT 1 FROM progression_events AS source_event
+        WHERE source_event.idempotency_key = NEW.source_event_id
+          AND source_event.profile_id = NEW.profile_id
+          AND source_event.event_type IN ('completed-hand', 'sng-finish')
+          AND source_event.created_at = NEW.granted_at
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid permanent grant source');
+      END;
+
+      CREATE TRIGGER validate_permanent_grant_source_event_insert
+      BEFORE INSERT ON progression_events
+      WHEN EXISTS (
+        SELECT 1 FROM permanent_progression_grants AS grant_row
+        WHERE grant_row.source_event_id = NEW.idempotency_key
+          AND (
+            grant_row.profile_id != NEW.profile_id
+            OR NEW.event_type NOT IN ('completed-hand', 'sng-finish')
+            OR grant_row.granted_at != NEW.created_at
+            OR NOT json_valid(NEW.summary_json)
+            OR NOT EXISTS (
+              SELECT 1 FROM json_each(NEW.summary_json, '$.grantedItemIds')
+              WHERE type = 'text' AND value = grant_row.item_id
+            )
+          )
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid permanent grant source event');
+      END;
+
+      CREATE TRIGGER reject_permanent_source_event_update
+      BEFORE UPDATE ON progression_events
+      WHEN EXISTS (
+        SELECT 1 FROM permanent_progression_grants
+        WHERE source_event_id = OLD.idempotency_key
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable permanent grant source event'); END;
+
+      CREATE TRIGGER sync_permanent_inventory_insert
+      AFTER INSERT ON permanent_progression_grants
+      BEGIN
+        INSERT INTO inventory_items (
+          profile_id, item_id, quantity, granted_at, updated_at
+        ) VALUES (NEW.profile_id, NEW.item_id, 1, NEW.granted_at, NEW.granted_at)
+        ON CONFLICT(profile_id, item_id) DO NOTHING;
+      END;
+
+      CREATE TRIGGER reject_permanent_grant_update
+      BEFORE UPDATE ON permanent_progression_grants
+      BEGIN SELECT RAISE(ABORT, 'immutable permanent progression grant'); END;
+
+      CREATE TRIGGER reject_permanent_grant_delete
+      BEFORE DELETE ON permanent_progression_grants
+      WHEN EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable permanent progression grant'); END;
+
+      CREATE TRIGGER protect_permanent_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM permanent_progression_grants
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable permanent inventory item'); END;
+
+      CREATE TRIGGER protect_permanent_inventory_delete
+      BEFORE DELETE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM permanent_progression_grants
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      ) AND EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable permanent inventory item'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -20,6 +20,8 @@ import {
 } from './persistence/backup';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
+import { ProgressionRepository } from './progression-repository';
+import { ProgressionService } from './progression-service';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
 import {
   setupSocketHandlers,
@@ -46,6 +48,7 @@ let profileRateLimiter: TransientHttpRateLimiter | undefined;
 let profileManager: ProfileManager | undefined;
 let economyService: EconomyService | undefined;
 let economyRuntime: EconomyRuntime | undefined;
+let progressionService: ProgressionService | undefined;
 let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
 
@@ -97,6 +100,8 @@ function initializePersistenceAndRecover(): void {
   const economyRepository = new EconomyRepository(database);
   economyService = new EconomyService(economyRepository);
   economyRuntime = new EconomyRuntime(economyService);
+  const progressionRepository = new ProgressionRepository(database);
+  progressionService = new ProgressionService(database, progressionRepository);
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
   // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
   economyRuntime.recoverActiveEscrows();
@@ -118,7 +123,13 @@ function initializePersistenceAndRecover(): void {
 }
 
 async function listen(): Promise<void> {
-  if (!database || !profileManager || !economyService || !economyRuntime) {
+  if (
+    !database
+    || !profileManager
+    || !economyService
+    || !economyRuntime
+    || !progressionService
+  ) {
     throw new Error('Persistence must be initialized before listening');
   }
   profileRateLimiter = new TransientHttpRateLimiter();
@@ -129,6 +140,7 @@ async function listen(): Promise<void> {
     database,
     profileManager,
     economyService,
+    progressionService,
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,

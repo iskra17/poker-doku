@@ -12,7 +12,12 @@ import {
   advanceStreakDay,
   reconcileWeeklyRestPass,
 } from '@/lib/progression/streak';
-import { STREAK_FRAGMENT_ITEM } from '@/lib/collection/catalog';
+import {
+  STREAK_FRAGMENT_ITEM,
+  getAffinityRewardItems,
+  getCollectionItemDefinition,
+  getDojoRewardItems,
+} from '@/lib/collection/catalog';
 import { parseProgressionRewardSummary } from '@/lib/progression/reward-summary';
 import type {
   MissionCompletion,
@@ -25,6 +30,7 @@ import {
   ProgressionRepository,
   type CharacterAffinity,
   type DailyMissionDaySnapshot,
+  type EquipmentSlot,
   type PlayableCharacterId,
   type ProgressionCounters,
   type ProgressionEvent,
@@ -48,7 +54,10 @@ export type ProgressionServiceErrorCode =
   | 'PROGRESSION_PROFILE_NOT_FOUND'
   | 'PROGRESSION_MISSION_NOT_FOUND'
   | 'PROGRESSION_MISSION_COMPLETED'
-  | 'PROGRESSION_MISSION_REROLL_USED';
+  | 'PROGRESSION_MISSION_REROLL_USED'
+  | 'PROGRESSION_ITEM_NOT_OWNED'
+  | 'PROGRESSION_EQUIPMENT_SLOT_INVALID'
+  | 'PROGRESSION_SKIN_CHARACTER_MISMATCH';
 
 export class ProgressionServiceError extends Error {
   constructor(readonly code: ProgressionServiceErrorCode) {
@@ -72,6 +81,11 @@ export interface SngFinishInput {
   place: number;
   selectedCharacterId: string;
   completedAt: number;
+}
+
+export interface ProgressionView {
+  progression: ProgressionSnapshot;
+  missions: DailyMissionDaySnapshot;
 }
 
 interface ValidCompletedHandInput extends Omit<
@@ -122,6 +136,128 @@ export class ProgressionService {
         characterId,
       );
       return this.reconcileWeeklyRestPass(snapshot, at);
+    });
+  }
+
+  getView(
+    profileId: string,
+    selectedCharacterId: string,
+    at = Date.now(),
+  ): ProgressionView {
+    assertBoundedId(profileId);
+    const characterId = assertCharacter(selectedCharacterId);
+    assertTimestamp(at);
+    return this.database.transaction(() => {
+      let snapshot = this.repository.getOrCreateInTransaction(
+        profileId,
+        characterId,
+        at,
+      );
+      snapshot = this.reconcileWeeklyRestPass(snapshot, at);
+      const missionDate = getKstDateKey(at);
+      const missions = this.repository.ensureDailyMissionsInTransaction(
+        profileId,
+        missionDate,
+        snapshot.profile.balanceVersion,
+        at,
+      );
+      return { progression: snapshot, missions };
+    });
+  }
+
+  selectCharacter(
+    profileId: string,
+    characterId: string,
+    updatedAt = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    const selectedCharacterId = assertCharacter(characterId);
+    assertTimestamp(updatedAt);
+    return this.database.transaction(() => {
+      const snapshot = this.repository.getOrCreateInTransaction(
+        profileId,
+        selectedCharacterId,
+        updatedAt,
+      );
+      const equippedSkinId = snapshot.equipment.skin;
+      if (equippedSkinId !== null) {
+        const equippedSkin = getCollectionItemDefinition(equippedSkinId);
+        if (!equippedSkin || equippedSkin.kind !== 'skin') {
+          throw new ProgressionPersistenceError(
+            'PROGRESSION_PERSISTENCE_INVALID',
+          );
+        }
+        if (equippedSkin.characterId !== selectedCharacterId) {
+          this.repository.compareAndUpdateEquipmentInTransaction({
+            profileId,
+            slot: 'skin',
+            expectedItemId: equippedSkinId,
+            nextItemId: null,
+            updatedAt,
+          });
+        }
+      }
+      if (snapshot.profile.selectedCharacterId !== selectedCharacterId) {
+        this.repository.compareAndUpdateProgressionInTransaction({
+          profileId,
+          expected: {
+            balanceVersion: snapshot.profile.balanceVersion,
+            dojoLevel: snapshot.profile.dojoLevel,
+            dojoXpMilli: snapshot.profile.dojoXpMilli,
+            selectedCharacterId: snapshot.profile.selectedCharacterId,
+          },
+          next: {
+            balanceVersion: snapshot.profile.balanceVersion,
+            dojoLevel: snapshot.profile.dojoLevel,
+            dojoXpMilli: snapshot.profile.dojoXpMilli,
+            selectedCharacterId,
+          },
+          updatedAt: Math.max(snapshot.profile.updatedAt, updatedAt),
+        });
+      }
+      return this.repository.getSnapshotInTransaction(profileId);
+    });
+  }
+
+  setEquipment(
+    profileId: string,
+    slot: string,
+    itemId: string | null,
+    updatedAt = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    const safeSlot = assertEquipmentSlot(slot);
+    if (itemId !== null && typeof itemId !== 'string') {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    assertTimestamp(updatedAt);
+    return this.database.transaction(() => {
+      const snapshot = this.repository.getSnapshotInTransaction(profileId);
+      if (itemId !== null) {
+        const definition = getCollectionItemDefinition(itemId);
+        if (!definition || definition.equipSlot !== safeSlot) {
+          throw new ProgressionServiceError('PROGRESSION_EQUIPMENT_SLOT_INVALID');
+        }
+        if (!snapshot.inventory.some(item => item.itemId === itemId)) {
+          throw new ProgressionServiceError('PROGRESSION_ITEM_NOT_OWNED');
+        }
+        if (
+          definition.kind === 'skin'
+          && definition.characterId !== snapshot.profile.selectedCharacterId
+        ) {
+          throw new ProgressionServiceError(
+            'PROGRESSION_SKIN_CHARACTER_MISMATCH',
+          );
+        }
+      }
+      this.repository.compareAndUpdateEquipmentInTransaction({
+        profileId,
+        slot: safeSlot,
+        expectedItemId: snapshot.equipment[safeSlot],
+        nextItemId: itemId,
+        updatedAt,
+      });
+      return this.repository.getSnapshotInTransaction(profileId);
     });
   }
 
@@ -330,10 +466,11 @@ export class ProgressionService {
     try {
       return this.database.transaction(() => {
         const snapshot = this.repository.getSnapshotInTransaction(profileId);
-        const day = this.repository.readDailyMissionDayInTransaction(
+        const day = this.repository.ensureDailyMissionsInTransaction(
           profileId,
           kstDate,
           snapshot.profile.balanceVersion,
+          requestedAt,
         );
         const current = day.missions[slot];
         if (!current) {
@@ -540,7 +677,39 @@ export class ProgressionService {
     });
     const summary = parseStoredSummary(duplicate.event, eventId);
     this.validateStoredFragmentClaim(duplicate.event, summary);
+    this.validateStoredPermanentClaims(duplicate.event, summary);
     return summary;
+  }
+
+  private validateStoredPermanentClaims(
+    event: ProgressionEvent,
+    summary: ProgressionRewardSummary,
+  ): void {
+    try {
+      const claimed = summary.grantedItemIds
+        .filter(itemId => itemId !== STREAK_FRAGMENT_ITEM.id)
+        .sort();
+      if (claimed.some(itemId => {
+        const definition = getCollectionItemDefinition(itemId);
+        return !definition || definition.source.kind === 'streak';
+      })) {
+        throw new Error('unknown permanent reward claim');
+      }
+      const receipts = this.repository
+        .getPermanentGrantItemIdsForEventInTransaction(
+          event.profileId,
+          event.idempotencyKey,
+        )
+        .sort();
+      if (
+        claimed.length !== receipts.length
+        || claimed.some((itemId, index) => itemId !== receipts[index])
+      ) {
+        throw new Error('permanent reward receipt mismatch');
+      }
+    } catch {
+      throw new ProgressionServiceError('PROGRESSION_STORED_SUMMARY_INVALID');
+    }
   }
 
   private validateStoredFragmentClaim(
@@ -610,6 +779,25 @@ export class ProgressionService {
       input.affinityReward,
       input.balance,
     );
+    const grantedItemIds = [...input.grantedItemIds];
+    const permanentRewards = [
+      ...getDojoRewardItems(input.profile.dojoLevel, nextDojo.level),
+      ...getAffinityRewardItems(
+        input.affinity.characterId,
+        input.affinity.level,
+        nextAffinity.level,
+      ),
+    ];
+    for (const reward of permanentRewards) {
+      const granted = this.repository.grantPermanentInventoryItemInTransaction({
+        profileId: input.profile.profileId,
+        itemId: reward.id,
+        sourceEventId: input.eventId,
+        source: reward.source,
+        grantedAt: input.completedAt,
+      });
+      if (granted) grantedItemIds.push(reward.id);
+    }
     const summary: ProgressionRewardSummary = {
       eventId: input.eventId,
       dojoXpMilli: input.dojoReward,
@@ -624,7 +812,7 @@ export class ProgressionService {
         nextAffinity.level,
       ),
       missionCompletions: input.missionCompletions,
-      grantedItemIds: input.grantedItemIds,
+      grantedItemIds,
     };
     if (input.streakChange) summary.streak = input.streakChange;
     const updatedAt = Math.max(input.profile.updatedAt, input.completedAt);
@@ -789,6 +977,13 @@ function assertCharacter(value: string): PlayableCharacterId {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
   return value as PlayableCharacterId;
+}
+
+function assertEquipmentSlot(value: string): EquipmentSlot {
+  if (!['title', 'frame', 'skin', 'cutin'].includes(value)) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  return value as EquipmentSlot;
 }
 
 function assertTimestamp(value: number): void {

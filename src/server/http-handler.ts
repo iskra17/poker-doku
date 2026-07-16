@@ -12,6 +12,10 @@ import {
   type EconomyHttpService,
   type ProfileHttpManager,
 } from './profile-http';
+import {
+  createProgressionHttpHandler,
+  type ProgressionHttpService,
+} from './progression-http';
 
 export type NextRequestHandler = (
   req: IncomingMessage,
@@ -24,6 +28,7 @@ interface HttpHandlerCommonOptions {
   database?: PokerDatabase;
   production?: boolean;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  now?: () => number;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -31,6 +36,7 @@ interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
   economyService?: undefined;
   profileRateLimiter?: undefined;
   profileConcurrencyGate?: undefined;
+  progressionService?: undefined;
 }
 
 interface HttpHandlerWithProfileOptions extends HttpHandlerCommonOptions {
@@ -38,6 +44,7 @@ interface HttpHandlerWithProfileOptions extends HttpHandlerCommonOptions {
   economyService: EconomyHttpService;
   profileRateLimiter: TransientHttpRateLimiter;
   profileConcurrencyGate?: TransientHttpConcurrencyGate;
+  progressionService?: ProgressionHttpService;
 }
 
 export type HttpHandlerOptions =
@@ -89,6 +96,16 @@ export function createHttpRequestHandler(
         onProfileRevoked: options.onProfileRevoked,
       })
     : undefined;
+  const progressionHandler = options.profileManager && options.progressionService
+    ? createProgressionHttpHandler({
+        manager: options.profileManager,
+        service: options.progressionService,
+        rateLimiter: options.profileRateLimiter,
+        concurrencyGate: options.profileConcurrencyGate,
+        production: options.production ?? process.env.NODE_ENV === 'production',
+        now: options.now,
+      })
+    : undefined;
   return (req, res) => {
     const dispatch = async (): Promise<void> => {
       const parsedUrl = parse(req.url ?? '/', true);
@@ -107,6 +124,12 @@ export function createHttpRequestHandler(
         return;
       }
       if (profileHandler && await profileHandler(req, res, parsedUrl.pathname)) {
+        return;
+      }
+      if (
+        progressionHandler
+        && await progressionHandler(req, res, parsedUrl.pathname)
+      ) {
         return;
       }
       await nextHandler(req, res, parsedUrl);

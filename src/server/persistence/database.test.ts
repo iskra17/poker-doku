@@ -44,7 +44,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(10);
+    expect(migration.version).toBe(11);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -65,6 +65,7 @@ describe('PokerDatabase migrations', () => {
         'daily_mission_modes',
         'streak_daily_progress',
         'progression_item_grants',
+        'permanent_progression_grants',
       ]),
     );
     expect(profileColumns).toEqual(
@@ -89,7 +90,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(10);
+    expect(result.count).toBe(11);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -117,7 +118,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -139,7 +140,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -180,7 +181,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
   });
 
@@ -219,7 +220,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -527,7 +528,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -775,7 +776,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 },
+      { version: 10 }, { version: 11 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1037,7 +1038,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 10 });
+    `).get()).toEqual({ version: 11 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -1380,7 +1381,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 10 });
+    `).get()).toEqual({ version: 11 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -2054,6 +2055,7 @@ describe('PokerDatabase migrations', () => {
       'daily_mission_modes',
       'streak_daily_progress',
       'progression_item_grants',
+      'permanent_progression_grants',
     ]) {
       const row = database.db.prepare(
         `SELECT COUNT(*) AS count FROM ${table}`,
