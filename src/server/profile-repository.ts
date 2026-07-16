@@ -53,6 +53,13 @@ export class ProfileRepository {
     return this.hasValue('recovery_lookup', lookup);
   }
 
+  findRecoveryLookupByProfileId(profileId: string): string | null {
+    const row = this.database.db.prepare(`
+      SELECT recovery_lookup FROM profiles WHERE id = ?
+    `).get(profileId) as { recovery_lookup: string } | undefined;
+    return row?.recovery_lookup ?? null;
+  }
+
   createWithWallet(profile: StoredProfileCreation): PublicProfile {
     return this.database.transaction(() => {
       this.database.db.prepare(`
@@ -156,17 +163,19 @@ export class ProfileRepository {
       StoredSecretRotation,
       'recoveryHash' | 'recoveryLookup' | 'now'
     >,
+    expectedRecoveryLookup: string,
   ): PublicProfile | null {
     return this.database.transaction(() => {
       const result = this.database.db.prepare(`
         UPDATE profiles
         SET recovery_hash = ?, recovery_lookup = ?, updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND recovery_lookup = ?
       `).run(
         rotation.recoveryHash,
         rotation.recoveryLookup,
         rotation.now,
         profileId,
+        expectedRecoveryLookup,
       );
       return result.changes === 0
         ? null

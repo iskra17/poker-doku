@@ -22,12 +22,19 @@ const PLAYABLE_AVATARS = new Set([
   'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena',
 ]);
 const MAX_RECOVERY_INPUT_LENGTH = 1_024;
+export const SCRYPT_V1_OPTIONS = {
+  N: 16_384,
+  r: 8,
+  p: 1,
+  maxmem: 32 * 1024 * 1024,
+} as const;
 
 export type ProfileErrorCode =
   | 'ADULT_CONFIRMATION_REQUIRED'
   | 'INVALID_AVATAR'
   | 'ALIAS_GENERATION_EXHAUSTED'
   | 'PROFILE_SECRET_GENERATION_EXHAUSTED'
+  | 'PROFILE_SECRET_CONFLICT'
   | 'PROFILE_HAS_ACTIVE_ESCROW'
   | 'PROFILE_NOT_FOUND';
 
@@ -62,13 +69,19 @@ const secureEntropy: ProfileEntropy = {
 
 const asynchronousScrypt: ProfileKdf = {
   derive: (secret, salt) => new Promise((resolve, reject) => {
-    scrypt(secret, Buffer.from(salt), 32, (error, derivedKey) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(derivedKey);
-    });
+    scrypt(
+      secret,
+      Buffer.from(salt),
+      32,
+      SCRYPT_V1_OPTIONS,
+      (error, derivedKey) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(derivedKey);
+      },
+    );
   }),
 };
 
@@ -100,18 +113,27 @@ export class ProfileManager {
     throw new ProfileDomainError('ALIAS_GENERATION_EXHAUSTED');
   }
 
-  async authenticateCredential(credential: string): Promise<PublicProfile | null> {
+  async authenticateCredential(
+    credential: string,
+  ): Promise<PublicProfile | null> {
     if (!isCanonicalCredential(credential)) return null;
-    const stored = this.repository.findByCredentialLookup(
-      digestSecret(credential),
-    );
+    const credentialLookup = digestSecret(credential);
+    const stored = this.repository.findByCredentialLookup(credentialLookup);
     if (
       !stored
       || !await verifySecret(credential, stored.verifier, this.kdf)
     ) {
       return null;
     }
-    return stored.profile;
+    const current = this.repository.findByCredentialLookup(credentialLookup);
+    if (
+      !current
+      || current.verifier !== stored.verifier
+      || current.profile.id !== stored.profile.id
+    ) {
+      return null;
+    }
+    return current.profile;
   }
 
   async recover(recoveryWords: string): Promise<CreatedProfile | null> {
@@ -165,6 +187,11 @@ export class ProfileManager {
   }
 
   async rotateRecovery(profileId: string): Promise<string> {
+    const expectedRecoveryLookup = this.repository
+      .findRecoveryLookupByProfileId(profileId);
+    if (!expectedRecoveryLookup) {
+      throw new ProfileDomainError('PROFILE_NOT_FOUND');
+    }
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const recoveryWords = canonicalRecoveryWords(
         this.entropy.recoveryWords(),
@@ -173,12 +200,16 @@ export class ProfileManager {
       const recoveryLookup = digestSecret(recoveryWords);
       if (this.repository.hasRecoveryLookup(recoveryLookup)) continue;
       try {
-        const profile = this.repository.rotateRecovery(profileId, {
-          recoveryHash: await this.hashSecret(recoveryWords),
-          recoveryLookup,
-          now: this.now(),
-        });
-        if (!profile) throw new ProfileDomainError('PROFILE_NOT_FOUND');
+        const profile = this.repository.rotateRecovery(
+          profileId,
+          {
+            recoveryHash: await this.hashSecret(recoveryWords),
+            recoveryLookup,
+            now: this.now(),
+          },
+          expectedRecoveryLookup,
+        );
+        if (!profile) throw new ProfileDomainError('PROFILE_SECRET_CONFLICT');
         return recoveryWords;
       } catch (error) {
         if (!isUniqueConstraint(error)) throw error;

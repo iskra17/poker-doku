@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import {
   ProfileManager,
+  SCRYPT_V1_OPTIONS,
   type ProfileEntropy,
   type ProfileKdf,
 } from './profile-manager';
@@ -511,6 +512,159 @@ describe('ProfileManager', () => {
     const recovered = await Promise.all([first, second]);
     expect(recovered.filter(result => result !== null)).toHaveLength(1);
   });
+
+  it('rejects a credential revoked while its KDF verification is pending', async () => {
+    const created = await manager.create({
+      avatarId: 'elena',
+      adultConfirmed: true,
+    });
+    let releaseVerification = (): void => undefined;
+    const verificationGate = new Promise<void>(resolve => {
+      releaseVerification = resolve;
+    });
+    let markVerificationStarted = (): void => undefined;
+    const verificationStarted = new Promise<void>(resolve => {
+      markVerificationStarted = resolve;
+    });
+    const kdf: ProfileKdf = {
+      derive: async (secret, salt) => {
+        if (secret === created.credential) {
+          markVerificationStarted();
+          await verificationGate;
+        }
+        return deriveScrypt(secret, salt);
+      },
+    };
+    const authenticatingManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeScriptedEntropy({ recoveryWords: [], seed: 'stale-auth' }),
+      Date.now,
+      kdf,
+    );
+
+    const pendingAuthentication = authenticatingManager.authenticateCredential(
+      created.credential,
+    );
+    await verificationStarted;
+    await manager.recover(created.recoveryWords);
+    releaseVerification();
+
+    await expect(pendingAuthentication).resolves.toBeNull();
+  });
+
+  it('returns only one recovery code from concurrent rotations', async () => {
+    const created = await manager.create({
+      avatarId: 'sakura',
+      adultConfirmed: true,
+    });
+    const rotatingManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeScriptedEntropy({
+        recoveryWords: [
+          generateMnemonic(koreanWordlist, 128),
+          generateMnemonic(koreanWordlist, 128),
+        ],
+        seed: 'concurrent-rotate-recovery',
+      }),
+      Date.now,
+      createPairGateKdf(),
+    );
+
+    const settled = await Promise.allSettled([
+      rotatingManager.rotateRecovery(created.profile.id),
+      rotatingManager.rotateRecovery(created.profile.id),
+    ]);
+    const fulfilled = settled.filter(
+      (result): result is PromiseFulfilledResult<string> => (
+        result.status === 'fulfilled'
+      ),
+    );
+    const rejected = settled.filter(
+      (result): result is PromiseRejectedResult => result.status === 'rejected',
+    );
+
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toEqual(expect.objectContaining({
+      code: 'PROFILE_SECRET_CONFLICT',
+    }));
+    const current = storedSecretState(database, created.profile.id);
+    expect(current.recovery_lookup).toBe(
+      createHash('sha256')
+        .update(fulfilled[0].value, 'utf8')
+      .digest('base64url'),
+    );
+  });
+
+  it('rejects a credential whose profile is deleted during KDF verification', async () => {
+    const created = await manager.create({
+      avatarId: 'hana',
+      adultConfirmed: true,
+    });
+    const gate = createManualGateKdf(created.credential, true);
+    const authenticatingManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeScriptedEntropy({ recoveryWords: [], seed: 'deleted-auth' }),
+      Date.now,
+      gate.kdf,
+    );
+
+    const pendingAuthentication = authenticatingManager.authenticateCredential(
+      created.credential,
+    );
+    await gate.started;
+    manager.deleteProfile(created.profile.id);
+    gate.release();
+
+    await expect(pendingAuthentication).resolves.toBeNull();
+  });
+
+  it('rejects recovery rotation made stale by a concurrent full recovery', async () => {
+    const created = await manager.create({
+      avatarId: 'vivian',
+      adultConfirmed: true,
+    });
+    const gate = createManualGateKdf(undefined, false);
+    const rotatingManager = new ProfileManager(
+      new ProfileRepository(database),
+      makeScriptedEntropy({
+        recoveryWords: [generateMnemonic(koreanWordlist, 128)],
+        seed: 'rotate-versus-recover',
+      }),
+      Date.now,
+      gate.kdf,
+    );
+
+    const pendingRotation = rotatingManager.rotateRecovery(created.profile.id);
+    await gate.started;
+    const recovered = await manager.recover(created.recoveryWords);
+    gate.release();
+
+    await expect(pendingRotation).rejects.toEqual(expect.objectContaining({
+      code: 'PROFILE_SECRET_CONFLICT',
+    }));
+    expect(recovered).not.toBeNull();
+    expect(storedSecretState(database, created.profile.id).recovery_lookup).toBe(
+      createHash('sha256')
+        .update(recovered?.recoveryWords ?? '', 'utf8')
+        .digest('base64url'),
+    );
+  });
+
+  it('preserves PROFILE_NOT_FOUND for an initially missing recovery profile', async () => {
+    await expect(manager.rotateRecovery('p_missing')).rejects.toEqual(
+      expect.objectContaining({ code: 'PROFILE_NOT_FOUND' }),
+    );
+  });
+
+  it('pins the scrypt v1 cost parameters', () => {
+    expect(SCRYPT_V1_OPTIONS).toEqual({
+      N: 16_384,
+      r: 8,
+      p: 1,
+      maxmem: 32 * 1024 * 1024,
+    });
+  });
 });
 
 function economyRowCounts(database: PokerDatabase): {
@@ -630,4 +784,53 @@ function deriveScrypt(
       resolve(derivedKey);
     });
   });
+}
+
+function createPairGateKdf(): ProfileKdf {
+  let callCount = 0;
+  let release = (): void => undefined;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  return {
+    derive: async (_secret, salt) => {
+      callCount += 1;
+      if (callCount === 2) release();
+      await gate;
+      return createHash('sha256').update(salt).digest();
+    },
+  };
+}
+
+function createManualGateKdf(
+  verifiedSecret: string | undefined,
+  useScrypt: boolean,
+): {
+  kdf: ProfileKdf;
+  started: Promise<void>;
+  release: () => void;
+} {
+  let release = (): void => undefined;
+  const gate = new Promise<void>(resolve => {
+    release = resolve;
+  });
+  let markStarted = (): void => undefined;
+  const started = new Promise<void>(resolve => {
+    markStarted = resolve;
+  });
+  return {
+    started,
+    release,
+    kdf: {
+      derive: async (secret, salt) => {
+        if (verifiedSecret === undefined || secret === verifiedSecret) {
+          markStarted();
+          await gate;
+        }
+        return useScrypt
+          ? deriveScrypt(secret, salt)
+          : createHash('sha256').update(salt).digest();
+      },
+    },
+  };
 }
