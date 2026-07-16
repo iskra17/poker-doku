@@ -992,6 +992,7 @@ interface CloneFrame {
   source: object;
   target: CanonicalJsonObject | CanonicalJsonValue[];
   depth: number;
+  ancestors: ReadonlySet<object>;
 }
 
 function canonicalizeSummary(
@@ -1008,13 +1009,18 @@ function canonicalizeSummary(
     }
 
     const root = Object.create(null) as CanonicalJsonObject;
-    const seen = new Set<object>([summary]);
-    const stack: CloneFrame[] = [{ source: summary, target: root, depth: 0 }];
+    const stack: CloneFrame[] = [{
+      source: summary,
+      target: root,
+      depth: 0,
+      ancestors: new Set([summary]),
+    }];
     let nodeCount = 1;
 
     const cloneValue = (
       value: unknown,
       depth: number,
+      ancestors: ReadonlySet<object>,
     ): CanonicalJsonValue => {
       nodeCount += 1;
       if (nodeCount > PROGRESSION_SUMMARY_LIMITS.maxNodes) {
@@ -1031,17 +1037,23 @@ function canonicalizeSummary(
         if (!Number.isSafeInteger(value)) {
           throw new ProgressionPersistenceError(code);
         }
-        return value;
+        return Object.is(value, -0) ? 0 : value;
       }
       if (typeof value !== 'object' || depth > PROGRESSION_SUMMARY_LIMITS.maxDepth) {
         throw new ProgressionPersistenceError(code);
       }
-      if (seen.has(value)) throw new ProgressionPersistenceError(code);
-      seen.add(value);
+      if (ancestors.has(value)) throw new ProgressionPersistenceError(code);
+      const childAncestors = new Set(ancestors);
+      childAncestors.add(value);
       const child: CanonicalJsonObject | CanonicalJsonValue[] = Array.isArray(value)
         ? []
         : Object.create(null) as CanonicalJsonObject;
-      stack.push({ source: value, target: child, depth });
+      stack.push({
+        source: value,
+        target: child,
+        depth,
+        ancestors: childAncestors,
+      });
       return child;
     };
 
@@ -1094,7 +1106,11 @@ function canonicalizeSummary(
           ) {
             throw new ProgressionPersistenceError(code);
           }
-          frame.target[index] = cloneValue(descriptor.value, frame.depth + 1);
+          frame.target[index] = cloneValue(
+            descriptor.value,
+            frame.depth + 1,
+            frame.ancestors,
+          );
         }
       } else {
         if (
@@ -1122,7 +1138,11 @@ function canonicalizeSummary(
             throw new ProgressionPersistenceError(code);
           }
           Object.defineProperty(frame.target, key, {
-            value: cloneValue(descriptor.value, frame.depth + 1),
+            value: cloneValue(
+              descriptor.value,
+              frame.depth + 1,
+              frame.ancestors,
+            ),
             enumerable: true,
             configurable: false,
             writable: false,

@@ -428,6 +428,14 @@ describe('ProgressionRepository', () => {
       () => insertEvent(repository, database, 'cycle', cyclic),
       'PROGRESSION_VALUE_INVALID',
     );
+    const indirectA: Record<string, unknown> = {};
+    const indirectB: Record<string, unknown> = {};
+    indirectA.next = indirectB;
+    indirectB.previous = indirectA;
+    captureError(
+      () => insertEvent(repository, database, 'indirect-cycle', indirectA),
+      'PROGRESSION_VALUE_INVALID',
+    );
 
     const tooDeep: Record<string, unknown> = {};
     let cursor = tooDeep;
@@ -483,6 +491,83 @@ describe('ProgressionRepository', () => {
     expect(inserted.event.summary).toEqual({ a: { b: 3, y: 2 }, z: 1 });
     expect(Object.isFrozen(inserted.event.summary)).toBe(true);
     expect(Object.isFrozen(inserted.event.summary.a)).toBe(true);
+  });
+
+  it('normalizes negative zero consistently across insert and DB roundtrip', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+
+    const inserted = database.transaction(() => (
+      repository.insertProgressionEvent({
+        idempotencyKey: 'numeric-event',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: { negativeZero: -0, zero: 0, positive: 7, negative: -7 },
+        createdAt: 2_000,
+      })
+    ));
+    const duplicate = database.transaction(() => (
+      repository.insertProgressionEvent({
+        idempotencyKey: 'numeric-event',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: {},
+        createdAt: 3_000,
+      })
+    ));
+    const insertedSummary = inserted.event.summary as Record<string, number>;
+    const duplicateSummary = duplicate.event.summary as Record<string, number>;
+
+    expect(Object.is(insertedSummary.negativeZero, 0)).toBe(true);
+    expect(Object.is(insertedSummary.negativeZero, -0)).toBe(false);
+    expect(Object.is(
+      insertedSummary.negativeZero,
+      duplicateSummary.negativeZero,
+    )).toBe(true);
+    expect(insertedSummary).toEqual(duplicateSummary);
+    expect(insertedSummary).toMatchObject({
+      zero: 0,
+      positive: 7,
+      negative: -7,
+    });
+  });
+
+  it('expands shared-reference DAGs into distinct immutable clones', () => {
+    insertProfile(database, 'profile-a');
+    repository.getOrCreate('profile-a', 'sakura', 1_000);
+    const shared = { value: 7, nested: [1, 2] };
+
+    const inserted = database.transaction(() => (
+      repository.insertProgressionEvent({
+        idempotencyKey: 'dag-event',
+        profileId: 'profile-a',
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: { a: shared, b: shared },
+        createdAt: 2_000,
+      })
+    ));
+    const summary = inserted.event.summary as {
+      a: { value: number; nested: number[] };
+      b: { value: number; nested: number[] };
+    };
+
+    expect(summary.a).toEqual(summary.b);
+    expect(summary.a).not.toBe(summary.b);
+    expect(summary.a.nested).not.toBe(summary.b.nested);
+    expect(Object.isFrozen(summary.a)).toBe(true);
+    expect(Object.isFrozen(summary.b)).toBe(true);
+    expect(Object.isFrozen(summary.a.nested)).toBe(true);
+    expect(Object.isFrozen(summary.b.nested)).toBe(true);
+
+    const stored = database.transaction(() => (
+      repository.getProgressionEvent('dag-event')
+    ));
+    const storedSummary = stored?.summary as typeof summary;
+    expect(storedSummary.a).toEqual(storedSummary.b);
+    expect(storedSummary.a).not.toBe(storedSummary.b);
   });
 
   it('validates and compare-and-swaps core, counters, and affinity rows', () => {
