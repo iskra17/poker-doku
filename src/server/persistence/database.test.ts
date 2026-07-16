@@ -689,11 +689,24 @@ describe('PokerDatabase migrations', () => {
       UPDATE daily_missions SET progress = 1
       WHERE profile_id = 'mission-v6-constraints' AND slot = 0
     `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET progress = 0
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
     database.db.prepare(`
       UPDATE daily_missions
       SET progress = target, completed_at = 3, rewarded_at = 3
       WHERE profile_id = 'mission-v6-constraints' AND slot = 0
     `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET completed_at = 4, rewarded_at = 4
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions
+      SET progress = 0, completed_at = NULL, rewarded_at = NULL
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
     expect(database.db.prepare(`
       SELECT mission_id, reroll_count, assigned_at, progress,
              completed_at, rewarded_at

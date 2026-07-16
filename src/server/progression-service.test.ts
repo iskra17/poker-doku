@@ -275,6 +275,7 @@ describe('ProgressionService', () => {
       1,
     );
     const summary = validStoredSummary(eventId, {
+      dojoXpMilli: 110_000,
       dojoLevelsGained: [2, 3],
       affinityLevelsGained: [2],
       missionCompletions: [{
@@ -341,6 +342,14 @@ describe('ProgressionService', () => {
         slot: 0,
         dojoXpMilli: 0,
       }] },
+      {
+        dojoXpMilli: 0,
+        missionCompletions: [{
+          missionId: 'COMPLETE_HANDS_ANY_10',
+          slot: 0,
+          dojoXpMilli: 100_000,
+        }],
+      },
       { missionCompletions: [{
         missionId: 'BAD\u0000MISSION',
         slot: 0,
@@ -979,6 +988,56 @@ describe('ProgressionService', () => {
       () => service.rerollMission('missing-profile', date, 0, at + 1),
       'PROGRESSION_PROFILE_NOT_FOUND',
     );
+  });
+
+  it('cannot reset a completed mission and award its XP a second time', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T19:30:00+09:00`);
+    const profileId = findProfileWithMissions(date, ['COMPLETE_ONE_SNG']);
+    insertProfile(database, profileId);
+    const first = service.recordSngFinish({
+      profileId,
+      roomId: 'terminal-mission-first',
+      place: 6,
+      selectedCharacterId: 'sakura',
+      completedAt: at,
+    });
+    const firstCompletion = first.missionCompletions.find(
+      completion => completion.missionId === 'COMPLETE_ONE_SNG',
+    );
+    expect(firstCompletion).toBeDefined();
+    if (!firstCompletion) throw new Error('missing test mission completion');
+    const slot = firstCompletion.slot;
+
+    let resetRejected = false;
+    try {
+      database.db.prepare(`
+        UPDATE daily_missions
+        SET progress = 0, completed_at = NULL, rewarded_at = NULL
+        WHERE profile_id = ? AND mission_date = ? AND slot = ?
+      `).run(profileId, date, slot);
+    } catch {
+      resetRejected = true;
+    }
+    const second = service.recordSngFinish({
+      profileId,
+      roomId: 'terminal-mission-second',
+      place: 6,
+      selectedCharacterId: 'sakura',
+      completedAt: at + 1,
+    });
+
+    expect(resetRejected).toBe(true);
+    expect(second.missionCompletions.map(value => value.missionId))
+      .not.toContain('COMPLETE_ONE_SNG');
+    expect(database.db.prepare(`
+      SELECT progress, completed_at, rewarded_at FROM daily_missions
+      WHERE profile_id = ? AND mission_date = ? AND slot = ?
+    `).get(profileId, date, slot)).toEqual({
+      progress: 1,
+      completed_at: at,
+      rewarded_at: at,
+    });
   });
 
   it('rolls a failed mission replacement back without consuming the reroll', () => {

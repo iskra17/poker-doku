@@ -690,6 +690,15 @@ function parseStoredSummary(
     ) {
       throw new Error('invalid summary');
     }
+    const missionRewardTotal = sumMissionCompletionRewards(
+      value.missionCompletions,
+    );
+    if (
+      missionRewardTotal === null
+      || value.dojoXpMilli < missionRewardTotal
+    ) {
+      throw new Error('invalid summary');
+    }
     return value as unknown as ProgressionRewardSummary;
   } catch {
     throw new ProgressionServiceError('PROGRESSION_STORED_SUMMARY_INVALID');
@@ -766,6 +775,17 @@ function isMissionCompletionArray(
     slots.add(slot);
     return true;
   });
+}
+
+function sumMissionCompletionRewards(
+  completions: readonly MissionCompletion[],
+): number | null {
+  let total = BigInt(0);
+  for (const completion of completions) {
+    total += BigInt(completion.dojoXpMilli);
+  }
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(total);
 }
 
 function isStreakChange(value: unknown): boolean {

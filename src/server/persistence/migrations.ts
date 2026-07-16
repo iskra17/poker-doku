@@ -447,6 +447,26 @@ export const migrations: readonly Migration[] = [
           )
           AND NOT (OLD.reroll_count = 0 AND NEW.reroll_count = 1)
         )
+        OR (
+          NEW.progress < OLD.progress
+          AND NOT (
+            OLD.reroll_count = 0
+            AND NEW.reroll_count = 1
+            AND OLD.completed_at IS NULL
+            AND OLD.rewarded_at IS NULL
+            AND NEW.mission_id != OLD.mission_id
+            AND NEW.progress = 0
+            AND NEW.completed_at IS NULL
+            AND NEW.rewarded_at IS NULL
+          )
+        )
+        OR (
+          (OLD.completed_at IS NOT NULL OR OLD.rewarded_at IS NOT NULL)
+          AND (
+            NEW.completed_at IS NOT OLD.completed_at
+            OR NEW.rewarded_at IS NOT OLD.rewarded_at
+          )
+        )
         OR NEW.balance_version != 1
         OR NOT (
           (NEW.mission_id = 'COMPLETE_HANDS_ANY_10' AND NEW.target = 10)
