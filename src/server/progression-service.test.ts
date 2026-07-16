@@ -143,6 +143,118 @@ describe('ProgressionService', () => {
     ]);
   });
 
+  it('does not regrant a permanent reward already backed by an earlier receipt', () => {
+    const profileId = findProfileWithMission('COMPLETE_ONE_SNG');
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1);
+    grantPermanentForTest(
+      database,
+      repository,
+      profileId,
+      'dojo-frame-cherry-blossom',
+      10,
+    );
+    database.db.prepare(`
+      UPDATE progression_profiles
+      SET dojo_level = 4, dojo_xp_milli = 174000
+      WHERE profile_id = ?
+    `).run(profileId);
+
+    const input = {
+      profileId,
+      roomId: 'preowned-receipt-room',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    } as const;
+    const first = service.recordSngFinish(input);
+    const duplicate = service.recordSngFinish(input);
+
+    expect(first.grantedItemIds).not.toContain('dojo-frame-cherry-blossom');
+    expect(duplicate).toEqual(first);
+    expect(database.db.prepare(`
+      SELECT quantity, granted_at, updated_at FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'dojo-frame-cherry-blossom'
+    `).get(profileId)).toEqual({ quantity: 1, granted_at: 10, updated_at: 10 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM permanent_progression_grants
+      WHERE profile_id = ? AND item_id = 'dojo-frame-cherry-blossom'
+    `).get(profileId)).toEqual({ count: 1 });
+  });
+
+  it('preserves a seeded preowned permanent item without creating an orphan receipt', () => {
+    const profileId = findProfileWithMission('COMPLETE_ONE_SNG');
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1);
+    database.db.prepare(`
+      INSERT INTO inventory_items (
+        profile_id, item_id, quantity, granted_at, updated_at
+      ) VALUES (?, 'dojo-frame-cherry-blossom', 1, 7, 7)
+    `).run(profileId);
+    database.db.prepare(`
+      UPDATE progression_profiles
+      SET dojo_level = 4, dojo_xp_milli = 174000
+      WHERE profile_id = ?
+    `).run(profileId);
+
+    const input = {
+      profileId,
+      roomId: 'preowned-seed-room',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    } as const;
+    const first = service.recordSngFinish(input);
+    const duplicate = service.recordSngFinish(input);
+
+    expect(first.grantedItemIds).not.toContain('dojo-frame-cherry-blossom');
+    expect(duplicate).toEqual(first);
+    expect(database.db.prepare(`
+      SELECT quantity, granted_at, updated_at FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'dojo-frame-cherry-blossom'
+    `).get(profileId)).toEqual({ quantity: 1, granted_at: 7, updated_at: 7 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM permanent_progression_grants
+      WHERE profile_id = ? AND item_id = 'dojo-frame-cherry-blossom'
+    `).get(profileId)).toEqual({ count: 0 });
+  });
+
+  it('fails closed when a permanent receipt and inventory timestamps disagree', () => {
+    const profileId = findProfileWithMission('COMPLETE_ONE_SNG');
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1);
+    grantPermanentForTest(
+      database,
+      repository,
+      profileId,
+      'dojo-frame-cherry-blossom',
+      10,
+    );
+    database.db.exec('DROP TRIGGER protect_permanent_inventory_update');
+    database.db.prepare(`
+      UPDATE inventory_items SET updated_at = 11
+      WHERE profile_id = ? AND item_id = 'dojo-frame-cherry-blossom'
+    `).run(profileId);
+    database.db.prepare(`
+      UPDATE progression_profiles
+      SET dojo_level = 4, dojo_xp_milli = 174000
+      WHERE profile_id = ?
+    `).run(profileId);
+
+    expect(() => service.recordSngFinish({
+      profileId,
+      roomId: 'corrupt-preowned-room',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    })).toThrowError(ProgressionPersistenceError);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_events
+      WHERE profile_id = ? AND event_type = 'sng-finish'
+    `).get(profileId))
+      .toEqual({ count: 0 });
+  });
+
   it('rolls permanent grants back when the source event cannot commit', () => {
     insertProfile(database, 'rollback-reward');
     repository.getOrCreate('rollback-reward', 'sakura', 1);

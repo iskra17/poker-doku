@@ -106,7 +106,7 @@ const AFFINITY_REWARDS = (Object.entries(CHARACTER_META) as Array<[
   ProgressionCharacterId,
   (typeof CHARACTER_META)[ProgressionCharacterId],
 ]>).flatMap(([characterId, meta]) => [
-  item({ id: `affinity-${characterId}-dialogue-pack`, name: `${meta.name} 대화 꾸러미`, description: `${meta.name} 인연 레벨 5 대화 꾸러미`, kind: 'dialogue-pack', equipSlot: null, stackable: false, characterId, source: { kind: 'affinity-level', characterId, level: 5 } }),
+  item({ id: `affinity-${characterId}-dialogue-pack`, name: `${meta.name} 대사 꾸러미`, description: `${meta.name} 인연 레벨 5 대사 꾸러미`, kind: 'dialogue-pack', equipSlot: null, stackable: false, characterId, source: { kind: 'affinity-level', characterId, level: 5 } }),
   item({ id: `affinity-${characterId}-aura`, name: `${meta.name} 인연 오라`, description: `${meta.name} 인연 레벨 10 오라`, kind: 'aura', equipSlot: null, stackable: false, characterId, source: { kind: 'affinity-level', characterId, level: 10 } }),
   item({ id: `affinity-${characterId}-cutin`, name: `${meta.name} 인연 컷인`, description: `${meta.name} 인연 레벨 15 컷인`, kind: 'cutin', equipSlot: 'cutin', stackable: false, characterId, source: { kind: 'affinity-level', characterId, level: 15 } }),
   item({

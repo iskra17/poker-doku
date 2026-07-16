@@ -49,6 +49,19 @@ describe('collection catalog', () => {
     });
   });
 
+  it('uses the exact approved affinity dialogue-pack names', () => {
+    expect(CHARACTERS.map(characterId => (
+      getAffinityRewardItems(characterId, 1, 5)[0]?.name
+    ))).toEqual([
+      '사쿠라 대사 꾸러미',
+      '아라 대사 꾸러미',
+      '하나 대사 꾸러미',
+      '클로이 대사 꾸러미',
+      '비비안 대사 꾸러미',
+      '엘레나 대사 꾸러미',
+    ]);
+  });
+
   it('uses unique stable ids and no gameplay modifiers', () => {
     expect(COLLECTION_CATALOG).toHaveLength(36);
     expect(new Set(COLLECTION_CATALOG.map(item => item.id)).size)

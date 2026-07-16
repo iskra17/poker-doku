@@ -359,6 +359,7 @@ interface ProgressionItemGrantRow {
 }
 
 interface PermanentProgressionGrantRow {
+  source_event_id: string;
   item_id: string;
   source_kind: string;
   source_level: number;
@@ -1152,6 +1153,57 @@ export class ProgressionRepository {
       throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
     }
     try {
+      const existingReceipt = this.database.db.prepare(`
+        SELECT source_event_id, item_id, source_kind, source_level,
+               source_character_id, granted_at
+        FROM permanent_progression_grants
+        WHERE profile_id = ? AND item_id = ?
+      `).get(
+        safe.profileId,
+        safe.itemId,
+      ) as PermanentProgressionGrantRow | undefined;
+      const existingInventory = this.database.db.prepare(`
+        SELECT profile_id, item_id, quantity, granted_at, updated_at
+        FROM inventory_items WHERE profile_id = ? AND item_id = ?
+      `).get(safe.profileId, safe.itemId) as InventoryItemRow | undefined;
+      if (existingReceipt) {
+        const receiptCharacter = definition.source.kind === 'affinity-level'
+          ? definition.source.characterId
+          : null;
+        if (
+          existingReceipt.item_id !== definition.id
+          || existingReceipt.source_kind !== definition.source.kind
+          || existingReceipt.source_level !== definition.source.level
+          || existingReceipt.source_character_id !== receiptCharacter
+          || typeof existingReceipt.source_event_id !== 'string'
+          || existingReceipt.source_event_id.length === 0
+          || !existingInventory
+        ) {
+          throw new ProgressionPersistenceError(
+            'PROGRESSION_PERSISTENCE_INVALID',
+          );
+        }
+        const inventory = mapInventoryItem(existingInventory);
+        if (
+          inventory.quantity !== 1
+          || inventory.grantedAt !== existingReceipt.granted_at
+          || inventory.updatedAt !== existingReceipt.granted_at
+        ) {
+          throw new ProgressionPersistenceError(
+            'PROGRESSION_PERSISTENCE_INVALID',
+          );
+        }
+        return false;
+      }
+      if (existingInventory) {
+        const inventory = mapInventoryItem(existingInventory);
+        if (inventory.quantity !== 1) {
+          throw new ProgressionPersistenceError(
+            'PROGRESSION_PERSISTENCE_INVALID',
+          );
+        }
+        return false;
+      }
       const result = this.database.db.prepare(`
         INSERT INTO permanent_progression_grants (
           profile_id, item_id, source_event_id, source_kind,
@@ -1201,8 +1253,8 @@ export class ProgressionRepository {
     assertNonemptyString(sourceEventId, 'PROGRESSION_VALUE_INVALID');
     try {
       const rows = this.database.db.prepare(`
-        SELECT item_id, source_kind, source_level, source_character_id,
-               granted_at
+        SELECT source_event_id, item_id, source_kind, source_level,
+               source_character_id, granted_at
         FROM permanent_progression_grants
         WHERE profile_id = ? AND source_event_id = ?
         ORDER BY item_id

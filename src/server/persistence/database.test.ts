@@ -93,6 +93,44 @@ describe('PokerDatabase migrations', () => {
     expect(result.count).toBe(11);
   });
 
+  it('upgrades a V10 preowned cosmetic without inventing a grant receipt', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-v10-cosmetic-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV10Database(path);
+    const raw = new DatabaseSync(path);
+    try {
+      raw.exec(`
+        INSERT INTO progression_profiles VALUES (
+          'v1-marker', 1, 1, 0, 'sakura', NULL,
+          0, 0, 0, 0, 0, 0, 1, 1
+        );
+        INSERT INTO character_affinity VALUES ('v1-marker', 'sakura', 1, 0);
+        INSERT INTO profile_equipment VALUES
+          ('v1-marker', 'title', NULL, 1),
+          ('v1-marker', 'frame', NULL, 1),
+          ('v1-marker', 'skin', NULL, 1),
+          ('v1-marker', 'cutin', NULL, 1);
+        INSERT INTO inventory_items VALUES (
+          'v1-marker', 'dojo-frame-cherry-blossom', 1, 1, 1
+        );
+      `);
+    } finally {
+      raw.close();
+    }
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT quantity, granted_at, updated_at FROM inventory_items
+      WHERE profile_id = 'v1-marker'
+        AND item_id = 'dojo-frame-cherry-blossom'
+    `).get()).toEqual({ quantity: 1, granted_at: 1, updated_at: 1 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM permanent_progression_grants
+    `).get()).toEqual({ count: 0 });
+  });
+
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
     const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
     temporaryDirectories.push(directory);
@@ -2649,6 +2687,23 @@ function createV7Database(path: string): void {
 function createV8Database(path: string): void {
   createV7Database(path);
   applyV8Migration(path);
+}
+
+function createV10Database(path: string): void {
+  createV8Database(path);
+  applyV9Migration(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[9].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (10, 'prove_fragment_sources_and_protect_progression_root', 10);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
 }
 
 function expectOpenDatabaseToThrow(path: string): void {

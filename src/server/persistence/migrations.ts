@@ -2096,12 +2096,6 @@ export const migrations: readonly Migration[] = [
     version: 11,
     name: 'add_permanent_progression_reward_receipts',
     sql: `
-      CREATE TABLE v11_progression_validation (
-        invalid INTEGER NOT NULL CHECK (invalid = 0)
-      ) STRICT;
-      INSERT INTO v11_progression_validation(invalid)
-      SELECT 1 FROM inventory_items WHERE item_id != 'streak-fragment';
-
       CREATE TABLE permanent_progression_grants (
         profile_id TEXT NOT NULL
           REFERENCES progression_profiles(profile_id) ON DELETE CASCADE,
@@ -2132,8 +2126,6 @@ export const migrations: readonly Migration[] = [
 
       CREATE INDEX idx_permanent_progression_grants_source_event
         ON permanent_progression_grants(source_event_id, profile_id);
-
-      DROP TABLE v11_progression_validation;
 
       CREATE TRIGGER validate_permanent_grant_insert
       BEFORE INSERT ON permanent_progression_grants
