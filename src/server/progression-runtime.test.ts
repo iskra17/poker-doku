@@ -184,6 +184,34 @@ describe('ProgressionRuntime', () => {
     expect(emit).toHaveBeenCalledOnce();
   });
 
+  it('retries personal delivery after a durable hand reward was recorded', () => {
+    const service = makeService();
+    const emit = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('delivery unavailable'); });
+    const runtime = new ProgressionRuntime(service.service, emit, () => 4_500);
+    runtime.captureHandStart({
+      roomId: 'cash-room',
+      roomRunId: 'run-delivery',
+      handNumber: 3,
+      mode: 'cash',
+      players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
+    });
+    const completion = {
+      roomId: 'cash-room',
+      roomRunId: 'run-delivery',
+      handNumber: 3,
+      pendingRemovalProfileIds: [],
+    };
+
+    expect(() => runtime.completeHand(completion)).toThrow('delivery unavailable');
+    expect(() => runtime.completeHand(completion)).not.toThrow();
+
+    expect(service.recordCompletedHand).toHaveBeenCalledTimes(2);
+    expect(service.recordCompletedHand.mock.results[0].value.eventId)
+      .toBe(service.recordCompletedHand.mock.results[1].value.eventId);
+    expect(emit).toHaveBeenCalledTimes(2);
+  });
+
   it('fans out final SnG places to snapshotted humans and never bots', () => {
     const service = makeService({ human1: 'hana' });
     const emit = vi.fn();

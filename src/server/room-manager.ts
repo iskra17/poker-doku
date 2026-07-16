@@ -20,6 +20,11 @@ const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) 
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
 const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
+const PRE_HAND_RETRY_MS = 1_000;
+const MAX_PRE_HAND_RETRIES = 3;
+const HAND_SETTLEMENT_RETRY_MS = 1_000;
+const SNG_FINALIZE_RETRY_MS = 1_000;
+const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
 
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
@@ -61,6 +66,8 @@ export class RoomManager {
   /** 봇 루프 세대 — stopBotLoop마다 증가. await(사고 지연) 중이던 이전 루프가 깨어나도 진행 못 하게 한다 */
   private botLoopEpochs: Map<string, number> = new Map();
   private pendingStartTimers: Map<string, NodeJS.Timeout> = new Map();
+  private preHandStartRetryAttempts = new Map<string, number>();
+  private handSettlementRetryAttempts = new Map<string, number>();
   private turnTimers: Map<string, NodeJS.Timeout> = new Map();
   private turnDeadlines: Map<string, number> = new Map();
   /** 자리비움 후 방을 떠난 좌석의 최종 정리 타이머 — 키 `${roomId}:${playerId}` (복귀 시 취소) */
@@ -83,6 +90,9 @@ export class RoomManager {
   }>();
   /** wallet Sit & Go 결과가 DB에 확정된 방 — retained snapshot 재처리 시 중복 호출 방지 */
   private settledTournamentRooms = new Set<string>();
+  private readonly usedRoomRunIds = new Set<string>();
+  private readonly roomRunInstanceId = randomUUID().replaceAll('-', '_');
+  private roomRunGeneration = 0;
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
@@ -108,12 +118,13 @@ export class RoomManager {
 
   createRoom(config: RoomConfig, persistent = false): string {
     const id = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const runId = this.reserveRoomRunId();
     const engine = new PokerEngine(config, id);
     this.rooms.set(id, {
       engine,
       config,
       createdAt: Date.now(),
-      runId: this.nextRoomRunId(),
+      runId,
       persistent,
     });
     this.chatHistory.set(id, []);
@@ -150,7 +161,8 @@ export class RoomManager {
   ): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
-    if (this.unresolvedSettlementRooms.has(roomId)) return false;
+    const tournament = room.engine.state.tournament;
+    if (this.unresolvedSettlementRooms.has(roomId) && !tournament?.finished) return false;
     if (
       this.isWalletCash(room)
       && room.engine.state.isHandInProgress
@@ -158,13 +170,13 @@ export class RoomManager {
       return false;
     }
     const walletSng = this.isWalletSng(room);
-    const tournament = room.engine.state.tournament;
     if (walletSng && tournament && tournament.entrants > 0 && !tournament.finished) {
       return false;
     }
     if (tournament?.finished && !this.finalizeFinishedTournament(roomId)) {
       return false;
     }
+    if (this.unresolvedSettlementRooms.has(roomId)) return false;
     if (this.isWalletCash(room) || (walletSng && tournament?.entrants === 0)) {
       try {
         this.requireEconomy().voidRoom(roomId);
@@ -180,10 +192,10 @@ export class RoomManager {
 
     this.stopBotLoop(roomId);
     this.clearPendingStart(roomId);
+    this.preHandStartRetryAttempts.delete(roomId);
+    this.handSettlementRetryAttempts.delete(roomId);
     this.clearTurnTimer(roomId);
-    const finishedTimer = this.finishedRoomTimers.get(roomId);
-    if (finishedTimer) clearTimeout(finishedTimer);
-    this.finishedRoomTimers.delete(roomId);
+    this.clearFinishedRoomTimer(roomId);
     for (const [key, timer] of this.sitOutAbandonTimers) {
       if (!key.startsWith(`${roomId}:`)) continue;
       clearTimeout(timer);
@@ -439,6 +451,26 @@ export class RoomManager {
     return true;
   }
 
+  private clearFinishedRoomTimer(roomId: string): void {
+    const timer = this.finishedRoomTimers.get(roomId);
+    if (timer) clearTimeout(timer);
+    this.finishedRoomTimers.delete(roomId);
+  }
+
+  private scheduleFinishedTournamentRetry(roomId: string): void {
+    if (!this.rooms.has(roomId)) return;
+    this.clearFinishedRoomTimer(roomId);
+    const timer = setTimeout(() => {
+      this.finishedRoomTimers.delete(roomId);
+      if (!this.finalizeFinishedTournament(roomId)) return;
+      const room = this.rooms.get(roomId);
+      if (!room) return;
+      this.announceTournamentProgress(roomId);
+      this.onUpdate(roomId, room.engine);
+    }, SNG_FINALIZE_RETRY_MS);
+    this.finishedRoomTimers.set(roomId, timer);
+  }
+
   private resumeAfterEconomicLeave(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (
@@ -507,8 +539,10 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return;
     if (this.unresolvedSettlementRooms.has(roomId)) return;
+    if (this.isWalletCash(room) && room.engine.state.isHandInProgress) return;
+    const nextRunId = this.reserveRoomRunId();
+    const nextEngine = new PokerEngine(room.config, roomId);
     if (this.isWalletCash(room)) {
-      if (room.engine.state.isHandInProgress) return;
       try {
         this.requireEconomy().voidRoom(roomId);
       } catch {
@@ -516,9 +550,12 @@ export class RoomManager {
         return;
       }
     }
-    room.engine = new PokerEngine(room.config, roomId);
-    room.runId = this.nextRoomRunId();
+    room.engine = nextEngine;
+    room.runId = nextRunId;
     this.chatHistory.set(roomId, []);
+    this.clearFinishedRoomTimer(roomId);
+    this.preHandStartRetryAttempts.delete(roomId);
+    this.handSettlementRetryAttempts.delete(roomId);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
@@ -538,6 +575,40 @@ export class RoomManager {
       clearTimeout(timer);
       this.pendingStartTimers.delete(roomId);
     }
+  }
+
+  private schedulePreHandRetry(roomId: string): boolean {
+    const attempts = this.preHandStartRetryAttempts.get(roomId) ?? 0;
+    if (attempts >= MAX_PRE_HAND_RETRIES) {
+      this.preHandStartRetryAttempts.delete(roomId);
+      this.economyBlockedRooms.add(roomId);
+      return false;
+    }
+    this.clearPendingStart(roomId);
+    this.preHandStartRetryAttempts.set(roomId, attempts + 1);
+    const timer = setTimeout(() => {
+      this.pendingStartTimers.delete(roomId);
+      this.startNewHand(roomId);
+    }, PRE_HAND_RETRY_MS);
+    this.pendingStartTimers.set(roomId, timer);
+    return true;
+  }
+
+  private scheduleCompletedHandRetry(roomId: string, handNumber: number): void {
+    const attempts = this.handSettlementRetryAttempts.get(roomId) ?? 0;
+    if (attempts >= MAX_PRE_HAND_RETRIES) {
+      this.handSettlementRetryAttempts.delete(roomId);
+      return;
+    }
+    this.clearPendingStart(roomId);
+    this.handSettlementRetryAttempts.set(roomId, attempts + 1);
+    const timer = setTimeout(() => {
+      this.pendingStartTimers.delete(roomId);
+      const room = this.rooms.get(roomId);
+      if (!room || room.engine.state.handNumber !== handNumber) return;
+      this.handleCompletedHand(roomId);
+    }, HAND_SETTLEMENT_RETRY_MS);
+    this.pendingStartTimers.set(roomId, timer);
   }
 
   private tryStartGame(roomId: string): void {
@@ -719,13 +790,18 @@ export class RoomManager {
         cashHandPrepared,
         preStartState,
       );
-      if (classification === 'blocked') this.economyBlockedRooms.add(roomId);
+      if (classification === 'blocked') {
+        this.economyBlockedRooms.add(roomId);
+      } else {
+        this.schedulePreHandRetry(roomId);
+      }
       this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
       this.onUpdate(roomId, room.engine);
       return;
     }
 
     if (room.engine.state.handNumber > prevHandNumber) {
+      this.preHandStartRetryAttempts.delete(roomId);
       this.options.progression?.confirmHandStart(roomId, room.runId, nextHandNumber);
       const s = room.engine.state;
       eventLog.log('hand-start', {
@@ -761,7 +837,7 @@ export class RoomManager {
           this.onUpdate(roomId, room.engine);
           return;
         }
-        this.tryStartGame(roomId);
+        this.schedulePreHandRetry(roomId);
       }
       return;
     }
@@ -1466,12 +1542,10 @@ export class RoomManager {
       this.requireEconomy().afterTournament(roomId, room.engine);
       this.completeProgressionTournament(roomId);
       this.settledTournamentRooms.add(roomId);
+      this.recoverFinishedTournament(roomId);
       return true;
     } catch {
-      this.economyBlockedRooms.add(roomId);
-      this.unresolvedSettlementRooms.add(roomId);
-      this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
-      this.onUpdate(roomId, room.engine);
+      this.blockFinishedTournament(roomId, room.engine);
       return false;
     }
   }
@@ -1480,16 +1554,31 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room?.engine.state.tournament?.finished) return true;
     if (this.isWalletSng(room)) return this.settleFinishedWalletTournament(roomId);
+    if (this.settledTournamentRooms.has(roomId)) return true;
     try {
       this.completeProgressionTournament(roomId);
+      this.settledTournamentRooms.add(roomId);
+      this.recoverFinishedTournament(roomId);
       return true;
     } catch {
-      this.economyBlockedRooms.add(roomId);
-      this.unresolvedSettlementRooms.add(roomId);
-      this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
-      this.onUpdate(roomId, room.engine);
+      this.blockFinishedTournament(roomId, room.engine);
       return false;
     }
+  }
+
+  private recoverFinishedTournament(roomId: string): void {
+    this.economyBlockedRooms.delete(roomId);
+    this.unresolvedSettlementRooms.delete(roomId);
+    this.clearFinishedRoomTimer(roomId);
+    this.retainFinishedTournament(roomId);
+  }
+
+  private blockFinishedTournament(roomId: string, engine: PokerEngine): void {
+    this.economyBlockedRooms.add(roomId);
+    this.unresolvedSettlementRooms.add(roomId);
+    this.scheduleFinishedTournamentRetry(roomId);
+    this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+    this.onUpdate(roomId, engine);
   }
 
   private completeProgressionTournament(roomId: string): void {
@@ -1521,13 +1610,16 @@ export class RoomManager {
     return this.options.economy;
   }
 
-  private nextRoomRunId(): string {
-    const runId = this.options.roomRunIdFactory?.()
-      ?? `run_${randomUUID().replaceAll('-', '_')}`;
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(runId)) {
-      throw new Error('invalid room run id');
+  private reserveRoomRunId(): string {
+    for (let attempt = 0; attempt < MAX_ROOM_RUN_ID_ATTEMPTS; attempt += 1) {
+      const runId = this.options.roomRunIdFactory?.()
+        ?? `run_${this.roomRunInstanceId}_${++this.roomRunGeneration}`;
+      if (!/^[A-Za-z0-9_-]{1,128}$/.test(runId)) continue;
+      if (this.usedRoomRunIds.has(runId)) continue;
+      this.usedRoomRunIds.add(runId);
+      return runId;
     }
-    return runId;
+    throw new Error('unable to reserve unique room run id');
   }
 
   private classifyUnstartedHand(
@@ -1562,7 +1654,7 @@ export class RoomManager {
     if (!room || room.engine.state.isHandInProgress) return;
     const state = room.engine.state;
     const previous = this.handSettlementStatus.get(roomId);
-    if (previous?.handNumber === state.handNumber) return;
+    if (previous?.handNumber === state.handNumber && previous.ok) return;
 
     let paidTotal = (state.winners ?? []).reduce(
       (sum, winner) => sum + winner.amount,
@@ -1570,6 +1662,7 @@ export class RoomManager {
     );
     let rake = state.handRake;
     let settlementOk = true;
+    let progressionRetryable = false;
 
     if (this.isWalletCash(room)) {
       try {
@@ -1612,6 +1705,7 @@ export class RoomManager {
         });
       } catch {
         settlementOk = false;
+        progressionRetryable = true;
         this.economyBlockedRooms.add(roomId);
         this.unresolvedSettlementRooms.add(roomId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
@@ -1626,7 +1720,17 @@ export class RoomManager {
     });
     this.onUpdate(roomId, room.engine);
     this.announceWinner(roomId, { paidTotal, rake, settlementOk });
-    if (!settlementOk) return;
+    if (!settlementOk) {
+      if (!state.tournament && progressionRetryable) {
+        this.scheduleCompletedHandRetry(roomId, state.handNumber);
+      }
+      return;
+    }
+    this.handSettlementRetryAttempts.delete(roomId);
+    if (previous?.handNumber === state.handNumber && !previous.ok) {
+      this.economyBlockedRooms.delete(roomId);
+      this.unresolvedSettlementRooms.delete(roomId);
+    }
 
     const remainingHumans = state.players.filter(
       player => player.type === 'human' && !player.pendingRemoval,

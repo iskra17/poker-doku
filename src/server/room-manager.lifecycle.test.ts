@@ -436,6 +436,227 @@ describe('RoomManager wallet cash persistence hooks', () => {
   });
 });
 
+describe('RoomManager progression start recovery', () => {
+  let manager: RoomManager;
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.useRealTimers();
+  });
+
+  function progressionHooks(
+    overrides: Partial<RoomProgressionHooks> = {},
+  ): RoomProgressionHooks {
+    return {
+      captureHandStart: vi.fn(),
+      confirmHandStart: vi.fn(),
+      cancelHand: vi.fn(),
+      completeHand: vi.fn(),
+      completeSng: vi.fn(),
+      disposeRoom: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('retries a transient pre-hand progression capture failure with one owned timer', () => {
+    vi.useFakeTimers();
+    const captureHandStart = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression: progressionHooks({ captureHandStart }),
+    });
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(captureHandStart).toHaveBeenCalledOnce();
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+    vi.advanceTimersByTime(998);
+    expect(captureHandStart).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1);
+    expect(captureHandStart).toHaveBeenCalledTimes(2);
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(1);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+  });
+
+  it('bounds repeated pre-hand failures and allows disposal of the blocked room', () => {
+    vi.useFakeTimers();
+    const captureHandStart = vi.fn(() => { throw new Error('progression unavailable'); });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression: progressionHooks({ captureHandStart }),
+    });
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+
+    vi.advanceTimersByTime(5_001);
+
+    expect(captureHandStart).toHaveBeenCalledTimes(4);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    manager.resumeRoom(roomId);
+    vi.advanceTimersByTime(2_001);
+    expect(captureHandStart).toHaveBeenCalledTimes(4);
+    expect(manager.disposeRoom(roomId)).toBe(true);
+  });
+
+  it('cancels a pending progression retry when the room is disposed', () => {
+    vi.useFakeTimers();
+    const captureHandStart = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression: progressionHooks({ captureHandStart }),
+    });
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+    expect(manager.disposeRoom(roomId)).toBe(true);
+    vi.advanceTimersByTime(2_000);
+    expect(captureHandStart).toHaveBeenCalledOnce();
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+  });
+
+  it('retries a failed completed-hand delivery and clears its settlement barrier', () => {
+    vi.useFakeTimers();
+    const completeHand = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('delivery unavailable'); });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression: progressionHooks({ completeHand }),
+    });
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.handNumber = 1;
+    room.engine.state.isHandInProgress = false;
+
+    (manager as unknown as { handleCompletedHand(roomId: string): void })
+      .handleCompletedHand(roomId);
+
+    expect(completeHand).toHaveBeenCalledOnce();
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    vi.advanceTimersByTime(1_000);
+    expect(completeHand).toHaveBeenCalledTimes(2);
+    expect(manager.disposeRoom(roomId)).toBe(true);
+  });
+});
+
+describe('RoomManager private room generation identity', () => {
+  let manager: RoomManager;
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.useRealTimers();
+  });
+
+  function runId(roomId: string): string {
+    return (manager.getRoom(roomId) as unknown as { runId: string }).runId;
+  }
+
+  it('retries duplicate factory values and never reuses a disposed room generation', () => {
+    const values = ['run-a', 'run-a', 'run-b'];
+    const factory = vi.fn(() => values.shift() ?? 'run-c');
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      roomRunIdFactory: factory,
+    });
+    const firstRoomId = manager.createRoom(makeConfig());
+    expect(runId(firstRoomId)).toBe('run-a');
+    expect(manager.disposeRoom(firstRoomId)).toBe(true);
+
+    const secondRoomId = manager.createRoom(makeConfig());
+    expect(runId(secondRoomId)).toBe('run-b');
+    expect(factory).toHaveBeenCalledTimes(3);
+  });
+
+  it('bounds a constant duplicate factory without replacing an existing room', () => {
+    const factory = vi.fn(() => 'run-a');
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      roomRunIdFactory: factory,
+    });
+    const roomId = manager.createRoom(makeConfig());
+    const engine = manager.getRoom(roomId)!.engine;
+
+    expect(() => manager.createRoom(makeConfig())).toThrow('room run id');
+    expect(factory).toHaveBeenCalledTimes(9);
+    expect(manager.getRoom(roomId)!.engine).toBe(engine);
+    expect(runId(roomId)).toBe('run-a');
+    expect(manager.getRoomCount()).toBe(1);
+  });
+
+  it('starts hand one under a new id after duplicate values during persistent reset', () => {
+    vi.useFakeTimers();
+    const values = ['run-a', 'run-a', 'run-b'];
+    const captureHandStart = vi.fn();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      roomRunIdFactory: () => values.shift() ?? 'run-c',
+      progression: {
+        captureHandStart,
+        confirmHandStart: vi.fn(),
+        cancelHand: vi.fn(),
+        completeHand: vi.fn(),
+        completeSng: vi.fn(),
+        disposeRoom: vi.fn(),
+      },
+    });
+    const roomId = manager.createRoom(makeConfig(), true);
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+
+    (manager as unknown as { resetRoomToIdle(roomId: string): void })
+      .resetRoomToIdle(roomId);
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+
+    expect(captureHandStart.mock.calls.map(call => ({
+      runId: call[0].roomRunId,
+      handNumber: call[0].handNumber,
+    }))).toEqual([
+      { runId: 'run-a', handNumber: 1 },
+      { runId: 'run-b', handNumber: 1 },
+    ]);
+  });
+
+  it('leaves the old persistent engine and progression context intact when reservation fails', () => {
+    const factory = vi.fn()
+      .mockReturnValueOnce('run-a')
+      .mockReturnValue('not valid');
+    const disposeRoom = vi.fn();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      roomRunIdFactory: factory,
+      progression: {
+        captureHandStart: vi.fn(),
+        confirmHandStart: vi.fn(),
+        cancelHand: vi.fn(),
+        completeHand: vi.fn(),
+        completeSng: vi.fn(),
+        disposeRoom,
+      },
+    });
+    const roomId = manager.createRoom(makeConfig(), true);
+    const before = manager.getRoom(roomId)!.engine;
+    before.state.handNumber = 7;
+    manager.addChatMessage(roomId, 'p1', 'p1', 'keep');
+
+    expect(() => (
+      manager as unknown as { resetRoomToIdle(roomId: string): void }
+    ).resetRoomToIdle(roomId)).toThrow('room run id');
+
+    expect(manager.getRoom(roomId)!.engine).toBe(before);
+    expect(runId(roomId)).toBe('run-a');
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(7);
+    expect(manager.getChatHistory(roomId).map(message => message.message)).toEqual(['keep']);
+    expect(disposeRoom).not.toHaveBeenCalled();
+    expect(factory).toHaveBeenCalledTimes(9);
+  });
+});
+
 describe('RoomManager wallet Sit & Go persistence hooks', () => {
   let manager: RoomManager;
 
@@ -532,7 +753,7 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     ))).toBe(true);
   });
 
-  it('blocks a between-hand SnG finish when progression persistence fails', () => {
+  it('retries a failed wallet SnG finalization and rearms full retention exactly once', () => {
     vi.useFakeTimers();
     const economy = hooks();
     const completeSng = vi.fn()
@@ -542,6 +763,7 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
       economy,
       progression,
       roomRunIdFactory: () => 'generation-a',
+      sngRetentionMs: 50,
     });
     const roomId = manager.createRoom(makeWalletSngConfig());
     seatSix(roomId);
@@ -563,7 +785,22 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     expect(manager.leaveRoom(roomId, 'sng-2')).toBe(false);
     expect(economy.afterTournament).toHaveBeenCalledOnce();
     expect(completeSng).toHaveBeenCalledOnce();
-    expect(manager.disposeRoom(roomId)).toBe(false);
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
+
+    vi.advanceTimersByTime(999);
+    expect(economy.afterTournament).toHaveBeenCalledOnce();
+    expect(manager.getRoom(roomId)).toBeDefined();
+    vi.advanceTimersByTime(1);
+
+    expect(economy.afterTournament).toHaveBeenCalledTimes(2);
+    expect(completeSng).toHaveBeenCalledTimes(2);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
+    vi.advanceTimersByTime(49);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    vi.advanceTimersByTime(1);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(0);
   });
 
   it('rewards a casual SnG between-hand finish without an economy ledger', () => {
@@ -598,6 +835,46 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     expect(progression.completeSng).toHaveBeenCalledWith(expect.objectContaining({
       roomRunId: 'generation-casual',
     }));
+  });
+
+  it('retries a failed casual SnG finalization without accumulating timers', () => {
+    vi.useFakeTimers();
+    const completeSng = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+    const progression = progressionHooks({ completeSng });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression,
+      roomRunIdFactory: () => 'generation-casual',
+      sngRetentionMs: 50,
+    });
+    const roomId = manager.createRoom({
+      ...makeWalletSngConfig(),
+      economyMode: 'practice',
+    });
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    for (let index = 2; index < 6; index += 1) {
+      const player = room.engine.state.players[index];
+      player.chips = 0;
+      player.finishPlace = 7 - index;
+      room.engine.state.tournament!.results.push({
+        playerId: player.id,
+        name: player.name,
+        place: player.finishPlace,
+        prize: 0,
+      });
+    }
+
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(false);
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
+    vi.advanceTimersByTime(1_000);
+    expect(completeSng).toHaveBeenCalledTimes(2);
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
+    vi.advanceTimersByTime(50);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(0);
   });
 
   it('commits six human reservations before starting the tournament and rejects bot fill', () => {

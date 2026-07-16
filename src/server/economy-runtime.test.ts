@@ -478,7 +478,7 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     manager.shutdown();
   });
 
-  it('allows an explicit retry after startHand throws before mutating engine state', () => {
+  it('automatically retries after startHand throws before mutating engine state', () => {
     vi.useFakeTimers();
     const database = openDatabase();
     seedProfile(database, 'human-1');
@@ -506,7 +506,7 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     expect(start).toHaveBeenCalledOnce();
     expect(room.engine.state.handNumber).toBe(0);
     expect(room.engine.state.isHandInProgress).toBe(false);
-    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
     expect(database.db.prepare(`
       SELECT settlement_seq, engine_hand_number, status
       FROM cash_hand_settlements
@@ -517,15 +517,13 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     expect(manager.getChatHistory(roomId).at(-1)?.message)
       .toBe('저장 연결을 확인 중이에요');
 
-    vi.advanceTimersByTime(10_000);
+    vi.advanceTimersByTime(998);
     expect(start).toHaveBeenCalledOnce();
-    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
-
-    start.mockRestore();
-    manager.resumeRoom(roomId);
     expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
-    vi.advanceTimersByTime(2_001);
+    vi.advanceTimersByTime(1);
 
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
     expect(room.engine.state.handNumber).toBe(1);
     expect(room.engine.state.isHandInProgress).toBe(true);
     expect(database.db.prepare(`
@@ -536,6 +534,7 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
       { settlement_seq: 1, engine_hand_number: 1, status: 'voided' },
       { settlement_seq: 2, engine_hand_number: 1, status: 'prepared' },
     ]);
+    start.mockRestore();
     manager.shutdown();
   });
 

@@ -162,13 +162,13 @@ export class ProgressionRuntime {
         completedAt,
       };
       const reward = this.service.recordRuntimeCompletedHand(rewardInput);
-      this.processedEvents.add(processedKey);
       const current = this.service.getRuntimeSnapshot(
         profileId,
         selectedCharacterId,
         completedAt,
       );
       this.emitReward(profileId, current, reward);
+      this.processedEvents.add(processedKey);
     }
     this.handContexts.delete(key);
     const processedPrefix = `hand:${key}:`;
@@ -203,13 +203,13 @@ export class ProgressionRuntime {
         completedAt,
       };
       const reward = this.service.recordRuntimeSngFinish(rewardInput);
-      this.processedEvents.add(processedKey);
       const current = this.service.getRuntimeSnapshot(
         result.profileId,
         selectedCharacterId,
         completedAt,
       );
       this.emitReward(result.profileId, current, reward);
+      this.processedEvents.add(processedKey);
     }
   }
 
