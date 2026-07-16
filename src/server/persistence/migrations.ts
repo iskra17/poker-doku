@@ -89,7 +89,23 @@ export const migrations: readonly Migration[] = [
   },
 ];
 
+export function validateMigrations(definitions: readonly Migration[]): void {
+  let previousVersion = 0;
+  for (const migration of definitions) {
+    if (
+      !Number.isInteger(migration.version)
+      || migration.version <= previousVersion
+    ) {
+      throw new Error(
+        'Migration versions must be unique and strictly increasing',
+      );
+    }
+    previousVersion = migration.version;
+  }
+}
+
 export function applyMigrations(db: DatabaseSync): void {
+  validateMigrations(migrations);
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(`
@@ -106,6 +122,15 @@ export function applyMigrations(db: DatabaseSync): void {
         .all()
         .map((row) => (row as { version: number }).version),
     );
+    const knownVersions = new Set(migrations.map(migration => migration.version));
+    const unknownVersions = [...appliedVersions]
+      .filter(version => !knownVersions.has(version))
+      .sort((left, right) => left - right);
+    if (unknownVersions.length > 0) {
+      throw new Error(
+        `Unknown applied migration version: ${unknownVersions.join(', ')}`,
+      );
+    }
     const recordMigration = db.prepare(`
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (?, ?, ?)
