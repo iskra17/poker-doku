@@ -16,6 +16,7 @@ import {
   createProgressionHttpHandler,
   type ProgressionHttpService,
 } from './progression-http';
+import type { ProgressionSnapshot } from '@/lib/progression/types';
 
 export type NextRequestHandler = (
   req: IncomingMessage,
@@ -29,6 +30,10 @@ interface HttpHandlerCommonOptions {
   production?: boolean;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
   now?: () => number;
+  onProgressionPublicCosmeticsChanged?: (
+    profileId: string,
+    snapshot: ProgressionSnapshot,
+  ) => void;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -104,6 +109,7 @@ export function createHttpRequestHandler(
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
         now: options.now,
+        onPublicCosmeticsChanged: options.onProgressionPublicCosmeticsChanged,
       })
     : undefined;
   return (req, res) => {

@@ -12,6 +12,7 @@ import {
   type ProgressionService,
 } from './progression-service';
 import { getKstDateKey } from './economy-service';
+import type { ProgressionSnapshot } from '@/lib/progression/types';
 
 const MAX_JSON_BODY_BYTES = 8 * 1024;
 const ROUTES = new Map<string, 'GET' | 'POST'>([
@@ -37,6 +38,10 @@ export interface ProgressionHttpOptions {
   concurrencyGate?: TransientHttpConcurrencyGate;
   production: boolean;
   now?: () => number;
+  onPublicCosmeticsChanged?: (
+    profileId: string,
+    snapshot: ProgressionSnapshot,
+  ) => void;
 }
 
 class BodyError extends Error {
@@ -103,13 +108,13 @@ export function createProgressionHttpHandler(options: ProgressionHttpOptions): (
           sendError(response, 400, 'BAD_REQUEST', '요청 본문이 올바르지 않습니다.');
           return true;
         }
-        sendJson(response, 200, {
-          progression: options.service.selectCharacter(
-            profile.id,
-            body.characterId,
-            at,
-          ),
-        });
+        const progression = options.service.selectCharacter(
+          profile.id,
+          body.characterId,
+          at,
+        );
+        notifyPublicCosmetics(options, profile.id, progression);
+        sendJson(response, 200, { progression });
         return true;
       }
       if (
@@ -121,20 +126,32 @@ export function createProgressionHttpHandler(options: ProgressionHttpOptions): (
         return true;
       }
       options.service.getView(profile.id, profile.avatarId, at);
-      sendJson(response, 200, {
-        progression: options.service.setEquipment(
-          profile.id,
-          body.slot,
-          body.itemId,
-          at,
-        ),
-      });
+      const progression = options.service.setEquipment(
+        profile.id,
+        body.slot,
+        body.itemId,
+        at,
+      );
+      notifyPublicCosmetics(options, profile.id, progression);
+      sendJson(response, 200, { progression });
     } catch (error) {
       if (response.writableEnded) return true;
       handleError(response, error, options.production);
     }
     return true;
   };
+}
+
+function notifyPublicCosmetics(
+  options: ProgressionHttpOptions,
+  profileId: string,
+  snapshot: ProgressionSnapshot,
+): void {
+  try {
+    options.onPublicCosmeticsChanged?.(profileId, snapshot);
+  } catch {
+    // The durable mutation already succeeded; a later room update/rejoin heals display state.
+  }
 }
 
 async function authenticate(

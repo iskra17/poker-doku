@@ -4,7 +4,7 @@ import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
 } from '@/lib/progression/types';
-import { createProgressionStore } from './progression-store';
+import { createProgressionStore, selectDisplayReward } from './progression-store';
 
 function snapshot(level = 1): ProgressionSnapshot {
   return {
@@ -66,6 +66,47 @@ describe('progression store', () => {
     store.getState().consumeReward('event-a');
     expect(store.getState().activeReward?.eventId).toBe('event-b');
     store.getState().consumeReward('event-b');
+    expect(store.getState().activeReward).toBeNull();
+  });
+
+  it('defers reward display while a hand economy card is active, then resumes FIFO', () => {
+    const store = createProgressionStore({ fetch: vi.fn() });
+    store.getState().setEconomySummaryActive(true);
+    store.getState().enqueueReward(reward('after-economy-a'));
+    store.getState().enqueueReward(reward('after-economy-b'));
+
+    expect(selectDisplayReward(store.getState())).toBeNull();
+    store.getState().setEconomySummaryActive(false);
+    expect(selectDisplayReward(store.getState())?.eventId).toBe('after-economy-a');
+    store.getState().consumeReward('after-economy-a');
+    expect(selectDisplayReward(store.getState())?.eventId).toBe('after-economy-b');
+  });
+
+  it('shows a practice hand immediately when no economy summary is active', () => {
+    const store = createProgressionStore({ fetch: vi.fn() });
+    store.getState().enqueueReward(reward('completed-hand:practice-event'));
+    expect(selectDisplayReward(store.getState())?.eventId)
+      .toBe('completed-hand:practice-event');
+  });
+
+  it('shows a non-hand reward immediately', () => {
+    const store = createProgressionStore({ fetch: vi.fn() });
+    store.getState().enqueueReward(reward('sng-finish:event'));
+    expect(selectDisplayReward(store.getState())?.eventId).toBe('sng-finish:event');
+  });
+
+  it('never accepts a replayed event id during the store lifetime', () => {
+    const store = createProgressionStore({ fetch: vi.fn() });
+    for (let index = 0; index < 300; index += 1) {
+      store.getState().enqueueReward(reward(`event-${index}`));
+    }
+    while (store.getState().activeReward) {
+      store.getState().consumeReward(store.getState().activeReward!.eventId);
+    }
+
+    store.getState().reset();
+    store.getState().enqueueReward(reward('event-0'));
+
     expect(store.getState().activeReward).toBeNull();
   });
 

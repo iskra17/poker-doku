@@ -4,21 +4,25 @@ import { useEffect } from 'react';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCollectionItemDefinition } from '@/lib/collection/catalog';
 import { milliToUiUnits } from '@/lib/progression/balance';
-import { useProgressionStore } from '@/lib/store/progression-store';
+import {
+  selectDisplayReward,
+  useProgressionStore,
+} from '@/lib/store/progression-store';
+import { isImportantProgressionItem } from '@/lib/progression/progression-summary';
 
 export default function ProgressionSummary() {
-  const summary = useProgressionStore(state => state.activeReward);
+  const summary = useProgressionStore(selectDisplayReward);
   const consumeReward = useProgressionStore(state => state.consumeReward);
+  const important = summary?.grantedItemIds.some(isImportantProgressionItem) ?? false;
   useEffect(() => {
     if (!summary) return;
-    const timer = setTimeout(() => consumeReward(summary.eventId), summary.grantedItemIds.length > 0 ? 6_000 : 4_000);
+    const timer = setTimeout(() => consumeReward(summary.eventId), important ? 6_000 : 4_000);
     return () => clearTimeout(timer);
-  }, [consumeReward, summary]);
+  }, [consumeReward, important, summary]);
   if (!summary) return null;
 
   const granted = summary.grantedItemIds.map(getCollectionItemDefinition).filter(item => item !== null);
   const skinId = granted.find(item => item.kind === 'skin')?.id ?? null;
-  const important = granted.length > 0;
   return (
     <aside aria-live="polite" className={`pointer-events-none absolute left-1/2 z-40 w-[min(90%,340px)] ${important ? 'top-28' : 'top-16'}`} style={{ transform: 'translateX(-50%)' }}>
       <div className={`overflow-hidden rounded-xl border bg-panel/95 shadow-xl backdrop-blur-sm ${important ? 'border-gilded/50 p-4' : 'border-mystic/30 px-3 py-2'}`}>

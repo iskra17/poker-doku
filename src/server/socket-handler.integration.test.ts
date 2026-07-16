@@ -73,6 +73,25 @@ function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function waitForGameUpdate(
+  client: ConnectedTestClient,
+  predicate: (payload: GameUpdatePayload) => boolean,
+): Promise<GameUpdatePayload> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.socket.off('game-update', onUpdate);
+      reject(new Error('game-update timeout'));
+    }, 1_000);
+    const onUpdate = (payload: GameUpdatePayload): void => {
+      if (!predicate(payload)) return;
+      clearTimeout(timer);
+      client.socket.off('game-update', onUpdate);
+      resolve(payload);
+    };
+    client.socket.on('game-update', onUpdate);
+  });
+}
+
 describe('Socket.IO 멀티클라이언트 경계', () => {
   let harness: SocketTestHarness | null = null;
 
@@ -113,7 +132,16 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
     const aliceRewards: string[] = [];
     const bobRewards: string[] = [];
-    alice.socket.on('reward-summary', reward => aliceRewards.push(reward.eventId));
+    const aliceCompletionOrder: string[] = [];
+    alice.socket.on('game-update', payload => {
+      if (payload.state.handNumber === 1 && !payload.state.isHandInProgress) {
+        aliceCompletionOrder.push('game-update');
+      }
+    });
+    alice.socket.on('reward-summary', reward => {
+      aliceCompletionOrder.push('reward-summary');
+      aliceRewards.push(reward.eventId);
+    });
     bob.socket.on('reward-summary', reward => bobRewards.push(reward.eventId));
 
     await expect(joinRoom(alice, roomId, 0)).resolves.toMatchObject({ ok: true });
@@ -136,12 +164,63 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(bobRewards[0]).toContain(roomId);
     expect(aliceRewards).not.toContain(bobRewards[0]);
     expect(bobRewards).not.toContain(aliceRewards[0]);
+    expect(aliceCompletionOrder.indexOf('game-update')).toBeGreaterThanOrEqual(0);
+    expect(aliceCompletionOrder.indexOf('game-update'))
+      .toBeLessThan(aliceCompletionOrder.indexOf('reward-summary'));
     expect(harness.progressionService.getRuntimeSnapshot(
       alice.playerId, 'sakura', Date.now(),
     ).profile.completedHands).toBe(1);
     expect(harness.progressionService.getRuntimeSnapshot(
       bob.playerId, 'hana', Date.now(),
     ).profile.completedHands).toBe(1);
+  });
+
+  it('broadcasts only authoritative public title and frame changes for a seated profile', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);
+    const aliceProfile = await harness.createProfile({ avatarId: 'sakura' });
+    const bobProfile = await harness.createProfile({ avatarId: 'hana' });
+    harness.grantProgressionItem(aliceProfile.profile.id, 'dojo-title-sprout-challenger');
+    harness.grantProgressionItem(aliceProfile.profile.id, 'dojo-frame-cherry-blossom');
+    const alice = await harness.connect('cosmetic-alice', { profileCookie: aliceProfile.cookie });
+    const bob = await harness.connect('cosmetic-bob', { profileCookie: bobProfile.cookie });
+    await expect(joinRoom(alice, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(bob, roomId, 1)).resolves.toMatchObject({ ok: true });
+
+    const titleSnapshot = harness.progressionService.setEquipment(
+      alice.playerId, 'title', 'dojo-title-sprout-challenger', Date.now(),
+    );
+    harness.runtime.refreshPublicCosmetics(alice.playerId, titleSnapshot);
+    const frameSnapshot = harness.progressionService.setEquipment(
+      alice.playerId, 'frame', 'dojo-frame-cherry-blossom', Date.now(),
+    );
+    const equippedUpdate = waitForGameUpdate(bob, payload => (
+      payload.state.players.find(player => player.id === alice.playerId)
+        ?.publicCosmetics?.frameId === 'dojo-frame-cherry-blossom'
+    ));
+    harness.runtime.refreshPublicCosmetics(alice.playerId, frameSnapshot);
+    const equipped = await equippedUpdate;
+    const publicAlice = equipped.state.players.find(player => player.id === alice.playerId)!;
+
+    expect(publicAlice.publicCosmetics).toEqual({
+      titleId: 'dojo-title-sprout-challenger',
+      frameId: 'dojo-frame-cherry-blossom',
+    });
+    expect(JSON.stringify(publicAlice)).not.toMatch(/inventory|affinit|skin|cutin|session/iu);
+
+    harness.progressionService.setEquipment(alice.playerId, 'title', null, Date.now());
+    const unequippedSnapshot = harness.progressionService.setEquipment(
+      alice.playerId, 'frame', null, Date.now(),
+    );
+    const unequippedUpdate = waitForGameUpdate(bob, payload => {
+      const cosmetics = payload.state.players.find(player => player.id === alice.playerId)
+        ?.publicCosmetics;
+      return cosmetics?.titleId === null && cosmetics.frameId === null;
+    });
+    harness.runtime.refreshPublicCosmetics(alice.playerId, unequippedSnapshot);
+    const unequipped = await unequippedUpdate;
+    expect(unequipped.state.players.find(player => player.id === alice.playerId)?.publicCosmetics)
+      .toEqual({ titleId: null, frameId: null });
   });
 
   it('does not award progression when wallet hand settlement fails', async () => {

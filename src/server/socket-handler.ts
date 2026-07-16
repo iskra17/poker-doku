@@ -69,6 +69,10 @@ export interface SocketRuntime {
   roomManager: RoomManager;
   sessions: SessionManager;
   revokeProfile: (profileId: string) => void;
+  refreshPublicCosmetics: (
+    profileId: string,
+    snapshot: import('../lib/progression/types').ProgressionSnapshot,
+  ) => boolean;
   close: () => void;
 }
 
@@ -138,12 +142,17 @@ export function setupSocketHandlers(
     ? new ProgressionRuntime(
       progressionService,
       (profileId, snapshot, summary) => {
-        const session = sessions.getByPlayerId(profileId);
-        if (!session?.socketId) return;
-        const target = io.sockets.sockets.get(session.socketId);
-        if (!target) return;
-        target.emit('progression-update', snapshot);
-        target.emit('reward-summary', summary);
+        // RoomManager가 같은 동기 스택에서 game-update를 먼저 emit하게 양보한다.
+        // 따라서 클라이언트 summary coordinator가 economy 카드 유무를 확정한 뒤
+        // progression reward를 받으며, practice처럼 카드가 없으면 즉시 표시된다.
+        queueMicrotask(() => {
+          const session = sessions.getByPlayerId(profileId);
+          if (!session?.socketId) return;
+          const target = io.sockets.sockets.get(session.socketId);
+          if (!target) return;
+          target.emit('progression-update', snapshot);
+          target.emit('reward-summary', summary);
+        });
       },
     )
     : undefined;
@@ -1387,6 +1396,18 @@ export function setupSocketHandlers(
   return {
     roomManager,
     sessions,
+    refreshPublicCosmetics: (profileId, snapshot) => {
+      const session = sessions.getByPlayerId(profileId);
+      if (!session) return false;
+      const roomId = session.roomId
+        ?? roomManager.getRoomList(profileId).find(room => room.mySeat)?.id;
+      if (!roomId) return false;
+      return roomManager.refreshPlayerPublicCosmetics(
+        roomId,
+        profileId,
+        buildPublicCosmetics(snapshot),
+      );
+    },
     revokeProfile: profileId => {
       const revoked = sessions.revokeProfile(profileId);
       if (!revoked) return;

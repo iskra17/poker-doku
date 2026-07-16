@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { PokerEngine } from '../lib/poker/engine';
 import { HAND_RANK_KO } from '../lib/poker/evaluator';
-import { RoomConfig, Player, ChatMessage, ActionType } from '../lib/poker/types';
+import {
+  RoomConfig,
+  Player,
+  ChatMessage,
+  ActionType,
+  type PlayerPublicCosmetics,
+} from '../lib/poker/types';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
@@ -443,6 +449,23 @@ export class RoomManager {
       }
     }
     if (economicLeaveCommitted) this.resumeAfterEconomicLeave(roomId);
+    return true;
+  }
+
+  refreshPlayerPublicCosmetics(
+    roomId: string,
+    playerId: string,
+    cosmetics: PlayerPublicCosmetics,
+  ): boolean {
+    const room = this.rooms.get(roomId);
+    const player = room?.engine.state.players.find(candidate => (
+      candidate.id === playerId
+      && candidate.type === 'human'
+      && !candidate.pendingRemoval
+    ));
+    if (!room || !player) return false;
+    player.publicCosmetics = { ...cosmetics };
+    this.onUpdate(roomId, room.engine);
     return true;
   }
 

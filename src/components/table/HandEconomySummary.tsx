@@ -9,6 +9,7 @@ import {
   type HandEconomySummary as Summary,
 } from '@/lib/events/hand-economy-summary';
 import { useGameStore } from '@/lib/store/game-store';
+import { useProgressionStore } from '@/lib/store/progression-store';
 
 export default function HandEconomySummary() {
   const myPlayerId = useGameStore(state => state.myPlayerId);
@@ -17,20 +18,33 @@ export default function HandEconomySummary() {
 
   useEffect(() => {
     const unsubscribe = onGameEvent(event => {
+      if (event.type === 'hand-start') {
+        if (hideTimer.current) clearTimeout(hideTimer.current);
+        hideTimer.current = null;
+        setSummary(null);
+        useProgressionStore.getState().setEconomySummaryActive(false);
+        return;
+      }
       if (event.type !== 'winners' || !myPlayerId) return;
       const nextSummary = buildHandEconomySummary(event, myPlayerId);
-      if (!nextSummary) return;
+      if (!nextSummary || event.economyMode === 'practice') {
+        useProgressionStore.getState().setEconomySummaryActive(false);
+        return;
+      }
       if (hideTimer.current) clearTimeout(hideTimer.current);
+      useProgressionStore.getState().setEconomySummaryActive(true);
       setSummary(nextSummary);
       hideTimer.current = setTimeout(() => {
         hideTimer.current = null;
         setSummary(null);
+        useProgressionStore.getState().setEconomySummaryActive(false);
       }, 5_000);
     });
     return () => {
       unsubscribe();
       if (hideTimer.current) clearTimeout(hideTimer.current);
       hideTimer.current = null;
+      useProgressionStore.getState().setEconomySummaryActive(false);
     };
   }, [myPlayerId]);
 

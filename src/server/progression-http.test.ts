@@ -1,7 +1,8 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PublicProfile } from '@/lib/profile/types';
+import type { ProgressionSnapshot } from '@/lib/progression/types';
 import { getCollectionItemDefinition } from '@/lib/collection/catalog';
 import { createHttpRequestHandler } from './http-handler';
 import {
@@ -21,6 +22,10 @@ describe('progression HTTP API', () => {
   let baseUrl: string;
   let close: () => Promise<void>;
   let authenticateCredential: (credential: string) => Promise<PublicProfile | null>;
+  let publicCosmeticsChanged: (
+    profileId: string,
+    snapshot: ProgressionSnapshot,
+  ) => void;
   const profile: PublicProfile = {
     id: 'http-profile',
     alias: '도전자',
@@ -37,6 +42,7 @@ describe('progression HTTP API', () => {
     authenticateCredential = async (credential: string) => (
         credential === 'good-credential' ? profile : null
       );
+    publicCosmeticsChanged = vi.fn();
     const manager = {
       authenticateCredential: (credential: string) => authenticateCredential(credential),
     } as ProfileHttpManager;
@@ -55,6 +61,7 @@ describe('progression HTTP API', () => {
       profileConcurrencyGate: new TransientHttpConcurrencyGate(1),
       production: false,
       now: () => Date.parse('2026-07-17T12:00:00+09:00'),
+      onProgressionPublicCosmeticsChanged: publicCosmeticsChanged,
     }));
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -152,6 +159,16 @@ describe('progression HTTP API', () => {
     expect(await unequipped.json()).toMatchObject({
       progression: { equipment: { frame: null } },
     });
+    expect(publicCosmeticsChanged).toHaveBeenNthCalledWith(
+      1,
+      profile.id,
+      expect.objectContaining({ equipment: expect.objectContaining({ frame: 'dojo-frame-cherry-blossom' }) }),
+    );
+    expect(publicCosmeticsChanged).toHaveBeenNthCalledWith(
+      2,
+      profile.id,
+      expect.objectContaining({ equipment: expect.objectContaining({ frame: null }) }),
+    );
   });
 
   it('allows one deterministic mission reroll and rejects a second', async () => {

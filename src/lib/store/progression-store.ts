@@ -27,6 +27,7 @@ export interface ProgressionStoreState {
   authExpired: boolean;
   activeReward: ProgressionRewardSummary | null;
   rewardQueue: ProgressionRewardSummary[];
+  economySummaryState: 'idle' | 'active';
   load(): Promise<LoadOutcome>;
   rerollMission(slot: number): Promise<LoadOutcome>;
   selectCharacter(characterId: ProgressionCharacterId): Promise<LoadOutcome>;
@@ -34,6 +35,7 @@ export interface ProgressionStoreState {
   receiveSnapshot(snapshot: ProgressionSnapshot): void;
   enqueueReward(summary: ProgressionRewardSummary): void;
   consumeReward(eventId: string): void;
+  setEconomySummaryActive(active: boolean): void;
   bindSocket(socket: PokerClientSocket): () => void;
   reset(): void;
   clearError(): void;
@@ -42,7 +44,11 @@ export interface ProgressionStoreState {
 export type ProgressionStore = UseBoundStore<StoreApi<ProgressionStoreState>>;
 
 const DEFAULT_ERROR = '성장 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
-const MAX_SEEN_REWARDS = 256;
+export function selectDisplayReward(
+  state: Pick<ProgressionStoreState, 'activeReward' | 'economySummaryState'>,
+): ProgressionRewardSummary | null {
+  return state.economySummaryState === 'idle' ? state.activeReward : null;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -89,7 +95,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
   let bindCount = 0;
   let onSnapshot: ((snapshot: ProgressionSnapshot) => void) | null = null;
   let onReward: ((summary: ProgressionRewardSummary) => void) | null = null;
-  let seenEventIds: string[] = [];
+  const seenEventIds = new Set<string>();
 
   return create<ProgressionStoreState>((set, get) => {
     const request = async (
@@ -137,6 +143,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       authExpired: false,
       activeReward: null,
       rewardQueue: [],
+      economySummaryState: 'idle',
 
       load: async () => {
         const result = await request('/api/progression', {
@@ -184,13 +191,15 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       receiveSnapshot: snapshot => set({ snapshot, status: 'ready', authExpired: false }),
 
       enqueueReward: summary => {
-        if (seenEventIds.includes(summary.eventId)) return;
-        seenEventIds = [...seenEventIds.slice(-(MAX_SEEN_REWARDS - 1)), summary.eventId];
+        if (seenEventIds.has(summary.eventId)) return;
+        seenEventIds.add(summary.eventId);
         if (!get().activeReward) {
           set({ activeReward: summary });
           return;
         }
-        set(state => ({ rewardQueue: [...state.rewardQueue, summary] }));
+        set(state => ({
+          rewardQueue: [...state.rewardQueue, summary],
+        }));
       },
 
       consumeReward: eventId => {
@@ -200,6 +209,10 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           rewardQueue: state.rewardQueue.slice(1),
         }));
       },
+
+      setEconomySummaryActive: active => set({
+        economySummaryState: active ? 'active' : 'idle',
+      }),
 
       bindSocket: socket => {
         if (boundSocket === socket) {
@@ -234,10 +247,10 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       },
 
       reset: () => {
-        seenEventIds = [];
         set({
           snapshot: null, missions: null, status: 'idle', action: null,
           error: null, authExpired: false, activeReward: null, rewardQueue: [],
+          economySummaryState: 'idle',
         });
       },
       clearError: () => set({ error: null }),

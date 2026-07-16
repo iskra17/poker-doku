@@ -24,6 +24,7 @@ import { ProfileManager, type ProfileKdf } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 import { ProgressionRepository } from './progression-repository';
 import { ProgressionService } from './progression-service';
+import { getCollectionItemDefinition } from '../lib/collection/catalog';
 import {
   setupSocketHandlers,
   type AuthenticatedSocketData,
@@ -51,6 +52,7 @@ export interface SocketTestHarness {
   runtime: SocketRuntime;
   economyRuntime: EconomyRuntime;
   progressionService: ProgressionService;
+  grantProgressionItem: (profileId: string, itemId: string) => void;
   profileManager: ProfileManager;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
@@ -104,10 +106,56 @@ export async function createSocketTestHarness(
   const economyRuntime = new EconomyRuntime(
     new EconomyService(new EconomyRepository(database)),
   );
-  const progressionService = new ProgressionService(
-    database,
-    new ProgressionRepository(database),
-  );
+  const progressionRepository = new ProgressionRepository(database);
+  const progressionService = new ProgressionService(database, progressionRepository);
+  const grantProgressionItem = (profileId: string, itemId: string): void => {
+    const identity = database.db.prepare(
+      'SELECT avatar_id FROM profiles WHERE id = ?',
+    ).get(profileId) as { avatar_id: string } | undefined;
+    if (!identity) throw new Error(`Unknown profile: ${profileId}`);
+    progressionService.getRuntimeSnapshot(profileId, identity.avatar_id, Date.now());
+    const definition = getCollectionItemDefinition(itemId);
+    if (!definition || definition.source.kind === 'streak') {
+      throw new Error(`Not a permanent reward: ${itemId}`);
+    }
+    const source = definition.source;
+    if (source.kind === 'dojo-level') {
+      database.db.prepare(`
+        UPDATE progression_profiles SET dojo_level = ?, dojo_xp_milli = 0
+        WHERE profile_id = ? AND dojo_level < ?
+      `).run(source.level, profileId, source.level);
+    } else {
+      database.db.prepare(`
+        INSERT INTO character_affinity (profile_id, character_id, level, xp_milli)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT(profile_id, character_id) DO UPDATE SET
+          level = MAX(level, excluded.level), xp_milli = 0
+      `).run(profileId, source.characterId, source.level);
+    }
+    const sourceEventId = `harness-grant-${itemId}`;
+    database.transaction(() => {
+      progressionRepository.grantPermanentInventoryItemInTransaction({
+        profileId, itemId, sourceEventId, source, grantedAt: 1,
+      });
+      progressionRepository.insertProgressionEvent({
+        idempotencyKey: sourceEventId,
+        profileId,
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: {
+          eventId: sourceEventId,
+          dojoXpMilli: 0,
+          dojoLevelsGained: source.kind === 'dojo-level' ? [source.level] : [],
+          characterId: source.kind === 'affinity-level' ? source.characterId : 'sakura',
+          affinityMilli: 0,
+          affinityLevelsGained: source.kind === 'affinity-level' ? [source.level] : [],
+          missionCompletions: [],
+          grantedItemIds: [itemId],
+        },
+        createdAt: 1,
+      });
+    });
+  };
   economyRuntime.recoverActiveEscrows();
   const profileRateLimiter = new TransientHttpRateLimiter({
     profileAuth: {
@@ -183,6 +231,7 @@ export async function createSocketTestHarness(
     runtime,
     economyRuntime,
     progressionService,
+    grantProgressionItem,
     profileManager,
     createProfile,
     recoverProfile,

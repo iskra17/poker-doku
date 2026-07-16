@@ -145,6 +145,9 @@ async function listen(): Promise<void> {
     profileConcurrencyGate,
     production: !dev,
     onProfileRevoked: profileId => runtime?.revokeProfile(profileId),
+    onProgressionPublicCosmeticsChanged: (profileId, snapshot) => {
+      runtime?.refreshPublicCosmetics(profileId, snapshot);
+    },
   }));
   httpServer = server;
   const originOptions = {
