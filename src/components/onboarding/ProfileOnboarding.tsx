@@ -7,6 +7,8 @@ import CharacterImage from '@/components/characters/CharacterImage';
 import RecoveryWordsCard from '@/components/profile/RecoveryWordsCard';
 import Button from '@/components/ui/Button';
 import { canEnterExistingProfileRecovery } from './onboarding-rules';
+import { reduceRecoveryInput } from './recovery-input';
+import { recoveryWordsIssuanceKey } from '@/components/profile/recovery-words';
 
 type OnboardingStep = 'adult' | 'avatar' | 'recover';
 
@@ -37,6 +39,7 @@ export default function ProfileOnboarding() {
           <p className="mt-1 text-lg font-bold text-mystic">{profile.alias}</p>
         </div>
         <RecoveryWordsCard
+          key={recoveryWordsIssuanceKey(recoveryWords)}
           words={recoveryWords}
           onAcknowledge={acknowledgeRecovery}
           onSkip={skipRecovery}
@@ -62,7 +65,15 @@ export default function ProfileOnboarding() {
             <input
               type="checkbox"
               checked={adultConfirmed}
-              onChange={event => setAdultConfirmed(event.target.checked)}
+              onChange={event => {
+                const checked = event.target.checked;
+                setAdultConfirmed(checked);
+                if (!checked) {
+                  setRecoveryInput(current => reduceRecoveryInput(current, {
+                    type: 'clear', reason: 'legal-unchecked',
+                  }));
+                }
+              }}
               className="mt-1 accent-blossom"
             />
             위 안내를 확인했으며 이용 가능한 연령입니다.
@@ -81,7 +92,12 @@ export default function ProfileOnboarding() {
             type="button"
             disabled={!canEnterExistingProfileRecovery(adultConfirmed)}
             onClick={() => {
-              if (canEnterExistingProfileRecovery(adultConfirmed)) setStep('recover');
+              if (canEnterExistingProfileRecovery(adultConfirmed)) {
+                setRecoveryInput(current => reduceRecoveryInput(current, {
+                  type: 'clear', reason: 'back',
+                }));
+                setStep('recover');
+              }
             }}
             className="w-full text-xs text-mystic hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -143,7 +159,9 @@ export default function ProfileOnboarding() {
           </div>
           <textarea
             value={recoveryInput}
-            onChange={event => setRecoveryInput(event.target.value)}
+            onChange={event => setRecoveryInput(current => reduceRecoveryInput(current, {
+              type: 'change', value: event.target.value,
+            }))}
             rows={5}
             autoComplete="off"
             spellCheck={false}
@@ -156,11 +174,26 @@ export default function ProfileOnboarding() {
             size="lg"
             className="w-full"
             disabled={busy || recoveryInput.trim().split(/\s+/u).length !== 12}
-            onClick={() => void recover(recoveryInput)}
+            onClick={() => {
+              const submitted = recoveryInput;
+              setRecoveryInput(current => reduceRecoveryInput(current, {
+                type: 'clear', reason: 'submit',
+              }));
+              void recover(submitted);
+            }}
           >
             {busy ? '복구하는 중…' : '프로필 복구'}
           </Button>
-          <button type="button" onClick={() => setStep('adult')} className="w-full text-xs text-ink-dim">
+          <button
+            type="button"
+            onClick={() => {
+              setRecoveryInput(current => reduceRecoveryInput(current, {
+                type: 'clear', reason: 'back',
+              }));
+              setStep('adult');
+            }}
+            className="w-full text-xs text-ink-dim"
+          >
             새 프로필 만들기로 돌아가기
           </button>
         </div>

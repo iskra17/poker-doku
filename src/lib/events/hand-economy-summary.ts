@@ -1,6 +1,7 @@
 import type { GameEvent } from './game-events';
 
 export interface HandEconomySummary {
+  playerId: string;
   handNumber: number;
   endingStack: number;
   delta: number;
@@ -23,12 +24,20 @@ export function buildHandEconomySummary(
   const delta = player.chips - (player.handStartChips as number);
   if (!Number.isSafeInteger(delta)) return null;
   return {
+    playerId,
     handNumber: event.handNumber,
     endingStack: player.chips,
     delta,
     handRake: event.handRake,
     economyMode: event.economyMode,
   };
+}
+
+export function isHandEconomySummaryForPlayer(
+  summary: HandEconomySummary,
+  playerId: string | null,
+): boolean {
+  return playerId !== null && summary.playerId === playerId;
 }
 
 export function formatChipDelta(delta: number): string {

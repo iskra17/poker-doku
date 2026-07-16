@@ -6,6 +6,7 @@ import type { ActionType, ChatMessage, GameState } from '../poker/types';
 import type { PokerClientSocket, RoomListItem } from '../realtime/protocol';
 import { diffGameState, emitGameEvent } from '../events/game-events';
 import { actionFailureMessage, canSendAction, shouldApplyGameUpdate } from './realtime-state';
+import { getBrowserTransportToken } from './transport-token';
 
 export type RoomInfo = RoomListItem;
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'replaced';
@@ -50,20 +51,6 @@ function samePendingAction(a: PendingAction | null, b: PendingAction): boolean {
   return a?.handNumber === b.handNumber && a.actionSeq === b.actionSeq;
 }
 
-// 연결 진단용 transport token. 서버 인증/좌석 복원 권위는 HttpOnly 프로필 쿠키의 profileId다.
-function getSessionToken(): string {
-  if (typeof window === 'undefined') return '';
-  const KEY = 'poker-doku-session';
-  let token = localStorage.getItem(KEY);
-  if (!token) {
-    token = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
-    localStorage.setItem(KEY, token);
-  }
-  return token;
-}
-
 interface GameStore {
   socket: PokerClientSocket | null;
   connected: boolean;
@@ -85,6 +72,7 @@ interface GameStore {
 
   connect: () => void;
   disconnect: () => void;
+  needsFreshConnection: () => boolean;
   setPublicProfile: (profile: { id: string; alias: string; avatarId: string }) => void;
   clearPublicProfile: () => void;
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
@@ -126,7 +114,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     set({ connectionState: 'connecting' });
     const socket = io({
       transports: ['websocket', 'polling'],
-      auth: { sessionToken: getSessionToken() },
+      auth: { sessionToken: getBrowserTransportToken() },
     }) as PokerClientSocket;
 
     socket.on('connect', () => {
@@ -220,18 +208,33 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   disconnect: () => {
     const { socket } = get();
-    if (!socket) return;
     clearJoinTimeout();
     clearActionAckTimeout();
-    socket.disconnect();
+    if (socket) {
+      socket.removeAllListeners();
+      socket.disconnect();
+    }
     set({
       socket: null,
       connected: false,
       connectionState: 'connecting',
+      publicProfileId: null,
+      playerName: '',
+      publicAvatarId: null,
+      myPlayerId: null,
+      currentRoomId: null,
       pendingRoomId: null,
       pendingAction: null,
+      gameState: null,
+      chatMessages: [],
+      rooms: [],
+      joinError: null,
+      tableNotice: null,
+      showCreateRoom: false,
     });
   },
+
+  needsFreshConnection: () => get().connectionState === 'replaced',
 
   setPublicProfile: profile => set({
     publicProfileId: profile.id,

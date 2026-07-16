@@ -64,14 +64,22 @@ function setup(
   fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>,
   storage: TestStorage = memoryStorage(),
 ) {
+  const realtime = {
+    currentRoomId: null as string | null,
+    gameState: null as { id: string } | null,
+  };
   const game = {
     connect: vi.fn(),
-    disconnect: vi.fn(),
+    disconnect: vi.fn(() => {
+      realtime.currentRoomId = null;
+      realtime.gameState = null;
+    }),
+    needsFreshConnection: vi.fn(() => false),
     setPublicProfile: vi.fn(),
     clearPublicProfile: vi.fn(),
   };
   const store = createProfileStore({ fetch: fetchImpl, storage, game });
-  return { store, game, storage };
+  return { store, game, storage, realtime };
 }
 
 describe('anonymous profile store', () => {
@@ -181,8 +189,10 @@ describe('anonymous profile store', () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
       .mockImplementationOnce(() => pending.promise);
-    const { store, game } = setup(fetchImpl);
+    const { store, game, realtime } = setup(fetchImpl);
     await store.getState().bootstrap();
+    realtime.currentRoomId = 'room-1';
+    realtime.gameState = { id: 'room-1' };
 
     const refresh = store.getState().refresh();
     expect(store.getState()).toMatchObject({ phase: 'ready', profile: PROFILE });
@@ -191,14 +201,71 @@ describe('anonymous profile store', () => {
 
     expect(store.getState()).toMatchObject({ phase: 'ready', profile: updated });
     expect(game.connect).toHaveBeenCalledTimes(1);
+    expect(realtime).toEqual({ currentRoomId: 'room-1', gameState: { id: 'room-1' } });
+  });
+
+  it('tears down profile A before publishing profile B from refresh', async () => {
+    const profileB = { ...PROFILE, id: 'profile-2', alias: '달빛 수달' };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: profileB, economy: ECONOMY }));
+    const { store, game, realtime } = setup(fetchImpl);
+    await store.getState().bootstrap();
+    realtime.currentRoomId = 'room-1';
+    realtime.gameState = { id: 'room-1' };
+
+    await store.getState().refresh();
+
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.setPublicProfile).toHaveBeenLastCalledWith({
+      id: profileB.id, alias: profileB.alias, avatarId: profileB.avatarId,
+    });
+    expect(game.connect).toHaveBeenCalledTimes(2);
+    expect(store.getState().profile).toEqual(profileB);
+  });
+
+  it('fresh reconnects a replaced same-profile socket but not a normal refresh', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }));
+    const { store, game } = setup(fetchImpl);
+    await store.getState().bootstrap();
+    await store.getState().refresh();
+    expect(game.disconnect).not.toHaveBeenCalled();
+    expect(game.connect).toHaveBeenCalledTimes(1);
+
+    game.needsFreshConnection.mockReturnValue(true);
+    await store.getState().refresh();
+
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.connect).toHaveBeenCalledTimes(2);
+  });
+
+  it('tears down the old realtime identity on successful recovery until acknowledgement', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
+      .mockResolvedValueOnce(jsonResponse({
+        profile: PROFILE, economy: ECONOMY, recoveryWords: NEW_WORDS,
+      }));
+    const { store, game } = setup(fetchImpl);
+    await store.getState().bootstrap();
+
+    await store.getState().recover(WORDS);
+
+    expect(store.getState().phase).toBe('recovery-required');
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.connect).toHaveBeenCalledTimes(1);
+    store.getState().acknowledgeRecovery();
+    expect(game.connect).toHaveBeenCalledTimes(2);
   });
 
   it('clears realtime identity when a forced bootstrap becomes anonymous', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
       .mockResolvedValueOnce(jsonResponse({ state: 'anonymous' }));
-    const { store, game } = setup(fetchImpl);
+    const { store, game, realtime } = setup(fetchImpl);
     await store.getState().bootstrap();
+    realtime.currentRoomId = 'room-1';
+    realtime.gameState = { id: 'room-1' };
 
     await store.getState().bootstrap();
 
@@ -208,14 +275,17 @@ describe('anonymous profile store', () => {
     });
     expect(game.disconnect).toHaveBeenCalledOnce();
     expect(game.clearPublicProfile).toHaveBeenCalledOnce();
+    expect(realtime).toEqual({ currentRoomId: null, gameState: null });
   });
 
   it('clears realtime identity when a forced bootstrap request fails', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
       .mockRejectedValueOnce(new Error('offline'));
-    const { store, game } = setup(fetchImpl);
+    const { store, game, realtime } = setup(fetchImpl);
     await store.getState().bootstrap();
+    realtime.currentRoomId = 'room-1';
+    realtime.gameState = { id: 'room-1' };
 
     await store.getState().bootstrap();
 
@@ -226,14 +296,17 @@ describe('anonymous profile store', () => {
     });
     expect(game.disconnect).toHaveBeenCalledOnce();
     expect(game.clearPublicProfile).toHaveBeenCalledOnce();
+    expect(realtime).toEqual({ currentRoomId: null, gameState: null });
   });
 
   it('retains the last ready snapshot when a refresh request fails', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
       .mockRejectedValueOnce(new Error('offline'));
-    const { store, game } = setup(fetchImpl);
+    const { store, game, realtime } = setup(fetchImpl);
     await store.getState().bootstrap();
+    realtime.currentRoomId = 'room-1';
+    realtime.gameState = { id: 'room-1' };
 
     await store.getState().refresh();
 
@@ -242,6 +315,8 @@ describe('anonymous profile store', () => {
       error: '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.',
     });
     expect(game.connect).toHaveBeenCalledTimes(1);
+    expect(game.disconnect).not.toHaveBeenCalled();
+    expect(realtime).toEqual({ currentRoomId: 'room-1', gameState: { id: 'room-1' } });
   });
 
   it('clears realtime identity when a refresh confirms an anonymous session', async () => {
@@ -289,6 +364,46 @@ describe('anonymous profile store', () => {
       recoveryWarning: true,
     });
     expect(game.connect).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates concurrent create operations to one profile POST', async () => {
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn(() => pending.promise);
+    const { store } = setup(fetchImpl);
+
+    const first = store.getState().create('sakura');
+    const second = store.getState().create('ara');
+
+    expect(second).toBe(first);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    pending.resolve(jsonResponse({
+      profile: PROFILE, economy: ECONOMY, recoveryWords: WORDS,
+    }, 201));
+    await Promise.all([first, second]);
+    expect(store.getState().phase).toBe('recovery-required');
+  });
+
+  it('deduplicates recover and ignores invalid/concurrent identity operations while it is in flight', async () => {
+    const pending = deferred<Response>();
+    const fetchImpl = vi.fn(() => pending.promise);
+    const { store } = setup(fetchImpl);
+
+    const first = store.getState().recover(WORDS);
+    const invalid = store.getState().recover('두 단어');
+    const competingCreate = store.getState().create('ara');
+
+    expect(invalid).toBe(first);
+    expect(competingCreate).toBe(first);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    pending.resolve(jsonResponse({
+      profile: PROFILE, economy: ECONOMY, recoveryWords: NEW_WORDS,
+    }));
+    await Promise.all([first, invalid, competingCreate]);
+    expect(store.getState()).toMatchObject({
+      phase: 'recovery-required',
+      recoveryWords: NEW_WORDS.split(' '),
+      error: null,
+    });
   });
 
   it('acknowledges or skips recovery words without persisting the secret', async () => {

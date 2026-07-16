@@ -25,6 +25,71 @@ afterEach(() => {
 });
 
 describe('game store leave acknowledgement', () => {
+  it('signals only a replaced socket as requiring a fresh connection', () => {
+    useGameStore.setState({ connectionState: 'connected' });
+    expect(useGameStore.getState().needsFreshConnection()).toBe(false);
+    useGameStore.setState({ connectionState: 'replaced' });
+    expect(useGameStore.getState().needsFreshConnection()).toBe(true);
+  });
+
+  it('disconnect clears every realtime and table snapshot atomically', () => {
+    const removeAllListeners = vi.fn();
+    const disconnect = vi.fn();
+    const socket = {
+      connected: true,
+      emit: vi.fn(),
+      removeAllListeners,
+      disconnect,
+    } as unknown as PokerClientSocket;
+    useGameStore.setState({
+      socket,
+      connected: true,
+      connectionState: 'connected',
+      publicProfileId: 'profile-1',
+      playerName: '벚꽃 여우',
+      publicAvatarId: 'sakura',
+      myPlayerId: 'profile-1',
+      currentRoomId: 'room-1',
+      pendingRoomId: 'room-2',
+      pendingAction: { handNumber: 3, actionSeq: 4 },
+      gameState: { id: 'room-1' } as never,
+      chatMessages: [{
+        id: 'chat-1', roomId: 'room-1', playerId: 'profile-1',
+        playerName: '벚꽃 여우', message: '안녕하세요', timestamp: 1, type: 'player',
+      }],
+      rooms: [{
+        id: 'room-1', name: '방', playerCount: 1, maxPlayers: 6,
+        blinds: '10/20', status: 'Playing',
+      }],
+      joinError: 'old error',
+      tableNotice: 'old notice',
+      showCreateRoom: true,
+    });
+
+    useGameStore.getState().disconnect();
+
+    expect(removeAllListeners).toHaveBeenCalledOnce();
+    expect(disconnect).toHaveBeenCalledOnce();
+    expect(useGameStore.getState()).toMatchObject({
+      socket: null,
+      connected: false,
+      connectionState: 'connecting',
+      publicProfileId: null,
+      playerName: '',
+      publicAvatarId: null,
+      myPlayerId: null,
+      currentRoomId: null,
+      pendingRoomId: null,
+      pendingAction: null,
+      gameState: null,
+      chatMessages: [],
+      rooms: [],
+      joinError: null,
+      tableNotice: null,
+      showCreateRoom: false,
+    });
+  });
+
   it('keeps the table visible when server settlement rejects leaving', async () => {
     const { socket } = socketRespondingWith({ ok: false, message: '정산 저장에 실패했어요.' });
     useGameStore.setState({ socket, connected: true, currentRoomId: 'room-1' });

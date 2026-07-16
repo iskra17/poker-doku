@@ -4,6 +4,7 @@ import type { GameState } from '@/lib/poker/types';
 import {
   buildHandEconomySummary,
   formatChipDelta,
+  isHandEconomySummaryForPlayer,
 } from './hand-economy-summary';
 
 function winnersEvent(
@@ -79,12 +80,20 @@ describe('hand economy summary', () => {
 
   it('uses ending stack minus hand-start stack regardless of multi-pot winners', () => {
     expect(buildHandEconomySummary(winnersEvent(), 'hero')).toEqual({
+      playerId: 'hero',
       handNumber: 4,
       endingStack: 1_250,
       delta: 250,
       handRake: 20,
       economyMode: 'wallet',
     });
+  });
+
+  it('does not carry a previous profile summary into a new player identity', () => {
+    const summary = buildHandEconomySummary(winnersEvent(), 'hero')!;
+    expect(isHandEconomySummaryForPlayer(summary, 'hero')).toBe(true);
+    expect(isHandEconomySummaryForPlayer(summary, 'new-profile')).toBe(false);
+    expect(isHandEconomySummaryForPlayer(summary, null)).toBe(false);
   });
 
   it('returns null when the current player was removed or lacks a safe starting stack', () => {

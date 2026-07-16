@@ -12,6 +12,7 @@ import EconomyBar from '@/components/lobby/EconomyBar';
 import GameRoomView from '@/components/layout/GameRoomView';
 import SettingsModal from '@/components/layout/SettingsModal';
 import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
+import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
   backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
@@ -83,8 +84,6 @@ export default function Home() {
     });
   };
 
-  if (currentRoomId) return <GameRoomView onLeave={handleLeave} />;
-
   if (phase !== 'ready') {
     return (
       <div className="min-h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
@@ -92,6 +91,10 @@ export default function Home() {
         <ProfileOnboarding />
       </div>
     );
+  }
+
+  if (shouldRenderAuthenticatedTable(phase, currentRoomId)) {
+    return <GameRoomView onLeave={handleLeave} />;
   }
 
   return (

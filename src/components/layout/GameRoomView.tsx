@@ -79,7 +79,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <PokerTable />
             <WinnerCutIn isMobile={isMobile} />
             <LoserCutIn isMobile={isMobile} />
-            <HandEconomySummary />
+            <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ActionLog />
             <ChatPanel />
             <SngWaitingOverlay />

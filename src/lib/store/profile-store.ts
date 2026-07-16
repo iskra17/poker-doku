@@ -34,6 +34,7 @@ interface StorageLike {
 interface ProfileGameBridge {
   connect(): void;
   disconnect(): void;
+  needsFreshConnection(): boolean;
   setPublicProfile(profile: PublicGameIdentity): void;
   clearPublicProfile(): void;
 }
@@ -222,7 +223,16 @@ export function createProfileStore(
   let requestVersion = 0;
   let bootstrapPromise: Promise<void> | null = null;
   let refreshPromise: Promise<void> | null = null;
+  let identityOperationPromise: Promise<void> | null = null;
   let connectedProfileId: string | null = null;
+  const startIdentityOperation = (work: () => Promise<void>): Promise<void> => {
+    if (identityOperationPromise) return identityOperationPromise;
+    const pending = work().finally(() => {
+      if (identityOperationPromise === pending) identityOperationPromise = null;
+    });
+    identityOperationPromise = pending;
+    return pending;
+  };
   const hasRecoveryAcknowledgement = (profileId: string): boolean => {
     try {
       return dependencies.storage.getItem(recoveryAcknowledgementKey(profileId)) === '1';
@@ -247,12 +257,9 @@ export function createProfileStore(
 
   return create<ProfileStoreState>((set, get) => {
     const resetAnonymous = (error: string | null): void => {
-      const hadPublishedIdentity = connectedProfileId !== null || get().profile !== null;
       connectedProfileId = null;
-      if (hadPublishedIdentity) {
-        dependencies.game.disconnect();
-        dependencies.game.clearPublicProfile();
-      }
+      dependencies.game.disconnect();
+      dependencies.game.clearPublicProfile();
       set({
         phase: 'anonymous',
         action: null,
@@ -269,6 +276,13 @@ export function createProfileStore(
       economy: EconomyStatus,
       recoveryWarning: boolean,
     ): void => {
+      const profileChanged = connectedProfileId !== null
+        && connectedProfileId !== profile.id;
+      if (profileChanged || dependencies.game.needsFreshConnection()) {
+        dependencies.game.disconnect();
+        dependencies.game.clearPublicProfile();
+        connectedProfileId = null;
+      }
       set({
         phase: 'ready',
         action: null,
@@ -377,7 +391,7 @@ export function createProfileStore(
         if (get().phase === 'recovery-required') return Promise.resolve();
         const version = ++requestVersion;
         set({ phase: 'loading', error: null });
-        const pending = (async () => {
+        const work = (async () => {
           try {
             const payload = await requestJson(dependencies, '/api/profile/session');
             if (version !== requestVersion) return;
@@ -396,10 +410,10 @@ export function createProfileStore(
             resetAnonymous(requestErrorMessage(error));
           }
         })();
-        bootstrapPromise = pending;
-        void pending.finally(() => {
+        const pending = work.finally(() => {
           if (bootstrapPromise === pending) bootstrapPromise = null;
         });
+        bootstrapPromise = pending;
         return pending;
       },
 
@@ -408,7 +422,7 @@ export function createProfileStore(
         if (refreshPromise) return refreshPromise;
         const version = ++requestVersion;
         set({ error: null });
-        const pending = (async () => {
+        const work = (async () => {
           try {
             const payload = await requestJson(dependencies, '/api/profile/session');
             if (version !== requestVersion) return;
@@ -428,14 +442,14 @@ export function createProfileStore(
             }
           }
         })();
-        refreshPromise = pending;
-        void pending.finally(() => {
+        const pending = work.finally(() => {
           if (refreshPromise === pending) refreshPromise = null;
         });
+        refreshPromise = pending;
         return pending;
       },
 
-      create: async avatarId => {
+      create: avatarId => startIdentityOperation(async () => {
         const version = ++requestVersion;
         set({
           phase: 'creating', action: null, profile: null, economy: null,
@@ -450,6 +464,11 @@ export function createProfileStore(
           if (version !== requestVersion) return;
           const { profile, economy, recoveryWords } = await requireRecoveryPayload(payload);
           if (version !== requestVersion) return;
+          if (connectedProfileId !== null || get().profile !== null) {
+            dependencies.game.disconnect();
+            dependencies.game.clearPublicProfile();
+            connectedProfileId = null;
+          }
           forgetRecoveryAcknowledgement(profile.id);
           set({
             phase: 'recovery-required',
@@ -468,41 +487,49 @@ export function createProfileStore(
             error: requestErrorMessage(error),
           });
         }
-      },
+      }),
 
-      recover: async recoveryInput => {
+      recover: recoveryInput => {
+        if (identityOperationPromise) return identityOperationPromise;
         const normalized = normalizeRecoveryWords(recoveryInput);
         if (!normalized) {
           set({ phase: 'anonymous', error: '복구 단어 12개를 확인해 주세요.' });
-          return;
+          return Promise.resolve();
         }
-        const version = ++requestVersion;
-        set({
-          phase: 'recovering', action: null, profile: null, economy: null,
-          recoveryWords: null, recoveryWarning: false, error: null,
+        return startIdentityOperation(async () => {
+          const version = ++requestVersion;
+          set({
+            phase: 'recovering', action: null, profile: null, economy: null,
+            recoveryWords: null, recoveryWarning: false, error: null,
+          });
+          try {
+            const payload = await requestJson(
+              dependencies,
+              '/api/profile/recover',
+              postJson({ recoveryWords: normalized }),
+            );
+            if (version !== requestVersion) return;
+            const { profile, economy, recoveryWords } = await requireRecoveryPayload(payload);
+            if (version !== requestVersion) return;
+            if (connectedProfileId !== null || get().profile !== null) {
+              dependencies.game.disconnect();
+              dependencies.game.clearPublicProfile();
+              connectedProfileId = null;
+            }
+            forgetRecoveryAcknowledgement(profile.id);
+            set({
+              phase: 'recovery-required', action: null, profile, economy,
+              recoveryWords, recoveryWarning: true, error: null,
+            });
+          } catch (error) {
+            if (version !== requestVersion) return;
+            set({
+              phase: 'anonymous', action: null, profile: null, economy: null,
+              recoveryWords: null, recoveryWarning: false,
+              error: requestErrorMessage(error),
+            });
+          }
         });
-        try {
-          const payload = await requestJson(
-            dependencies,
-            '/api/profile/recover',
-            postJson({ recoveryWords: normalized }),
-          );
-          if (version !== requestVersion) return;
-          const { profile, economy, recoveryWords } = await requireRecoveryPayload(payload);
-          if (version !== requestVersion) return;
-          forgetRecoveryAcknowledgement(profile.id);
-          set({
-            phase: 'recovery-required', action: null, profile, economy,
-            recoveryWords, recoveryWarning: true, error: null,
-          });
-        } catch (error) {
-          if (version !== requestVersion) return;
-          set({
-            phase: 'anonymous', action: null, profile: null, economy: null,
-            recoveryWords: null, recoveryWarning: false,
-            error: requestErrorMessage(error),
-          });
-        }
       },
 
       acknowledgeRecovery: () => {
@@ -588,6 +615,7 @@ const browserStorage: StorageLike = {
 const browserGame: ProfileGameBridge = {
   connect: () => useGameStore.getState().connect(),
   disconnect: () => useGameStore.getState().disconnect(),
+  needsFreshConnection: () => useGameStore.getState().needsFreshConnection(),
   setPublicProfile: profile => useGameStore.getState().setPublicProfile(profile),
   clearPublicProfile: () => useGameStore.getState().clearPublicProfile(),
 };

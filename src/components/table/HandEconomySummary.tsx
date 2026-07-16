@@ -5,6 +5,7 @@ import { onGameEvent } from '@/lib/events/game-events';
 import {
   buildHandEconomySummary,
   formatChipDelta,
+  isHandEconomySummaryForPlayer,
   type HandEconomySummary as Summary,
 } from '@/lib/events/hand-economy-summary';
 import { useGameStore } from '@/lib/store/game-store';
@@ -33,7 +34,7 @@ export default function HandEconomySummary() {
     };
   }, [myPlayerId]);
 
-  if (!summary) return null;
+  if (!summary || !isHandEconomySummaryForPlayer(summary, myPlayerId)) return null;
   return (
     <div className="pointer-events-none absolute left-1/2 top-16 z-30 w-[min(90%,340px)]" style={{ transform: 'translateX(-50%)' }}>
       <div className="rounded-xl border border-mystic/30 bg-panel/95 px-4 py-3 text-center shadow-xl backdrop-blur-sm">

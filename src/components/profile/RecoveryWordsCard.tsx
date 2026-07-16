@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Button from '@/components/ui/Button';
+import { copyRecoveryWords, type RecoveryCopyStatus } from './recovery-words';
 
 interface RecoveryWordsCardProps {
   words: readonly string[];
@@ -15,14 +16,11 @@ export default function RecoveryWordsCard({
   onSkip,
 }: RecoveryWordsCardProps) {
   const [saved, setSaved] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<RecoveryCopyStatus | 'idle'>('idle');
 
   const copy = () => {
-    if (typeof navigator === 'undefined' || !navigator.clipboard) return;
-    void navigator.clipboard.writeText(words.join(' ')).then(
-      () => setCopied(true),
-      () => setCopied(false),
-    );
+    const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+    void copyRecoveryWords(words, clipboard).then(setCopyStatus);
   };
 
   return (
@@ -42,8 +40,13 @@ export default function RecoveryWordsCard({
         ))}
       </ol>
       <Button variant="secondary" className="w-full" onClick={copy}>
-        {copied ? '복사했어요 ✓' : '12단어 복사'}
+        {copyStatus === 'success' ? '복사했어요 ✓' : '12단어 복사'}
       </Button>
+      {copyStatus === 'error' && (
+        <p className="text-center text-xs text-blossom">
+          복사하지 못했어요. 위 단어를 직접 선택해 안전하게 저장해 주세요.
+        </p>
+      )}
       <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-mystic/20 p-3 text-xs leading-relaxed text-ink">
         <input
           type="checkbox"

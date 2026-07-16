@@ -6,6 +6,7 @@ import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
 import RecoveryWordsCard from './RecoveryWordsCard';
 import { getProfileDeletionAvailability } from './recovery-rules';
+import { recoveryWordsIssuanceKey } from './recovery-words';
 
 export default function RecoveryPanel() {
   const phase = useProfileStore(state => state.phase);
@@ -28,6 +29,7 @@ export default function RecoveryPanel() {
       <section>
         <SectionTitle>새 복구 코드</SectionTitle>
         <RecoveryWordsCard
+          key={recoveryWordsIssuanceKey(recoveryWords)}
           words={recoveryWords}
           onAcknowledge={acknowledgeRecovery}
           onSkip={skipRecovery}
