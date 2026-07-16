@@ -1,9 +1,11 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -20,6 +22,7 @@ import {
   encryptBackupFile,
   formatKstBackupDate,
   getNextKstFourAm,
+  promoteCompletedBackup,
   pruneExpiredBackups,
   resolveBackupEncryptionKey,
 } from './backup';
@@ -35,6 +38,40 @@ function temporaryDirectory(): string {
 
 function key(seed = 7): Buffer {
   return Buffer.alloc(32, seed);
+}
+
+async function snapshotMarkerDatabase(
+  source: DatabaseSync,
+  destination: string,
+): Promise<number> {
+  const marker = source.prepare('SELECT value FROM backup_marker').get() as {
+    value: string;
+  };
+  const copy = new DatabaseSync(destination);
+  try {
+    copy.exec('CREATE TABLE backup_marker (value TEXT NOT NULL) STRICT;');
+    copy.prepare('INSERT INTO backup_marker (value) VALUES (?)').run(marker.value);
+  } finally {
+    copy.close();
+  }
+  return 1;
+}
+
+function readMarkerDatabase(path: string): string {
+  const database = new DatabaseSync(path, { readOnly: true });
+  try {
+    return (database.prepare('SELECT value FROM backup_marker').get() as {
+      value: string;
+    }).value;
+  } finally {
+    database.close();
+  }
+}
+
+function assertNoBackupTemps(directory: string): void {
+  expect(readdirSync(directory).filter(name => (
+    name.includes('.tmp') || name.includes('.previous.')
+  ))).toEqual([]);
 }
 
 function deferred(): {
@@ -176,12 +213,73 @@ describe('backup retention', () => {
   });
 });
 
+describe('atomic backup promotion', () => {
+  it('uses a rollback-safe previous-file swap when rename-overwrite is unavailable', () => {
+    const directory = temporaryDirectory();
+    const temporary = join(directory, 'new.sqlite.tmp');
+    const finalPath = join(directory, 'poker-doku-2026-07-16.sqlite');
+    writeFileSync(temporary, 'B');
+    writeFileSync(finalPath, 'A');
+    let renames = 0;
+
+    promoteCompletedBackup(temporary, finalPath, {
+      exists: existsSync,
+      isRegularFile: path => lstatSync(path).isFile(),
+      rename: (source, destination) => {
+        renames += 1;
+        if (renames === 1) {
+          throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+        }
+        renameSync(source, destination);
+      },
+      remove: path => rmSync(path),
+      uniqueId: () => 'swap-success',
+    });
+
+    expect(readFileSync(finalPath, 'utf8')).toBe('B');
+    expect(existsSync(temporary)).toBe(false);
+    assertNoBackupTemps(directory);
+  });
+
+  it('restores the previous completed file when swap promotion fails', () => {
+    const directory = temporaryDirectory();
+    const temporary = join(directory, 'new.sqlite.tmp');
+    const finalPath = join(directory, 'poker-doku-2026-07-16.sqlite');
+    writeFileSync(temporary, 'B');
+    writeFileSync(finalPath, 'A');
+    let renames = 0;
+
+    expect(() => promoteCompletedBackup(temporary, finalPath, {
+      exists: existsSync,
+      isRegularFile: path => lstatSync(path).isFile(),
+      rename: (source, destination) => {
+        renames += 1;
+        if (renames === 1) {
+          throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
+        }
+        if (renames === 3) throw new Error('promotion failed');
+        renameSync(source, destination);
+      },
+      remove: path => rmSync(path),
+      uniqueId: () => 'swap-failure',
+    })).toThrow('promotion failed');
+
+    expect(readFileSync(finalPath, 'utf8')).toBe('A');
+    expect(readFileSync(temporary, 'utf8')).toBe('B');
+    expect(readdirSync(directory).some(name => name.includes('.previous.')))
+      .toBe(false);
+  });
+});
+
 describe('BackupManager', () => {
   function createManager(options: {
     directory?: string;
     now?: Date;
     backupDatabase?: (database: DatabaseSync, destination: string) => Promise<number>;
     encryptionKey?: Buffer;
+    validateBackup?: (path: string) => void | Promise<void>;
+    encryptBackup?: typeof encryptBackupFile;
+    promoteBackup?: (temporary: string, finalPath: string) => void | Promise<void>;
   } = {}): { manager: BackupManager; database: PokerDatabase; directory: string } {
     const directory = options.directory ?? temporaryDirectory();
     const database = openPokerDatabase(':memory:');
@@ -194,7 +292,9 @@ describe('BackupManager', () => {
         writeFileSync(destination, 'valid fake sqlite');
         return 1;
       }),
-      validateBackup: async () => undefined,
+      validateBackup: options.validateBackup ?? (async () => undefined),
+      encryptBackup: options.encryptBackup,
+      promoteBackup: options.promoteBackup,
     });
     return { manager, database, directory };
   }
@@ -222,7 +322,7 @@ describe('BackupManager', () => {
     database.close();
   });
 
-  it('cleans partial files, preserves the completed same-day backup, and retries after rejection', async () => {
+  it('cleans partial files, preserves a completed backup after failure, and retries', async () => {
     const directory = temporaryDirectory();
     const completed = join(directory, 'poker-doku-2026-07-16.sqlite');
     writeFileSync(completed, 'completed');
@@ -251,8 +351,205 @@ describe('BackupManager', () => {
     fail = false;
     await expect(manager.backup()).resolves.toBe(completed);
     expect(calls).toBe(2);
-    expect(readFileSync(completed, 'utf8')).toBe('completed');
+    expect(readFileSync(completed, 'utf8')).toBe('partial');
     expect(readdirSync(directory)).toEqual(['poker-doku-2026-07-16.sqlite']);
+    database.close();
+  });
+
+  it('replaces a same-KST-date plaintext snapshot with the latest committed SQLite state', async () => {
+    const directory = temporaryDirectory();
+    const database = openPokerDatabase(':memory:');
+    database.db.exec(`CREATE TABLE backup_marker (value TEXT NOT NULL) STRICT;
+      INSERT INTO backup_marker (value) VALUES ('A');`);
+    const manager = new BackupManager({
+      database,
+      backupDirectory: directory,
+      now: () => new Date('2026-07-16T03:00:00.000Z'),
+      backupDatabase: snapshotMarkerDatabase,
+    });
+
+    const finalPath = await manager.backup();
+    expect(readMarkerDatabase(finalPath)).toBe('A');
+    database.db.exec("UPDATE backup_marker SET value = 'B'");
+    await manager.backup();
+
+    expect(readMarkerDatabase(finalPath)).toBe('B');
+    assertNoBackupTemps(directory);
+    database.close();
+  });
+
+  it('replaces a same-KST-date encrypted snapshot with the latest committed SQLite state', async () => {
+    const directory = temporaryDirectory();
+    const database = openPokerDatabase(':memory:');
+    database.db.exec(`CREATE TABLE backup_marker (value TEXT NOT NULL) STRICT;
+      INSERT INTO backup_marker (value) VALUES ('A');`);
+    const manager = new BackupManager({
+      database,
+      backupDirectory: directory,
+      encryptionKey: key(),
+      now: () => new Date('2026-07-16T03:00:00.000Z'),
+      backupDatabase: snapshotMarkerDatabase,
+    });
+    const restored = join(directory, 'restored.sqlite');
+
+    const finalPath = await manager.backup();
+    database.db.exec("UPDATE backup_marker SET value = 'B'");
+    await manager.backup();
+    await decryptBackupFile(finalPath, restored, key());
+
+    expect(readMarkerDatabase(restored)).toBe('B');
+    rmSync(restored);
+    assertNoBackupTemps(directory);
+    database.close();
+  });
+
+  it.each(['backup', 'integrity', 'encryption', 'promotion'] as const)(
+    'keeps the readable encrypted A snapshot when the second %s stage fails',
+    async failureStage => {
+      const directory = temporaryDirectory();
+      const database = openPokerDatabase(':memory:');
+      database.db.exec(`CREATE TABLE backup_marker (value TEXT NOT NULL) STRICT;
+        INSERT INTO backup_marker (value) VALUES ('A');`);
+      let second = false;
+      const manager = new BackupManager({
+        database,
+        backupDirectory: directory,
+        encryptionKey: key(),
+        now: () => new Date('2026-07-16T03:00:00.000Z'),
+        backupDatabase: async (source, destination) => {
+          if (second && failureStage === 'backup') {
+            writeFileSync(destination, 'partial');
+            throw new Error('backup stage failed');
+          }
+          return snapshotMarkerDatabase(source, destination);
+        },
+        validateBackup: path => {
+          if (second && failureStage === 'integrity') {
+            throw new Error('integrity stage failed');
+          }
+          const copy = new DatabaseSync(path, { readOnly: true });
+          copy.close();
+        },
+        encryptBackup: async (source, destination, encryptionKey) => {
+          if (second && failureStage === 'encryption') {
+            writeFileSync(destination, 'partial encrypted');
+            throw new Error('encryption stage failed');
+          }
+          await encryptBackupFile(source, destination, encryptionKey);
+        },
+        promoteBackup: (temporary, finalPath) => {
+          if (second && failureStage === 'promotion') {
+            let renames = 0;
+            promoteCompletedBackup(temporary, finalPath, {
+              exists: existsSync,
+              isRegularFile: path => lstatSync(path).isFile(),
+              rename: (source, destination) => {
+                renames += 1;
+                if (renames === 1) {
+                  throw Object.assign(new Error('destination exists'), {
+                    code: 'EEXIST',
+                  });
+                }
+                if (renames === 3) throw new Error('promotion stage failed');
+                renameSync(source, destination);
+              },
+              remove: path => rmSync(path),
+              uniqueId: () => 'manager-swap-failure',
+            });
+            return;
+          }
+          promoteCompletedBackup(temporary, finalPath);
+        },
+      });
+      const restored = join(directory, 'restored.sqlite');
+
+      const finalPath = await manager.backup();
+      const expired = join(directory, 'poker-doku-2026-07-01.sqlite');
+      writeFileSync(expired, 'must survive failed replacement');
+      database.db.exec("UPDATE backup_marker SET value = 'B'");
+      second = true;
+      await expect(manager.backup()).rejects.toThrow(`${failureStage} stage failed`);
+      await decryptBackupFile(finalPath, restored, key());
+
+      expect(readMarkerDatabase(restored)).toBe('A');
+      expect(readFileSync(expired, 'utf8')).toBe('must survive failed replacement');
+      rmSync(restored);
+      assertNoBackupTemps(directory);
+      database.close();
+    },
+  );
+
+  it('waits for an in-flight daily backup, then takes one fresh shared final snapshot', async () => {
+    const directory = temporaryDirectory();
+    const database = openPokerDatabase(':memory:');
+    database.db.exec(`CREATE TABLE backup_marker (value TEXT NOT NULL) STRICT;
+      INSERT INTO backup_marker (value) VALUES ('before-close');`);
+    const firstPending = deferred();
+    const captured: string[] = [];
+    let active = 0;
+    let maximumActive = 0;
+    const manager = new BackupManager({
+      database,
+      backupDirectory: directory,
+      now: () => new Date('2026-07-16T03:00:00.000Z'),
+      backupDatabase: async (source, destination) => {
+        active += 1;
+        maximumActive = Math.max(maximumActive, active);
+        const marker = (source.prepare('SELECT value FROM backup_marker').get() as {
+          value: string;
+        }).value;
+        captured.push(marker);
+        await snapshotMarkerDatabase(source, destination);
+        if (captured.length === 1) await firstPending.promise;
+        active -= 1;
+        return 1;
+      },
+    });
+
+    const daily = manager.backup();
+    database.db.exec("UPDATE backup_marker SET value = 'after-close'");
+    const final = manager.backupAfterCurrent();
+    const duplicateFinal = manager.backupAfterCurrent();
+    expect(duplicateFinal).toBe(final);
+    expect(captured).toEqual(['before-close']);
+    firstPending.resolve();
+    await daily;
+    const finalPath = await final;
+
+    expect(captured).toEqual(['before-close', 'after-close']);
+    expect(maximumActive).toBe(1);
+    expect(readMarkerDatabase(finalPath)).toBe('after-close');
+    assertNoBackupTemps(directory);
+    database.close();
+  });
+
+  it('still attempts a fresh final snapshot after the in-flight backup rejects', async () => {
+    let calls = 0;
+    const { manager, database } = createManager({
+      backupDatabase: async (_source, destination) => {
+        calls += 1;
+        if (calls === 1) throw new Error('daily failed');
+        writeFileSync(destination, 'final');
+        return 1;
+      },
+    });
+
+    const daily = manager.backup();
+    const final = manager.backupAfterCurrent();
+    await expect(daily).rejects.toThrow('daily failed');
+    await expect(final).resolves.toContain('poker-doku-2026-07-16.sqlite');
+    expect(calls).toBe(2);
+    database.close();
+  });
+
+  it('surfaces a final snapshot failure to shutdown callers', async () => {
+    const { manager, database } = createManager({
+      backupDatabase: async () => { throw new Error('final snapshot failed'); },
+    });
+
+    await expect(manager.backupAfterCurrent()).rejects.toThrow(
+      'final snapshot failed',
+    );
     database.close();
   });
 

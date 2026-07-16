@@ -40,12 +40,25 @@ export interface BackupManagerOptions {
   now?: () => Date;
   backupDatabase?: NativeBackup;
   validateBackup?: (path: string) => void | Promise<void>;
+  encryptBackup?: typeof encryptBackupFile;
+  promoteBackup?: (
+    temporaryPath: string,
+    finalPath: string,
+  ) => void | Promise<void>;
 }
 
 export interface DailyBackupSchedulerOptions {
   backup: () => Promise<unknown>;
   now?: () => Date;
   logger: { error: (message: string, error?: unknown) => void };
+}
+
+export interface BackupPromotionDependencies {
+  exists: (path: string) => boolean;
+  isRegularFile: (path: string) => boolean;
+  rename: (source: string, destination: string) => void;
+  remove: (path: string) => void;
+  uniqueId: () => string;
 }
 
 function safeDateParts(year: string, month: string, day: string): number | undefined {
@@ -88,14 +101,52 @@ function validateSqliteBackup(path: string): void {
   }
 }
 
-function retainCompletedSameDayBackup(temporary: string, finalPath: string): void {
-  if (existsSync(finalPath)) {
-    if (!lstatSync(finalPath).isFile()) {
-      throw new Error('Backup destination is not a regular file');
-    }
-    return;
+export function promoteCompletedBackup(
+  temporaryPath: string,
+  finalPath: string,
+  dependencies: BackupPromotionDependencies = {
+    exists: existsSync,
+    isRegularFile: path => lstatSync(path).isFile(),
+    rename: renameSync,
+    remove: path => rmSync(path),
+    uniqueId: randomUUID,
+  },
+): void {
+  if (dependencies.exists(finalPath) && !dependencies.isRegularFile(finalPath)) {
+    throw new Error('Backup destination is not a regular file');
   }
-  renameSync(temporary, finalPath);
+
+  try {
+    dependencies.rename(temporaryPath, finalPath);
+    return;
+  } catch (directPromotionError) {
+    if (
+      !dependencies.exists(finalPath)
+      || !dependencies.isRegularFile(finalPath)
+    ) {
+      throw directPromotionError;
+    }
+
+    // Windows can reject rename-overwrite. Move the last completed snapshot
+    // aside first, but restore it if promoting the fully completed replacement
+    // fails. Every path is in the same backup directory/volume.
+    const previousPath = `${finalPath}.previous.${dependencies.uniqueId()}.tmp`;
+    dependencies.rename(finalPath, previousPath);
+    try {
+      dependencies.rename(temporaryPath, finalPath);
+    } catch (replacementError) {
+      try {
+        dependencies.rename(previousPath, finalPath);
+      } catch (restoreError) {
+        throw new AggregateError(
+          [replacementError, restoreError],
+          'Backup promotion and rollback failed',
+        );
+      }
+      throw replacementError;
+    }
+    dependencies.remove(previousPath);
+  }
 }
 
 export function formatKstBackupDate(now: Date): string {
@@ -242,17 +293,44 @@ export class BackupManager {
   private readonly now: () => Date;
   private readonly backupDatabase: NativeBackup;
   private readonly validateBackup: (path: string) => void | Promise<void>;
+  private readonly encryptBackup: typeof encryptBackupFile;
+  private readonly promoteBackup: (
+    temporaryPath: string,
+    finalPath: string,
+  ) => void | Promise<void>;
   private inFlight?: Promise<string>;
+  private finalInFlight?: Promise<string>;
 
   constructor(private readonly options: BackupManagerOptions) {
     if (options.encryptionKey) ensureEncryptionKey(options.encryptionKey);
     this.now = options.now ?? (() => new Date());
     this.backupDatabase = options.backupDatabase ?? defaultNativeBackup;
     this.validateBackup = options.validateBackup ?? validateSqliteBackup;
+    this.encryptBackup = options.encryptBackup ?? encryptBackupFile;
+    this.promoteBackup = options.promoteBackup ?? promoteCompletedBackup;
   }
 
   backup(): Promise<string> {
     if (this.inFlight) return this.inFlight;
+    return this.startBackup();
+  }
+
+  backupAfterCurrent(): Promise<string> {
+    if (this.finalInFlight) return this.finalInFlight;
+    const pending = this.performFinalBackup();
+    this.finalInFlight = pending;
+    void pending.then(
+      () => {
+        if (this.finalInFlight === pending) this.finalInFlight = undefined;
+      },
+      () => {
+        if (this.finalInFlight === pending) this.finalInFlight = undefined;
+      },
+    );
+    return pending;
+  }
+
+  private startBackup(): Promise<string> {
     const pending = this.performBackup();
     this.inFlight = pending;
     void pending.then(
@@ -264,6 +342,19 @@ export class BackupManager {
       },
     );
     return pending;
+  }
+
+  private async performFinalBackup(): Promise<string> {
+    while (this.inFlight) {
+      const current = this.inFlight;
+      try {
+        await current;
+      } catch {
+        // A final post-writer snapshot is still required after a daily failure.
+      }
+      if (this.inFlight === current) this.inFlight = undefined;
+    }
+    return this.startBackup();
   }
 
   private async performBackup(): Promise<string> {
@@ -282,14 +373,14 @@ export class BackupManager {
       await this.validateBackup(plaintext);
       let completed = plaintext;
       if (this.options.encryptionKey) {
-        await encryptBackupFile(
+        await this.encryptBackup(
           plaintext,
           encrypted,
           this.options.encryptionKey,
         );
         completed = encrypted;
       }
-      retainCompletedSameDayBackup(completed, finalPath);
+      await this.promoteBackup(completed, finalPath);
       await pruneExpiredBackups(directory, now);
       return finalPath;
     } finally {

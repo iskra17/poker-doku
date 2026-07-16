@@ -52,8 +52,8 @@ let backupScheduler: DailyBackupScheduler | undefined;
 const shutdown = createServerShutdown({
   backup: {
     stopScheduler: () => backupScheduler?.close(),
-    backup: async () => {
-      await backupManager?.backup();
+    backupAfterCurrent: async () => {
+      await backupManager?.backupAfterCurrent();
     },
   },
   runtime: {

@@ -47,8 +47,8 @@ fly ssh console -C "mount | grep ' /data '; ls -lah /data /data/backups"
 - 복구 직후 첫 백업이 완료되어야 HTTP/Socket 서버가 listen한다.
 - 매일 **KST 04:00**에 다음 시각을 다시 계산해 백업한다. 고정 24시간 interval이 아니다.
 - 정상 종료 시 게임/소켓/HTTP writer를 닫은 뒤 DB를 닫기 전에 한 번 더 백업한다.
-- 같은 KST 날짜에는 첫 번째로 완성된 백업을 보존한다. 이후 백업이 실패해도 그 파일을 교체하거나
-  지우지 않는다.
+- 같은 KST 날짜에는 마지막으로 **성공한** 완성 백업으로 원자적으로 교체한다. 새 백업·검증·암호화·
+  승격 중 하나라도 실패하면 직전 완성 파일을 그대로 보존한다.
 - 운영 백업은 `poker-doku-YYYY-MM-DD.sqlite.enc`이며 AES-256-GCM으로 인증 암호화한다.
 - 완료된 백업만 대상으로 14 KST calendar day를 보존한다. 15일 지난 파일부터 삭제한다.
 - live DB/WAL을 파일 복사해 백업하지 않는다. 서버는 Node 공식 `node:sqlite backup()` API로 일관된
@@ -101,6 +101,72 @@ fly logs
 문제가 있으면 같은 maintenance 절차로 들어가 현재 실패 DB도 별도 사본으로 남긴 뒤
 `/data/poker-doku.before-restore.<timestamp>.sqlite`를 `/data/poker-doku.sqlite`로 atomic rename한다.
 백업 없이 기존 DB를 덮어쓰는 복원은 금지한다.
+
+### 장애 시 실행 가능한 롤백 명령
+
+먼저 머신 ID를 확인하고 실제 값으로 설정한 뒤 writer를 maintenance command로 정지한다.
+
+```powershell
+fly machine list
+$machineId = "<machine-id>"
+fly machine update $machineId --command "sleep inf" --skip-health-checks
+fly ssh console
+```
+
+다음 블록은 maintenance 셸에서 실행한다. `SOURCE`에는 검증할 이전 known-good 백업을 지정한다.
+암호화 파일이면 머신 secret의 `BACKUP_ENCRYPTION_KEY`와 실제 서비스의 복호화 helper를 그대로
+사용한다. 평문 SQLite도 같은 후보·무결성 검사 경로를 거친다.
+
+```bash
+set -euo pipefail
+cd /app
+
+SOURCE=/data/backups/poker-doku-2026-07-15.sqlite.enc
+LIVE=/data/poker-doku.sqlite
+CANDIDATE=/data/rollback-candidate.sqlite
+test -f "$SOURCE"
+test ! -e "$CANDIDATE"
+
+case "$SOURCE" in
+  *.sqlite.enc)
+    SOURCE="$SOURCE" CANDIDATE="$CANDIDATE" node_modules/.bin/tsx -e \
+      "import {decryptBackupFile,resolveBackupEncryptionKey} from './src/server/persistence/backup.ts'; (async()=>decryptBackupFile(process.env.SOURCE,process.env.CANDIDATE,resolveBackupEncryptionKey(process.env.BACKUP_ENCRYPTION_KEY,true)))().catch(e=>{console.error(e.message);process.exit(1)})"
+    ;;
+  *.sqlite)
+    cp -p "$SOURCE" "$CANDIDATE"
+    ;;
+  *)
+    echo "지원하지 않는 백업 형식" >&2
+    exit 1
+    ;;
+esac
+
+CANDIDATE="$CANDIDATE" node -e \
+  "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.env.CANDIDATE,{readOnly:true});const r=d.prepare('PRAGMA integrity_check').get();d.close();if(r.integrity_check!=='ok')process.exit(1);console.log('integrity_check: ok')"
+
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+FAILED_COPY="/data/poker-doku.rollback-debug.$stamp.sqlite"
+cp -p "$LIVE" "$FAILED_COPY"
+test -s "$FAILED_COPY"
+rm -f "$LIVE-wal" "$LIVE-shm"
+mv "$CANDIDATE" "$LIVE"
+```
+
+원격 maintenance 셸에서 먼저 다음 명령으로 로컬 PowerShell로 돌아온다.
+
+```bash
+exit
+```
+
+정상 command로 갱신한 뒤 명시적으로 머신을 시작하고 상태, health, 로그를 모두 확인한다.
+
+```powershell
+fly machine update $machineId --command "node_modules/.bin/tsx src/server/index.ts" --skip-start
+fly machine start $machineId
+fly status
+curl.exe -fsS https://poker-doku.fly.dev/healthz
+fly logs
+```
 
 ## 갱신과 관찰
 

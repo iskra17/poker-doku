@@ -91,8 +91,8 @@ describe('custom server shutdown', () => {
         stopScheduler: () => {
           order.push('backup-stop');
         },
-        backup: async () => {
-          order.push('backup');
+        backupAfterCurrent: async () => {
+          order.push('final-backup');
         },
       },
       app: {
@@ -113,7 +113,7 @@ describe('custom server shutdown', () => {
       'socket.io',
       'http',
       'rate-limiter',
-      'backup',
+      'final-backup',
       'database',
       'next',
     ]);

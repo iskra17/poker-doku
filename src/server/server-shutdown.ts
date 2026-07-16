@@ -9,7 +9,7 @@ export interface CallbackCloseable {
 export interface ServerShutdownResources {
   backup?: {
     stopScheduler: () => void | Promise<void>;
-    backup: () => void | Promise<void>;
+    backupAfterCurrent: () => void | Promise<void>;
   };
   runtime: ImmediateCloseable;
   rateLimiter?: ImmediateCloseable;
@@ -122,7 +122,7 @@ export function createServerShutdown(
     const rateLimiter = resources.rateLimiter;
     if (rateLimiter) await attempt(() => rateLimiter.close());
     if (backup && reason !== 'startup-error') {
-      await attempt(() => backup.backup());
+      await attempt(() => backup.backupAfterCurrent());
     }
     const database = resources.database;
     if (database) await attempt(() => database.close());
