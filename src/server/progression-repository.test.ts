@@ -883,6 +883,169 @@ describe('ProgressionRepository', () => {
     ]);
     expect(rowCount(database, 'progression_events', 'trigger-writes')).toBe(0);
   });
+
+  it('assigns and durably reads exactly three missions per KST day', () => {
+    insertProfile(database, 'mission-profile');
+    repository.getOrCreate('mission-profile', 'sakura', 1_000);
+
+    const first = database.transaction(() => (
+      repository.ensureDailyMissionsInTransaction(
+        'mission-profile', '2026-07-17', 1, 2_000,
+      )
+    ));
+    const restart = database.transaction(() => (
+      repository.ensureDailyMissionsInTransaction(
+        'mission-profile', '2026-07-17', 1, 9_000,
+      )
+    ));
+    const tomorrow = database.transaction(() => (
+      repository.ensureDailyMissionsInTransaction(
+        'mission-profile', '2026-07-18', 1, 10_000,
+      )
+    ));
+
+    expect(first).toEqual(restart);
+    expect(first.missions.map(mission => mission.slot)).toEqual([0, 1, 2]);
+    expect(new Set(first.missions.map(mission => mission.missionId)).size)
+      .toBe(3);
+    expect(first.missions.every(mission => mission.assignedAt === 2_000))
+      .toBe(true);
+    expect(first.modes).toEqual([]);
+    expect(tomorrow.missionDate).toBe('2026-07-18');
+    expect(rowCount(database, 'daily_missions', 'mission-profile')).toBe(6);
+  });
+
+  it('stores each completed mode once and returns a sorted set snapshot', () => {
+    insertProfile(database, 'mode-profile');
+    repository.getOrCreate('mode-profile', 'sakura', 1_000);
+    database.transaction(() => {
+      repository.ensureDailyMissionsInTransaction(
+        'mode-profile', '2026-07-17', 1, 2_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'mode-profile', '2026-07-17', 'cash', 3_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'mode-profile', '2026-07-17', 'cash', 4_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'mode-profile', '2026-07-17', 'practice', 5_000,
+      );
+    });
+
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(
+        'mode-profile', '2026-07-17', 1,
+      )
+    ));
+    expect(day.modes).toEqual(['cash', 'practice']);
+    expect(rowCount(database, 'daily_mission_modes', 'mode-profile')).toBe(2);
+  });
+
+  it('clamps progress, completes and rewards each mission exactly once', () => {
+    insertProfile(database, 'progress-profile');
+    repository.getOrCreate('progress-profile', 'sakura', 1_000);
+    database.transaction(() => {
+      repository.ensureDailyMissionsInTransaction(
+        'progress-profile', '2026-07-17', 1, 2_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'progress-profile', '2026-07-17', 'cash', 2_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'progress-profile', '2026-07-17', 'practice', 2_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'progress-profile', '2026-07-17', 'sng', 2_000,
+      );
+    });
+
+    const completions = [];
+    for (let index = 0; index < 20; index += 1) {
+      completions.push(...database.transaction(() => (
+        repository.advanceDailyMissionsInTransaction({
+          profileId: 'progress-profile',
+          missionDate: '2026-07-17',
+          balanceVersion: 1,
+          metricDeltas: {
+            handsAny: 1,
+            handsCash: 1,
+            handsPractice: 1,
+            sngCompleted: 1,
+          },
+          completedAt: 3_000 + index,
+        })
+      )));
+    }
+    const afterCompletion = database.transaction(() => (
+      repository.advanceDailyMissionsInTransaction({
+        profileId: 'progress-profile',
+        missionDate: '2026-07-17',
+        balanceVersion: 1,
+        metricDeltas: { handsAny: 1 },
+        completedAt: 9_000,
+      })
+    ));
+
+    expect(completions).toHaveLength(3);
+    expect(new Set(completions.map(mission => mission.slot)).size).toBe(3);
+    expect(afterCompletion).toEqual([]);
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(
+        'progress-profile', '2026-07-17', 1,
+      )
+    ));
+    expect(day.missions.every(mission => (
+      mission.progress === mission.target
+      && mission.completedAt !== null
+      && mission.rewardedAt === mission.completedAt
+    ))).toBe(true);
+  });
+
+  it('rejects partial or malformed stored mission sets with one generic error', () => {
+    insertProfile(database, 'malformed-missions');
+    repository.getOrCreate('malformed-missions', 'sakura', 1_000);
+    database.transaction(() => {
+      repository.ensureDailyMissionsInTransaction(
+        'malformed-missions', '2026-07-17', 1, 2_000,
+      );
+    });
+    database.db.exec('DROP TRIGGER validate_daily_mission_update;');
+    database.db.prepare(`
+      UPDATE daily_missions SET target = target + 1
+      WHERE profile_id = 'malformed-missions' AND slot = 0
+    `).run();
+
+    expectErrorCode(() => database.transaction(() => {
+      repository.readDailyMissionDayInTransaction(
+        'malformed-missions', '2026-07-17', 1,
+      );
+    }), 'PROGRESSION_PERSISTENCE_INVALID');
+  });
+
+  it('does not recreate a previously used day whose entire mission set vanished', () => {
+    insertProfile(database, 'missing-mission-day');
+    repository.getOrCreate('missing-mission-day', 'sakura', 1_000);
+    database.transaction(() => {
+      repository.ensureDailyMissionsInTransaction(
+        'missing-mission-day', '2026-07-17', 1, 2_000,
+      );
+      repository.insertDailyMissionModeInTransaction(
+        'missing-mission-day', '2026-07-17', 'cash', 2_000,
+      );
+    });
+    database.db.prepare(`
+      DELETE FROM daily_missions
+      WHERE profile_id = 'missing-mission-day' AND mission_date = '2026-07-17'
+    `).run();
+
+    expectErrorCode(() => database.transaction(() => {
+      repository.ensureDailyMissionsInTransaction(
+        'missing-mission-day', '2026-07-17', 1, 3_000,
+      );
+    }), 'PROGRESSION_PERSISTENCE_INVALID');
+    expect(rowCount(database, 'daily_missions', 'missing-mission-day')).toBe(0);
+  });
 });
 
 function core(

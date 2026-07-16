@@ -315,6 +315,105 @@ export const migrations: readonly Migration[] = [
         ON inventory_items(item_id, profile_id);
     `,
   },
+  {
+    version: 6,
+    name: 'durable_daily_mission_mode_sets',
+    sql: `
+      CREATE TABLE daily_mission_modes (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        mission_date TEXT NOT NULL CHECK (
+          length(mission_date) = 10
+          AND mission_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND CAST(substr(mission_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+          AND COALESCE(date(mission_date, '+0 days') = mission_date, 0)
+        ),
+        mode TEXT NOT NULL CHECK (mode IN ('cash','practice','sng')),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        PRIMARY KEY (profile_id, mission_date, mode)
+      ) STRICT;
+
+      CREATE INDEX idx_daily_mission_modes_date_profile
+        ON daily_mission_modes(mission_date, profile_id);
+
+      CREATE TRIGGER validate_daily_mission_insert
+      BEFORE INSERT ON daily_missions
+      WHEN
+        NEW.balance_version != 1
+        OR NOT (
+          (NEW.mission_id = 'COMPLETE_HANDS_ANY_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_CASH_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_PRACTICE_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_ANY_20' AND NEW.target = 20)
+          OR (NEW.mission_id = 'COMPLETE_ONE_SNG' AND NEW.target = 1)
+          OR (NEW.mission_id = 'COMPLETE_TWO_MODES' AND NEW.target = 2)
+        )
+        OR NEW.progress > NEW.target
+        OR NEW.reroll_count NOT IN (0, 1)
+        OR (
+          (NEW.progress < NEW.target AND (
+            NEW.completed_at IS NOT NULL OR NEW.rewarded_at IS NOT NULL
+          ))
+          OR (NEW.progress = NEW.target AND (
+            NEW.completed_at IS NULL
+            OR NEW.rewarded_at IS NULL
+            OR NEW.rewarded_at != NEW.completed_at
+          ))
+        )
+        OR (
+          NEW.reroll_count = 1
+          AND EXISTS (
+            SELECT 1 FROM daily_missions
+            WHERE profile_id = NEW.profile_id
+              AND mission_date = NEW.mission_date
+              AND reroll_count = 1
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid daily mission');
+      END;
+
+      CREATE TRIGGER validate_daily_mission_update
+      BEFORE UPDATE ON daily_missions
+      WHEN
+        NEW.profile_id != OLD.profile_id
+        OR NEW.mission_date != OLD.mission_date
+        OR NEW.slot != OLD.slot
+        OR NEW.balance_version != 1
+        OR NOT (
+          (NEW.mission_id = 'COMPLETE_HANDS_ANY_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_CASH_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_PRACTICE_10' AND NEW.target = 10)
+          OR (NEW.mission_id = 'COMPLETE_HANDS_ANY_20' AND NEW.target = 20)
+          OR (NEW.mission_id = 'COMPLETE_ONE_SNG' AND NEW.target = 1)
+          OR (NEW.mission_id = 'COMPLETE_TWO_MODES' AND NEW.target = 2)
+        )
+        OR NEW.progress > NEW.target
+        OR NEW.reroll_count NOT IN (0, 1)
+        OR (
+          (NEW.progress < NEW.target AND (
+            NEW.completed_at IS NOT NULL OR NEW.rewarded_at IS NOT NULL
+          ))
+          OR (NEW.progress = NEW.target AND (
+            NEW.completed_at IS NULL
+            OR NEW.rewarded_at IS NULL
+            OR NEW.rewarded_at != NEW.completed_at
+          ))
+        )
+        OR (
+          NEW.reroll_count = 1
+          AND EXISTS (
+            SELECT 1 FROM daily_missions
+            WHERE profile_id = NEW.profile_id
+              AND mission_date = NEW.mission_date
+              AND reroll_count = 1
+              AND slot != OLD.slot
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid daily mission');
+      END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

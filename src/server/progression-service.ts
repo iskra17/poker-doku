@@ -5,13 +5,18 @@ import {
   scaleReward,
   type ProgressionBalance,
 } from '@/lib/progression/balance';
-import type { ProgressionRewardSummary } from '@/lib/progression/types';
+import { selectRerollMission } from '@/lib/progression/missions';
+import type {
+  MissionCompletion,
+  ProgressionRewardSummary,
+} from '@/lib/progression/types';
 import type { PokerDatabase } from './persistence/database';
 import {
   PLAYABLE_CHARACTER_IDS,
   ProgressionPersistenceError,
   ProgressionRepository,
   type CharacterAffinity,
+  type DailyMissionDaySnapshot,
   type PlayableCharacterId,
   type ProgressionCounters,
   type ProgressionEvent,
@@ -41,7 +46,11 @@ export type ProgressionServiceErrorCode =
   | 'PROGRESSION_INPUT_INVALID'
   | 'PROGRESSION_CHARACTER_STALE'
   | 'PROGRESSION_COUNTER_OVERFLOW'
-  | 'PROGRESSION_STORED_SUMMARY_INVALID';
+  | 'PROGRESSION_STORED_SUMMARY_INVALID'
+  | 'PROGRESSION_PROFILE_NOT_FOUND'
+  | 'PROGRESSION_MISSION_NOT_FOUND'
+  | 'PROGRESSION_MISSION_COMPLETED'
+  | 'PROGRESSION_MISSION_REROLL_USED';
 
 export class ProgressionServiceError extends Error {
   constructor(readonly code: ProgressionServiceErrorCode) {
@@ -72,11 +81,12 @@ interface ValidCompletedHandInput extends Omit<
   'selectedCharacterId'
 > {
   selectedCharacterId: PlayableCharacterId;
-  kstDate: string | null;
+  kstDate: string;
 }
 
 interface ValidSngFinishInput extends Omit<SngFinishInput, 'selectedCharacterId'> {
   selectedCharacterId: PlayableCharacterId;
+  kstDate: string;
 }
 
 export class ProgressionService {
@@ -120,6 +130,13 @@ export class ProgressionService {
         snapshot.affinities,
         snapshot.profile.selectedCharacterId,
       );
+      const missionCompletions = this.progressDailyMissions(
+        safeInput.profileId,
+        safeInput.kstDate,
+        snapshot.profile.balanceVersion,
+        safeInput.mode,
+        safeInput.completedAt,
+      );
       const nextPracticeHands = safeInput.mode === 'practice'
         ? snapshot.profile.practiceDate === safeInput.kstDate
           ? safeIncrement(snapshot.profile.practiceHands)
@@ -129,9 +146,13 @@ export class ProgressionService {
         && nextPracticeHands > balance.practiceFullRewardHandsPerKstDay
         ? balance.practiceReducedRatePermille
         : 1_000;
-      const dojoReward = scaleReward(
+      const baseDojoReward = scaleReward(
         balance.dojoXpPerCompletedHand,
         ratePermille,
+      );
+      const dojoReward = addMissionRewards(
+        baseDojoReward,
+        missionCompletions,
       );
       const affinityReward = scaleReward(
         balance.affinityPerCompletedHand,
@@ -162,6 +183,7 @@ export class ProgressionService {
         balance,
         dojoReward,
         affinityReward,
+        missionCompletions,
         completedAt: safeInput.completedAt,
       });
     });
@@ -197,12 +219,23 @@ export class ProgressionService {
         snapshot.affinities,
         snapshot.profile.selectedCharacterId,
       );
+      const missionCompletions = this.progressDailyMissions(
+        safeInput.profileId,
+        safeInput.kstDate,
+        snapshot.profile.balanceVersion,
+        'sng',
+        safeInput.completedAt,
+      );
       const placeIndex = safeInput.place - 1;
-      const dojoReward = balance.dojoXpPerSngPlace[placeIndex];
+      const baseDojoReward = balance.dojoXpPerSngPlace[placeIndex];
       const affinityReward = balance.affinityPerSngPlace[placeIndex];
-      if (dojoReward === undefined || affinityReward === undefined) {
+      if (baseDojoReward === undefined || affinityReward === undefined) {
         throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
       }
+      const dojoReward = addMissionRewards(
+        baseDojoReward,
+        missionCompletions,
+      );
       const nextCounters: ProgressionCounters = {
         practiceDate: snapshot.profile.practiceDate,
         practiceHands: snapshot.profile.practiceHands,
@@ -222,9 +255,102 @@ export class ProgressionService {
         balance,
         dojoReward,
         affinityReward,
+        missionCompletions,
         completedAt: safeInput.completedAt,
       });
     });
+  }
+
+  rerollMission(
+    profileId: string,
+    kstDate: string,
+    slot: number,
+    requestedAt = Date.now(),
+  ): DailyMissionDaySnapshot {
+    assertBoundedId(profileId);
+    if (!Number.isSafeInteger(slot) || slot < 0 || slot > 2) {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    assertTimestamp(requestedAt);
+    try {
+      if (getKstDateKey(requestedAt) !== kstDate) {
+        throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+      }
+    } catch (error) {
+      if (error instanceof ProgressionServiceError) throw error;
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+
+    try {
+      return this.database.transaction(() => {
+        const snapshot = this.repository.getSnapshotInTransaction(profileId);
+        const day = this.repository.readDailyMissionDayInTransaction(
+          profileId,
+          kstDate,
+          snapshot.profile.balanceVersion,
+        );
+        const current = day.missions[slot];
+        if (!current) {
+          throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+        }
+        const replacement = selectRerollMission(
+          profileId,
+          kstDate,
+          snapshot.profile.balanceVersion,
+          day.missions.map(mission => mission.missionId),
+          current.missionId,
+        );
+        return this.repository.replaceDailyMissionInTransaction({
+          profileId,
+          missionDate: kstDate,
+          balanceVersion: snapshot.profile.balanceVersion,
+          slot,
+          replacementMissionId: replacement.id,
+          replacedAt: requestedAt,
+        });
+      });
+    } catch (error) {
+      throwMissionServiceError(error);
+    }
+  }
+
+  private progressDailyMissions(
+    profileId: string,
+    missionDate: string,
+    balanceVersion: number,
+    mode: 'cash' | 'practice' | 'sng',
+    completedAt: number,
+  ): MissionCompletion[] {
+    this.repository.ensureDailyMissionsInTransaction(
+      profileId,
+      missionDate,
+      balanceVersion,
+      completedAt,
+    );
+    this.repository.insertDailyMissionModeInTransaction(
+      profileId,
+      missionDate,
+      mode,
+      completedAt,
+    );
+    const metricDeltas = mode === 'cash'
+      ? { handsAny: 1, handsCash: 1 }
+      : mode === 'practice'
+        ? { handsAny: 1, handsPractice: 1 }
+        : { sngCompleted: 1 };
+    const completed = this.repository.advanceDailyMissionsInTransaction({
+      profileId,
+      missionDate,
+      balanceVersion,
+      metricDeltas,
+      completedAt,
+    });
+    const balance = getBalance(balanceVersion);
+    return completed.map(mission => ({
+      missionId: mission.missionId,
+      slot: mission.slot,
+      dojoXpMilli: balance.dojoXpPerMission,
+    }));
   }
 
   private getDuplicate(
@@ -255,6 +381,7 @@ export class ProgressionService {
     balance: ProgressionBalance;
     dojoReward: number;
     affinityReward: number;
+    missionCompletions: MissionCompletion[];
     completedAt: number;
   }): ProgressionRewardSummary {
     const nextDojo = applyDojoXp(
@@ -280,7 +407,7 @@ export class ProgressionService {
         input.affinity.level,
         nextAffinity.level,
       ),
-      missionCompletions: [],
+      missionCompletions: input.missionCompletions,
       grantedItemIds: [],
     };
     const updatedAt = Math.max(input.profile.updatedAt, input.completedAt);
@@ -383,13 +510,11 @@ function validateCompletedHandInput(
   }
   const selectedCharacterId = assertCharacter(copy.selectedCharacterId);
   assertTimestamp(copy.completedAt);
-  let kstDate: string | null = null;
-  if (copy.mode === 'practice') {
-    try {
-      kstDate = getKstDateKey(copy.completedAt);
-    } catch {
-      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
-    }
+  let kstDate: string;
+  try {
+    kstDate = getKstDateKey(copy.completedAt);
+  } catch {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
   return { ...copy, selectedCharacterId, kstDate };
 }
@@ -414,7 +539,13 @@ function validateSngFinishInput(input: SngFinishInput): ValidSngFinishInput {
   }
   const selectedCharacterId = assertCharacter(copy.selectedCharacterId);
   assertTimestamp(copy.completedAt);
-  return { ...copy, selectedCharacterId };
+  let kstDate: string;
+  try {
+    kstDate = getKstDateKey(copy.completedAt);
+  } catch {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  return { ...copy, selectedCharacterId, kstDate };
 }
 
 function assertBoundedId(value: string): void {
@@ -482,6 +613,35 @@ function safeIncrement(value: number): number {
     throw new ProgressionServiceError('PROGRESSION_COUNTER_OVERFLOW');
   }
   return value + 1;
+}
+
+function addMissionRewards(
+  baseReward: number,
+  completions: readonly MissionCompletion[],
+): number {
+  let total = BigInt(baseReward);
+  for (const completion of completions) {
+    total += BigInt(completion.dojoXpMilli);
+  }
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new ProgressionServiceError('PROGRESSION_COUNTER_OVERFLOW');
+  }
+  return Number(total);
+}
+
+function throwMissionServiceError(error: unknown): never {
+  if (error instanceof ProgressionServiceError) throw error;
+  if (error instanceof ProgressionPersistenceError) {
+    if (
+      error.code === 'PROGRESSION_PROFILE_NOT_FOUND'
+      || error.code === 'PROGRESSION_MISSION_NOT_FOUND'
+      || error.code === 'PROGRESSION_MISSION_COMPLETED'
+      || error.code === 'PROGRESSION_MISSION_REROLL_USED'
+    ) {
+      throw new ProgressionServiceError(error.code);
+    }
+  }
+  throw error;
 }
 
 function countersFromProfile(profile: ProgressionProfile): ProgressionCounters {

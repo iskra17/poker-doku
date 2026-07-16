@@ -43,7 +43,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(5);
+    expect(migration.version).toBe(6);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -61,6 +61,7 @@ describe('PokerDatabase migrations', () => {
         'inventory_items',
         'profile_equipment',
         'progression_events',
+        'daily_mission_modes',
       ]),
     );
     expect(profileColumns).toEqual(
@@ -85,7 +86,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(5);
+    expect(result.count).toBe(6);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -111,7 +112,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(versions).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 },
+      { version: 5 }, { version: 6 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -131,7 +132,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 },
+      { version: 5 }, { version: 6 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -170,7 +171,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 },
+      { version: 5 }, { version: 6 },
     ]);
   });
 
@@ -207,7 +208,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 },
+      { version: 5 }, { version: 6 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -375,7 +376,7 @@ describe('PokerDatabase migrations', () => {
         profile_id, mission_date, slot, mission_id, target, progress,
         balance_version, reroll_count, assigned_at, completed_at, rewarded_at
       ) VALUES (
-        'durable-constraints', '2024-02-29', 0, 'mission-leap', 1, 0,
+        'durable-constraints', '2024-02-29', 0, 'COMPLETE_ONE_SNG', 1, 0,
         1, 0, 1, NULL, NULL
       )
     `).run();
@@ -493,6 +494,104 @@ describe('PokerDatabase migrations', () => {
     }
   });
 
+  it('atomically upgrades V5 with durable distinct daily mission modes', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV5Database(path);
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT version FROM schema_migrations ORDER BY version
+    `).all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+      { version: 5 }, { version: 6 },
+    ]);
+    const table = database.db.prepare(`
+      SELECT sql FROM sqlite_schema
+      WHERE type = 'table' AND name = 'daily_mission_modes'
+    `).get() as { sql: string };
+    expect(table.sql).toContain('STRICT');
+    expect(database.db.prepare(`
+      SELECT alias FROM profiles WHERE id = 'v1-marker'
+    `).get()).toEqual({ alias: 'v1-marker-alias' });
+  });
+
+  it('rolls back every V6 object and version when its table conflicts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV5Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec('CREATE TABLE daily_mission_modes (id TEXT) STRICT;');
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrowError(
+      'table daily_mission_modes already exists',
+    );
+
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT version FROM schema_migrations ORDER BY version
+      `).all()).toEqual([
+        { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+        { version: 5 },
+      ]);
+      expect(reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'trigger' AND name LIKE 'validate_daily_mission_%'
+      `).all()).toEqual([]);
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('enforces mission catalog, reward, and one-reroll invariants in V6', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'mission-v6-constraints');
+    const insert = database.db.prepare(`
+      INSERT INTO daily_missions (
+        profile_id, mission_date, slot, mission_id, target, progress,
+        balance_version, reroll_count, assigned_at, completed_at, rewarded_at
+      ) VALUES (?, '2026-07-17', ?, ?, ?, 0, 1, 0, 1, NULL, NULL)
+    `);
+    insert.run(
+      'mission-v6-constraints', 0, 'COMPLETE_HANDS_ANY_10', 10,
+    );
+    insert.run(
+      'mission-v6-constraints', 1, 'COMPLETE_HANDS_CASH_10', 10,
+    );
+    insert.run(
+      'mission-v6-constraints', 2, 'COMPLETE_ONE_SNG', 1,
+    );
+
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET target = 11
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions SET progress = target, completed_at = 2
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run()).toThrowError('invalid daily mission');
+    database.db.prepare(`
+      UPDATE daily_missions
+      SET mission_id = 'COMPLETE_HANDS_PRACTICE_10', reroll_count = 1
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 0
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE daily_missions
+      SET mission_id = 'COMPLETE_HANDS_ANY_20', target = 20, reroll_count = 1
+      WHERE profile_id = 'mission-v6-constraints' AND slot = 1
+    `).run()).toThrowError('invalid daily mission');
+    expect(() => database?.db.prepare(`
+      INSERT INTO daily_mission_modes VALUES (
+        'mission-v6-constraints', '2026-07-17', 'ranked', 1
+      )
+    `).run()).toThrow();
+  });
+
   it('cascades profile deletion through every progression table', () => {
     database = openPokerDatabase(':memory:');
     insertProfile(database, 'progression-cascade');
@@ -508,7 +607,7 @@ describe('PokerDatabase migrations', () => {
         profile_id, mission_date, slot, mission_id, target, progress,
         balance_version, reroll_count, assigned_at, completed_at, rewarded_at
       ) VALUES (
-        'progression-cascade', '2026-07-17', 0, 'mission-a', 10, 0,
+        'progression-cascade', '2026-07-17', 0, 'COMPLETE_HANDS_ANY_10', 10, 0,
         1, 0, 1, NULL, NULL
       );
       INSERT INTO streak_state VALUES (
@@ -523,6 +622,9 @@ describe('PokerDatabase migrations', () => {
       INSERT INTO progression_events VALUES (
         'event-a', 'progression-cascade', 'test', 1, '{}', 1
       );
+      INSERT INTO daily_mission_modes VALUES (
+        'progression-cascade', '2026-07-17', 'cash', 1
+      );
       DELETE FROM profiles WHERE id = 'progression-cascade';
     `);
 
@@ -530,6 +632,7 @@ describe('PokerDatabase migrations', () => {
       'progression_profiles', 'character_affinity', 'daily_missions',
       'streak_state', 'inventory_items', 'profile_equipment',
       'progression_events',
+      'daily_mission_modes',
     ]) {
       const row = database.db.prepare(
         `SELECT COUNT(*) AS count FROM ${table}`,
@@ -1014,6 +1117,22 @@ function createV4Database(path: string): void {
       ${migrations[3].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (4, 'durable_sng_tournament_incarnations', 4);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV5Database(path: string): void {
+  createV4Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[4].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (5, 'progression_persistence_schema', 5);
       COMMIT;
     `);
   } finally {

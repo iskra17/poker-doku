@@ -3,6 +3,19 @@ import {
   getBalance,
   type ProgressionBalance,
 } from '@/lib/progression/balance';
+import {
+  assignDailyMissions,
+  getMissionDefinition,
+  type DailyMission,
+  type DailyMissionDaySnapshot,
+  type MissionMetric,
+  type ProgressionMode,
+} from '@/lib/progression/missions';
+
+export type {
+  DailyMission,
+  DailyMissionDaySnapshot,
+} from '@/lib/progression/missions';
 
 export const PLAYABLE_CHARACTER_IDS = [
   'sakura',
@@ -45,6 +58,9 @@ export type ProgressionErrorCode =
   | 'PROGRESSION_TRANSACTION_REQUIRED'
   | 'PROGRESSION_CONFLICT'
   | 'PROGRESSION_EVENT_CONFLICT'
+  | 'PROGRESSION_MISSION_NOT_FOUND'
+  | 'PROGRESSION_MISSION_COMPLETED'
+  | 'PROGRESSION_MISSION_REROLL_USED'
   | 'PROGRESSION_PERSISTENCE_INVALID';
 
 export class ProgressionPersistenceError extends Error {
@@ -146,6 +162,23 @@ export interface AffinityUpdate {
   next: Pick<CharacterAffinity, 'level' | 'xpMilli'>;
 }
 
+export interface DailyMissionProgressUpdate {
+  profileId: string;
+  missionDate: string;
+  balanceVersion: number;
+  metricDeltas: Partial<Record<Exclude<MissionMetric, 'modesCompleted'>, number>>;
+  completedAt: number;
+}
+
+export interface DailyMissionReplacement {
+  profileId: string;
+  missionDate: string;
+  balanceVersion: number;
+  slot: number;
+  replacementMissionId: string;
+  replacedAt: number;
+}
+
 interface ProgressionProfileRow {
   profile_id: string;
   balance_version: number;
@@ -201,6 +234,27 @@ interface ProgressionEventRow {
   event_type: string;
   balance_version: number;
   summary_json: string;
+  created_at: number;
+}
+
+interface DailyMissionRow {
+  profile_id: string;
+  mission_date: string;
+  slot: number;
+  mission_id: string;
+  target: number;
+  progress: number;
+  balance_version: number;
+  reroll_count: number;
+  assigned_at: number;
+  completed_at: number | null;
+  rewarded_at: number | null;
+}
+
+interface DailyMissionModeRow {
+  profile_id: string;
+  mission_date: string;
+  mode: string;
   created_at: number;
 }
 
@@ -493,6 +547,295 @@ export class ProgressionRepository {
   }
 
   /** Must be called inside a caller-owned PokerDatabase transaction. */
+  ensureDailyMissionsInTransaction(
+    profileId: string,
+    missionDate: string,
+    balanceVersion: number,
+    assignedAt: number,
+  ): DailyMissionDaySnapshot {
+    this.assertTransaction();
+    assertMissionIdentity(profileId, missionDate, balanceVersion);
+    assertTimestamp(assignedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const existing = this.selectDailyMissionRows(profileId, missionDate);
+      if (existing.length === 0) {
+        const usedDay = this.database.db.prepare(`
+          SELECT 1 FROM daily_mission_modes
+          WHERE profile_id = ? AND mission_date = ? LIMIT 1
+        `).get(profileId, missionDate);
+        if (usedDay) throw persistenceInvalid();
+        if (!this.profileExists(profileId)) {
+          throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+        }
+        const insert = this.database.db.prepare(`
+          INSERT INTO daily_missions (
+            profile_id, mission_date, slot, mission_id, target, progress,
+            balance_version, reroll_count, assigned_at, completed_at,
+            rewarded_at
+          ) VALUES (?, ?, ?, ?, ?, 0, ?, 0, ?, NULL, NULL)
+        `);
+        const assigned = assignDailyMissions(
+          profileId,
+          missionDate,
+          balanceVersion,
+        );
+        assigned.forEach((definition, slot) => {
+          insert.run(
+            profileId,
+            missionDate,
+            slot,
+            definition.id,
+            definition.target,
+            balanceVersion,
+            assignedAt,
+          );
+        });
+      }
+      return this.readDailyMissionDayInTransaction(
+        profileId,
+        missionDate,
+        balanceVersion,
+      );
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  readDailyMissionDayInTransaction(
+    profileId: string,
+    missionDate: string,
+    balanceVersion: number,
+  ): DailyMissionDaySnapshot {
+    this.assertTransaction();
+    assertMissionIdentity(profileId, missionDate, balanceVersion);
+    try {
+      const rows = this.selectDailyMissionRows(profileId, missionDate);
+      if (rows.length === 0) {
+        throw new ProgressionPersistenceError('PROGRESSION_MISSION_NOT_FOUND');
+      }
+      const missions = rows.map(row => mapDailyMission(
+        row,
+        profileId,
+        missionDate,
+        balanceVersion,
+      ));
+      validateDailyMissionSet(missions);
+      const modeRows = this.database.db.prepare(`
+        SELECT profile_id, mission_date, mode, created_at
+        FROM daily_mission_modes
+        WHERE profile_id = ? AND mission_date = ?
+        ORDER BY mode
+      `).all(profileId, missionDate) as unknown as DailyMissionModeRow[];
+      const modes = modeRows.map(row => mapDailyMissionMode(
+        row,
+        profileId,
+        missionDate,
+      ));
+      if (new Set(modes).size !== modes.length) throw persistenceInvalid();
+      return freezeMissionDay({
+        profileId,
+        missionDate,
+        balanceVersion,
+        missions,
+        modes,
+      });
+    } catch (error) {
+      if (error instanceof ProgressionPersistenceError) throw error;
+      throw persistenceInvalid();
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  insertDailyMissionModeInTransaction(
+    profileId: string,
+    missionDate: string,
+    mode: ProgressionMode,
+    createdAt: number,
+  ): boolean {
+    this.assertTransaction();
+    assertMissionProfileId(profileId);
+    assertMissionDate(missionDate);
+    assertProgressionMode(mode);
+    assertTimestamp(createdAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const missionRows = this.selectDailyMissionRows(profileId, missionDate);
+      if (missionRows.length === 0) {
+        throw new ProgressionPersistenceError('PROGRESSION_MISSION_NOT_FOUND');
+      }
+      const storedVersion = missionRows[0]?.balance_version;
+      if (!Number.isSafeInteger(storedVersion)) throw persistenceInvalid();
+      const missions = missionRows.map(row => mapDailyMission(
+        row,
+        profileId,
+        missionDate,
+        storedVersion,
+      ));
+      validateDailyMissionSet(missions);
+      const result = this.database.db.prepare(`
+        INSERT INTO daily_mission_modes (
+          profile_id, mission_date, mode, created_at
+        ) VALUES (?, ?, ?, ?)
+        ON CONFLICT(profile_id, mission_date, mode) DO NOTHING
+      `).run(profileId, missionDate, mode, createdAt);
+      return result.changes === 1;
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  advanceDailyMissionsInTransaction(
+    update: DailyMissionProgressUpdate,
+  ): readonly DailyMission[] {
+    this.assertTransaction();
+    const safeUpdate = copyDailyMissionProgressUpdate(update);
+    assertMissionIdentity(
+      safeUpdate.profileId,
+      safeUpdate.missionDate,
+      safeUpdate.balanceVersion,
+    );
+    assertMetricDeltas(safeUpdate.metricDeltas);
+    assertTimestamp(safeUpdate.completedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const day = this.readDailyMissionDayInTransaction(
+        safeUpdate.profileId,
+        safeUpdate.missionDate,
+        safeUpdate.balanceVersion,
+      );
+      const completed: DailyMission[] = [];
+      for (const current of day.missions) {
+        if (current.completedAt !== null) continue;
+        const definition = getMissionDefinition(current.missionId);
+        if (!definition) throw persistenceInvalid();
+        const nextProgress = definition.metric === 'modesCompleted'
+          ? Math.min(current.target, day.modes.length)
+          : clampedAdd(
+            current.progress,
+            safeUpdate.metricDeltas[definition.metric] ?? 0,
+            current.target,
+          );
+        if (nextProgress === current.progress) continue;
+        const completedNow = nextProgress === current.target;
+        const completedAt = completedNow ? safeUpdate.completedAt : null;
+        const result = this.database.db.prepare(`
+          UPDATE daily_missions
+          SET progress = ?, completed_at = ?, rewarded_at = ?
+          WHERE profile_id = ? AND mission_date = ? AND slot = ?
+            AND mission_id = ? AND target = ? AND progress = ?
+            AND balance_version = ? AND reroll_count = ?
+            AND assigned_at = ? AND completed_at IS NULL
+            AND rewarded_at IS NULL
+        `).run(
+          nextProgress,
+          completedAt,
+          completedAt,
+          current.profileId,
+          current.missionDate,
+          current.slot,
+          current.missionId,
+          current.target,
+          current.progress,
+          current.balanceVersion,
+          current.rerollCount,
+          current.assignedAt,
+        );
+        if (result.changes !== 1) {
+          throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+        }
+        if (completedNow) {
+          completed.push(Object.freeze({
+            ...current,
+            progress: nextProgress,
+            completedAt,
+            rewardedAt: completedAt,
+          }));
+        }
+      }
+      return Object.freeze(
+        completed.sort((left, right) => left.slot - right.slot),
+      );
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  replaceDailyMissionInTransaction(
+    replacement: DailyMissionReplacement,
+  ): DailyMissionDaySnapshot {
+    this.assertTransaction();
+    const safe = copyDailyMissionReplacement(replacement);
+    assertMissionIdentity(
+      safe.profileId,
+      safe.missionDate,
+      safe.balanceVersion,
+    );
+    if (!Number.isSafeInteger(safe.slot) || safe.slot < 0 || safe.slot > 2) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    const definition = getMissionDefinition(safe.replacementMissionId);
+    if (!definition) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertTimestamp(safe.replacedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const day = this.readDailyMissionDayInTransaction(
+        safe.profileId,
+        safe.missionDate,
+        safe.balanceVersion,
+      );
+      if (day.missions.some(mission => mission.rerollCount !== 0)) {
+        throw new ProgressionPersistenceError(
+          'PROGRESSION_MISSION_REROLL_USED',
+        );
+      }
+      const current = day.missions[safe.slot];
+      if (!current) throw persistenceInvalid();
+      if (current.completedAt !== null || current.rewardedAt !== null) {
+        throw new ProgressionPersistenceError('PROGRESSION_MISSION_COMPLETED');
+      }
+      if (day.missions.some(mission => (
+        mission.missionId === definition.id
+      ))) {
+        throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+      }
+      const result = this.database.db.prepare(`
+        UPDATE daily_missions
+        SET mission_id = ?, target = ?, progress = 0, reroll_count = 1,
+            assigned_at = ?, completed_at = NULL, rewarded_at = NULL
+        WHERE profile_id = ? AND mission_date = ? AND slot = ?
+          AND mission_id = ? AND target = ? AND progress = ?
+          AND balance_version = ? AND reroll_count = 0
+          AND assigned_at = ? AND completed_at IS NULL
+          AND rewarded_at IS NULL
+      `).run(
+        definition.id,
+        definition.target,
+        safe.replacedAt,
+        current.profileId,
+        current.missionDate,
+        current.slot,
+        current.missionId,
+        current.target,
+        current.progress,
+        current.balanceVersion,
+        current.assignedAt,
+      );
+      if (result.changes !== 1) {
+        throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+      }
+      return this.readDailyMissionDayInTransaction(
+        safe.profileId,
+        safe.missionDate,
+        safe.balanceVersion,
+      );
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
   getProgressionEvent(idempotencyKey: string): ProgressionEvent | null {
     this.assertTransaction();
     assertNonemptyString(idempotencyKey, 'PROGRESSION_VALUE_INVALID');
@@ -589,6 +932,20 @@ export class ProgressionRepository {
       SELECT 1 FROM profiles WHERE id = ?
     `).get(profileId) !== undefined;
   }
+
+  private selectDailyMissionRows(
+    profileId: string,
+    missionDate: string,
+  ): DailyMissionRow[] {
+    return this.database.db.prepare(`
+      SELECT
+        profile_id, mission_date, slot, mission_id, target, progress,
+        balance_version, reroll_count, assigned_at, completed_at, rewarded_at
+      FROM daily_missions
+      WHERE profile_id = ? AND mission_date = ?
+      ORDER BY slot
+    `).all(profileId, missionDate) as unknown as DailyMissionRow[];
+  }
 }
 
 function copyCoreUpdate(update: ProgressionCoreUpdate): ProgressionCoreUpdate {
@@ -653,6 +1010,39 @@ function copyAffinityUpdate(update: AffinityUpdate): AffinityUpdate {
         level: update.next.level,
         xpMilli: update.next.xpMilli,
       },
+    };
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function copyDailyMissionProgressUpdate(
+  update: DailyMissionProgressUpdate,
+): DailyMissionProgressUpdate {
+  try {
+    return {
+      profileId: update.profileId,
+      missionDate: update.missionDate,
+      balanceVersion: update.balanceVersion,
+      metricDeltas: { ...update.metricDeltas },
+      completedAt: update.completedAt,
+    };
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function copyDailyMissionReplacement(
+  replacement: DailyMissionReplacement,
+): DailyMissionReplacement {
+  try {
+    return {
+      profileId: replacement.profileId,
+      missionDate: replacement.missionDate,
+      balanceVersion: replacement.balanceVersion,
+      slot: replacement.slot,
+      replacementMissionId: replacement.replacementMissionId,
+      replacedAt: replacement.replacedAt,
     };
   } catch {
     throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
@@ -832,6 +1222,99 @@ function mapProgressionEvent(row: ProgressionEventRow): ProgressionEvent {
   };
 }
 
+function mapDailyMission(
+  row: DailyMissionRow,
+  expectedProfileId: string,
+  expectedDate: string,
+  expectedBalanceVersion: number,
+): DailyMission {
+  const definition = typeof row.mission_id === 'string'
+    ? getMissionDefinition(row.mission_id)
+    : null;
+  if (
+    row.profile_id !== expectedProfileId
+    || row.mission_date !== expectedDate
+    || !Number.isSafeInteger(row.slot)
+    || row.slot < 0
+    || row.slot > 2
+    || !definition
+    || row.target !== definition.target
+    || !Number.isSafeInteger(row.progress)
+    || row.progress < 0
+    || row.progress > row.target
+    || row.balance_version !== expectedBalanceVersion
+    || row.balance_version !== SUPPORTED_BALANCE_VERSION
+    || !Number.isSafeInteger(row.reroll_count)
+    || row.reroll_count < 0
+    || row.reroll_count > 1
+  ) {
+    throw persistenceInvalid();
+  }
+  assertStoredTimestamp(row.assigned_at);
+  if (row.completed_at !== null) assertStoredTimestamp(row.completed_at);
+  if (row.rewarded_at !== null) assertStoredTimestamp(row.rewarded_at);
+  if (
+    (row.progress < row.target && (
+      row.completed_at !== null || row.rewarded_at !== null
+    ))
+    || (row.progress === row.target && (
+      row.completed_at === null
+      || row.rewarded_at === null
+      || row.rewarded_at !== row.completed_at
+    ))
+  ) {
+    throw persistenceInvalid();
+  }
+  return Object.freeze({
+    profileId: row.profile_id,
+    missionDate: row.mission_date,
+    slot: row.slot,
+    missionId: definition.id,
+    target: row.target,
+    progress: row.progress,
+    balanceVersion: row.balance_version,
+    rerollCount: row.reroll_count,
+    assignedAt: row.assigned_at,
+    completedAt: row.completed_at,
+    rewardedAt: row.rewarded_at,
+  });
+}
+
+function mapDailyMissionMode(
+  row: DailyMissionModeRow,
+  expectedProfileId: string,
+  expectedDate: string,
+): ProgressionMode {
+  if (
+    row.profile_id !== expectedProfileId
+    || row.mission_date !== expectedDate
+  ) {
+    throw persistenceInvalid();
+  }
+  assertProgressionMode(row.mode, 'PROGRESSION_PERSISTENCE_INVALID');
+  assertStoredTimestamp(row.created_at);
+  return row.mode as ProgressionMode;
+}
+
+function validateDailyMissionSet(missions: readonly DailyMission[]): void {
+  if (
+    missions.length !== 3
+    || missions.some((mission, index) => mission.slot !== index)
+    || new Set(missions.map(mission => mission.missionId)).size !== 3
+    || missions.reduce((sum, mission) => sum + mission.rerollCount, 0) > 1
+  ) {
+    throw persistenceInvalid();
+  }
+}
+
+function freezeMissionDay(
+  day: DailyMissionDaySnapshot,
+): DailyMissionDaySnapshot {
+  Object.freeze(day.missions);
+  Object.freeze(day.modes);
+  return Object.freeze(day);
+}
+
 function assertProgressionCore(
   value: ProgressionCore,
   code: ProgressionErrorCode,
@@ -916,6 +1399,67 @@ function assertPlayableCharacter(value: string): PlayableCharacterId {
 
 function assertProfileId(value: string): void {
   assertNonemptyString(value, 'PROGRESSION_VALUE_INVALID');
+}
+
+function assertMissionIdentity(
+  profileId: string,
+  missionDate: string,
+  balanceVersion: number,
+): void {
+  assertMissionProfileId(profileId);
+  assertMissionDate(missionDate);
+  if (balanceVersion !== SUPPORTED_BALANCE_VERSION) {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function assertMissionProfileId(value: string): void {
+  if (
+    typeof value !== 'string'
+    || !/^[A-Za-z0-9_-]{1,128}$/.test(value)
+  ) {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function assertMissionDate(value: string): void {
+  if (!isCanonicalDate(value)) {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function assertProgressionMode(
+  value: string,
+  code: ProgressionErrorCode = 'PROGRESSION_VALUE_INVALID',
+): asserts value is ProgressionMode {
+  if (value !== 'cash' && value !== 'practice' && value !== 'sng') {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertMetricDeltas(
+  value: DailyMissionProgressUpdate['metricDeltas'],
+): void {
+  const allowed = new Set([
+    'handsAny',
+    'handsCash',
+    'handsPractice',
+    'sngCompleted',
+  ]);
+  const keys = Object.keys(value);
+  if (
+    keys.some(key => !allowed.has(key))
+    || keys.some(key => !isNonnegativeSafeInteger(
+      value[key as keyof typeof value] as number,
+    ))
+  ) {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function clampedAdd(current: number, delta: number, target: number): number {
+  const remaining = target - current;
+  return delta >= remaining ? target : current + delta;
 }
 
 function assertNonemptyString(

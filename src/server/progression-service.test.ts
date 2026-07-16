@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import {
+  assignDailyMissions,
+  getMissionDefinition,
+  selectRerollMission,
+  type MissionId,
+} from '@/lib/progression/missions';
+import {
   ProgressionPersistenceError,
   ProgressionRepository,
 } from './progression-repository';
@@ -159,6 +165,10 @@ describe('ProgressionService', () => {
   ) => {
     const profileId = `sng-profile-${place}`;
     insertProfile(database, profileId);
+    const missionBonus = assignDailyMissions(profileId, '1970-01-01', 1)
+      .some(mission => mission.id === 'COMPLETE_ONE_SNG')
+      ? 100_000
+      : 0;
 
     const summary = service.recordSngFinish({
       profileId,
@@ -169,7 +179,7 @@ describe('ProgressionService', () => {
     });
 
     expect(summary).toMatchObject({
-      dojoXpMilli,
+      dojoXpMilli: dojoXpMilli + missionBonus,
       characterId: 'chloe',
       affinityMilli,
     });
@@ -632,6 +642,386 @@ describe('ProgressionService', () => {
     expect(rowCount(database, 'progression_profiles')).toBe(0);
     expect(rowCount(database, 'progression_events')).toBe(0);
   });
+
+  it('assigns today before progressing only completion-based cash metrics', () => {
+    insertProfile(database, 'cash-mission-profile');
+    const completedAt = Date.parse('2026-07-17T12:00:00+09:00');
+
+    service.recordCompletedHand({
+      profileId: 'cash-mission-profile',
+      roomId: 'cash-mission-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt,
+    });
+
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(
+        'cash-mission-profile', '2026-07-17', 1,
+      )
+    ));
+    expect(day.modes).toEqual(['cash']);
+    for (const mission of day.missions) {
+      const metric = getMissionDefinition(mission.missionId)?.metric;
+      const expected = metric === 'handsAny'
+        || metric === 'handsCash'
+        || metric === 'modesCompleted'
+        ? 1
+        : 0;
+      expect(mission.progress).toBe(expected);
+    }
+  });
+
+  it('rewards overlapping hand missions together without affinity bonus', () => {
+    const completedAt = Date.parse('2026-07-17T13:00:00+09:00');
+    const profileId = findProfileWithMissions(
+      '2026-07-17',
+      ['COMPLETE_HANDS_ANY_10', 'COMPLETE_HANDS_CASH_10'],
+    );
+    insertProfile(database, profileId);
+
+    let tenth;
+    for (let handNumber = 1; handNumber <= 10; handNumber += 1) {
+      tenth = service.recordCompletedHand({
+        profileId,
+        roomId: 'overlap-room',
+        handNumber,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: completedAt + handNumber,
+      });
+    }
+
+    expect(tenth).toMatchObject({
+      dojoXpMilli: 210_000,
+      affinityMilli: 2_000,
+    });
+    expect(tenth?.missionCompletions.map(value => value.missionId).sort())
+      .toEqual(['COMPLETE_HANDS_ANY_10', 'COMPLETE_HANDS_CASH_10']);
+    expect(tenth?.missionCompletions.every(value => (
+      value.dojoXpMilli === 100_000
+    ))).toBe(true);
+  });
+
+  it('counts distinct modes once and completes the two-mode mission', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T14:00:00+09:00`);
+    const profileId = findProfileWithMissions(date, ['COMPLETE_TWO_MODES']);
+    insertProfile(database, profileId);
+
+    service.recordCompletedHand({
+      profileId,
+      roomId: 'mode-cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'hana',
+      completedAt: at,
+    });
+    service.recordCompletedHand({
+      profileId,
+      roomId: 'mode-cash-room',
+      handNumber: 2,
+      mode: 'cash',
+      selectedCharacterId: 'hana',
+      completedAt: at + 1,
+    });
+    const practice = service.recordCompletedHand({
+      profileId,
+      roomId: 'mode-practice-room',
+      handNumber: 1,
+      mode: 'practice',
+      selectedCharacterId: 'hana',
+      completedAt: at + 2,
+    });
+
+    expect(practice.missionCompletions).toEqual([
+      expect.objectContaining({ missionId: 'COMPLETE_TWO_MODES' }),
+    ]);
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(profileId, date, 1)
+    ));
+    expect(day.modes).toEqual(['cash', 'practice']);
+  });
+
+  it('returns a duplicate before mutating mission progress or mode rows', () => {
+    const at = Date.parse('2026-07-17T15:00:00+09:00');
+    insertProfile(database, 'mission-duplicate');
+    const input = {
+      profileId: 'mission-duplicate',
+      roomId: 'mission-duplicate-room',
+      handNumber: 1,
+      mode: 'cash' as const,
+      selectedCharacterId: 'sakura',
+      completedAt: at,
+    };
+    const first = service.recordCompletedHand(input);
+    const before = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(
+        'mission-duplicate', '2026-07-17', 1,
+      )
+    ));
+
+    const duplicate = service.recordCompletedHand({
+      ...input,
+      mode: 'practice',
+      selectedCharacterId: 'hana',
+      completedAt: at + 10_000,
+    });
+    const after = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(
+        'mission-duplicate', '2026-07-17', 1,
+      )
+    ));
+
+    expect(duplicate).toEqual(first);
+    expect(after).toEqual(before);
+  });
+
+  it('rerolls one incomplete slot deterministically and rejects a second use', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T16:00:00+09:00`);
+    insertProfile(database, 'reroll-profile');
+    repository.getOrCreate('reroll-profile', 'sakura', at);
+    const before = database.transaction(() => (
+      repository.ensureDailyMissionsInTransaction(
+        'reroll-profile', date, 1, at,
+      )
+    ));
+
+    const rerolled = service.rerollMission('reroll-profile', date, 1, at);
+    const restarted = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction('reroll-profile', date, 1)
+    ));
+
+    expect(rerolled).toEqual(restarted);
+    expect(rerolled.missions[1]).toMatchObject({
+      slot: 1,
+      progress: 0,
+      rerollCount: 1,
+      completedAt: null,
+      rewardedAt: null,
+    });
+    expect(before.missions.map(value => value.missionId))
+      .not.toContain(rerolled.missions[1].missionId);
+    expectServiceError(
+      () => service.rerollMission('reroll-profile', date, 0, at),
+      'PROGRESSION_MISSION_REROLL_USED',
+    );
+  });
+
+  it('rolls mission and progression mutations back when the event insert fails', () => {
+    const at = Date.parse('2026-07-17T17:00:00+09:00');
+    insertProfile(database, 'mission-rollback');
+    database.db.exec(`
+      CREATE TRIGGER fail_mission_event
+      BEFORE INSERT ON progression_events
+      BEGIN SELECT RAISE(ABORT, 'sensitive-mission-event'); END;
+    `);
+
+    expect(() => service.recordCompletedHand({
+      profileId: 'mission-rollback',
+      roomId: 'mission-rollback-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: at,
+    })).toThrowError(ProgressionPersistenceError);
+
+    expect(rowCount(database, 'progression_profiles', 'mission-rollback')).toBe(0);
+    expect(rowCount(database, 'daily_missions', 'mission-rollback')).toBe(0);
+    expect(rowCount(database, 'daily_mission_modes', 'mission-rollback')).toBe(0);
+  });
+
+  it('progresses only SNG completion and mode metrics regardless of place', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T18:00:00+09:00`);
+    insertProfile(database, 'sng-metrics');
+
+    service.recordSngFinish({
+      profileId: 'sng-metrics',
+      roomId: 'sng-metrics-room',
+      place: 6,
+      selectedCharacterId: 'vivian',
+      completedAt: at,
+    });
+
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction('sng-metrics', date, 1)
+    ));
+    expect(day.modes).toEqual(['sng']);
+    for (const mission of day.missions) {
+      const metric = getMissionDefinition(mission.missionId)?.metric;
+      expect(mission.progress).toBe(
+        metric === 'sngCompleted' || metric === 'modesCompleted' ? 1 : 0,
+      );
+    }
+  });
+
+  it('uses a separate mission day at exact KST midnight for cash and SNG', () => {
+    const before = Date.parse('2026-07-17T23:59:59.999+09:00');
+    const after = Date.parse('2026-07-18T00:00:00.000+09:00');
+    insertProfile(database, 'kst-all-modes');
+    service.recordCompletedHand({
+      profileId: 'kst-all-modes',
+      roomId: 'kst-cash',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'ara',
+      completedAt: before,
+    });
+    service.recordSngFinish({
+      profileId: 'kst-all-modes',
+      roomId: 'kst-sng',
+      place: 3,
+      selectedCharacterId: 'ara',
+      completedAt: after,
+    });
+
+    expect(database.db.prepare(`
+      SELECT mission_date, COUNT(*) AS count FROM daily_missions
+      WHERE profile_id = 'kst-all-modes'
+      GROUP BY mission_date ORDER BY mission_date
+    `).all()).toEqual([
+      { mission_date: '2026-07-17', count: 3 },
+      { mission_date: '2026-07-18', count: 3 },
+    ]);
+  });
+
+  it('keeps the full mission reward when reduced practice XP applies', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T03:00:00+09:00`);
+    const scenario = findRerollReplacement(date, 'COMPLETE_HANDS_PRACTICE_10');
+    insertProfile(database, scenario.profileId);
+    for (let handNumber = 1; handNumber <= 30; handNumber += 1) {
+      service.recordCompletedHand({
+        profileId: scenario.profileId,
+        roomId: 'reduced-practice',
+        handNumber,
+        mode: 'practice',
+        selectedCharacterId: 'elena',
+        completedAt: at + handNumber,
+      });
+    }
+    service.rerollMission(
+      scenario.profileId,
+      date,
+      scenario.slot,
+      at + 31,
+    );
+
+    let fortieth;
+    for (let handNumber = 31; handNumber <= 40; handNumber += 1) {
+      fortieth = service.recordCompletedHand({
+        profileId: scenario.profileId,
+        roomId: 'reduced-practice',
+        handNumber,
+        mode: 'practice',
+        selectedCharacterId: 'elena',
+        completedAt: at + 100 + handNumber,
+      });
+    }
+
+    expect(fortieth).toMatchObject({
+      dojoXpMilli: 102_500,
+      affinityMilli: 500,
+      missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_PRACTICE_10',
+        slot: scenario.slot,
+        dojoXpMilli: 100_000,
+      }],
+    });
+  });
+
+  it('rejects completed, stale-day, and unknown-profile rerolls safely', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T19:00:00+09:00`);
+    const profileId = findProfileWithMissions(date, ['COMPLETE_ONE_SNG']);
+    insertProfile(database, profileId);
+    service.recordSngFinish({
+      profileId,
+      roomId: 'completed-reroll-sng',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: at,
+    });
+    const day = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction(profileId, date, 1)
+    ));
+    const completedSlot = day.missions.find(
+      mission => mission.missionId === 'COMPLETE_ONE_SNG',
+    )?.slot as number;
+
+    expectServiceError(
+      () => service.rerollMission(profileId, date, completedSlot, at + 1),
+      'PROGRESSION_MISSION_COMPLETED',
+    );
+    expectServiceError(
+      () => service.rerollMission(profileId, '2026-07-16', 0, at + 1),
+      'PROGRESSION_INPUT_INVALID',
+    );
+    expectServiceError(
+      () => service.rerollMission('missing-profile', date, 0, at + 1),
+      'PROGRESSION_PROFILE_NOT_FOUND',
+    );
+  });
+
+  it('rolls a failed mission replacement back without consuming the reroll', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T20:00:00+09:00`);
+    insertProfile(database, 'reroll-rollback');
+    repository.getOrCreate('reroll-rollback', 'sakura', at);
+    const before = database.transaction(() => (
+      repository.ensureDailyMissionsInTransaction(
+        'reroll-rollback', date, 1, at,
+      )
+    ));
+    database.db.exec(`
+      CREATE TRIGGER fail_mission_reroll
+      BEFORE UPDATE ON daily_missions
+      BEGIN SELECT RAISE(ABORT, 'sensitive-reroll'); END;
+    `);
+    expect(() => service.rerollMission(
+      'reroll-rollback', date, 0, at + 1,
+    )).toThrowError(ProgressionPersistenceError);
+    database.db.exec('DROP TRIGGER fail_mission_reroll;');
+
+    const after = database.transaction(() => (
+      repository.readDailyMissionDayInTransaction('reroll-rollback', date, 1)
+    ));
+    expect(after).toEqual(before);
+    expect(service.rerollMission('reroll-rollback', date, 0, at + 2)
+      .missions[0].rerollCount).toBe(1);
+  });
+
+  it('records mission receipts while keeping max-level XP canonical', () => {
+    const date = '2026-07-17';
+    const at = Date.parse(`${date}T21:00:00+09:00`);
+    const profileId = findProfileWithMissions(date, ['COMPLETE_HANDS_ANY_10']);
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', at);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 50, dojo_xp_milli = 0
+      WHERE profile_id = ?
+    `).run(profileId);
+
+    let tenth;
+    for (let handNumber = 1; handNumber <= 10; handNumber += 1) {
+      tenth = service.recordCompletedHand({
+        profileId,
+        roomId: 'max-level-missions',
+        handNumber,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: at + handNumber,
+      });
+    }
+
+    expect(tenth?.missionCompletions.map(value => value.missionId))
+      .toContain('COMPLETE_HANDS_ANY_10');
+    expect(repository.getOrCreate(profileId, 'sakura', at + 100).profile)
+      .toMatchObject({ dojoLevel: 50, dojoXpMilli: 0 });
+  });
 });
 
 function insertProfile(database: PokerDatabase, id: string): void {
@@ -734,4 +1124,46 @@ function expectServiceError(
   }
   expect(thrown).toBeInstanceOf(ProgressionServiceError);
   expect((thrown as ProgressionServiceError).code).toBe(code);
+}
+
+function findProfileWithMissions(
+  date: string,
+  required: readonly MissionId[],
+): string {
+  for (let index = 0; index < 10_000; index += 1) {
+    const profileId = `mission-search-${index}`;
+    const ids = new Set(
+      assignDailyMissions(profileId, date, 1).map(mission => mission.id),
+    );
+    if (required.every(id => ids.has(id))) return profileId;
+  }
+  throw new Error('test mission assignment unavailable');
+}
+
+function findRerollReplacement(
+  date: string,
+  requiredReplacement: MissionId,
+): { profileId: string; slot: number } {
+  for (let index = 0; index < 10_000; index += 1) {
+    const profileId = `reroll-search-${index}`;
+    const assigned = assignDailyMissions(profileId, date, 1);
+    const ids = assigned.map(mission => mission.id);
+    for (const [slot, discarded] of assigned.entries()) {
+      if (
+        discarded.metric !== 'sngCompleted'
+        && discarded.metric !== 'modesCompleted'
+      ) {
+        continue;
+      }
+      const replacement = selectRerollMission(
+        profileId,
+        date,
+        1,
+        ids,
+        discarded.id,
+      );
+      if (replacement.id === requiredReplacement) return { profileId, slot };
+    }
+  }
+  throw new Error('test reroll replacement unavailable');
 }
