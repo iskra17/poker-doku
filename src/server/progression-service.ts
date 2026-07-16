@@ -6,17 +6,14 @@ import {
   type ProgressionBalance,
 } from '@/lib/progression/balance';
 import {
-  getMissionDefinition,
   selectRerollMission,
 } from '@/lib/progression/missions';
 import {
   advanceStreakDay,
   reconcileWeeklyRestPass,
 } from '@/lib/progression/streak';
-import {
-  getCollectionItemDefinition,
-  STREAK_FRAGMENT_ITEM,
-} from '@/lib/collection/catalog';
+import { STREAK_FRAGMENT_ITEM } from '@/lib/collection/catalog';
+import { parseProgressionRewardSummary } from '@/lib/progression/reward-summary';
 import type {
   MissionCompletion,
   ProgressionRewardSummary,
@@ -42,16 +39,6 @@ const EVENT_TYPE_SNG_FINISH = 'sng-finish';
 const MAX_EVENT_ID_COMPONENT_LENGTH = 128;
 const MAX_EVENT_ID_LENGTH = 384;
 const INTERNAL_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const REQUIRED_SUMMARY_KEYS = [
-  'eventId',
-  'dojoXpMilli',
-  'dojoLevelsGained',
-  'characterId',
-  'affinityMilli',
-  'affinityLevelsGained',
-  'missionCompletions',
-  'grantedItemIds',
-] as const;
 
 export type ProgressionServiceErrorCode =
   | 'PROGRESSION_INPUT_INVALID'
@@ -907,197 +894,13 @@ function parseStoredSummary(
   event: ProgressionEvent,
   expectedEventId: string,
 ): ProgressionRewardSummary {
-  try {
-    const value = event.summary;
-    if (
-      !hasExactSummaryKeys(value)
-      || value.eventId !== expectedEventId
-      || !isNonnegativeSafeInteger(value.dojoXpMilli)
-      || !isConsecutiveLevelArray(value.dojoLevelsGained, 50)
-      || typeof value.characterId !== 'string'
-      || !(PLAYABLE_CHARACTER_IDS as readonly string[])
-        .includes(value.characterId)
-      || !isNonnegativeSafeInteger(value.affinityMilli)
-      || !isConsecutiveLevelArray(value.affinityLevelsGained, 20)
-      || !isMissionCompletionArray(
-        value.missionCompletions,
-        event.balanceVersion,
-      )
-      || !isUniqueCatalogItemIdArray(value.grantedItemIds)
-      || (hasOwn(value, 'streak') && !isStreakChange(value.streak))
-    ) {
-      throw new Error('invalid summary');
-    }
-    const missionRewardTotal = sumMissionCompletionRewards(
-      value.missionCompletions,
-    );
-    if (
-      missionRewardTotal === null
-      || value.dojoXpMilli < missionRewardTotal
-    ) {
-      throw new Error('invalid summary');
-    }
-    return value as unknown as ProgressionRewardSummary;
-  } catch {
+  const summary = parseProgressionRewardSummary(
+    event.summary,
+    expectedEventId,
+    event.balanceVersion,
+  );
+  if (!summary) {
     throw new ProgressionServiceError('PROGRESSION_STORED_SUMMARY_INVALID');
   }
-}
-
-function isNonnegativeSafeInteger(value: unknown): value is number {
-  return typeof value === 'number'
-    && Number.isSafeInteger(value)
-    && value >= 0;
-}
-
-function isConsecutiveLevelArray(
-  value: unknown,
-  maxLevel: number,
-): value is number[] {
-  return Array.isArray(value) && value.every((level, index) => (
-    Number.isSafeInteger(level)
-    && level >= 2
-    && level <= maxLevel
-    && (index === 0 || level === value[index - 1] + 1)
-  ));
-}
-
-function hasExactSummaryKeys(value: unknown): value is Record<string, unknown> {
-  if (!isPlainObject(value)) return false;
-  const keys = getOwnStringKeys(value);
-  if (!keys) return false;
-  const hasStreak = hasOwn(value, 'streak');
-  if (keys.length !== REQUIRED_SUMMARY_KEYS.length + (hasStreak ? 1 : 0)) {
-    return false;
-  }
-  return REQUIRED_SUMMARY_KEYS.every(key => hasOwn(value, key))
-    && keys.every(key => (
-      (REQUIRED_SUMMARY_KEYS as readonly string[]).includes(key)
-      || key === 'streak'
-    ));
-}
-
-function isMissionCompletionArray(
-  value: unknown,
-  balanceVersion: number,
-): value is MissionCompletion[] {
-  if (!Array.isArray(value)) return false;
-  let expectedReward: number;
-  try {
-    expectedReward = getBalance(balanceVersion).dojoXpPerMission;
-  } catch {
-    return false;
-  }
-  const missionIds = new Set<string>();
-  const slots = new Set<number>();
-  return value.every(item => {
-    if (!hasExactKeys(item, ['missionId', 'slot', 'dojoXpMilli'])) {
-      return false;
-    }
-    const { missionId, slot, dojoXpMilli } = item;
-    const definition = typeof missionId === 'string'
-      ? getMissionDefinition(missionId)
-      : null;
-    if (
-      !definition
-      || missionIds.has(definition.id)
-      || typeof slot !== 'number'
-      || !Number.isSafeInteger(slot)
-      || slot < 0
-      || slot > 2
-      || slots.has(slot)
-      || dojoXpMilli !== expectedReward
-    ) {
-      return false;
-    }
-    missionIds.add(definition.id);
-    slots.add(slot);
-    return true;
-  });
-}
-
-function sumMissionCompletionRewards(
-  completions: readonly MissionCompletion[],
-): number | null {
-  let total = BigInt(0);
-  for (const completion of completions) {
-    total += BigInt(completion.dojoXpMilli);
-  }
-  if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
-  return Number(total);
-}
-
-function isStreakChange(value: unknown): boolean {
-  if (!hasExactKeys(value, [
-    'previousStreak',
-    'currentStreak',
-    'restPassUsed',
-  ])) {
-    return false;
-  }
-  if (
-    !isNonnegativeSafeInteger(value.previousStreak)
-    || !isNonnegativeSafeInteger(value.currentStreak)
-    || value.currentStreak < 1
-    || typeof value.restPassUsed !== 'boolean'
-    || (
-      value.currentStreak !== 1
-      && value.currentStreak !== value.previousStreak + 1
-    )
-    || (
-      value.restPassUsed
-      && (
-        value.previousStreak === 0
-        || value.currentStreak !== value.previousStreak + 1
-      )
-    )
-  ) {
-    return false;
-  }
-  return true;
-}
-
-function isUniqueCatalogItemIdArray(value: unknown): value is string[] {
-  if (!Array.isArray(value)) return false;
-  const seen = new Set<string>();
-  return value.every(item => {
-    if (
-      typeof item !== 'string'
-      || getCollectionItemDefinition(item) === null
-      || seen.has(item)
-    ) {
-      return false;
-    }
-    seen.add(item);
-    return true;
-  });
-}
-
-function hasExactKeys(
-  value: unknown,
-  expected: readonly string[],
-): value is Record<string, unknown> {
-  if (!isPlainObject(value)) return false;
-  const keys = getOwnStringKeys(value);
-  if (!keys) return false;
-  return keys.length === expected.length
-    && expected.every(key => hasOwn(value, key));
-}
-
-function getOwnStringKeys(value: object): string[] | null {
-  const keys = Reflect.ownKeys(value);
-  return keys.every((key): key is string => typeof key === 'string')
-    ? keys
-    : null;
-}
-
-function hasOwn(value: object, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(value, key);
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
-    return false;
-  }
-  const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  return summary;
 }

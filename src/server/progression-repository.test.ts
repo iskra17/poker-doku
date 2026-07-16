@@ -1138,7 +1138,7 @@ describe('ProgressionRepository', () => {
         profileId,
         eventType: 'completed-hand',
         balanceVersion: 1,
-        summary: {},
+        summary: fragmentSourceSummary('corrupt-main-event'),
         createdAt: grantedAt,
       });
     });
@@ -1172,6 +1172,44 @@ describe('ProgressionRepository', () => {
     }), 'PROGRESSION_PERSISTENCE_INVALID');
   });
 
+  it('rejects a fragment source summary that does not prove the reward claim', () => {
+    const profileId = 'invalid-fragment-source-summary';
+    const sourceDate = '2026-07-17';
+    const grantedAt = Date.parse(`${sourceDate}T12:00:00+09:00`);
+    const key = `streak-fragment:${profileId}:${sourceDate}`;
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1_000);
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (?, ?, 0, 1, ?)
+    `).run(profileId, sourceDate, grantedAt);
+    database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: 'invalid-fragment-main-event',
+        profileId,
+        eventType: 'sng-finish',
+        balanceVersion: 1,
+        summary: {},
+        createdAt: grantedAt,
+      });
+    });
+
+    expectErrorCode(() => database.transaction(() => {
+      repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: key,
+        profileId,
+        itemId: 'streak-fragment',
+        balanceVersion: 1,
+        grantedAt,
+        source: 'streak',
+        sourceRef: key,
+        sourceEventId: 'invalid-fragment-main-event',
+        sourceDate,
+      });
+    }), 'PROGRESSION_PERSISTENCE_INVALID');
+    expect(rowCount(database, 'progression_item_grants', profileId)).toBe(0);
+    expect(rowCount(database, 'inventory_items', profileId)).toBe(0);
+  });
+
   it('uses a dedicated immutable grant receipt as the source of fragment quantity', () => {
     const profileId = 'dedicated-fragment-receipt';
     const sourceDate = '2026-07-17';
@@ -1184,7 +1222,7 @@ describe('ProgressionRepository', () => {
         profileId,
         eventType: 'completed-hand',
         balanceVersion: 1,
-        summary: {},
+        summary: fragmentSourceSummary('completed-hand:source-event'),
         createdAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
       });
     });
@@ -1273,8 +1311,11 @@ describe('ProgressionRepository', () => {
       DELETE FROM progression_item_grants WHERE profile_id = ?
     `).run(profileId)).toThrowError('immutable progression item grant');
 
-    database.db.prepare(`
+    expect(() => database?.db.prepare(`
       DELETE FROM progression_profiles WHERE profile_id = ?
+    `).run(profileId)).toThrowError('delete progression through profile owner');
+    database.db.prepare(`
+      DELETE FROM profiles WHERE id = ?
     `).run(profileId);
     expect(database.db.prepare(`
       SELECT COUNT(*) AS count FROM progression_item_grants
@@ -1342,6 +1383,24 @@ function rowCount(
       `SELECT COUNT(*) AS count FROM ${table} WHERE profile_id = ?`,
     ).get(profileId)) as { count: number };
   return row.count;
+}
+
+function fragmentSourceSummary(eventId: string) {
+  return {
+    eventId,
+    dojoXpMilli: 30_000,
+    dojoLevelsGained: [],
+    characterId: 'sakura',
+    affinityMilli: 8_000,
+    affinityLevelsGained: [],
+    missionCompletions: [],
+    streak: {
+      previousStreak: 6,
+      currentStreak: 7,
+      restPassUsed: false,
+    },
+    grantedItemIds: ['streak-fragment'],
+  };
 }
 
 function insertEvent(

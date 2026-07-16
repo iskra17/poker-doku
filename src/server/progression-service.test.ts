@@ -1492,6 +1492,10 @@ describe('ProgressionService', () => {
     expect(() => database?.db.prepare(`
       DELETE FROM progression_events WHERE idempotency_key = ?
     `).run(seventh.eventId)).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE progression_events SET summary_json = '{}'
+      WHERE idempotency_key = ?
+    `).run(seventh.eventId)).toThrowError('immutable fragment source event');
 
     expect(new ProfileRepository(database).deleteProfile(profileId))
       .toBe('deleted');

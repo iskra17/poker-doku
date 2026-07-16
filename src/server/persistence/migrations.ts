@@ -1700,6 +1700,368 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 10,
+    name: 'prove_fragment_sources_and_protect_progression_root',
+    sql: `
+      CREATE TABLE v10_progression_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      CREATE VIEW canonical_streak_fragment_source_events AS
+      SELECT
+        source_event.idempotency_key,
+        source_event.profile_id,
+        source_event.created_at
+      FROM progression_events AS source_event
+      WHERE
+        source_event.event_type IN ('completed-hand', 'sng-finish')
+        AND source_event.balance_version = 1
+        AND json_valid(source_event.summary_json)
+        AND json_type(source_event.summary_json) = 'object'
+        AND (
+          SELECT COUNT(*) FROM json_each(source_event.summary_json)
+        ) = 9
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(source_event.summary_json) AS summary_field
+          WHERE summary_field.key NOT IN (
+            'eventId', 'dojoXpMilli', 'dojoLevelsGained', 'characterId',
+            'affinityMilli', 'affinityLevelsGained', 'missionCompletions',
+            'grantedItemIds', 'streak'
+          )
+        )
+        AND json_type(source_event.summary_json, '$.eventId') = 'text'
+        AND json_extract(source_event.summary_json, '$.eventId')
+          = source_event.idempotency_key
+        AND json_type(source_event.summary_json, '$.dojoXpMilli') = 'integer'
+        AND json_extract(source_event.summary_json, '$.dojoXpMilli') >= 0
+        AND json_type(source_event.summary_json, '$.dojoLevelsGained') = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE
+              WHEN json_type(
+                source_event.summary_json,
+                '$.dojoLevelsGained'
+              ) = 'array'
+              THEN json_extract(
+                source_event.summary_json,
+                '$.dojoLevelsGained'
+              )
+              ELSE '[]'
+            END
+          ) AS dojo_level
+          WHERE
+            dojo_level.type != 'integer'
+            OR dojo_level.value NOT BETWEEN 2 AND 50
+            OR (
+              CAST(dojo_level.key AS INTEGER) > 0
+              AND dojo_level.value != json_extract(
+                source_event.summary_json,
+                '$.dojoLevelsGained['
+                  || (CAST(dojo_level.key AS INTEGER) - 1) || ']'
+              ) + 1
+            )
+        )
+        AND json_extract(source_event.summary_json, '$.characterId') IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )
+        AND json_type(source_event.summary_json, '$.affinityMilli') = 'integer'
+        AND json_extract(source_event.summary_json, '$.affinityMilli') >= 0
+        AND json_type(
+          source_event.summary_json,
+          '$.affinityLevelsGained'
+        ) = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE
+              WHEN json_type(
+                source_event.summary_json,
+                '$.affinityLevelsGained'
+              ) = 'array'
+              THEN json_extract(
+                source_event.summary_json,
+                '$.affinityLevelsGained'
+              )
+              ELSE '[]'
+            END
+          ) AS affinity_level
+          WHERE
+            affinity_level.type != 'integer'
+            OR affinity_level.value NOT BETWEEN 2 AND 20
+            OR (
+              CAST(affinity_level.key AS INTEGER) > 0
+              AND affinity_level.value != json_extract(
+                source_event.summary_json,
+                '$.affinityLevelsGained['
+                  || (CAST(affinity_level.key AS INTEGER) - 1) || ']'
+              ) + 1
+            )
+        )
+        AND json_type(
+          source_event.summary_json,
+          '$.missionCompletions'
+        ) = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE
+              WHEN json_type(
+                source_event.summary_json,
+                '$.missionCompletions'
+              ) = 'array'
+              THEN json_extract(
+                source_event.summary_json,
+                '$.missionCompletions'
+              )
+              ELSE '[]'
+            END
+          ) AS mission
+          WHERE
+            mission.type != 'object'
+            OR (
+              SELECT COUNT(*)
+              FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              )
+            ) != 3
+            OR EXISTS (
+              SELECT 1
+              FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              ) AS mission_field
+              WHERE mission_field.key NOT IN (
+                'missionId', 'slot', 'dojoXpMilli'
+              )
+            )
+            OR json_extract(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.missionId'
+            ) NOT IN (
+              'COMPLETE_HANDS_ANY_10', 'COMPLETE_HANDS_CASH_10',
+              'COMPLETE_HANDS_PRACTICE_10', 'COMPLETE_HANDS_ANY_20',
+              'COMPLETE_ONE_SNG', 'COMPLETE_TWO_MODES'
+            )
+            OR json_type(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.slot'
+            ) != 'integer'
+            OR json_extract(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.slot'
+            ) NOT BETWEEN 0 AND 2
+            OR json_extract(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.dojoXpMilli'
+            ) != 100000
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(
+            source_event.summary_json,
+            '$.missionCompletions'
+          )
+        ) = (
+          SELECT COUNT(DISTINCT json_extract(mission.value, '$.missionId'))
+          FROM json_each(
+            source_event.summary_json,
+            '$.missionCompletions'
+          ) AS mission
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(
+            source_event.summary_json,
+            '$.missionCompletions'
+          )
+        ) = (
+          SELECT COUNT(DISTINCT json_extract(mission.value, '$.slot'))
+          FROM json_each(
+            source_event.summary_json,
+            '$.missionCompletions'
+          ) AS mission
+        )
+        AND json_extract(source_event.summary_json, '$.dojoXpMilli') >= COALESCE((
+          SELECT SUM(json_extract(mission.value, '$.dojoXpMilli'))
+          FROM json_each(
+            source_event.summary_json,
+            '$.missionCompletions'
+          ) AS mission
+        ), 0)
+        AND json_type(source_event.summary_json, '$.streak') = 'object'
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(source_event.summary_json, '$.streak')
+        ) = 3
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(source_event.summary_json, '$.streak') AS streak_field
+          WHERE streak_field.key NOT IN (
+            'previousStreak', 'currentStreak', 'restPassUsed'
+          )
+        )
+        AND json_type(
+          source_event.summary_json,
+          '$.streak.previousStreak'
+        ) = 'integer'
+        AND json_extract(
+          source_event.summary_json,
+          '$.streak.previousStreak'
+        ) >= 0
+        AND json_type(
+          source_event.summary_json,
+          '$.streak.currentStreak'
+        ) = 'integer'
+        AND json_extract(
+          source_event.summary_json,
+          '$.streak.currentStreak'
+        ) > 0
+        AND json_extract(
+          source_event.summary_json,
+          '$.streak.currentStreak'
+        ) = json_extract(
+          source_event.summary_json,
+          '$.streak.previousStreak'
+        ) + 1
+        AND json_extract(
+          source_event.summary_json,
+          '$.streak.currentStreak'
+        ) % 7 = 0
+        AND json_type(
+          source_event.summary_json,
+          '$.streak.restPassUsed'
+        ) IN ('true', 'false')
+        AND json_type(
+          source_event.summary_json,
+          '$.grantedItemIds'
+        ) = 'array'
+        AND json_array_length(
+          source_event.summary_json,
+          '$.grantedItemIds'
+        ) = 1
+        AND json_extract(
+          source_event.summary_json,
+          '$.grantedItemIds[0]'
+        ) = 'streak-fragment';
+
+      INSERT INTO v10_progression_validation (invalid)
+      SELECT 1
+      FROM (
+        SELECT
+          profile_id,
+          item_id,
+          COUNT(*) AS receipt_count,
+          MIN(granted_at) AS first_granted_at,
+          MAX(granted_at) AS last_granted_at
+        FROM progression_item_grants
+        WHERE item_id = 'streak-fragment'
+        GROUP BY profile_id, item_id
+      ) AS receipt_group
+      LEFT JOIN inventory_items AS inventory
+        ON inventory.profile_id = receipt_group.profile_id
+        AND inventory.item_id = receipt_group.item_id
+      WHERE
+        inventory.profile_id IS NULL
+        OR inventory.quantity != receipt_group.receipt_count
+        OR inventory.granted_at != receipt_group.first_granted_at
+        OR inventory.updated_at != receipt_group.last_granted_at
+      LIMIT 1;
+
+      INSERT INTO v10_progression_validation (invalid)
+      SELECT 1 FROM inventory_items AS inventory
+      WHERE inventory.item_id = 'streak-fragment'
+        AND NOT EXISTS (
+          SELECT 1 FROM progression_item_grants AS grant_row
+          WHERE grant_row.profile_id = inventory.profile_id
+            AND grant_row.item_id = inventory.item_id
+        )
+      LIMIT 1;
+
+      INSERT INTO v10_progression_validation (invalid)
+      SELECT 1
+      FROM progression_item_grants AS grant_row
+      LEFT JOIN canonical_streak_fragment_source_events AS source_event
+        ON source_event.idempotency_key = grant_row.source_event_id
+        AND source_event.profile_id = grant_row.profile_id
+        AND source_event.created_at = grant_row.granted_at
+      WHERE source_event.idempotency_key IS NULL
+      LIMIT 1;
+
+      DROP TABLE v10_progression_validation;
+
+      DROP TRIGGER validate_progression_item_grant_insert;
+      DROP TRIGGER validate_fragment_source_event_insert;
+
+      CREATE TRIGGER validate_progression_item_grant_insert
+      BEFORE INSERT ON progression_item_grants
+      WHEN
+        NEW.idempotency_key != (
+          'streak-fragment:' || NEW.profile_id || ':' || NEW.source_date
+        )
+        OR NEW.source_ref != NEW.idempotency_key
+        OR NEW.item_id != 'streak-fragment'
+        OR NEW.source != 'streak'
+        OR NEW.quantity != 1
+        OR NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR NOT EXISTS (
+          SELECT 1 FROM streak_daily_progress AS daily
+          WHERE daily.profile_id = NEW.profile_id
+            AND daily.kst_date = NEW.source_date
+            AND daily.qualified_at = NEW.granted_at
+        )
+        OR (
+          EXISTS (
+            SELECT 1 FROM progression_events
+            WHERE idempotency_key = NEW.source_event_id
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM canonical_streak_fragment_source_events AS source_event
+            WHERE source_event.idempotency_key = NEW.source_event_id
+              AND source_event.profile_id = NEW.profile_id
+              AND source_event.created_at = NEW.granted_at
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid progression item grant source');
+      END;
+
+      CREATE TRIGGER validate_fragment_source_event_insert
+      AFTER INSERT ON progression_events
+      WHEN EXISTS (
+        SELECT 1 FROM progression_item_grants AS grant_row
+        WHERE grant_row.source_event_id = NEW.idempotency_key
+      )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM canonical_streak_fragment_source_events AS source_event
+          JOIN progression_item_grants AS grant_row
+            ON grant_row.source_event_id = source_event.idempotency_key
+            AND grant_row.profile_id = source_event.profile_id
+            AND grant_row.granted_at = source_event.created_at
+          WHERE source_event.idempotency_key = NEW.idempotency_key
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid fragment source event');
+      END;
+
+      CREATE TRIGGER reject_direct_progression_profile_delete
+      BEFORE DELETE ON progression_profiles
+      WHEN EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'delete progression through profile owner');
+      END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './database';
+import { ProfileRepository } from '../profile-repository';
 import {
   type Migration,
   migrations,
@@ -43,7 +44,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(9);
+    expect(migration.version).toBe(10);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -88,7 +89,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(9);
+    expect(result.count).toBe(10);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -116,6 +117,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -137,6 +139,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -177,6 +180,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
   });
 
@@ -215,6 +219,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -522,6 +527,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -769,6 +775,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
+      { version: 10 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1030,7 +1037,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 9 });
+    `).get()).toEqual({ version: 10 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -1101,9 +1108,16 @@ describe('PokerDatabase migrations', () => {
         'v8-owned', '2026-07-17', 1, 0, NULL
       )
     `).run();
-    database.db.prepare(`
+    expect(() => database?.db.prepare(`
       DELETE FROM progression_profiles WHERE profile_id = 'v8-owned'
+    `).run()).toThrowError('delete progression through profile owner');
+    database.db.prepare(`
+      DELETE FROM profiles WHERE id = 'v8-owned'
     `).run();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_profiles
+      WHERE profile_id = 'v8-owned'
+    `).get()).toEqual({ count: 0 });
     expect(database.db.prepare(`
       SELECT COUNT(*) AS count FROM streak_state WHERE profile_id = 'v8-owned'
     `).get()).toEqual({ count: 0 });
@@ -1366,7 +1380,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 9 });
+    `).get()).toEqual({ version: 10 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -1376,6 +1390,223 @@ describe('PokerDatabase migrations', () => {
       source_date: '2026-07-17',
       granted_at: Date.parse('2026-07-17T12:00:00+09:00'),
     });
+  });
+
+  it.each([
+    {
+      corruption: 'with no inventory row',
+      apply: (db: DatabaseSync) => {
+        db.exec(`
+          DELETE FROM inventory_items
+          WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+        `);
+      },
+    },
+    {
+      corruption: 'with a quantity mismatch',
+      apply: (db: DatabaseSync) => {
+        bypassTrigger(db, 'validate_fragment_inventory_update', `
+          UPDATE inventory_items SET quantity = 2
+          WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+        `);
+      },
+    },
+    {
+      corruption: 'with a granted-time mismatch',
+      apply: (db: DatabaseSync) => {
+        bypassTrigger(db, 'validate_fragment_inventory_update', `
+          UPDATE inventory_items SET granted_at = granted_at - 1
+          WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+        `);
+      },
+    },
+    {
+      corruption: 'with an updated-time mismatch',
+      apply: (db: DatabaseSync) => {
+        bypassTrigger(db, 'validate_fragment_inventory_update', `
+          UPDATE inventory_items SET updated_at = updated_at + 1
+          WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+        `);
+      },
+    },
+  ])('rejects V8 fragment inventory $corruption atomically', ({ apply }) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    const rawDatabase = new DatabaseSync(path);
+    apply(rawDatabase);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 8 });
+      expect(reopened.prepare(`
+        SELECT name FROM pragma_table_info('progression_item_grants')
+      `).all().map(row => (row as { name: string }).name))
+        .not.toContain('source_event_id');
+      expect(reopened.prepare(`
+        SELECT COUNT(*) AS count FROM progression_item_grants
+      `).get()).toEqual({ count: 1 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects an invalid existing V9 fragment inventory in additive V10', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    applyV9Migration(path);
+    const rawDatabase = new DatabaseSync(path);
+    bypassTrigger(rawDatabase, 'validate_fragment_inventory_delete', `
+      DELETE FROM inventory_items
+      WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+    `);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 9 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it.each([
+    {
+      corruption: 'empty object',
+      mutate: () => ({}),
+    },
+    {
+      corruption: 'non-milestone streak',
+      mutate: (summary: Record<string, unknown>) => ({
+        ...summary,
+        streak: {
+          previousStreak: 7,
+          currentStreak: 8,
+          restPassUsed: false,
+        },
+      }),
+    },
+    {
+      corruption: 'duplicate fragment claim',
+      mutate: (summary: Record<string, unknown>) => ({
+        ...summary,
+        grantedItemIds: ['streak-fragment', 'streak-fragment'],
+      }),
+    },
+    {
+      corruption: 'unknown item claim',
+      mutate: (summary: Record<string, unknown>) => ({
+        ...summary,
+        grantedItemIds: ['streak-fragment', 'unknown-cosmetic'],
+      }),
+    },
+  ])('rejects a V8 fragment source summary with $corruption atomically', ({
+    mutate,
+  }) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    const rawDatabase = new DatabaseSync(path);
+    const source = rawDatabase.prepare(`
+      SELECT summary_json FROM progression_events
+      WHERE idempotency_key = 'sng-finish:legacy-main'
+    `).get() as { summary_json: string };
+    rawDatabase.prepare(`
+      UPDATE progression_events SET summary_json = ?
+      WHERE idempotency_key = 'sng-finish:legacy-main'
+    `).run(JSON.stringify(mutate(JSON.parse(source.summary_json))));
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 8 });
+      expect(reopened.prepare(`
+        SELECT COUNT(*) AS count FROM progression_item_grants
+      `).get()).toEqual({ count: 1 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects an invalid existing V9 fragment source summary in additive V10', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    applyV9Migration(path);
+    const rawDatabase = new DatabaseSync(path);
+    bypassTrigger(rawDatabase, 'reject_fragment_source_event_update', `
+      UPDATE progression_events SET summary_json = '{}'
+      WHERE idempotency_key = 'sng-finish:legacy-main';
+    `);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 9 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects a fragment grant whose source summary does not prove the claim', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'invalid-source-summary');
+    const at = Date.parse('2026-07-17T12:00:00+09:00');
+    database.db.prepare(`
+      INSERT INTO progression_profiles VALUES (
+        'invalid-source-summary', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 7, ?, ?
+      )
+    `).run(at, at);
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'invalid-source-summary', '2026-07-17', 0, 1, ?
+      )
+    `).run(at);
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'invalid-summary-source', 'invalid-source-summary',
+        'sng-finish', 1, '{}', ?
+      )
+    `).run(at);
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (
+        'streak-fragment:invalid-source-summary:2026-07-17',
+        'invalid-source-summary', 'streak-fragment', 'streak',
+        'streak-fragment:invalid-source-summary:2026-07-17',
+        'invalid-summary-source', '2026-07-17', 1, ?
+      )
+    `).run(at)).toThrowError('invalid progression item grant source');
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_item_grants
+      WHERE profile_id = 'invalid-source-summary'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_items
+      WHERE profile_id = 'invalid-source-summary'
+    `).get()).toEqual({ count: 0 });
   });
 
   it('rejects V8 timestamps outside the service Date range atomically', () => {
@@ -1563,6 +1794,57 @@ describe('PokerDatabase migrations', () => {
       const row = database.db.prepare(
         `SELECT COUNT(*) AS count FROM ${table}`,
       ).get() as { count: number };
+      expect(row.count).toBe(0);
+    }
+  });
+
+  it('rejects direct progression root deletion but allows the base-profile cascade', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'progression-delete-boundary');
+    database.db.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'progression-delete-boundary', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+      INSERT INTO character_affinity VALUES (
+        'progression-delete-boundary', 'sakura', 1, 0
+      );
+      INSERT INTO profile_equipment VALUES
+        ('progression-delete-boundary', 'title', NULL, 1),
+        ('progression-delete-boundary', 'frame', NULL, 1),
+        ('progression-delete-boundary', 'skin', NULL, 1),
+        ('progression-delete-boundary', 'cutin', NULL, 1);
+      INSERT INTO streak_daily_progress VALUES (
+        'progression-delete-boundary', '2026-07-17', 1, 0, NULL
+      );
+      INSERT INTO progression_events VALUES (
+        'delete-boundary-event', 'progression-delete-boundary',
+        'completed-hand', 1, '{}', 1
+      );
+    `);
+
+    expect(() => database?.db.prepare(`
+      DELETE FROM progression_profiles
+      WHERE profile_id = 'progression-delete-boundary'
+    `).run()).toThrowError('delete progression through profile owner');
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_profiles
+      WHERE profile_id = 'progression-delete-boundary'
+    `).get()).toEqual({ count: 1 });
+
+    expect(new ProfileRepository(database).deleteProfile(
+      'progression-delete-boundary',
+    )).toBe('deleted');
+    for (const table of [
+      'profiles', 'progression_profiles', 'character_affinity',
+      'profile_equipment', 'streak_state', 'streak_daily_progress',
+      'progression_events',
+    ]) {
+      const row = database.db.prepare(
+        `SELECT COUNT(*) AS count FROM ${table} WHERE ${
+          table === 'profiles' ? 'id' : 'profile_id'
+        } = ?`,
+      ).get('progression-delete-boundary') as { count: number };
       expect(row.count).toBe(0);
     }
   });
@@ -2103,6 +2385,44 @@ function createV8Database(path: string): void {
   applyV8Migration(path);
 }
 
+function expectOpenDatabaseToThrow(path: string): void {
+  let opened: PokerDatabase | undefined;
+  let thrown: unknown;
+  try {
+    opened = openPokerDatabase(path);
+  } catch (error) {
+    thrown = error;
+  } finally {
+    opened?.close();
+  }
+  expect(thrown).toBeDefined();
+}
+
+function bypassTrigger(
+  database: DatabaseSync,
+  triggerName: string,
+  statement: string,
+): void {
+  const trigger = database.prepare(`
+    SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?
+  `).get(triggerName) as { sql: string } | undefined;
+  if (!trigger) throw new Error(`missing trigger: ${triggerName}`);
+  database.exec(`DROP TRIGGER "${triggerName}";`);
+  try {
+    database.exec(statement);
+  } finally {
+    database.exec(trigger.sql);
+  }
+}
+
+function createV8FragmentDatabase(path: string): void {
+  createV7Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  insertValidV7FragmentGrant(rawDatabase, 1);
+  rawDatabase.close();
+  applyV8Migration(path);
+}
+
 function applyV8Migration(path: string): void {
   const rawDatabase = new DatabaseSync(path);
   try {
@@ -2111,6 +2431,21 @@ function applyV8Migration(path: string): void {
       ${migrations[7].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (8, 'harden_streak_ownership_and_grant_receipts', 8);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function applyV9Migration(path: string): void {
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[8].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (9, 'repair_streak_children_and_canonicalize_grant_sources', 9);
       COMMIT;
     `);
   } finally {

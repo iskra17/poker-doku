@@ -11,6 +11,7 @@ import {
   type MissionMetric,
   type ProgressionMode,
 } from '@/lib/progression/missions';
+import { isStreakFragmentSourceSummary } from '@/lib/progression/reward-summary';
 
 export type {
   DailyMission,
@@ -1079,6 +1080,19 @@ export class ProgressionRepository {
       throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
     }
     try {
+      const sourceEvent = this.getProgressionEvent(safe.sourceEventId);
+      if (sourceEvent && (
+        sourceEvent.profileId !== safe.profileId
+        || !['completed-hand', 'sng-finish'].includes(sourceEvent.eventType)
+        || sourceEvent.createdAt !== safe.grantedAt
+        || !isStreakFragmentSourceSummary(
+          sourceEvent.summary,
+          sourceEvent.idempotencyKey,
+          sourceEvent.balanceVersion,
+        )
+      )) {
+        throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+      }
       const existingRow = this.database.db.prepare(`
         SELECT idempotency_key, profile_id, item_id, source, source_ref,
                source_event_id, source_date, quantity, granted_at
