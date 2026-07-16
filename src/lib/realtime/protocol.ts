@@ -45,10 +45,8 @@ export interface RoomListItem {
 
 export interface JoinRoomRequest {
   roomId: string;
-  playerName: string;
   buyIn: number;
   seatIndex: number;
-  avatar?: string;
   password?: string;
 }
 

@@ -22,6 +22,7 @@ interface HttpHandlerCommonOptions {
   debugToken?: string;
   database?: PokerDatabase;
   production?: boolean;
+  onProfileRevoked?: (profileId: string) => void | Promise<void>;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -78,6 +79,7 @@ export function createHttpRequestHandler(
         rateLimiter: options.profileRateLimiter,
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
+        onProfileRevoked: options.onProfileRevoked,
       })
     : undefined;
   return (req, res) => {

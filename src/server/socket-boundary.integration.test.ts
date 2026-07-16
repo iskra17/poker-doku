@@ -38,11 +38,9 @@ function withAck<T>(
 function joinRoom(
   client: ConnectedTestClient,
   roomId: string,
-  playerName: string,
 ): Promise<RealtimeAck<{ roomId: string }>> {
   return withAck(done => client.socket.emit('join-room', {
     roomId,
-    playerName,
     buyIn: 2000,
     seatIndex: 0,
   }, done));
@@ -60,7 +58,7 @@ describe('Socket.IO runtime boundary', () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Malformed ack room' });
     const client = await harness.connect('malformed-ack-toggle-1234');
-    await expect(joinRoom(client, roomId, 'Ack boundary')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(client, roomId)).resolves.toMatchObject({ ok: true });
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
     const before = {
@@ -98,7 +96,6 @@ describe('Socket.IO runtime boundary', () => {
       .filter(event => event.type.startsWith('join-room')).length;
     rawSocket.emit('join-room', {
       roomId,
-      playerName: 'Arity boundary',
       buyIn: 2000,
       seatIndex: 0,
     }, { forgedAck: true });
@@ -111,7 +108,6 @@ describe('Socket.IO runtime boundary', () => {
     const rejected = await withAck(done => {
       rawSocket.emit('join-room', {
         roomId,
-        playerName: 'Arity boundary',
         buyIn: 2000,
         seatIndex: 0,
       }, { forgedAck: true }, done);
@@ -130,7 +126,7 @@ describe('Socket.IO runtime boundary', () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Sit-out limit room' });
     const client = await harness.connect('sitout-limit-token-1234');
-    await expect(joinRoom(client, roomId, 'Sit-out limiter')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(client, roomId)).resolves.toMatchObject({ ok: true });
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
 
@@ -165,7 +161,7 @@ describe('Socket.IO runtime boundary', () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Sit-out no-op room' });
     const client = await harness.connect('sitout-noop-token-1234');
-    await expect(joinRoom(client, roomId, 'Pending removal')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(client, roomId)).resolves.toMatchObject({ ok: true });
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
     player.pendingRemoval = true;
@@ -182,7 +178,7 @@ describe('Socket.IO runtime boundary', () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Time-bank no-op room' });
     const client = await harness.connect('timebank-noop-token-1234');
-    await expect(joinRoom(client, roomId, 'No active hand')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(client, roomId)).resolves.toMatchObject({ ok: true });
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
     const chipCount = player.timeBankChips;
@@ -198,7 +194,7 @@ describe('Socket.IO runtime boundary', () => {
     const roomId = harness.runtime.roomManager.createRoom({ ...HUMAN_ROOM, name: 'Ownership guard room' });
     const token = 'ownership-guard-token-1234';
     const client = await harness.connect(token);
-    await expect(joinRoom(client, roomId, 'Old socket')).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(client, roomId)).resolves.toMatchObject({ ok: true });
     const room = harness.runtime.roomManager.getRoom(roomId)!;
     const player = room.engine.state.players.find(candidate => candidate.id === client.playerId)!;
     const before = {
@@ -206,7 +202,7 @@ describe('Socket.IO runtime boundary', () => {
       status: player.status,
       chatCount: harness.runtime.roomManager.getChatHistory(roomId).length,
     };
-    harness.runtime.sessions.resolve(token, 'superseding-server-socket');
+    harness.runtime.sessions.resolve(token, 'superseding-server-socket', client.playerId);
 
     const rejected = await withAck(done => client.socket.emit('toggle-sit-out', done));
 

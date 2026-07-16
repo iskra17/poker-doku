@@ -136,6 +136,14 @@ export class ProfileManager {
     return current.profile;
   }
 
+  isCredentialCurrent(profileId: string, credential: string): boolean {
+    if (!isCanonicalCredential(credential)) return false;
+    const current = this.repository.findByCredentialLookup(
+      digestSecret(credential),
+    );
+    return current?.profile.id === profileId;
+  }
+
   async recover(recoveryWords: string): Promise<CreatedProfile | null> {
     const canonical = canonicalRecoveryWords(recoveryWords);
     if (!canonical) return null;

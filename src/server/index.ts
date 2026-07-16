@@ -13,7 +13,10 @@ import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
-import { setupSocketHandlers } from './socket-handler';
+import {
+  setupSocketHandlers,
+  type AuthenticatedSocketData,
+} from './socket-handler';
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -23,7 +26,12 @@ const FORCE_EXIT_MS = 10_000;
 
 const app = next({ dev, hostname, port });
 let httpServer: ReturnType<typeof createServer> | undefined;
-let io: Server<ClientToServerEvents, ServerToClientEvents> | undefined;
+let io: Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  Record<string, never>,
+  AuthenticatedSocketData
+> | undefined;
 let runtime: ReturnType<typeof setupSocketHandlers> | undefined;
 let database: PokerDatabase | undefined;
 let profileRateLimiter: TransientHttpRateLimiter | undefined;
@@ -78,6 +86,7 @@ async function listen(): Promise<void> {
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,
+    onProfileRevoked: profileId => runtime?.revokeProfile(profileId),
   }));
   httpServer = server;
   const originOptions = {
@@ -85,7 +94,12 @@ async function listen(): Promise<void> {
     allowedOrigins: parseSocketAllowedOrigins(process.env.SOCKET_ALLOWED_ORIGINS),
   };
 
-  io = new Server<ClientToServerEvents, ServerToClientEvents>(server, {
+  io = new Server<
+    ClientToServerEvents,
+    ServerToClientEvents,
+    Record<string, never>,
+    AuthenticatedSocketData
+  >(server, {
     cors: {
       origin: dev ? '*' : true,
       methods: ['GET', 'POST'],
@@ -100,7 +114,13 @@ async function listen(): Promise<void> {
     pingTimeout: 60000,
   });
 
-  runtime = setupSocketHandlers(io);
+  runtime = setupSocketHandlers(io, {
+    profileAuth: {
+      manager: profileManager,
+      rateLimiter: profileRateLimiter,
+      concurrencyGate: profileConcurrencyGate,
+    },
+  });
 
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => {

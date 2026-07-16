@@ -1,8 +1,8 @@
 /**
  * 세션 관리: 재접속 지원의 핵심.
  *
- * - token: 클라이언트가 localStorage에 보관하는 비밀값. gameState로 절대 노출하지 않는다.
- * - playerId: 서버가 발급하는 공개 식별자. gameState.players[].id로 브로드캐스트된다.
+ * - token: localStorage transport binding. 프로필 인증에는 사용하지 않고 gameState로 노출하지 않는다.
+ * - playerId: 인증된 공개 profileId. gameState.players[].id로 브로드캐스트된다.
  * - socketId: 현재 연결된 소켓. 재접속 시 교체된다 (중복 탭은 최신 소켓 승리).
  * - grace: disconnect 후 일정 시간 좌석/칩을 보존하는 유예 타이머.
  */
@@ -20,27 +20,35 @@ export interface SessionResolution {
   replacedSocketId: string | null;
 }
 
+export interface RevokedSession {
+  session: Session;
+  socketId: string;
+}
+
 export const GRACE_MS = 60_000;
 const SESSION_TOKEN_RE = /^[A-Za-z0-9._~-]{8,128}$/;
 
 export class SessionManager {
-  private byToken = new Map<string, Session>();
   private byPlayerId = new Map<string, Session>();
   private bySocketId = new Map<string, Session>();
   private closed = false;
 
   /**
-   * 접속 시 세션 확보. 같은 토큰으로 재접속하면 기존 세션(좌석/방 정보)을 되찾는다.
-   * 토큰이 없는 구버전 클라이언트는 socketId를 토큰 대용으로 사용 (재접속 불가만 감수).
+   * 접속 시 인증된 profileId의 단일 세션(좌석/방 정보)을 되찾는다.
+   * transport token이 없거나 잘못되면 socketId를 binding 표식으로만 사용한다.
    */
-  resolve(token: unknown, socketId: string): SessionResolution {
+  resolve(
+    token: string | undefined,
+    socketId: string,
+    profileId: string,
+  ): SessionResolution {
     const stableToken = typeof token === 'string' && SESSION_TOKEN_RE.test(token)
       ? token
       : null;
     const key = stableToken ?? socketId;
-    let session = this.byToken.get(key);
+    let session = this.byPlayerId.get(profileId);
     if (!session) {
-      session = this.createSession(key);
+      session = this.createSession(key, profileId);
     }
     this.clearGrace(session);
     const replacedSocketId = session.socketId && session.socketId !== socketId
@@ -50,6 +58,15 @@ export class SessionManager {
     session.socketId = socketId;
     this.bySocketId.set(socketId, session);
     return { session, replacedSocketId };
+  }
+
+  revokeProfile(profileId: string): RevokedSession | null {
+    const session = this.byPlayerId.get(profileId);
+    const socketId = session?.socketId;
+    if (!session || !socketId) return null;
+    this.bySocketId.delete(socketId);
+    session.socketId = null;
+    return { session, socketId };
   }
 
   isCurrentSocket(playerId: string, socketId: string): boolean {
@@ -66,7 +83,6 @@ export class SessionManager {
 
   releaseIfIdle(session: Session): boolean {
     if (session.socketId || session.roomId || session.graceTimer) return false;
-    if (this.byToken.get(session.token) === session) this.byToken.delete(session.token);
     if (this.byPlayerId.get(session.playerId) === session) this.byPlayerId.delete(session.playerId);
     return true;
   }
@@ -78,11 +94,11 @@ export class SessionManager {
 
   stats(): { sessions: number; sockets: number; grace: number } {
     let grace = 0;
-    for (const session of this.byToken.values()) {
+    for (const session of this.byPlayerId.values()) {
       if (session.graceTimer) grace++;
     }
     return {
-      sessions: this.byToken.size,
+      sessions: this.byPlayerId.size,
       sockets: this.bySocketId.size,
       grace,
     };
@@ -118,21 +134,19 @@ export class SessionManager {
 
   shutdown(): void {
     this.closed = true;
-    for (const session of this.byToken.values()) this.clearGrace(session);
+    for (const session of this.byPlayerId.values()) this.clearGrace(session);
     this.bySocketId.clear();
     this.byPlayerId.clear();
-    this.byToken.clear();
   }
 
-  private createSession(key: string): Session {
+  private createSession(key: string, profileId: string): Session {
     const session: Session = {
       token: key,
-      playerId: `p-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+      playerId: profileId,
       socketId: null,
       roomId: null,
       graceTimer: null,
     };
-    this.byToken.set(key, session);
     this.byPlayerId.set(session.playerId, session);
     return session;
   }

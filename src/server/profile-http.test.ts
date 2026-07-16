@@ -17,6 +17,7 @@ import {
 } from './profile-manager';
 import {
   PROFILE_COOKIE_NAME,
+  readProfileCredentialCookie,
   type ProfileHttpManager,
 } from './profile-http';
 import { ProfileRepository } from './profile-repository';
@@ -42,6 +43,7 @@ async function startServer(options: {
   limiter?: TransientHttpRateLimiter;
   gate?: TransientHttpConcurrencyGate;
   nextHandler?: Mock<NextRequestHandler>;
+  onProfileRevoked?: (profileId: string) => void | Promise<void>;
 } = {}): Promise<RunningServer & { nextHandler: Mock<NextRequestHandler> }> {
   const database = openPokerDatabase(':memory:');
   const manager = new ProfileManager(new ProfileRepository(database));
@@ -55,6 +57,7 @@ async function startServer(options: {
     profileManager: options.manager ?? manager,
     profileRateLimiter: limiter,
     profileConcurrencyGate: options.gate,
+    onProfileRevoked: options.onProfileRevoked,
     production: options.production ?? false,
   }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -102,6 +105,61 @@ function expectNoStore(response: Response): void {
 }
 
 describe('profile HTTP lifecycle', () => {
+  it('rejects empty, exact duplicate, and malformed duplicate profile cookies', () => {
+    expect(readProfileCredentialCookie(undefined)).toBeNull();
+    expect(readProfileCredentialCookie(`${PROFILE_COOKIE}=`)).toBeNull();
+    expect(readProfileCredentialCookie(
+      `${PROFILE_COOKIE}=first; ${PROFILE_COOKIE}=second`,
+    )).toBeNull();
+    expect(readProfileCredentialCookie(
+      `${PROFILE_COOKIE}=first; ${PROFILE_COOKIE} =second`,
+    )).toBeNull();
+    expect(readProfileCredentialCookie(
+      `theme=dark; ${PROFILE_COOKIE}=credential; locale=ko`,
+    )).toBe('credential');
+  });
+
+  it('revokes realtime ownership after full recovery and delete only without changing committed responses', async () => {
+    const onProfileRevoked = vi.fn(() => {
+      throw new Error('realtime unavailable');
+    });
+    const server = await startServer({ onProfileRevoked });
+    const recovering = await createProfile(server);
+    const recoveringProfile = recovering.body.profile as PublicProfile;
+
+    const rotatedOnly = await fetch(`${server.baseUrl}/api/profile/recovery/rotate`, {
+      method: 'POST',
+      headers: { cookie: recovering.cookie },
+    });
+    expect(rotatedOnly.status).toBe(200);
+    const rotatedBody = await rotatedOnly.json() as { recoveryWords: string };
+    expect(onProfileRevoked).not.toHaveBeenCalled();
+
+    const recovered = await fetch(`${server.baseUrl}/api/profile/recover`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ recoveryWords: rotatedBody.recoveryWords }),
+    });
+    expect(recovered.status).toBe(200);
+    expect(onProfileRevoked).toHaveBeenCalledTimes(1);
+    expect(onProfileRevoked).toHaveBeenLastCalledWith(recoveringProfile.id);
+
+    const deleting = await createProfile(server);
+    const deletingProfile = deleting.body.profile as PublicProfile;
+    const deleted = await fetch(`${server.baseUrl}/api/profile`, {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        cookie: deleting.cookie,
+      },
+      body: JSON.stringify({ confirmation: '삭제' }),
+    });
+    expect(deleted.status).toBe(200);
+    expect(await deleted.json()).toEqual({ ok: true });
+    expect(onProfileRevoked).toHaveBeenCalledTimes(2);
+    expect(onProfileRevoked).toHaveBeenLastCalledWith(deletingProfile.id);
+  });
+
   it('returns an anonymous no-store session without a cookie', async () => {
     const server = await startServer();
 

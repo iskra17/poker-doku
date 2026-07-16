@@ -6,7 +6,6 @@ import type { ActionType, ChatMessage, GameState } from '../poker/types';
 import type { PokerClientSocket, RoomListItem } from '../realtime/protocol';
 import { diffGameState, emitGameEvent } from '../events/game-events';
 import { actionFailureMessage, canSendAction, shouldApplyGameUpdate } from './realtime-state';
-import { useSettingsStore } from './settings-store';
 
 export type RoomInfo = RoomListItem;
 export type ConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'replaced';
@@ -232,9 +231,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setPlayerName: name => set({ playerName: name }),
 
   joinRoom: (roomId, buyIn, seatIndex, password) => {
-    const { socket, playerName } = get();
+    const { socket } = get();
     if (!socket?.connected) return;
-    const avatar = useSettingsStore.getState().profileCharacter;
     set({ pendingRoomId: roomId, joinError: null });
     clearJoinTimeout();
     joinTimeoutTimer = setTimeout(() => {
@@ -248,10 +246,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.emit('join-room', {
       roomId,
-      playerName,
       buyIn,
       seatIndex,
-      avatar,
       password,
     }, ack => {
       if (ack.ok || get().pendingRoomId !== roomId) return;

@@ -29,6 +29,7 @@ export interface ProfileHttpOptions {
   concurrencyGate?: TransientHttpConcurrencyGate;
   production: boolean;
   remoteAddress?: (request: IncomingMessage) => string;
+  onProfileRevoked?: (profileId: string) => void | Promise<void>;
 }
 
 interface ErrorBody {
@@ -78,17 +79,26 @@ function clearedCookie(production: boolean): string {
   return `${PROFILE_COOKIE_NAME}=; ${cookieAttributes(production, 0)}`;
 }
 
-function readCredentialCookie(request: IncomingMessage): string | null {
-  const header = request.headers.cookie;
+export function readProfileCredentialCookie(
+  header: string | undefined,
+): string | null {
   if (!header) return null;
-  const prefix = `${PROFILE_COOKIE_NAME}=`;
-  const matches = header
-    .split(';')
-    .map(part => part.trim())
-    .filter(part => part.startsWith(prefix));
+  const matches: string[] = [];
+  for (const rawPart of header.split(';')) {
+    const part = rawPart.trim();
+    const separator = part.indexOf('=');
+    const rawName = separator < 0 ? part : part.slice(0, separator);
+    if (rawName.trim() !== PROFILE_COOKIE_NAME) continue;
+    if (separator < 0 || rawName !== PROFILE_COOKIE_NAME) return null;
+    matches.push(part.slice(separator + 1));
+  }
   if (matches.length !== 1) return null;
-  const credential = matches[0].slice(prefix.length);
+  const credential = matches[0];
   return credential || null;
+}
+
+function readCredentialCookie(request: IncomingMessage): string | null {
+  return readProfileCredentialCookie(request.headers.cookie);
 }
 
 function hasProfileCookie(request: IncomingMessage): boolean {
@@ -122,6 +132,18 @@ function sendError(
 ): void {
   const body: ErrorBody = { error: { code, message } };
   sendJson(response, status, body, headers);
+}
+
+function notifyProfileRevoked(
+  options: ProfileHttpOptions,
+  profileId: string,
+): void {
+  if (!options.onProfileRevoked) return;
+  try {
+    void Promise.resolve(options.onProfileRevoked(profileId)).catch(() => undefined);
+  } catch {
+    // The credential rotation/deletion response is already committed.
+  }
 }
 
 function drainRequest(request: IncomingMessage): void {
@@ -365,6 +387,7 @@ async function handleRecover(
       { profile: recovered.profile, recoveryWords: recovered.recoveryWords },
       { 'set-cookie': issuedCookie(recovered.credential, options.production) },
     );
+    notifyProfileRevoked(options, recovered.profile.id);
   });
 }
 
@@ -409,6 +432,7 @@ async function handleDelete(
       { ok: true },
       { 'set-cookie': clearedCookie(options.production) },
     );
+    notifyProfileRevoked(options, profile.id);
   });
 }
 

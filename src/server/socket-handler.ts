@@ -1,8 +1,7 @@
 import { Server, Socket } from 'socket.io';
 import { RoomManager } from './room-manager';
-import { SessionManager, GRACE_MS } from './session-manager';
+import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
-import { getCharacterById } from '../lib/characters';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
@@ -24,6 +23,12 @@ import {
   parsePayloadlessArgs,
   parseRequiredPayloadArgs,
 } from './socket-arguments';
+import type { PublicProfile } from '../lib/profile/types';
+import type {
+  TransientHttpConcurrencyGate,
+  TransientHttpRateLimiter,
+} from './http-rate-limit';
+import { readProfileCredentialCookie } from './profile-http';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -32,6 +37,14 @@ const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
 
 export interface SocketRuntimeOptions {
+  profileAuth: {
+    manager: {
+      authenticateCredential(credential: string): Promise<PublicProfile | null>;
+      isCredentialCurrent(profileId: string, credential: string): boolean;
+    };
+    rateLimiter: Pick<TransientHttpRateLimiter, 'allow'>;
+    concurrencyGate: Pick<TransientHttpConcurrencyGate, 'run'>;
+  };
   createDefaultRooms?: boolean;
   sweepIntervalMs?: number;
   graceMs?: number;
@@ -41,20 +54,103 @@ export interface SocketRuntimeOptions {
 export interface SocketRuntime {
   roomManager: RoomManager;
   sessions: SessionManager;
+  revokeProfile: (profileId: string) => void;
   close: () => void;
 }
 
+export interface AuthenticatedSocketData {
+  profileId?: string;
+  profileAlias?: string;
+  profileAvatarId?: string;
+}
+
+type PokerSocket = Socket<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  Record<string, never>,
+  AuthenticatedSocketData
+>;
+
+type PokerServer = Server<
+  ClientToServerEvents,
+  ServerToClientEvents,
+  Record<string, never>,
+  AuthenticatedSocketData
+>;
+
 export function setupSocketHandlers(
-  io: Server<ClientToServerEvents, ServerToClientEvents>,
-  options: SocketRuntimeOptions = {},
+  io: PokerServer,
+  options: SocketRuntimeOptions,
 ): SocketRuntime {
   const {
+    profileAuth,
     createDefaultRooms = true,
     sweepIntervalMs = 60_000,
     graceMs = GRACE_MS,
     sngRetentionMs,
   } = options;
   const sessions = new SessionManager();
+
+  io.use((socket, next) => {
+    const credential = readProfileCredentialCookie(socket.handshake.headers.cookie);
+    if (!credential) {
+      next(new Error('profile-required'));
+      return;
+    }
+    const handshakeAuth = socket.handshake.auth;
+    if (
+      handshakeAuth
+      && typeof handshakeAuth === 'object'
+      && handshakeAuth.sessionToken === credential
+    ) {
+      delete handshakeAuth.sessionToken;
+    }
+    const address = socket.conn.remoteAddress ?? 'unknown';
+    let allowed = false;
+    try {
+      allowed = profileAuth.rateLimiter.allow('profileAuth', address);
+    } catch {
+      next(new Error('profile-required'));
+      return;
+    }
+    if (!allowed) {
+      next(new Error('profile-required'));
+      return;
+    }
+    void profileAuth.concurrencyGate.run(
+      () => profileAuth.manager.authenticateCredential(credential),
+    ).then(profile => {
+      let current = false;
+      try {
+        current = !!profile && profileAuth.manager.isCredentialCurrent(
+          profile.id,
+          credential,
+        );
+      } catch {
+        next(new Error('profile-required'));
+        return;
+      }
+      if (!profile || !current) {
+        next(new Error('profile-required'));
+        return;
+      }
+      socket.data.profileId = profile.id;
+      socket.data.profileAlias = profile.alias;
+      socket.data.profileAvatarId = profile.avatarId;
+      const rawHeaders = socket.request.rawHeaders;
+      for (let index = rawHeaders.length - 2; index >= 0; index -= 2) {
+        if (rawHeaders[index].toLowerCase() === 'cookie') {
+          rawHeaders.splice(index, 2);
+        }
+      }
+      delete socket.handshake.headers.cookie;
+      delete socket.request.headers.cookie;
+      // Final indexed credential check -> safe fields -> next has no await gap.
+      next();
+    },
+      () => next(new Error('profile-required')),
+    );
+  });
 
   // 방 목록은 소켓별로 개인화해 보낸다 — 보존 중인 내 좌석(mySeat)이 실려야
   // 로비에서 바이인/비밀번호 없이 '게임 복귀'가 가능하다.
@@ -203,9 +299,43 @@ export function setupSocketHandlers(
     }));
   }
 
-  io.on('connection', (socket: Socket<ClientToServerEvents, ServerToClientEvents>) => {
+  function startDisconnectedGrace(session: Session): void {
+    if (!session.roomId) {
+      sessions.releaseIfIdle(session);
+      return;
+    }
+    const roomId = session.roomId;
+    roomManager.handleDisconnect(roomId, session.playerId);
+    sessions.startGrace(session, graceMs, () => {
+      const seatKept = roomManager.handleGraceExpired(roomId, session.playerId);
+      eventLog.log('grace-expired', {
+        roomId,
+        playerId: session.playerId,
+        data: { seatKept, seats: seatSnapshot(roomId) },
+      });
+      if (!seatKept) {
+        session.roomId = null;
+        sessions.releaseIfIdle(session);
+      }
+      broadcastRoomList();
+    });
+  }
+
+  io.on('connection', (socket: PokerSocket) => {
+    const profileId = socket.data.profileId;
+    const profileAlias = socket.data.profileAlias;
+    const profileAvatarId = socket.data.profileAvatarId;
+    if (!profileId || !profileAlias || !profileAvatarId) {
+      socket.disconnect(true);
+      return;
+    }
     const rawToken = socket.handshake.auth?.sessionToken;
-    const { session, replacedSocketId } = sessions.resolve(rawToken, socket.id);
+    const transportToken = typeof rawToken === 'string' ? rawToken : undefined;
+    const { session, replacedSocketId } = sessions.resolve(
+      transportToken,
+      socket.id,
+      profileId,
+    );
     if (replacedSocketId) {
       const previousSocket = io.sockets.sockets.get(replacedSocketId);
       previousSocket?.emit('session-replaced', {
@@ -214,8 +344,8 @@ export function setupSocketHandlers(
       previousSocket?.disconnect(true);
     }
     console.log(`Player connected: socket=${socket.id} player=${session.playerId}`);
-    // 세션 재사용 여부가 중복 좌석 조사의 출발점 — 같은 사람이 새 토큰으로 들어오면
-    // 새 playerId가 발급되어 이전 좌석이 유령으로 남는다.
+    // 인증 profileId가 세션 재사용의 기준이다. transport token은 grace 연결 힌트일 뿐
+    // 다른 profileId를 합치거나 새 공개 playerId를 만들 수 없다.
     eventLog.log('connect', {
       playerId: session.playerId,
       data: {
@@ -333,9 +463,8 @@ export function setupSocketHandlers(
       if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
-      const playerName = data.playerName;
-      // 프로필 캐릭터 — 등록된 캐릭터 id만 허용 (그 외엔 기본 'player')
-      const avatar = data.avatar && getCharacterById(data.avatar) ? data.avatar : 'player';
+      const playerName = profileAlias;
+      const avatar = profileAvatarId;
 
       const room = roomManager.getRoom(roomId);
       if (!room) {
@@ -848,31 +977,26 @@ export function setupSocketHandlers(
         // detached=null이면 이미 새 소켓이 세션을 가져간 것(중복 탭) — grace를 걸지 않는 정상 경로
         data: { socketId: socket.id, graceStarted: !!detached?.roomId },
       });
-      if (!detached?.roomId) {
-        if (detached) sessions.releaseIfIdle(detached);
-        return;
-      }
-
-      const roomId = detached.roomId;
-      roomManager.handleDisconnect(roomId, detached.playerId);
-      sessions.startGrace(detached, graceMs, () => {
-        // 자리비움 좌석은 유지 (캐시: 미납 BB/최종 유예로 정리, SnG: 블라인드 소진에 맡김)
-        const seatKept = roomManager.handleGraceExpired(roomId, detached.playerId);
-        eventLog.log('grace-expired', {
-          roomId, playerId: detached.playerId, data: { seatKept, seats: seatSnapshot(roomId) },
-        });
-        if (!seatKept) {
-          detached.roomId = null;
-          sessions.releaseIfIdle(detached);
-        }
-        broadcastRoomList();
-      });
+      if (detached) startDisconnectedGrace(detached);
+      delete socket.data.profileId;
+      delete socket.data.profileAlias;
+      delete socket.data.profileAvatarId;
     });
   });
 
   return {
     roomManager,
     sessions,
+    revokeProfile: profileId => {
+      const revoked = sessions.revokeProfile(profileId);
+      if (!revoked) return;
+      startDisconnectedGrace(revoked.session);
+      const socket = io.sockets.sockets.get(revoked.socketId);
+      socket?.emit('session-replaced', {
+        message: '프로필 인증 정보가 변경되어 연결을 다시 확인해 주세요.',
+      });
+      socket?.disconnect(true);
+    },
     close: () => {
       if (sweepTimer) clearInterval(sweepTimer);
       sessions.shutdown();

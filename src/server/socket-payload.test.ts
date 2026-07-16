@@ -11,37 +11,45 @@ describe('Socket.IO payload runtime parsing', () => {
     expect(parseJoinRoomRequest(input).ok).toBe(false);
   });
 
-  it('join-room 문자열을 정리하고 숫자만 통과시킨다', () => {
+  it('join-room 공개 필드만 정리하고 통과시킨다', () => {
     expect(parseJoinRoomRequest({
       roomId: ' room-1 ',
-      playerName: '\u0000  홍길동  ',
       buyIn: 2000,
       seatIndex: 2,
-      avatar: 'ara',
       password: 'pw',
     })).toEqual({
       ok: true,
       value: {
         roomId: 'room-1',
-        playerName: '홍길동',
         buyIn: 2000,
         seatIndex: 2,
-        avatar: 'ara',
         password: 'pw',
       },
     });
   });
 
+  it.each([
+    { playerName: '위조 이름' },
+    { avatar: 'ara' },
+    { extra: true },
+  ])('join-room 허용 목록 밖의 필드를 거절한다: %j', extra => {
+    expect(parseJoinRoomRequest({
+      roomId: 'room-1',
+      buyIn: 2000,
+      seatIndex: 0,
+      ...extra,
+    }).ok).toBe(false);
+  });
+
   it.each([NaN, Infinity, -Infinity])('join-room 비유한 buyIn을 거절한다: %s', buyIn => {
     expect(parseJoinRoomRequest({
-      roomId: 'room-1', playerName: '나', buyIn, seatIndex: 0,
+      roomId: 'room-1', buyIn, seatIndex: 0,
     }).ok).toBe(false);
   });
 
   it('외부 roomId는 100자를 넘으면 잘라 쓰지 않고 거절한다', () => {
     expect(parseJoinRoomRequest({
       roomId: 'r'.repeat(101),
-      playerName: '나',
       buyIn: 2000,
       seatIndex: 0,
     }).ok).toBe(false);

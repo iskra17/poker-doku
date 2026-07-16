@@ -45,20 +45,26 @@ function memberOf<T extends string>(value: unknown, values: readonly T[]): value
   return typeof value === 'string' && values.includes(value as T);
 }
 
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+): boolean {
+  return Object.keys(value).every(key => allowed.includes(key));
+}
+
 export function parseJoinRoomRequest(input: unknown): ParseResult<JoinRoomRequest> {
-  if (!isRecord(input)) return fail();
+  if (
+    !isRecord(input)
+    || !hasOnlyKeys(input, ['roomId', 'buyIn', 'seatIndex', 'password'])
+  ) return fail();
   const roomId = cleanText(input.roomId, 100);
-  const playerName = cleanText(input.playerName, 24);
   const buyIn = finiteNumber(input.buyIn);
   const seatIndex = finiteNumber(input.seatIndex);
-  const avatar = optionalText(input.avatar, 50);
   const password = optionalText(input.password, 20);
   if (
     !roomId
-    || !playerName
     || buyIn === null
     || seatIndex === null
-    || avatar === null
     || password === null
   ) return fail();
 
@@ -66,10 +72,8 @@ export function parseJoinRoomRequest(input: unknown): ParseResult<JoinRoomReques
     ok: true,
     value: {
       roomId,
-      playerName,
       buyIn,
       seatIndex: Math.trunc(seatIndex),
-      ...(avatar ? { avatar } : {}),
       ...(password ? { password } : {}),
     },
   };
