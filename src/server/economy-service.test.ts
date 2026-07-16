@@ -752,6 +752,276 @@ describe('EconomyService rescue grant', () => {
   });
 });
 
+describe('EconomyService casual wallet Sit & Go', () => {
+  const BUY_IN = 1_500;
+  const FEE = 150;
+
+  function seedEntrants(balance = 10_000): string[] {
+    return Array.from({ length: 6 }, (_, index) => {
+      const profileId = `sng-human-${index + 1}`;
+      seedProfile(profileId, balance);
+      return profileId;
+    });
+  }
+
+  function ledgerTotals(): Record<string, number> {
+    return Object.fromEntries((database.db.prepare(`
+      SELECT account, SUM(delta) AS total
+      FROM chip_ledger
+      WHERE reason LIKE 'SNG_%'
+      GROUP BY account
+      ORDER BY account
+    `).all() as Array<{ account: string; total: number }>).map(row => [
+      row.account,
+      row.total,
+    ]));
+  }
+
+  it('reserves six fixed entries, burns only fees at start, and settles 50/30/20 exactly once', () => {
+    const entrants = seedEntrants();
+    const service = new EconomyService(repository, () => 100);
+
+    for (const profileId of entrants) {
+      service.reserveSngEntry(profileId, 'sng-room', BUY_IN, FEE);
+    }
+    expect(entrants.map(profileId => walletBalance(profileId)))
+      .toEqual(Array(6).fill(8_350));
+    expect(ledgerTotals()).toEqual({ escrow: 9_900, wallet: -9_900 });
+
+    service.startSngTournament('sng-room', entrants, BUY_IN, FEE);
+    expect(ledgerTotals()).toEqual({ burn: 900, escrow: 9_000, wallet: -9_900 });
+
+    const results = entrants.map((profileId, index) => ({
+      playerId: profileId,
+      place: index + 1,
+      prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+    }));
+    service.settleSngTournament('sng-room', results, BUY_IN, FEE);
+    service.settleSngTournament('sng-room', results, BUY_IN, FEE);
+
+    expect(entrants.map(profileId => walletBalance(profileId))).toEqual([
+      12_850, 11_050, 10_150, 8_350, 8_350, 8_350,
+    ]);
+    expect(ledgerTotals()).toEqual({ burn: 900, escrow: 0, wallet: -900 });
+    expect(database.db.prepare(`
+      SELECT profile_id, status, place, prize
+      FROM sng_entries ORDER BY place
+    `).all()).toEqual(results.map(result => ({
+      profile_id: result.playerId,
+      status: 'settled',
+      place: result.place,
+      prize: result.prize,
+    })));
+    expect(database.db.prepare(`
+      SELECT idempotency_key FROM chip_ledger
+      WHERE reason = 'SNG_PRIZE' ORDER BY profile_id
+    `).all()).toHaveLength(3);
+    expect(database.db.prepare(`
+      SELECT idempotency_key FROM chip_ledger
+      WHERE reason = 'SNG_PRIZE'
+    `).all()).toEqual(expect.arrayContaining(entrants.slice(0, 3).map(
+      profileId => ({
+        idempotency_key: expect.stringMatching(
+          new RegExp(`^sng-prize:sng-room:${profileId}:`),
+        ),
+      }),
+    )));
+  });
+
+  it('rejects insufficient funds and a second active economic seat without partial mutation', () => {
+    seedProfile('poor', BUY_IN + FEE - 1);
+    seedProfile('cash-player', 10_000);
+    const service = new EconomyService(repository, () => 100);
+    service.openCashEscrow('cash-player', 'cash-room', 4_000);
+
+    expectEconomyError(
+      () => service.reserveSngEntry('poor', 'sng-room', BUY_IN, FEE),
+      'INSUFFICIENT_BALANCE',
+    );
+    expectEconomyError(
+      () => service.reserveSngEntry('cash-player', 'sng-room', BUY_IN, FEE),
+      'SNG_ACTIVE_SEAT',
+    );
+    expect(walletBalance('poor')).toBe(BUY_IN + FEE - 1);
+    expect(walletBalance('cash-player')).toBe(6_000);
+    expect(database.db.prepare('SELECT COUNT(*) AS count FROM sng_entries').get())
+      .toEqual({ count: 0 });
+  });
+
+  it('refunds a waiting cancellation once and permits a new room incarnation', () => {
+    seedProfile('profile-1', 10_000);
+    const service = new EconomyService(repository, () => 100);
+
+    const first = service.reserveSngEntry('profile-1', 'reused-room', BUY_IN, FEE);
+    service.cancelSngEntry('profile-1', 'reused-room');
+    service.cancelSngEntry('profile-1', 'reused-room');
+    const second = service.reserveSngEntry('profile-1', 'reused-room', BUY_IN, FEE);
+
+    expect(second.tournamentId).not.toBe(first.tournamentId);
+    expect(walletBalance()).toBe(8_350);
+    expect(database.db.prepare(`
+      SELECT status, COUNT(*) AS count FROM sng_entries GROUP BY status
+      ORDER BY status
+    `).all()).toEqual([
+      { status: 'refunded', count: 1 },
+      { status: 'reserved', count: 1 },
+    ]);
+  });
+
+  it('refunds every waiting entry exactly once when a room is disposed', () => {
+    seedProfile('profile-1', 10_000);
+    seedProfile('profile-2', 10_000);
+    const service = new EconomyService(repository, () => 100);
+    service.reserveSngEntry('profile-1', 'disposed-room', BUY_IN, FEE);
+    service.reserveSngEntry('profile-2', 'disposed-room', BUY_IN, FEE);
+
+    expect(service.cancelWaitingSngRoom('disposed-room')).toBe(2);
+    expect(service.cancelWaitingSngRoom('disposed-room')).toBe(0);
+    expect(walletBalance('profile-1')).toBe(10_000);
+    expect(walletBalance('profile-2')).toBe(10_000);
+  });
+
+  it('rolls back a conflicting or malformed finish without paying anyone', () => {
+    const entrants = seedEntrants();
+    const service = new EconomyService(repository, () => 100);
+    for (const profileId of entrants) {
+      service.reserveSngEntry(profileId, 'sng-room', BUY_IN, FEE);
+    }
+    service.startSngTournament('sng-room', entrants, BUY_IN, FEE);
+    const invalid = entrants.map((playerId, index) => ({
+      playerId,
+      place: index === 5 ? 5 : index + 1,
+      prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+    }));
+
+    expectEconomyError(
+      () => service.settleSngTournament('sng-room', invalid, BUY_IN, FEE),
+      'SNG_SETTLEMENT_INVALID',
+    );
+    expect(entrants.map(profileId => walletBalance(profileId)))
+      .toEqual(Array(6).fill(8_350));
+    expect(database.db.prepare(`
+      SELECT DISTINCT status FROM sng_entries
+    `).all()).toEqual([{ status: 'started' }]);
+  });
+
+  it('treats a changed duplicate finish as a conflict without another payout', () => {
+    const entrants = seedEntrants();
+    const service = new EconomyService(repository, () => 100);
+    for (const profileId of entrants) {
+      service.reserveSngEntry(profileId, 'sng-room', BUY_IN, FEE);
+    }
+    service.startSngTournament('sng-room', entrants, BUY_IN, FEE);
+    const results = entrants.map((playerId, index) => ({
+      playerId,
+      place: index + 1,
+      prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+    }));
+    service.settleSngTournament('sng-room', results, BUY_IN, FEE);
+    const changed = results.map(result => ({ ...result }));
+    [changed[0].playerId, changed[1].playerId] = [
+      changed[1].playerId,
+      changed[0].playerId,
+    ];
+
+    expectEconomyError(
+      () => service.settleSngTournament('sng-room', changed, BUY_IN, FEE),
+      'SNG_SETTLEMENT_CONFLICT',
+    );
+    expect(entrants.map(profileId => walletBalance(profileId))).toEqual([
+      12_850, 11_050, 10_150, 8_350, 8_350, 8_350,
+    ]);
+  });
+
+  it('reverts an unmutated failed start so the exact tournament can retry with a new attempt', () => {
+    const entrants = seedEntrants();
+    const service = new EconomyService(repository, () => 100);
+    for (const profileId of entrants) {
+      service.reserveSngEntry(profileId, 'sng-room', BUY_IN, FEE);
+    }
+
+    service.startSngTournament('sng-room', entrants, BUY_IN, FEE);
+    service.revertSngTournamentStart('sng-room', entrants, BUY_IN, FEE);
+    service.startSngTournament('sng-room', entrants, BUY_IN, FEE);
+
+    expect(ledgerTotals()).toEqual({ burn: 900, escrow: 9_000, wallet: -9_900 });
+    expect(database.db.prepare(`
+      SELECT DISTINCT status, start_attempt FROM sng_entries
+    `).all()).toEqual([{ status: 'started', start_attempt: 2 }]);
+  });
+
+  it('atomically refunds both reserved and started entries during startup recovery', () => {
+    const reserved = seedEntrants();
+    const started = Array.from({ length: 6 }, (_, index) => {
+      const profileId = `started-human-${index + 1}`;
+      seedProfile(profileId, 10_000);
+      return profileId;
+    });
+    const service = new EconomyService(repository, () => 100);
+    for (const profileId of reserved) {
+      service.reserveSngEntry(profileId, 'reserved-room', BUY_IN, FEE);
+    }
+    for (const profileId of started) {
+      service.reserveSngEntry(profileId, 'started-room', BUY_IN, FEE);
+    }
+    service.startSngTournament('started-room', started, BUY_IN, FEE);
+
+    expect(service.recoverIncompleteSngEntries()).toBe(12);
+    expect(service.recoverIncompleteSngEntries()).toBe(0);
+    expect([...reserved, ...started].map(profileId => walletBalance(profileId)))
+      .toEqual(Array(12).fill(10_000));
+    expect(database.db.prepare(`
+      SELECT DISTINCT status FROM sng_entries
+    `).all()).toEqual([{ status: 'refunded' }]);
+    expect(ledgerTotals()).toEqual({ burn: 0, escrow: 0, wallet: 0 });
+  });
+
+  it.each([
+    { reason: 'SNG_FEE_BURN', account: 'burn' },
+    { reason: 'SNG_ENTRY_RESERVE', account: 'escrow' },
+  ])('rolls back every startup refund when a $reason ledger is malformed', ({
+    reason,
+    account,
+  }) => {
+    const reserved = seedEntrants();
+    const started = Array.from({ length: 6 }, (_, index) => {
+      const profileId = `started-human-${index + 1}`;
+      seedProfile(profileId, 10_000);
+      return profileId;
+    });
+    const service = new EconomyService(repository, () => 100);
+    for (const profileId of reserved) {
+      service.reserveSngEntry(profileId, 'reserved-room', BUY_IN, FEE);
+    }
+    for (const profileId of started) {
+      service.reserveSngEntry(profileId, 'started-room', BUY_IN, FEE);
+    }
+    service.startSngTournament('started-room', started, BUY_IN, FEE);
+    database.db.prepare(`
+      DELETE FROM chip_ledger
+      WHERE idempotency_key = (
+        SELECT idempotency_key FROM chip_ledger
+        WHERE reason = ? AND account = ?
+        LIMIT 1
+      )
+    `).run(reason, account);
+
+    expectEconomyError(
+      () => service.recoverIncompleteSngEntries(),
+      'ECONOMY_PERSISTENCE_INVALID',
+    );
+    expect([...reserved, ...started].map(profileId => walletBalance(profileId)))
+      .toEqual(Array(12).fill(8_350));
+    expect(database.db.prepare(`
+      SELECT status, COUNT(*) AS count FROM sng_entries
+      GROUP BY status ORDER BY status
+    `).all()).toEqual([
+      { status: 'reserved', count: 6 },
+      { status: 'started', count: 6 },
+    ]);
+  });
+});
+
 function walletBalance(profileId = 'profile-1'): number {
   return (database.db.prepare(`
     SELECT balance FROM wallets WHERE profile_id = ?

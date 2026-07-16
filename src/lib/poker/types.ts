@@ -147,6 +147,8 @@ export interface RoomConfig {
   turnTime: number; // seconds
   gameMode?: GameMode; // 기본 'cash'
   startingStack?: number; // 시트앤고 시작 스택
+  entryBuyIn?: number; // wallet Sit & Go 참가 바이인 — 엔진 칩/상금 풀에만 포함
+  entryFee?: number; // wallet Sit & Go 참가 수수료 — 엔진 밖에서 소각
   password?: string; // 방 비밀번호 — 서버 전용, 절대 gameState로 노출하지 말 것
   hostId?: string; // 방 생성자 playerId (서버가 create-room 시 세팅)
   difficulty?: RoomDifficulty; // 봇 난이도 (기본 'normal')

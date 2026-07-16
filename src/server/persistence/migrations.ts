@@ -116,6 +116,57 @@ export const migrations: readonly Migration[] = [
         ON cash_hand_settlements(room_id) WHERE status = 'prepared';
     `,
   },
+  {
+    version: 4,
+    name: 'durable_sng_tournament_incarnations',
+    sql: `
+      ALTER TABLE sng_entries RENAME TO sng_entries_v1_backup;
+
+      CREATE TABLE sng_entries (
+        id TEXT PRIMARY KEY,
+        tournament_id TEXT NOT NULL,
+        room_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        buy_in INTEGER NOT NULL CHECK (buy_in > 0),
+        fee INTEGER NOT NULL CHECK (fee > 0),
+        status TEXT NOT NULL CHECK (status IN ('reserved','started','settled','refunded')),
+        place INTEGER CHECK (place IS NULL OR place BETWEEN 1 AND 6),
+        prize INTEGER NOT NULL DEFAULT 0 CHECK (prize >= 0),
+        start_attempt INTEGER NOT NULL DEFAULT 0 CHECK (start_attempt >= 0),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (tournament_id, profile_id)
+      ) STRICT;
+
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, created_at, updated_at
+      )
+      SELECT
+        'legacy:' || room_id || ':' || profile_id,
+        'legacy:' || room_id,
+        room_id,
+        profile_id,
+        buy_in,
+        fee,
+        status,
+        place,
+        prize,
+        CASE WHEN status IN ('started', 'settled') THEN 1 ELSE 0 END,
+        created_at,
+        updated_at
+      FROM sng_entries_v1_backup;
+
+      DROP TABLE sng_entries_v1_backup;
+
+      CREATE UNIQUE INDEX one_active_sng_entry_per_profile
+        ON sng_entries(profile_id)
+        WHERE status IN ('reserved', 'started');
+
+      CREATE INDEX idx_sng_entries_room_status_tournament
+        ON sng_entries(room_id, status, tournament_id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -3,7 +3,7 @@ import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
-import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
+import { SNG_BLIND_SCHEDULE } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
 import type {
   AckCallback,
@@ -33,7 +33,9 @@ import { EconomyDomainError } from './economy-repository';
 import type {
   CashAdmissionEconomy,
   RoomEconomyHooks,
+  SngAdmissionEconomy,
 } from './economy-runtime';
+import { ECONOMY_RULES } from './economy-service';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -54,7 +56,7 @@ export interface SocketRuntimeOptions {
   sweepIntervalMs?: number;
   graceMs?: number;
   sngRetentionMs?: number;
-  economy?: CashAdmissionEconomy & RoomEconomyHooks;
+  economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
 }
 
 export interface SocketRuntime {
@@ -533,6 +535,9 @@ export function setupSocketHandlers(
       );
       const walletCash = (room.config.gameMode ?? 'cash') === 'cash'
         && room.config.economyMode === 'wallet';
+      const walletSng = room.config.gameMode === 'sng'
+        && room.config.economyMode === 'wallet';
+      const walletAdmission = walletCash || walletSng;
 
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
       // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
@@ -565,6 +570,47 @@ export function setupSocketHandlers(
               ok: false,
               code: 'action-rejected',
               message: '이전 핸드 정리를 마친 뒤 다시 입장해 주세요.',
+            });
+            return;
+          }
+          seated = undefined;
+          retiredWalletSeat = true;
+        }
+      }
+      if (walletSng && seated) {
+        if (!economy) {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        let entryBacked = false;
+        try {
+          entryBacked = economy.hasActiveSngEntry(session.playerId, roomId);
+        } catch {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        if (!entryBacked) {
+          if ((room.engine.state.tournament?.entrants ?? 0) > 0) {
+            ack?.({
+              ok: false,
+              code: 'sng-started',
+              message: '이미 시작된 Sit & Go입니다.',
+            });
+            return;
+          }
+          if (!roomManager.retireUnbackedWaitingSngSeat(roomId, session.playerId)) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '이전 참가 기록을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
             });
             return;
           }
@@ -733,7 +779,11 @@ export function setupSocketHandlers(
         type: 'human',
         avatar,
         // 시트앤고는 바이인 무관 고정 스택
-        chips: room.config.gameMode === 'sng' ? (room.config.startingStack ?? safeBuyIn) : safeBuyIn,
+        chips: walletSng
+          ? ECONOMY_RULES.casualSngBuyIn
+          : room.config.gameMode === 'sng'
+            ? (room.config.startingStack ?? safeBuyIn)
+            : safeBuyIn,
         seatIndex: assignedSeat,
         holeCards: [],
         currentBet: 0,
@@ -743,8 +793,8 @@ export function setupSocketHandlers(
         timeBankChips: 1, // 입장 시 기본 타임칩 1개
       };
 
-      let escrowOpened = false;
-      if (walletCash) {
+      let admissionOpened: 'cash' | 'sng' | null = null;
+      if (walletAdmission) {
         if (!economy) {
           ack?.({
             ok: false,
@@ -757,7 +807,17 @@ export function setupSocketHandlers(
         // 정상 cash-out한 뒤 새 escrow를 연다. 대상 방의 모든 정적 검증은 이미 끝난 시점이다.
         const previousRoomId = session.roomId;
         if (previousRoomId && previousRoomId !== roomId) {
-          if (roomManager.getRoom(previousRoomId)?.engine.state.isHandInProgress) {
+          const previousRoom = roomManager.getRoom(previousRoomId);
+          const previousTournament = previousRoom?.engine.state.tournament;
+          if (
+            previousRoom?.engine.state.isHandInProgress
+            || (
+              previousRoom?.config.economyMode === 'wallet'
+              && previousTournament
+              && previousTournament.entrants > 0
+              && !previousTournament.finished
+            )
+          ) {
             ack?.({
               ok: false,
               code: 'action-rejected',
@@ -785,7 +845,17 @@ export function setupSocketHandlers(
           .find(item => (
             item.id !== roomId
             && item.mySeat !== undefined
-            && roomManager.getRoom(item.id)?.engine.state.isHandInProgress
+            && (() => {
+              const preservedRoom = roomManager.getRoom(item.id);
+              const preservedTournament = preservedRoom?.engine.state.tournament;
+              return !!preservedRoom?.engine.state.isHandInProgress
+                || !!(
+                  preservedRoom?.config.economyMode === 'wallet'
+                  && preservedTournament
+                  && preservedTournament.entrants > 0
+                  && !preservedTournament.finished
+                );
+            })()
           ));
         if (activePreservedSeat) {
           ack?.({
@@ -807,8 +877,18 @@ export function setupSocketHandlers(
           return;
         }
         try {
-          economy.openCashEscrow(session.playerId, roomId, safeBuyIn);
-          escrowOpened = true;
+          if (walletSng) {
+            economy.reserveSngEntry(
+              session.playerId,
+              roomId,
+              ECONOMY_RULES.casualSngBuyIn,
+              ECONOMY_RULES.casualSngFee,
+            );
+            admissionOpened = 'sng';
+          } else {
+            economy.openCashEscrow(session.playerId, roomId, safeBuyIn);
+            admissionOpened = 'cash';
+          }
         } catch (error) {
           const insufficient = error instanceof EconomyDomainError
             && error.code === 'INSUFFICIENT_BALANCE';
@@ -835,9 +915,13 @@ export function setupSocketHandlers(
       } catch {
         success = false;
       }
-      if (!success && escrowOpened) {
+      if (!success && admissionOpened) {
         try {
-          economy?.cancelCashEscrow(session.playerId, roomId);
+          if (admissionOpened === 'sng') {
+            economy?.cancelSngEntry(session.playerId, roomId);
+          } else {
+            economy?.cancelCashEscrow(session.playerId, roomId);
+          }
         } catch {
           eventLog.log('join-room:compensation-failed', {
             roomId,
@@ -1106,22 +1190,27 @@ export function setupSocketHandlers(
           : 'normal',
         tableType,
         // 봇 충원 수는 구성이 결정: 사람만=0, 봇 전용=5, 혼합=1~5 (기본 2)
-        botCount: tableType === 'humans'
+        botCount: isSng
           ? 0
-          : tableType === 'bots'
-            ? 5
-            : Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 1), 5),
+          : tableType === 'humans'
+            ? 0
+            : tableType === 'bots'
+              ? 5
+              : Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 1), 5),
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
         // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택
         ...(isSng
           ? {
               gameMode: 'sng' as const,
+              economyMode: 'wallet' as const,
               smallBlind: SNG_BLIND_SCHEDULE[0].smallBlind,
               bigBlind: SNG_BLIND_SCHEDULE[0].bigBlind,
-              startingStack: SNG_STARTING_STACK,
-              minBuyIn: SNG_STARTING_STACK,
-              maxBuyIn: SNG_STARTING_STACK,
+              startingStack: ECONOMY_RULES.casualSngBuyIn,
+              minBuyIn: ECONOMY_RULES.casualSngBuyIn,
+              maxBuyIn: ECONOMY_RULES.casualSngBuyIn,
+              entryBuyIn: ECONOMY_RULES.casualSngBuyIn,
+              entryFee: ECONOMY_RULES.casualSngFee,
             }
           : {
               gameMode: 'cash' as const,

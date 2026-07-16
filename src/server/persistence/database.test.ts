@@ -38,7 +38,12 @@ describe('PokerDatabase migrations', () => {
       SELECT name FROM sqlite_schema WHERE type = 'index'
     `).all().map(row => (row as { name: string }).name);
 
-    expect(migration.version).toBe(3);
+    const sngColumns = database.db
+      .prepare('PRAGMA table_info(sng_entries)')
+      .all()
+      .map((column) => (column as { name: string }).name);
+
+    expect(migration.version).toBe(4);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -55,6 +60,10 @@ describe('PokerDatabase migrations', () => {
       expect.arrayContaining(['credential_lookup', 'recovery_lookup']),
     );
     expect(indexes).toContain('idx_rescue_claims_profile_claimed_at_desc');
+    expect(indexes).toContain('one_active_sng_entry_per_profile');
+    expect(sngColumns).toEqual(expect.arrayContaining([
+      'id', 'tournament_id', 'room_id', 'profile_id', 'start_attempt',
+    ]));
   });
 
   it('does not reapply migrations when reopening a file database', () => {
@@ -69,7 +78,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(3);
+    expect(result.count).toBe(4);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -93,7 +102,9 @@ describe('PokerDatabase migrations', () => {
       WHERE type = 'index' AND name = 'idx_rescue_claims_profile_claimed_at_desc'
     `).get();
 
-    expect(versions).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    expect(versions).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+    ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
       name: 'idx_rescue_claims_profile_claimed_at_desc',
@@ -110,11 +121,71 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version
-    `).all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    `).all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+    ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
     `).get()).toEqual({ alias: 'v1-marker-alias' });
+  });
+
+  it('atomically upgrades V3 SNG rows to collision-safe tournament identities', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV3Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO sng_entries (
+        room_id, profile_id, buy_in, fee, status, place, prize,
+        created_at, updated_at
+      ) VALUES ('legacy-room', 'v1-marker', 1500, 150, 'reserved', NULL, 0, 3, 3);
+    `);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT id, tournament_id, room_id, profile_id, start_attempt, status
+      FROM sng_entries
+    `).get()).toEqual({
+      id: 'legacy:legacy-room:v1-marker',
+      tournament_id: 'legacy:legacy-room',
+      room_id: 'legacy-room',
+      profile_id: 'v1-marker',
+      start_attempt: 0,
+      status: 'reserved',
+    });
+    expect(database.db.prepare(`
+      SELECT version FROM schema_migrations ORDER BY version
+    `).all()).toEqual([
+      { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
+    ]);
+  });
+
+  it('rolls back the V4 SNG table replacement and version when migration conflicts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV3Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec('CREATE TABLE sng_entries_v1_backup (id TEXT) STRICT;');
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrowError(
+      'there is already another table or index with this name: sng_entries_v1_backup',
+    );
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT version FROM schema_migrations ORDER BY version
+      `).all()).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+      expect(reopened.prepare('PRAGMA table_info(sng_entries)').all()
+        .map(row => (row as { name: string }).name)).not.toContain('tournament_id');
+    } finally {
+      reopened.close();
+    }
   });
 
   it('rolls back the V3 version record when its durable identity table conflicts', () => {
@@ -537,6 +608,22 @@ function createV2Database(path: string): void {
       ${migrations[1].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (2, 'index_rescue_claims_by_profile_and_latest_claim', 2);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV3Database(path: string): void {
+  createV2Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[2].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (3, 'durable_cash_hand_settlement_identity', 3);
       COMMIT;
     `);
   } finally {

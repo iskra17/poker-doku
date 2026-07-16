@@ -1,7 +1,7 @@
 import type { PokerEngine } from '../lib/poker/engine';
 import type { Player } from '../lib/poker/types';
 import { EconomyDomainError } from './economy-repository';
-import type { EconomyService } from './economy-service';
+import { ECONOMY_RULES, type EconomyService } from './economy-service';
 
 export interface CashHandPersistenceResult {
   paidTotal: number;
@@ -14,6 +14,10 @@ export interface RoomEconomyHooks {
   afterHand(roomId: string, engine: PokerEngine): CashHandPersistenceResult;
   settleExit(roomId: string, player: Player): void;
   voidRoom(roomId: string): void;
+  beforeTournament(roomId: string, engine: PokerEngine): void;
+  cancelTournamentStart(roomId: string, engine: PokerEngine): boolean;
+  afterTournament(roomId: string, engine: PokerEngine): void;
+  cancelWaitingSng(roomId: string, player: Player): void;
 }
 
 export interface CashAdmissionEconomy {
@@ -23,7 +27,21 @@ export interface CashAdmissionEconomy {
   hasActiveCashEscrow(profileId: string, roomId: string): boolean;
 }
 
-export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
+export interface SngAdmissionEconomy {
+  reserveSngEntry(
+    profileId: string,
+    roomId: string,
+    buyIn: number,
+    fee: number,
+  ): unknown;
+  cancelSngEntry(profileId: string, roomId: string): unknown;
+  hasActiveSngEntry(profileId: string, roomId: string): boolean;
+}
+
+export class EconomyRuntime implements
+  RoomEconomyHooks,
+  CashAdmissionEconomy,
+  SngAdmissionEconomy {
   constructor(private readonly economy: EconomyService) {}
 
   openCashEscrow(profileId: string, roomId: string, buyIn: number): unknown {
@@ -40,6 +58,87 @@ export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
 
   hasActiveCashEscrow(profileId: string, roomId: string): boolean {
     return this.economy.hasActiveCashEscrow(profileId, roomId);
+  }
+
+  reserveSngEntry(
+    profileId: string,
+    roomId: string,
+    buyIn: number,
+    fee: number,
+  ): unknown {
+    return this.economy.reserveSngEntry(profileId, roomId, buyIn, fee);
+  }
+
+  cancelSngEntry(profileId: string, roomId: string): unknown {
+    return this.economy.cancelSngEntry(profileId, roomId);
+  }
+
+  hasActiveSngEntry(profileId: string, roomId: string): boolean {
+    return this.economy.hasActiveSngEntry(profileId, roomId);
+  }
+
+  beforeTournament(roomId: string, engine: PokerEngine): void {
+    const { buyIn, fee } = this.requireWalletSng(engine);
+    const tournament = engine.state.tournament;
+    const entrants = engine.state.players.filter(player => (
+      player.type === 'human' && !player.pendingRemoval
+    ));
+    if (
+      !tournament
+      || tournament.entrants !== 0
+      || tournament.finished
+      || engine.state.isHandInProgress
+      || entrants.length !== 6
+      || entrants.length !== engine.state.players.length
+      || entrants.some(player => player.chips !== buyIn)
+    ) {
+      throw new EconomyDomainError('SNG_START_INVALID');
+    }
+    this.economy.startSngTournament(
+      roomId,
+      entrants.map(player => player.id),
+      buyIn,
+      fee,
+    );
+  }
+
+  cancelTournamentStart(roomId: string, engine: PokerEngine): boolean {
+    const { buyIn, fee } = this.requireWalletSng(engine);
+    if (engine.state.tournament?.entrants !== 0) {
+      throw new EconomyDomainError('SNG_START_INVALID');
+    }
+    const entrants = engine.state.players.filter(player => (
+      player.type === 'human' && !player.pendingRemoval
+    ));
+    return this.economy.revertSngTournamentStart(
+      roomId,
+      entrants.map(player => player.id),
+      buyIn,
+      fee,
+    );
+  }
+
+  afterTournament(roomId: string, engine: PokerEngine): void {
+    const { buyIn, fee } = this.requireWalletSng(engine);
+    const tournament = engine.state.tournament;
+    if (!tournament?.finished || tournament.entrants !== 6) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+    }
+    this.economy.settleSngTournament(
+      roomId,
+      tournament.results.map(result => ({
+        playerId: result.playerId,
+        place: result.place,
+        prize: result.prize,
+      })),
+      buyIn,
+      fee,
+    );
+  }
+
+  cancelWaitingSng(roomId: string, player: Player): void {
+    if (player.type !== 'human') return;
+    this.economy.cancelSngEntry(player.id, roomId);
   }
 
   beforeHand(roomId: string, engine: PokerEngine): void {
@@ -102,11 +201,28 @@ export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
   }
 
   voidRoom(roomId: string): void {
+    this.economy.cancelWaitingSngRoom(roomId);
     this.economy.settleCashRoom(roomId);
   }
 
   recoverActiveEscrows(): number {
-    return this.economy.recoverActiveCashEscrows();
+    return this.safeAdd(
+      this.economy.recoverActiveCashEscrows(),
+      this.economy.recoverIncompleteSngEntries(),
+    );
+  }
+
+  private requireWalletSng(engine: PokerEngine): {
+    buyIn: number;
+    fee: number;
+  } {
+    if (!engine.state.tournament) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    return {
+      buyIn: ECONOMY_RULES.casualSngBuyIn,
+      fee: ECONOMY_RULES.casualSngFee,
+    };
   }
 
   private safeAdd(left: number, right: number): number {

@@ -68,6 +68,8 @@ export class RoomManager {
     paidTotal: number;
     rake: number;
   }>();
+  /** wallet Sit & Go 결과가 DB에 확정된 방 — retained snapshot 재처리 시 중복 호출 방지 */
+  private settledTournamentRooms = new Set<string>();
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
@@ -136,7 +138,20 @@ export class RoomManager {
     ) {
       return false;
     }
-    if (this.isWalletCash(room)) {
+    const walletSng = this.isWalletSng(room);
+    const tournament = room.engine.state.tournament;
+    if (walletSng && tournament && tournament.entrants > 0 && !tournament.finished) {
+      return false;
+    }
+    if (
+      walletSng
+      && tournament?.finished
+      && !this.settledTournamentRooms.has(roomId)
+      && !this.settleFinishedWalletTournament(roomId)
+    ) {
+      return false;
+    }
+    if (this.isWalletCash(room) || (walletSng && tournament?.entrants === 0)) {
       try {
         this.requireEconomy().voidRoom(roomId);
       } catch {
@@ -168,6 +183,7 @@ export class RoomManager {
     this.economyBlockedRooms.delete(roomId);
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
+    this.settledTournamentRooms.delete(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
       this.options.onRoomDisposed?.(roomId, playerIds, reason);
@@ -235,6 +251,8 @@ export class RoomManager {
         bigBlind: room.config.bigBlind,
         minBuyIn: room.config.minBuyIn,
         maxBuyIn: room.config.maxBuyIn,
+        entryBuyIn: room.config.entryBuyIn,
+        entryFee: room.config.entryFee,
         difficulty: room.config.difficulty ?? 'normal',
         turnTime: room.config.turnTime,
         // 봇 좌석은 만석 판정에서 제외 — 휴먼이 오면 봇이 자리를 양보한다
@@ -287,6 +305,7 @@ export class RoomManager {
   fillWithBots(roomId: string, requesterId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    if (this.isWalletSng(room)) return false;
     const tournament = room.engine.state.tournament;
     if (!tournament || tournament.entrants > 0 || tournament.finished) return false;
 
@@ -313,6 +332,19 @@ export class RoomManager {
     const wasInProgress = room.engine.state.isHandInProgress;
     const leavingPlayer = room.engine.state.players.find(p => p.id === playerId);
     if (
+      leavingPlayer?.type === 'human'
+      && this.isWalletSng(room)
+      && room.engine.state.tournament?.entrants === 0
+    ) {
+      try {
+        this.requireEconomy().cancelWaitingSng(roomId, leavingPlayer);
+      } catch {
+        this.economyBlockedRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+        return;
+      }
+    }
+    if (
       !wasInProgress
       && leavingPlayer?.type === 'human'
       && this.isWalletCash(room)
@@ -333,6 +365,16 @@ export class RoomManager {
     const { player, handComplete } = room.engine.processLeave(playerId);
     if (player) {
       this.sendSystemChat(roomId, `${player.name}님이 테이블을 떠났습니다.`);
+    }
+
+    if (
+      !wasInProgress
+      && this.isWalletSng(room)
+      && room.engine.state.tournament?.finished
+    ) {
+      if (!this.settleFinishedWalletTournament(roomId)) return;
+      this.announceTournamentProgress(roomId);
+      this.onUpdate(roomId, room.engine);
     }
 
     // 진행 중 wallet cash 핸드는 마지막 휴먼이 나가도 봇 액션/정산이 끝날 때까지 보존한다.
@@ -414,6 +456,7 @@ export class RoomManager {
     this.economyBlockedRooms.delete(roomId);
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
+    this.settledTournamentRooms.delete(roomId);
   }
 
   // --- [FIX 1] Hand start 중복 방지 ---
@@ -496,18 +539,63 @@ export class RoomManager {
     if (tournament) {
       if (tournament.finished) return;
       if (tournament.entrants === 0) {
+        const walletSng = this.isWalletSng(room);
+        if (walletSng && !this.canStartWalletSng(room.engine, room.config)) {
+          return;
+        }
+        const preTournamentState = JSON.stringify(room.engine.state);
+        let tournamentStartCommitted = false;
+        if (walletSng) {
+          try {
+            this.requireEconomy().beforeTournament(roomId, room.engine);
+            tournamentStartCommitted = true;
+          } catch {
+            this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+            this.onUpdate(roomId, room.engine);
+            return;
+          }
+        }
         const startedAt = Date.now();
+        const next = SNG_BLIND_SCHEDULE[1] ?? null;
+        try {
+          room.engine.startTournament(
+            startedAt + SNG_LEVEL_DURATION_MS,
+            next?.smallBlind ?? null,
+            next?.bigBlind ?? null,
+          );
+        } catch {
+          if (!this.revertUnmutatedTournamentStart(
+            roomId,
+            room.engine,
+            tournamentStartCommitted,
+            preTournamentState,
+          )) {
+            this.economyBlockedRooms.add(roomId);
+            this.unresolvedSettlementRooms.add(roomId);
+          }
+          this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+          this.onUpdate(roomId, room.engine);
+          return;
+        }
+        if (walletSng && room.engine.state.tournament?.entrants !== 6) {
+          if (!this.revertUnmutatedTournamentStart(
+            roomId,
+            room.engine,
+            tournamentStartCommitted,
+            preTournamentState,
+          )) {
+            this.economyBlockedRooms.add(roomId);
+            this.unresolvedSettlementRooms.add(roomId);
+          }
+          this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+          this.onUpdate(roomId, room.engine);
+          return;
+        }
         this.tournamentClocks.set(roomId, {
           startedAt,
           announcedResults: 0,
           finishedAnnounced: false,
         });
-        const next = SNG_BLIND_SCHEDULE[1] ?? null;
-        room.engine.startTournament(
-          startedAt + SNG_LEVEL_DURATION_MS,
-          next?.smallBlind ?? null,
-          next?.bigBlind ?? null,
-        );
         this.sendSystemChat(
           roomId,
           `Sit & Go 시작! ${room.engine.state.players.length}인 · 블라인드 ${SNG_LEVEL_DURATION_MS / 60000}분마다 인상 · 1~3위 시상`,
@@ -836,6 +924,33 @@ export class RoomManager {
     if (!room || room.engine.state.isHandInProgress) return false;
     const player = room.engine.state.players.find(candidate => (
       candidate.id === playerId && candidate.pendingRemoval
+    ));
+    if (!player) return false;
+    this.cancelSitOutAbandon(roomId, playerId);
+    const removed = room.engine.processLeave(playerId).player;
+    if (!removed) return false;
+    this.onRoomsChanged?.();
+    return true;
+  }
+
+  /**
+   * DB reserve가 이미 환불된 대기 SnG 메모리 좌석을 새 reserve 전에 제거한다.
+   * 경제 훅을 다시 호출하지 않아 이중 환불을 피하고, 시작된 토너먼트에는 적용하지 않는다.
+   */
+  retireUnbackedWaitingSngSeat(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (
+      !room
+      || !this.isWalletSng(room)
+      || room.engine.state.isHandInProgress
+      || room.engine.state.tournament?.entrants !== 0
+    ) {
+      return false;
+    }
+    const player = room.engine.state.players.find(candidate => (
+      candidate.id === playerId
+      && candidate.type === 'human'
+      && !candidate.pendingRemoval
     ));
     if (!player) return false;
     this.cancelSitOutAbandon(roomId, playerId);
@@ -1202,6 +1317,66 @@ export class RoomManager {
     );
   }
 
+  private isWalletSng(room: {
+    config: RoomConfig;
+    engine: PokerEngine;
+  }): boolean {
+    return (
+      room.config.gameMode === 'sng'
+      && room.config.economyMode === 'wallet'
+    );
+  }
+
+  private canStartWalletSng(engine: PokerEngine, config: RoomConfig): boolean {
+    return (
+      Number.isSafeInteger(config.entryBuyIn)
+      && (config.entryBuyIn as number) > 0
+      && Number.isSafeInteger(config.entryFee)
+      && (config.entryFee as number) > 0
+      && config.startingStack === config.entryBuyIn
+      && engine.state.players.length === 6
+      && engine.state.players.every(player => (
+        player.type === 'human'
+        && !player.pendingRemoval
+        && player.chips === config.entryBuyIn
+      ))
+    );
+  }
+
+  private revertUnmutatedTournamentStart(
+    roomId: string,
+    engine: PokerEngine,
+    committed: boolean,
+    preTournamentState: string,
+  ): boolean {
+    if (JSON.stringify(engine.state) !== preTournamentState) return false;
+    if (!committed) return true;
+    try {
+      return this.requireEconomy().cancelTournamentStart(roomId, engine);
+    } catch {
+      return false;
+    }
+  }
+
+  private settleFinishedWalletTournament(roomId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isWalletSng(room) || !room.engine.state.tournament?.finished) {
+      return true;
+    }
+    if (this.settledTournamentRooms.has(roomId)) return true;
+    try {
+      this.requireEconomy().afterTournament(roomId, room.engine);
+      this.settledTournamentRooms.add(roomId);
+      return true;
+    } catch {
+      this.economyBlockedRooms.add(roomId);
+      this.unresolvedSettlementRooms.add(roomId);
+      this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+      this.onUpdate(roomId, room.engine);
+      return false;
+    }
+  }
+
   private canStartWalletHand(engine: PokerEngine): boolean {
     return engine.state.players.filter(player => (
       !player.pendingRemoval
@@ -1278,6 +1453,14 @@ export class RoomManager {
         this.unresolvedSettlementRooms.add(roomId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
       }
+    }
+    if (
+      settlementOk
+      && this.isWalletSng(room)
+      && state.tournament?.finished
+      && !this.settleFinishedWalletTournament(roomId)
+    ) {
+      settlementOk = false;
     }
 
     this.handSettlementStatus.set(roomId, {

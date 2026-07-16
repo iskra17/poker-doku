@@ -23,6 +23,21 @@ function makeWalletConfig(): RoomConfig {
   return { ...makeConfig(), economyMode: 'wallet' };
 }
 
+function makeWalletSngConfig(): RoomConfig {
+  return {
+    ...makeConfig(),
+    name: '지갑 Sit & Go',
+    gameMode: 'sng',
+    economyMode: 'wallet',
+    startingStack: 1_500,
+    minBuyIn: 1_500,
+    maxBuyIn: 1_500,
+    entryBuyIn: 1_500,
+    entryFee: 150,
+    tableType: 'mixed',
+  };
+}
+
 function makeHuman(id: string, seatIndex = 0): Player {
   return {
     id,
@@ -198,6 +213,10 @@ describe('RoomManager wallet cash persistence hooks', () => {
       afterHand: vi.fn(() => ({ paidTotal: 0, rake: 0 })),
       settleExit: vi.fn(),
       voidRoom: vi.fn(),
+      beforeTournament: vi.fn(),
+      cancelTournamentStart: vi.fn(() => true),
+      afterTournament: vi.fn(),
+      cancelWaitingSng: vi.fn(),
       ...overrides,
     };
   }
@@ -413,5 +432,171 @@ describe('RoomManager wallet cash persistence hooks', () => {
     expect(economy.voidRoom).toHaveBeenCalledWith(roomId);
     expect(manager.getRoom(roomId)?.engine).not.toBe(originalEngine);
     expect(manager.getRoom(roomId)?.engine.state.players).toEqual([]);
+  });
+});
+
+describe('RoomManager wallet Sit & Go persistence hooks', () => {
+  let manager: RoomManager;
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.useRealTimers();
+  });
+
+  function hooks(overrides: Partial<RoomEconomyHooks> = {}): RoomEconomyHooks {
+    return {
+      beforeHand: vi.fn(),
+      cancelPreparedHand: vi.fn(() => true),
+      afterHand: vi.fn(() => ({ paidTotal: 0, rake: 0 })),
+      settleExit: vi.fn(),
+      voidRoom: vi.fn(),
+      beforeTournament: vi.fn(),
+      cancelTournamentStart: vi.fn(() => true),
+      afterTournament: vi.fn(),
+      cancelWaitingSng: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  function seatSix(roomId: string): void {
+    for (let index = 0; index < 6; index += 1) {
+      manager.joinRoom(roomId, {
+        ...makeHuman(`sng-${index + 1}`, index),
+        chips: 1_500,
+      });
+    }
+  }
+
+  it('commits six human reservations before starting the tournament and rejects bot fill', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+
+    expect(manager.fillWithBots(roomId, 'sng-1')).toBe(false);
+    vi.advanceTimersByTime(2_001);
+
+    const tournament = manager.getRoom(roomId)!.engine.state.tournament!;
+    expect(economy.beforeTournament).toHaveBeenCalledOnce();
+    expect(tournament.entrants).toBe(6);
+    expect(tournament.prizes).toEqual([4_500, 2_700, 1_800]);
+    expect(vi.mocked(economy.beforeTournament).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(economy.beforeHand).mock.invocationCallOrder[0] ?? Infinity);
+  });
+
+  it('does not start when storage commit fails and refunds only a pre-start leave', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      beforeTournament: vi.fn(() => { throw new Error('storage unavailable'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+
+    vi.advanceTimersByTime(2_001);
+    expect(manager.getRoom(roomId)!.engine.state.tournament?.entrants).toBe(0);
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
+    expect(manager.getChatHistory(roomId).at(-1)?.message)
+      .toBe('저장 연결을 확인 중이에요');
+
+    manager.leaveRoom(roomId, 'sng-1');
+    expect(economy.cancelWaitingSng).toHaveBeenCalledOnce();
+  });
+
+  it('reverts a durable start when engine start has no mutation and permits a retry', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    const room = manager.getRoom(roomId)!;
+    vi.spyOn(room.engine, 'startTournament').mockImplementationOnce(() => undefined);
+    seatSix(roomId);
+
+    vi.advanceTimersByTime(2_001);
+    expect(economy.beforeTournament).toHaveBeenCalledOnce();
+    expect(economy.cancelTournamentStart).toHaveBeenCalledOnce();
+    expect(room.engine.state.tournament?.entrants).toBe(0);
+
+    manager.resumeRoom(roomId);
+    vi.advanceTimersByTime(2_001);
+    expect(economy.beforeTournament).toHaveBeenCalledTimes(2);
+    expect(room.engine.state.tournament?.entrants).toBe(6);
+  });
+
+  it('preserves and blocks a partially mutated start without reversing its durable fee commit', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    const room = manager.getRoom(roomId)!;
+    vi.spyOn(room.engine, 'startTournament').mockImplementationOnce(() => {
+      room.engine.state.tournament!.entrants = 1;
+      throw new Error('failed after mutation');
+    });
+    seatSix(roomId);
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(economy.beforeTournament).toHaveBeenCalledOnce();
+    expect(economy.cancelTournamentStart).not.toHaveBeenCalled();
+    expect(room.engine.state.tournament?.entrants).toBe(1);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+  });
+
+  it('settles a finished snapshot before announcement and blocks cleanup when settlement fails', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      afterTournament: vi.fn(() => { throw new Error('settlement unavailable'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.tournament!.finished = true;
+    room.engine.state.tournament!.results = room.engine.state.players.map(
+      (player, index) => ({
+        playerId: player.id,
+        name: player.name,
+        place: index + 1,
+        prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+      }),
+    );
+
+    (manager as unknown as { handleCompletedHand(roomId: string): void })
+      .handleCompletedHand(roomId);
+
+    expect(economy.afterTournament).toHaveBeenCalledOnce();
+    expect(manager.getChatHistory(roomId).some(message => (
+      message.message.includes('Sit & Go 종료')
+    ))).toBe(false);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    expect(manager.getRoom(roomId)).toBeDefined();
+  });
+
+  it('settles a finished snapshot before direct room disposal', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.tournament!.finished = true;
+    room.engine.state.tournament!.results = room.engine.state.players.map(
+      (player, index) => ({
+        playerId: player.id,
+        name: player.name,
+        place: index + 1,
+        prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+      }),
+    );
+
+    expect(manager.disposeRoom(roomId)).toBe(true);
+    expect(economy.afterTournament).toHaveBeenCalledOnce();
+    expect(economy.voidRoom).not.toHaveBeenCalled();
   });
 });

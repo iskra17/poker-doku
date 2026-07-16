@@ -7,7 +7,13 @@ import {
   type CashHandStack,
   type EconomyRepository,
   type EconomyResult,
+  type SngEntry,
+  type SngResult,
 } from './economy-repository';
+import {
+  CASUAL_SNG_BUY_IN,
+  CASUAL_SNG_ENTRY_FEE,
+} from '@/lib/economy/casual-sng';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
 
@@ -25,6 +31,8 @@ export const ECONOMY_RULES = {
   rescueTarget: 2_000,
   rescueDailyLimit: 3,
   rescueCooldownMs: 4 * 60 * 60 * 1_000,
+  casualSngBuyIn: CASUAL_SNG_BUY_IN,
+  casualSngFee: CASUAL_SNG_ENTRY_FEE,
 } as const;
 
 interface KstDateParts {
@@ -111,6 +119,84 @@ export class EconomyService {
       getNextKstMidnight(at),
       at,
     );
+  }
+
+  reserveSngEntry(
+    profileId: string,
+    roomId: string,
+    buyIn: number = ECONOMY_RULES.casualSngBuyIn,
+    fee: number = ECONOMY_RULES.casualSngFee,
+    at = this.clock(),
+  ): SngEntry {
+    return this.repository.reserveSngEntry(profileId, roomId, buyIn, fee, at);
+  }
+
+  hasActiveSngEntry(profileId: string, roomId: string): boolean {
+    return this.repository.hasActiveSngEntry(profileId, roomId);
+  }
+
+  cancelSngEntry(
+    profileId: string,
+    roomId: string,
+    at = this.clock(),
+  ): SngEntry | null {
+    return this.repository.cancelSngEntry(profileId, roomId, at);
+  }
+
+  cancelWaitingSngRoom(roomId: string, at = this.clock()): number {
+    return this.repository.cancelWaitingSngRoom(roomId, at);
+  }
+
+  startSngTournament(
+    roomId: string,
+    profileIds: readonly string[],
+    buyIn: number = ECONOMY_RULES.casualSngBuyIn,
+    fee: number = ECONOMY_RULES.casualSngFee,
+    at = this.clock(),
+  ): string {
+    return this.repository.startSngTournament(
+      roomId,
+      profileIds,
+      buyIn,
+      fee,
+      at,
+    );
+  }
+
+  revertSngTournamentStart(
+    roomId: string,
+    profileIds: readonly string[],
+    buyIn: number = ECONOMY_RULES.casualSngBuyIn,
+    fee: number = ECONOMY_RULES.casualSngFee,
+    at = this.clock(),
+  ): boolean {
+    return this.repository.revertSngTournamentStart(
+      roomId,
+      profileIds,
+      buyIn,
+      fee,
+      at,
+    );
+  }
+
+  settleSngTournament(
+    roomId: string,
+    results: readonly SngResult[],
+    buyIn: number = ECONOMY_RULES.casualSngBuyIn,
+    fee: number = ECONOMY_RULES.casualSngFee,
+    at = this.clock(),
+  ): string {
+    return this.repository.settleSngTournament(
+      roomId,
+      results,
+      buyIn,
+      fee,
+      at,
+    );
+  }
+
+  recoverIncompleteSngEntries(at = this.clock()): number {
+    return this.repository.recoverIncompleteSngEntries(at);
   }
 
   openCashEscrow(

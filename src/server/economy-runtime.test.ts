@@ -110,6 +110,21 @@ const walletCashConfig: RoomConfig = {
   turnTime: 8,
 };
 
+const walletSngConfig: RoomConfig = {
+  name: 'Wallet Sit & Go',
+  smallBlind: 10,
+  bigBlind: 20,
+  minBuyIn: 1_500,
+  maxBuyIn: 1_500,
+  maxPlayers: 6,
+  economyMode: 'wallet',
+  gameMode: 'sng',
+  startingStack: 1_500,
+  entryBuyIn: 1_500,
+  entryFee: 150,
+  turnTime: 8,
+};
+
 function createRuntime(database: PokerDatabase, now = 100): EconomyRuntime {
   return new EconomyRuntime(
     new EconomyService(new EconomyRepository(database), () => now),
@@ -511,6 +526,12 @@ describe('EconomyRuntime startup recovery', () => {
         afterHand: () => { throw new Error('settlement write failed'); },
         settleExit: (roomId, player) => runtime.settleExit(roomId, player),
         voidRoom,
+        beforeTournament: (roomId, engine) => runtime.beforeTournament(roomId, engine),
+        cancelTournamentStart: (roomId, engine) => (
+          runtime.cancelTournamentStart(roomId, engine)
+        ),
+        afterTournament: (roomId, engine) => runtime.afterTournament(roomId, engine),
+        cancelWaitingSng: (roomId, player) => runtime.cancelWaitingSng(roomId, player),
       },
     });
     const roomId = manager.createRoom({
@@ -651,5 +672,95 @@ describe('EconomyRuntime startup recovery', () => {
     expect(walletBalance(database, 'human-1')).toBe(6_000);
     expect(activeEscrow(database, 'human-1')).toBeDefined();
     expect(activeEscrow(database, 'human-2')).toBeDefined();
+  });
+});
+
+describe('EconomyRuntime wallet Sit & Go lifecycle', () => {
+  function setupWalletSng(database: PokerDatabase): {
+    runtime: EconomyRuntime;
+    engine: PokerEngine;
+    entrants: string[];
+  } {
+    const runtime = createRuntime(database);
+    const engine = new PokerEngine(walletSngConfig, 'sng-room');
+    const entrants = Array.from({ length: 6 }, (_, index) => {
+      const profileId = `human-${index + 1}`;
+      seedProfile(database, profileId);
+      runtime.reserveSngEntry(profileId, 'sng-room', 1_500, 150);
+      engine.addPlayer(makePlayer(profileId, 'human', 1_500, index));
+      return profileId;
+    });
+    return { runtime, engine, entrants };
+  }
+
+  it('commits six paid human entries before engine start and settles authoritative results', () => {
+    const database = openDatabase();
+    const { runtime, engine, entrants } = setupWalletSng(database);
+
+    runtime.beforeTournament('sng-room', engine);
+    expect(engine.state.tournament?.entrants).toBe(0);
+    expect(database.db.prepare(`
+      SELECT DISTINCT status FROM sng_entries
+    `).all()).toEqual([{ status: 'started' }]);
+
+    engine.startTournament(1_000, 15, 30);
+    engine.state.tournament!.results = entrants.map((playerId, index) => ({
+      playerId,
+      name: playerId,
+      place: index + 1,
+      prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+    }));
+    engine.state.tournament!.finished = true;
+    runtime.afterTournament('sng-room', engine);
+    runtime.afterTournament('sng-room', engine);
+
+    expect(entrants.map(profileId => walletBalance(database, profileId))).toEqual([
+      12_850, 11_050, 10_150, 8_350, 8_350, 8_350,
+    ]);
+  });
+
+  it('reverts a committed start without engine mutation and permits an exact retry', () => {
+    const database = openDatabase();
+    const { runtime, engine } = setupWalletSng(database);
+
+    runtime.beforeTournament('sng-room', engine);
+    expect(runtime.cancelTournamentStart('sng-room', engine)).toBe(true);
+    runtime.beforeTournament('sng-room', engine);
+
+    expect(database.db.prepare(`
+      SELECT DISTINCT status, start_attempt FROM sng_entries
+    `).all()).toEqual([{ status: 'started', start_attempt: 2 }]);
+  });
+
+  it('refunds only a waiting seat and rejects bots or incomplete paid starts', () => {
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    const runtime = createRuntime(database);
+    const engine = new PokerEngine(walletSngConfig, 'sng-room');
+    runtime.reserveSngEntry('human-1', 'sng-room', 1_500, 150);
+    const human = makePlayer('human-1', 'human', 1_500, 0);
+    engine.addPlayer(human);
+    engine.addPlayer(makePlayer('bot-1', 'bot', 1_500, 1));
+
+    expect(() => runtime.beforeTournament('sng-room', engine))
+      .toThrowError(EconomyDomainError);
+    runtime.cancelWaitingSng('sng-room', human);
+    expect(walletBalance(database, 'human-1')).toBe(10_000);
+  });
+
+  it('recovers cash and both reserved and started SNG escrows before accepting joins', () => {
+    const database = openDatabase();
+    seedProfile(database, 'cash');
+    const runtime = createRuntime(database);
+    runtime.openCashEscrow('cash', 'cash-room', 4_000);
+    const { engine } = setupWalletSng(database);
+    runtime.beforeTournament('sng-room', engine);
+
+    expect(runtime.recoverActiveEscrows()).toBe(7);
+    expect(runtime.recoverActiveEscrows()).toBe(0);
+    expect(walletBalance(database, 'cash')).toBe(10_000);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM seat_escrows WHERE status = 'active'
+    `).get()).toEqual({ count: 0 });
   });
 });

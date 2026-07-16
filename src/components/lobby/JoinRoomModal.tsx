@@ -1,9 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
+import {
+  CASUAL_SNG_BUY_IN,
+  getCasualSngEntryAvailability,
+} from './sng-entry';
 
 interface JoinRoomModalProps {
   room: RoomInfo; // 부모가 key={room.id}로 마운트해 방이 바뀌면 상태가 리셋된다
@@ -31,9 +35,41 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
 
   const [buyIn, setBuyIn] = useState(defaultBuyIn);
   const [password, setPassword] = useState('');
+  const [profileBalance, setProfileBalance] = useState<number | null>(null);
+  const sngAvailability = getCasualSngEntryAvailability(profileBalance);
+
+  useEffect(() => {
+    if (!isSng) return;
+    let cancelled = false;
+    void fetch('/api/profile/session', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    })
+      .then(async response => response.ok ? response.json() as Promise<unknown> : null)
+      .then(payload => {
+        if (cancelled || !payload || typeof payload !== 'object') return;
+        const profile = (payload as { profile?: unknown }).profile;
+        if (!profile || typeof profile !== 'object') return;
+        const wallet = (profile as { wallet?: unknown }).wallet;
+        if (!wallet || typeof wallet !== 'object') return;
+        const balance = (wallet as { balance?: unknown }).balance;
+        if (Number.isSafeInteger(balance) && (balance as number) >= 0) {
+          setProfileBalance(balance as number);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [isSng]);
 
   const handleJoin = () => {
-    joinRoom(room.id, buyIn, 0, needPassword ? password : undefined);
+    joinRoom(
+      room.id,
+      isSng ? CASUAL_SNG_BUY_IN : buyIn,
+      0,
+      needPassword ? password : undefined,
+    );
     onClose();
   };
 
@@ -49,12 +85,18 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
         {isSng ? (
           <div className="bg-gray-800/30 rounded-lg p-3 text-sm space-y-1">
             <div className="flex justify-between text-gray-400">
-              <span>시작 스택 (전원 동일)</span>
-              <span className="text-yellow-300">{(room.minBuyIn ?? 1500).toLocaleString()}</span>
+              <span>바이인 1,500 + 참가 수수료 150</span>
+              <span className="text-yellow-300">총 {sngAvailability.cost.toLocaleString()}</span>
             </div>
+            <p className="text-[11px] text-gilded/90">상금 풀에는 바이인만 포함</p>
             <p className="text-[11px] text-gray-500 pt-1">
               6명이 모이면 시작해요. 탈락하면 리바이 없이 관전으로 전환됩니다.
             </p>
+            {sngAvailability.insufficient && (
+              <p className="text-xs text-blossom pt-1">
+                보유한 무료 칩이 참가 비용 1,650보다 부족해요.
+              </p>
+            )}
           </div>
         ) : (
           <div>
@@ -132,7 +174,7 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           size="lg"
           className="w-full"
           onClick={handleJoin}
-          disabled={needPassword && !password.trim()}
+          disabled={(needPassword && !password.trim()) || (isSng && sngAvailability.insufficient)}
         >
           {isRebuyReturn ? '리바이하고 복귀' : isSng ? '참가하기' : '앉기'}
         </Button>

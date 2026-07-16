@@ -38,6 +38,19 @@ const WALLET_CASH_ROOM: RoomConfig = {
   economyMode: 'wallet',
 };
 
+const WALLET_SNG_ROOM: RoomConfig = {
+  ...HUMAN_ROOM,
+  name: '지갑 Sit & Go',
+  gameMode: 'sng',
+  economyMode: 'wallet',
+  startingStack: 1_500,
+  minBuyIn: 1_500,
+  maxBuyIn: 1_500,
+  entryBuyIn: 1_500,
+  entryFee: 150,
+  tableType: 'mixed',
+};
+
 function joinRoom(
   client: ConnectedTestClient,
   roomId: string,
@@ -272,6 +285,229 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       activeEscrow: 0,
       activeRoomId: null,
     });
+  });
+
+  it('forces casual SNG economy config and refuses paid bot filling', async () => {
+    harness = await createSocketTestHarness();
+    const created = await harness.createProfile();
+    const client = await harness.connect('sng-config-token', {
+      profileCookie: created.cookie,
+    });
+    const createdRoom = await withAck<{ roomId: string }>(done => client.socket.emit(
+      'create-room',
+      {
+        name: '일반 토너먼트',
+        bigBlind: 999,
+        turnTime: 8,
+        gameMode: 'sng',
+        difficulty: 'normal',
+        tableType: 'mixed',
+        botCount: 5,
+      },
+      done,
+    ));
+    expect(createdRoom.ok).toBe(true);
+    if (!createdRoom.ok) throw new Error('room creation failed');
+    const roomId = createdRoom.data!.roomId;
+    expect(harness.runtime.roomManager.getRoom(roomId)?.config).toMatchObject({
+      gameMode: 'sng',
+      economyMode: 'wallet',
+      startingStack: 1_500,
+      minBuyIn: 1_500,
+      maxBuyIn: 1_500,
+      entryBuyIn: 1_500,
+      entryFee: 150,
+    });
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(withAck(done => client.socket.emit('sng-fill-bots', done)))
+      .resolves.toMatchObject({ ok: false, code: 'action-rejected' });
+  });
+
+  it('reserves a fixed SNG entry before seating, reuses it, and compensates seat failure', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('sng-reserve-token', {
+      profileCookie: created.cookie,
+    });
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 99_999,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 8_350,
+      activeEscrow: 1_650,
+      activeRoomId: roomId,
+    });
+    expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players[0].chips)
+      .toBe(1_500);
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id).balance).toBe(8_350);
+
+    const failedRoomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    await expect(withAck(done => client.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    vi.spyOn(harness.runtime.roomManager, 'joinRoom').mockReturnValueOnce(false);
+    await expect(joinRoom(client, failedRoomId, 0)).resolves.toMatchObject({
+      ok: false,
+      code: 'room-full',
+    });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+  });
+
+  it('retires a refunded stale SNG memory seat before a fresh reserve', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('sng-stale-seat-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    harness.economyRuntime.cancelSngEntry(created.profile.id, roomId);
+    expect(harness.walletState(created.profile.id).balance).toBe(10_000);
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+
+    expect(harness.runtime.roomManager.getRoom(roomId)?.engine.state.players
+      .filter(player => player.id === created.profile.id)).toHaveLength(1);
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 8_350,
+      activeEscrow: 1_650,
+      activeRoomId: roomId,
+    });
+  });
+
+  it('refunds all waiting SNG entries when the room is disposed', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const profiles = await Promise.all([
+      harness.createProfile(),
+      harness.createProfile(),
+    ]);
+    const clients = await Promise.all(profiles.map((profile, index) => (
+      harness!.connect(`sng-dispose-${index}`, { profileCookie: profile.cookie })
+    )));
+    await expect(joinRoom(clients[0], roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(clients[1], roomId, 1)).resolves.toMatchObject({ ok: true });
+
+    expect(harness.runtime.roomManager.disposeRoom(roomId)).toBe(true);
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).balance))
+      .toEqual([10_000, 10_000]);
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).activeEscrow))
+      .toEqual([0, 0]);
+  });
+
+  it('preserves a waiting SNG reservation on disconnect and refunds explicit pre-start leave', async () => {
+    harness = await createSocketTestHarness({ graceMs: 500 });
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const firstProfile = await harness.createProfile();
+    const first = await harness.connect('sng-disconnect-token', {
+      profileCookie: firstProfile.cookie,
+    });
+    await expect(joinRoom(first, roomId, 0)).resolves.toMatchObject({ ok: true });
+    first.socket.disconnect();
+    await wait(30);
+    expect(harness.walletState(firstProfile.profile.id)).toEqual({
+      balance: 8_350,
+      activeEscrow: 1_650,
+      activeRoomId: roomId,
+    });
+
+    const secondProfile = await harness.createProfile();
+    const second = await harness.connect('sng-leave-token', {
+      profileCookie: secondProfile.cookie,
+    });
+    await expect(joinRoom(second, roomId, 1)).resolves.toMatchObject({ ok: true });
+    await expect(withAck(done => second.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(secondProfile.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+  });
+
+  it('starts only after six paid humans, keeps started exits charged, and settles exact prizes', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const profiles = await Promise.all(Array.from({ length: 6 }, () => (
+      harness!.createProfile()
+    )));
+    const clients = await Promise.all(profiles.map((profile, index) => (
+      harness!.connect(`sng-six-${index}`, { profileCookie: profile.cookie })
+    )));
+    for (let index = 0; index < clients.length; index += 1) {
+      await expect(joinRoom(clients[index], roomId, index))
+        .resolves.toMatchObject({ ok: true });
+    }
+    await wait(2_100);
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    expect(room.engine.state.tournament).toMatchObject({
+      entrants: 6,
+      prizes: [4_500, 2_700, 1_800],
+    });
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).activeEscrow))
+      .toEqual(Array(6).fill(1_500));
+
+    await expect(withAck(done => clients[5].socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(profiles[5].profile.id)).toEqual({
+      balance: 8_350,
+      activeEscrow: 1_500,
+      activeRoomId: roomId,
+    });
+
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.tournament!.finished = true;
+    room.engine.state.tournament!.results = profiles.map((profile, index) => ({
+      playerId: profile.profile.id,
+      name: profile.profile.alias,
+      place: index + 1,
+      prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+    }));
+    (harness.runtime.roomManager as unknown as {
+      handleCompletedHand(roomId: string): void;
+    }).handleCompletedHand(roomId);
+
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).balance))
+      .toEqual([12_850, 11_050, 10_150, 8_350, 8_350, 8_350]);
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).activeEscrow))
+      .toEqual(Array(6).fill(0));
+  });
+
+  it('does not start a full paid SNG when the storage start commit fails', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const profiles = await Promise.all(Array.from({ length: 6 }, () => (
+      harness!.createProfile()
+    )));
+    const clients = await Promise.all(profiles.map((profile, index) => (
+      harness!.connect(`sng-fail-${index}`, { profileCookie: profile.cookie })
+    )));
+    vi.spyOn(harness.economyRuntime, 'beforeTournament')
+      .mockImplementationOnce(() => { throw new Error('storage unavailable'); });
+    for (let index = 0; index < clients.length; index += 1) {
+      await expect(joinRoom(clients[index], roomId, index))
+        .resolves.toMatchObject({ ok: true });
+    }
+    await wait(2_100);
+
+    const state = harness.runtime.roomManager.getRoom(roomId)!.engine.state;
+    expect(state.tournament?.entrants).toBe(0);
+    expect(state.handNumber).toBe(0);
+    expect(profiles.map(profile => harness!.walletState(profile.profile.id).activeEscrow))
+      .toEqual(Array(6).fill(1_650));
   });
 
   it('keeps wallet cash escrow during disconnect grace', async () => {

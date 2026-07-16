@@ -36,6 +36,8 @@ export interface RoomListItem {
   bigBlind?: number;
   minBuyIn?: number;
   maxBuyIn?: number;
+  entryBuyIn?: number;
+  entryFee?: number;
   difficulty?: 'easy' | 'normal' | 'hard';
   turnTime?: number;
   humanCount?: number;
