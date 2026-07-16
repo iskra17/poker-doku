@@ -5,7 +5,6 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './database';
 import {
-  applyMigrations,
   type Migration,
   validateMigrations,
 } from './migrations';
@@ -114,34 +113,53 @@ describe('PokerDatabase migrations', () => {
   });
 
   it('rolls back the whole migration when a V1 statement fails', () => {
-    const rawDatabase = new DatabaseSync(':memory:');
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    const rawDatabase = new DatabaseSync(path);
     rawDatabase.exec(`
       CREATE TABLE schema_migrations (
         version INTEGER PRIMARY KEY,
         name TEXT NOT NULL,
         applied_at INTEGER NOT NULL
       ) STRICT;
-      CREATE TABLE profiles (id TEXT PRIMARY KEY) STRICT;
+      CREATE TABLE chip_ledger (id TEXT PRIMARY KEY) STRICT;
     `);
-
-    expect(() => applyMigrations(rawDatabase)).toThrowError(
-      'table profiles already exists',
-    );
-    const migrationCount = rawDatabase
-      .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
-      .get() as { count: number };
-    const tableNames = rawDatabase
-      .prepare(`
-        SELECT name FROM sqlite_schema
-        WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-        ORDER BY name
-      `)
-      .all()
-      .map(row => (row as { name: string }).name);
     rawDatabase.close();
 
-    expect(migrationCount.count).toBe(0);
-    expect(tableNames).toEqual(['profiles', 'schema_migrations']);
+    let unexpectedlyOpened: PokerDatabase | undefined;
+    try {
+      expect(() => {
+        unexpectedlyOpened = openPokerDatabase(path);
+      }).toThrowError('table chip_ledger already exists');
+    } finally {
+      unexpectedlyOpened?.close();
+    }
+
+    const reopened = new DatabaseSync(path);
+    let migrationCount = -1;
+    let tableNames: string[] = [];
+    try {
+      migrationCount = (
+        reopened
+          .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
+          .get() as { count: number }
+      ).count;
+      tableNames = reopened
+        .prepare(`
+          SELECT name FROM sqlite_schema
+          WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+          ORDER BY name
+        `)
+        .all()
+        .map(row => (row as { name: string }).name);
+    } finally {
+      reopened.close();
+    }
+
+    expect(migrationCount).toBe(0);
+    expect(tableNames).toContain('chip_ledger');
+    expect(tableNames).not.toContain('profiles');
   });
 
   it.each([
