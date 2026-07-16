@@ -5,7 +5,10 @@ import { useProfileStore } from '@/lib/store/profile-store';
 import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
 import RecoveryWordsCard from './RecoveryWordsCard';
-import { getProfileDeletionAvailability } from './recovery-rules';
+import {
+  consumeRecoveryRotationConfirmation,
+  getProfileDeletionAvailability,
+} from './recovery-rules';
 import { recoveryWordsIssuanceKey } from './recovery-words';
 
 export default function RecoveryPanel() {
@@ -22,6 +25,15 @@ export default function RecoveryPanel() {
   const skipRecovery = useProfileStore(state => state.skipRecovery);
   const [rotationConfirmed, setRotationConfirmed] = useState(false);
   const [deleteText, setDeleteText] = useState('');
+
+  const handleRotateRecovery = async () => {
+    if (action !== null) return;
+    const attempt = consumeRecoveryRotationConfirmation(rotationConfirmed);
+    if (!attempt.shouldRotate) return;
+
+    setRotationConfirmed(attempt.nextConfirmed);
+    await rotateRecovery();
+  };
 
   if (!profile) return null;
   if (phase === 'recovery-required' && recoveryWords) {
@@ -74,7 +86,7 @@ export default function RecoveryPanel() {
           variant="secondary"
           className="mt-3 w-full"
           disabled={!rotationConfirmed || action !== null}
-          onClick={() => void rotateRecovery()}
+          onClick={() => void handleRotateRecovery()}
         >
           {action === 'rotating' ? '재발급 중…' : '새 복구 코드 발급'}
         </Button>

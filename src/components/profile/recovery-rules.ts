@@ -3,6 +3,20 @@ export interface ProfileDeletionAvailability {
   guidance: string;
 }
 
+export interface RecoveryRotationConfirmationAttempt {
+  shouldRotate: boolean;
+  nextConfirmed: false;
+}
+
+export function consumeRecoveryRotationConfirmation(
+  confirmed: boolean,
+): RecoveryRotationConfirmationAttempt {
+  return {
+    shouldRotate: confirmed,
+    nextConfirmed: false,
+  };
+}
+
 export function getProfileDeletionAvailability(
   hasActiveSeat: boolean,
 ): ProfileDeletionAvailability {
