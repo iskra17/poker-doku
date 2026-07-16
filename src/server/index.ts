@@ -1,10 +1,19 @@
+import { mkdirSync } from 'node:fs';
 import { createServer } from 'http';
+import { dirname, join, resolve } from 'node:path';
 import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
-import { setupSocketHandlers } from './socket-handler';
 import { createHttpRequestHandler } from './http-handler';
+import {
+  TransientHttpConcurrencyGate,
+  TransientHttpRateLimiter,
+} from './http-rate-limit';
+import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { ProfileManager } from './profile-manager';
+import { ProfileRepository } from './profile-repository';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
+import { setupSocketHandlers } from './socket-handler';
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -16,10 +25,15 @@ const app = next({ dev, hostname, port });
 let httpServer: ReturnType<typeof createServer> | undefined;
 let io: Server<ClientToServerEvents, ServerToClientEvents> | undefined;
 let runtime: ReturnType<typeof setupSocketHandlers> | undefined;
+let database: PokerDatabase | undefined;
+let profileRateLimiter: TransientHttpRateLimiter | undefined;
 
 const shutdown = createServerShutdown({
   runtime: {
     close: () => runtime?.close(),
+  },
+  rateLimiter: {
+    close: () => profileRateLimiter?.close(),
   },
   io: {
     close: callback => {
@@ -39,12 +53,32 @@ const shutdown = createServerShutdown({
       return httpServer.close(callback);
     },
   },
+  database: {
+    close: () => database?.close(),
+  },
   app,
 });
 
 async function listen(): Promise<void> {
+  const databasePath = process.env.POKER_DB_PATH
+    ?? join(process.cwd(), 'data', 'poker-doku.sqlite');
+  if (databasePath !== ':memory:') {
+    mkdirSync(dirname(resolve(databasePath)), { recursive: true });
+  }
+  database = openPokerDatabase(databasePath);
+  const profileRepository = new ProfileRepository(database);
+  const profileManager = new ProfileManager(profileRepository);
+  profileRateLimiter = new TransientHttpRateLimiter();
+  const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
+
   const handle = app.getRequestHandler();
-  const server = createServer(createHttpRequestHandler(handle));
+  const server = createServer(createHttpRequestHandler(handle, {
+    database,
+    profileManager,
+    profileRateLimiter,
+    profileConcurrencyGate,
+    production: !dev,
+  }));
   httpServer = server;
   const originOptions = {
     production: !dev,

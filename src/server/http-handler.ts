@@ -2,6 +2,15 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
 import { eventLog } from './event-log';
+import {
+  TransientHttpConcurrencyGate,
+  TransientHttpRateLimiter,
+} from './http-rate-limit';
+import type { PokerDatabase } from './persistence/database';
+import {
+  createProfileHttpHandler,
+  type ProfileHttpManager,
+} from './profile-http';
 
 export type NextRequestHandler = (
   req: IncomingMessage,
@@ -11,6 +20,11 @@ export type NextRequestHandler = (
 
 export interface HttpHandlerOptions {
   debugToken?: string;
+  database?: PokerDatabase;
+  profileManager?: ProfileHttpManager;
+  profileRateLimiter?: TransientHttpRateLimiter;
+  profileConcurrencyGate?: TransientHttpConcurrencyGate;
+  production?: boolean;
 }
 
 function one(value: string | string[] | undefined): string | undefined {
@@ -42,22 +56,49 @@ export function createHttpRequestHandler(
   options: HttpHandlerOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const debugToken = options.debugToken ?? process.env.DEBUG_LOG_TOKEN;
+  const profileHandler = options.profileManager
+    ? createProfileHttpHandler({
+        manager: options.profileManager,
+        rateLimiter: options.profileRateLimiter ?? new TransientHttpRateLimiter(),
+        concurrencyGate: options.profileConcurrencyGate,
+        production: options.production ?? process.env.NODE_ENV === 'production',
+      })
+    : undefined;
   return (req, res) => {
-    const parsedUrl = parse(req.url ?? '/', true);
-    if (parsedUrl.pathname === '/healthz') {
-      if (req.method !== 'GET' && req.method !== 'HEAD') {
-        res.writeHead(405, { allow: 'GET, HEAD' });
-        res.end();
+    const dispatch = async (): Promise<void> => {
+      const parsedUrl = parse(req.url ?? '/', true);
+      if (parsedUrl.pathname === '/healthz') {
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          res.writeHead(405, { allow: 'GET, HEAD' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
         return;
       }
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-      res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
-      return;
-    }
-    if (parsedUrl.pathname === '/api/debug/log') {
-      handleDebugLog(parsedUrl, res, debugToken);
-      return;
-    }
-    void nextHandler(req, res, parsedUrl);
+      if (parsedUrl.pathname === '/api/debug/log') {
+        handleDebugLog(parsedUrl, res, debugToken);
+        return;
+      }
+      if (profileHandler && await profileHandler(req, res, parsedUrl.pathname)) {
+        return;
+      }
+      await nextHandler(req, res, parsedUrl);
+    };
+
+    void dispatch().catch(() => {
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      res.writeHead(500, {
+        'cache-control': 'no-store',
+        'content-type': 'application/json; charset=utf-8',
+      });
+      res.end(JSON.stringify({
+        error: { code: 'INTERNAL_ERROR', message: '요청을 처리하지 못했습니다.' },
+      }));
+    });
   };
 }

@@ -8,8 +8,10 @@ export interface CallbackCloseable {
 
 export interface ServerShutdownResources {
   runtime: ImmediateCloseable;
+  rateLimiter?: ImmediateCloseable;
   io: CallbackCloseable;
   httpServer: CallbackCloseable;
+  database?: ImmediateCloseable;
   app: ImmediateCloseable;
 }
 
@@ -108,6 +110,10 @@ export function createServerShutdown(
     await attempt(() => resources.runtime.close());
     await attempt(() => closeWithCallback(resources.io));
     await attempt(() => closeWithCallback(resources.httpServer));
+    const rateLimiter = resources.rateLimiter;
+    if (rateLimiter) await attempt(() => rateLimiter.close());
+    const database = resources.database;
+    if (database) await attempt(() => database.close());
     await attempt(() => resources.app.close());
 
     if (errors.length > 0) {

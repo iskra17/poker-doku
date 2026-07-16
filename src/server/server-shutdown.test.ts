@@ -75,8 +75,18 @@ describe('custom server shutdown', () => {
           order.push('runtime');
         },
       },
+      rateLimiter: {
+        close: () => {
+          order.push('rate-limiter');
+        },
+      },
       io: callbackCloseable('socket.io', order),
       httpServer: callbackCloseable('http', order),
+      database: {
+        close: () => {
+          order.push('database');
+        },
+      },
       app: {
         close: async () => {
           order.push('next');
@@ -89,7 +99,14 @@ describe('custom server shutdown', () => {
 
     expect(second).toBe(first);
     await Promise.all([first, second]);
-    expect(order).toEqual(['runtime', 'socket.io', 'http', 'next']);
+    expect(order).toEqual([
+      'runtime',
+      'socket.io',
+      'http',
+      'rate-limiter',
+      'database',
+      'next',
+    ]);
   });
 
   it('attempts every close when an earlier resource reports an error', async () => {
