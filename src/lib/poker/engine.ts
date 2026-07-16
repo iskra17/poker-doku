@@ -5,6 +5,7 @@ import {
   Pot, WinResult, Card, RoomConfig,
 } from './types';
 import { SNG_PRIZE_SPLIT } from './blind-schedule';
+import { allocateRakeAcrossPots, computeCashRake } from '../economy/rake';
 
 // 타임칩: N핸드 참여마다 1개 적립, 최대 보유량 제한
 export const TIME_BANK_ACCRUAL_HANDS = 10;
@@ -73,6 +74,7 @@ export class PokerEngine {
       bigBlind: config.bigBlind,
       isHandInProgress: false,
       winners: null,
+      handRake: 0,
       lastAction: null,
       turnTimer: config.turnTime,
       handNumber: 0,
@@ -280,6 +282,7 @@ export class PokerEngine {
     this.state.minRaise = this.config.bigBlind;
     this.state.street = 'preflop';
     this.state.winners = null;
+    this.state.handRake = 0;
     this.state.lastAction = null;
     this.state.lastAggressorId = null;
 
@@ -658,11 +661,15 @@ export class PokerEngine {
     this.state.isHandInProgress = false;
 
     const activePlayers = this.getActivePlayers();
+    const payoutPots = this.preparePayoutPots();
 
     // If only one player remains (everyone else folded)
     if (activePlayers.length === 1) {
       const winner = activePlayers[0];
-      const totalPot = this.state.pots.reduce((sum, p) => sum + p.amount, 0);
+      const totalPot = this.sumSettlementAmounts(
+        payoutPots.map(pot => pot.amount),
+        'fold payout pots',
+      );
       winner.chips += totalPot;
       this.state.winners = [{
         playerId: winner.id,
@@ -670,14 +677,15 @@ export class PokerEngine {
         hand: null,
         potIndex: 0,
       }];
+      this.assertSettlementInvariant(payoutPots);
       this.finalizeTournamentHand();
       return;
     }
 
     // Showdown: evaluate hands
     const winners: WinResult[] = [];
-    for (let potIndex = 0; potIndex < this.state.pots.length; potIndex++) {
-      const pot = this.state.pots[potIndex];
+    for (let potIndex = 0; potIndex < payoutPots.length; potIndex++) {
+      const pot = payoutPots[potIndex];
       const eligible = activePlayers.filter(p => pot.eligiblePlayerIds.includes(p.id));
 
       if (eligible.length === 0) continue;
@@ -711,7 +719,102 @@ export class PokerEngine {
     }
 
     this.state.winners = winners;
+    this.assertSettlementInvariant(payoutPots);
     this.finalizeTournamentHand();
+  }
+
+  private preparePayoutPots(): Pot[] {
+    const grossTotal = this.sumSettlementAmounts(
+      this.state.pots.map(pot => pot.amount),
+      'gross pots',
+    );
+    let rake = 0;
+    let allocations: number[];
+
+    try {
+      if (this.config.gameMode === 'cash' && this.config.economyMode === 'wallet') {
+        rake = computeCashRake({
+          totalPot: grossTotal,
+          bigBlind: this.state.bigBlind,
+          flopDealt: this.state.communityCards.length >= 3,
+        });
+      }
+      allocations = allocateRakeAcrossPots(
+        this.state.pots.map(pot => pot.amount),
+        rake,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'invalid rake calculation';
+      throw new Error(`settlement invariant failed: ${detail}`);
+    }
+
+    const payoutPots = this.state.pots.map((pot, index) => ({
+      amount: pot.amount - allocations[index],
+      eligiblePlayerIds: [...pot.eligiblePlayerIds],
+    }));
+    this.sumSettlementAmounts(
+      payoutPots.map(pot => pot.amount),
+      'net payout pots',
+    );
+    this.state.handRake = rake;
+    return payoutPots;
+  }
+
+  private sumSettlementAmounts(amounts: readonly number[], label: string): number {
+    let total = 0;
+    for (const amount of amounts) {
+      if (!Number.isSafeInteger(amount) || amount < 0) {
+        throw new Error(`settlement invariant failed: ${label} contains invalid chip amount`);
+      }
+      total += amount;
+      if (!Number.isSafeInteger(total)) {
+        throw new Error(`settlement invariant failed: ${label} total is unsafe`);
+      }
+    }
+    return total;
+  }
+
+  private assertSettlementInvariant(payoutPots: readonly Pot[]): void {
+    const contributed = this.sumSettlementAmounts(
+      this.state.players.map(player => player.totalContributed),
+      'contributions',
+    );
+    const gross = this.sumSettlementAmounts(
+      this.state.pots.map(pot => pot.amount),
+      'gross pots',
+    );
+    const netPayout = this.sumSettlementAmounts(
+      payoutPots.map(pot => pot.amount),
+      'net payout pots',
+    );
+    const paid = this.sumSettlementAmounts(
+      (this.state.winners ?? []).map(winner => winner.amount),
+      'winner payouts',
+    );
+    const grossFromNet = this.sumSettlementAmounts(
+      [netPayout, this.state.handRake],
+      'net payout plus rake',
+    );
+    const settled = this.sumSettlementAmounts(
+      [paid, this.state.handRake],
+      'paid plus rake',
+    );
+
+    if (gross !== contributed) {
+      throw new Error(
+        `settlement invariant failed: gross pots ${gross} !== contributed ${contributed}`,
+      );
+    }
+    if (grossFromNet !== gross) {
+      throw new Error(
+        `settlement invariant failed: net payout ${netPayout} + rake ${this.state.handRake} !== gross pots ${gross}`,
+      );
+    }
+    if (settled !== contributed) {
+      throw new Error(
+        `settlement invariant failed: paid ${paid} + rake ${this.state.handRake} !== contributed ${contributed}`,
+      );
+    }
   }
 
   /** 핸드 종료 후 시트앤고 탈락/종료 판정 */

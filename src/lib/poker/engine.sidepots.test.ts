@@ -1,5 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { setupTable, act, actor, totalTableChips, totalStacks } from './test-helpers';
+import { PokerEngine } from './engine';
+import { RoomConfig } from './types';
+import {
+  RiggedDeck, setupTable, act, actor, makePlayer, totalTableChips, totalStacks,
+} from './test-helpers';
+
+function setupWalletTable(chipCounts: number[], riggedCodes: string) {
+  const config: RoomConfig = {
+    name: 'Wallet Side Pot Test',
+    smallBlind: 10,
+    bigBlind: 20,
+    minBuyIn: 100,
+    maxBuyIn: 10_000,
+    maxPlayers: 6,
+    turnTime: 30,
+    gameMode: 'cash',
+    economyMode: 'wallet',
+  };
+  const engine = new PokerEngine(config, 'wallet-sidepot-room', new RiggedDeck(riggedCodes));
+  chipCounts.forEach((chips, index) => {
+    engine.addPlayer(makePlayer(`p${index + 1}`, chips, index));
+  });
+  engine.state.dealerIndex = chipCounts.length - 1;
+  return { engine, initialTotal: chipCounts.reduce((sum, chips) => sum + chips, 0) };
+}
 
 /**
  * 사이드팟 회계 테스트.
@@ -168,5 +192,58 @@ describe('사이드팟 — 멀티 스트리트 (버그 A 재현)', () => {
     // 각자 원금 회복
     expect(engine.state.players[0].chips).toBe(1000);
     expect(engine.state.players[1].chips).toBe(1000);
+  });
+});
+
+describe('wallet cash rake with showdown pots', () => {
+  it('allocates rake across side pots without changing the gross pot ledger', () => {
+    const { engine, initialTotal } = setupWalletTable(
+      [100, 200, 300],
+      'As Ah Kd Kc Qh Qd 2c 8s 9d 4h Js',
+    );
+    engine.startHand();
+
+    act(engine, 'all-in');
+    act(engine, 'call');
+    act(engine, 'all-in');
+    act(engine, 'call');
+
+    expect(engine.state.pots.map(pot => pot.amount)).toEqual([300, 200, 100]);
+    expect(engine.state.handRake).toBe(30);
+    expect(engine.state.winners?.map(winner => ({
+      playerId: winner.playerId,
+      amount: winner.amount,
+      potIndex: winner.potIndex,
+    }))).toEqual([
+      { playerId: 'p1', amount: 285, potIndex: 0 },
+      { playerId: 'p2', amount: 190, potIndex: 1 },
+      { playerId: 'p3', amount: 95, potIndex: 2 },
+    ]);
+    expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
+  });
+
+  it('awards the odd net chip to the first winning position in a tied pot', () => {
+    const { engine, initialTotal } = setupWalletTable(
+      [1000, 1000],
+      '2h 3d 2c 3c As Ks Qs Js Ts',
+    );
+    engine.startHand();
+    act(engine, 'raise', 50);
+    act(engine, 'call');
+
+    while (engine.state.isHandInProgress) {
+      act(engine, 'check');
+    }
+
+    expect(engine.state.pots.map(pot => pot.amount)).toEqual([100]);
+    expect(engine.state.handRake).toBe(5);
+    expect(engine.state.winners?.map(winner => ({
+      playerId: winner.playerId,
+      amount: winner.amount,
+    }))).toEqual([
+      { playerId: 'p1', amount: 48 },
+      { playerId: 'p2', amount: 47 },
+    ]);
+    expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
   });
 });

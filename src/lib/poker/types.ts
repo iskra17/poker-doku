@@ -82,6 +82,7 @@ export interface GameState {
   bigBlind: number;
   isHandInProgress: boolean;
   winners: WinResult[] | null;
+  handRake: number;
   lastAction: PlayerAction | null;
   /** 이번 핸드 마지막 벳/레이즈 주체 — 봇 c벳(연속 베팅) 판정용 */
   lastAggressorId?: string | null;
@@ -142,6 +143,7 @@ export interface RoomConfig {
   minBuyIn: number;
   maxBuyIn: number;
   maxPlayers: 6;
+  economyMode?: 'practice' | 'wallet' | 'arena';
   turnTime: number; // seconds
   gameMode?: GameMode; // 기본 'cash'
   startingStack?: number; // 시트앤고 시작 스택

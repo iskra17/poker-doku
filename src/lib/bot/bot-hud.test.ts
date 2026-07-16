@@ -27,6 +27,7 @@ function state(partial: Partial<GameState> = {}): GameState {
     bigBlind: 20,
     isHandInProgress: true,
     winners: null,
+    handRake: 0,
     lastAction: null,
     turnTimer: 30,
     handNumber: 1,
