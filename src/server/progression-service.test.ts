@@ -256,6 +256,167 @@ describe('ProgressionService', () => {
     expect(rowCount(database, 'progression_events')).toBe(1);
   });
 
+  it('accepts only an exact semantic stored reward summary and returns it frozen', () => {
+    insertProfile(database, 'semantic-profile');
+    repository.getOrCreate('semantic-profile', 'sakura', 1_000);
+    const eventId = buildCompletedHandEventId(
+      'semantic-profile',
+      'semantic-room',
+      1,
+    );
+    const summary = validStoredSummary(eventId, {
+      dojoLevelsGained: [2, 3],
+      affinityLevelsGained: [2],
+      missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_ANY_10',
+        slot: 0,
+        dojoXpMilli: 100_000,
+      }],
+      streak: {
+        previousStreak: 6,
+        currentStreak: 7,
+        restPassUsed: false,
+      },
+      grantedItemIds: ['dojo-title-2'],
+    });
+    insertRawRewardEvent(database, 'semantic-profile', eventId, summary);
+
+    const stored = service.recordCompletedHand({
+      profileId: 'semantic-profile',
+      roomId: 'semantic-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    });
+
+    expect(stored).toEqual(summary);
+    expect(Object.isFrozen(stored)).toBe(true);
+    expect(Object.isFrozen(stored.dojoLevelsGained)).toBe(true);
+    expect(Object.isFrozen(stored.missionCompletions)).toBe(true);
+    expect(Object.isFrozen(stored.missionCompletions[0])).toBe(true);
+    expect(Object.isFrozen(stored.streak)).toBe(true);
+    expect(Object.isFrozen(stored.grantedItemIds)).toBe(true);
+  });
+
+  it('rejects malformed stored reward semantics with one generic error', () => {
+    insertProfile(database, 'corrupt-summary-profile');
+    repository.getOrCreate('corrupt-summary-profile', 'sakura', 1_000);
+    const corruptions: Array<Record<string, unknown>> = [
+      { extraTopLevel: true },
+      { eventId: undefined },
+      { missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_ANY_10',
+        slot: 0,
+        dojoXpMilli: 100_000,
+        extra: true,
+      }] },
+      { missionCompletions: [{
+        missionId: 'complete-hands',
+        slot: 0,
+        dojoXpMilli: 100_000,
+      }] },
+      { missionCompletions: [{
+        missionId: 'BAD\u0000MISSION',
+        slot: 0,
+        dojoXpMilli: 100_000,
+      }] },
+      { missionCompletions: [{
+        missionId: `BAD${String.fromCharCode(0xd800)}`,
+        slot: 0,
+        dojoXpMilli: 100_000,
+      }] },
+      { missionCompletions: [{
+        missionId: 'COMPLETE_HANDS_ANY_10',
+        slot: '0',
+        dojoXpMilli: 100_000,
+      }] },
+      { streak: {
+        previousStreak: 1,
+        currentStreak: 2,
+        restPassUsed: false,
+        extra: true,
+      } },
+      { streak: {
+        previousStreak: 1,
+        currentStreak: 2,
+        restPassUsed: 0,
+      } },
+      { dojoLevelsGained: [2, 2] },
+      { dojoLevelsGained: [2, 4] },
+      { affinityLevelsGained: [3, 2] },
+      { grantedItemIds: ['item-a', 'item-a'] },
+      { grantedItemIds: ['bad\u0000item'] },
+      { grantedItemIds: [`bad${String.fromCharCode(0xd800)}`] },
+      { grantedItemIds: ['x'.repeat(129)] },
+      { dojoXpMilli: -1 },
+      { characterId: 'dealer' },
+    ];
+
+    corruptions.forEach((corruption, index) => {
+      const handNumber = index + 1;
+      const eventId = buildCompletedHandEventId(
+        'corrupt-summary-profile',
+        'corrupt-summary-room',
+        handNumber,
+      );
+      const summary = validStoredSummary(eventId, corruption);
+      insertRawRewardEvent(
+        database,
+        'corrupt-summary-profile',
+        eventId,
+        summary,
+      );
+
+      expectServiceError(() => service.recordCompletedHand({
+        profileId: 'corrupt-summary-profile',
+        roomId: 'corrupt-summary-room',
+        handNumber,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: 2_000 + index,
+      }), 'PROGRESSION_STORED_SUMMARY_INVALID');
+    });
+  });
+
+  it('normalizes stored summary reflection traps without leaking details', () => {
+    const eventId = buildCompletedHandEventId(
+      'trap-profile',
+      'trap-room',
+      1,
+    );
+    const trappedSummary = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error('sensitive-summary-trap');
+      },
+    });
+    const trappedEvent = {
+      idempotencyKey: eventId,
+      profileId: 'trap-profile',
+      eventType: 'completed-hand',
+      balanceVersion: 1,
+      summary: trappedSummary,
+      createdAt: 1_000,
+    };
+    const repositoryDouble = {
+      getProgressionEvent: () => trappedEvent,
+      insertProgressionEvent: () => ({
+        status: 'duplicate' as const,
+        event: trappedEvent,
+      }),
+    } as unknown as ProgressionRepository;
+    const trappedService = new ProgressionService(database, repositoryDouble);
+
+    expectServiceError(() => trappedService.recordCompletedHand({
+      profileId: 'trap-profile',
+      roomId: 'trap-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    }), 'PROGRESSION_STORED_SUMMARY_INVALID');
+  });
+
   it('rejects an existing key with a conflicting event identity', () => {
     insertProfile(database, 'conflict-profile');
     repository.getOrCreate('conflict-profile', 'sakura', 1_000);
@@ -348,10 +509,12 @@ describe('ProgressionService', () => {
   it('fails safely for an unknown persisted balance version', () => {
     insertProfile(database, 'future-profile');
     repository.getOrCreate('future-profile', 'sakura', 1_000);
+    database.db.exec('PRAGMA ignore_check_constraints = ON;');
     database.db.prepare(`
       UPDATE progression_profiles SET balance_version = 2
       WHERE profile_id = 'future-profile'
     `).run();
+    database.db.exec('PRAGMA ignore_check_constraints = OFF;');
 
     expect(() => service.recordCompletedHand({
       profileId: 'future-profile',
@@ -401,8 +564,16 @@ describe('ProgressionService', () => {
     for (const patch of [
       { profileId: '' },
       { profileId: 'x'.repeat(129) },
+      { profileId: 'profile:collision' },
+      { profileId: 'profile\u0000collision' },
+      { profileId: `profile${String.fromCharCode(0xd800)}` },
       { roomId: '' },
       { roomId: 'x'.repeat(129) },
+      { roomId: 'room:collision' },
+      { roomId: 'room collision' },
+      { roomId: 'room\u0000collision' },
+      { roomId: `room${String.fromCharCode(0xd800)}` },
+      { roomId: `room${String.fromCharCode(0xfffd)}` },
       { handNumber: 0 },
       { handNumber: 1.5 },
       { mode: 'arena' },
@@ -424,6 +595,40 @@ describe('ProgressionService', () => {
         completedAt: 1_000,
       }), 'PROGRESSION_INPUT_INVALID');
     }
+    expect(rowCount(database, 'progression_profiles')).toBe(0);
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('accepts production profile and room identifier formats', () => {
+    const profileId = 'p_AbCdEf0123_-';
+    const roomId = 'room-1721199999999-a1b2c';
+    insertProfile(database, profileId);
+
+    const summary = service.recordCompletedHand({
+      profileId,
+      roomId,
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    });
+
+    expect(summary.eventId.length).toBeLessThanOrEqual(384);
+    expect(rowCount(database, 'progression_events')).toBe(1);
+  });
+
+  it('normalizes an unrepresentable practice KST date before a transaction', () => {
+    insertProfile(database, 'kst-overflow-profile');
+
+    expectServiceError(() => service.recordCompletedHand({
+      profileId: 'kst-overflow-profile',
+      roomId: 'practice-room',
+      handNumber: 1,
+      mode: 'practice',
+      selectedCharacterId: 'sakura',
+      completedAt: Date.parse('9999-12-31T23:59:59.999Z'),
+    }), 'PROGRESSION_INPUT_INVALID');
+
     expect(rowCount(database, 'progression_profiles')).toBe(0);
     expect(rowCount(database, 'progression_events')).toBe(0);
   });
@@ -468,6 +673,37 @@ function affinityRow(database: PokerDatabase, profileId: string) {
   return database.db.prepare(`
     SELECT level, xp_milli FROM character_affinity WHERE profile_id = ?
   `).get(profileId) as Record<string, unknown>;
+}
+
+function validStoredSummary(
+  eventId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    eventId,
+    dojoXpMilli: 10_000,
+    dojoLevelsGained: [],
+    characterId: 'sakura',
+    affinityMilli: 2_000,
+    affinityLevelsGained: [],
+    missionCompletions: [],
+    grantedItemIds: [],
+    ...overrides,
+  };
+}
+
+function insertRawRewardEvent(
+  database: PokerDatabase,
+  profileId: string,
+  eventId: string,
+  summary: Record<string, unknown>,
+): void {
+  database.db.prepare(`
+    INSERT INTO progression_events (
+      idempotency_key, profile_id, event_type, balance_version,
+      summary_json, created_at
+    ) VALUES (?, ?, 'completed-hand', 1, ?, 1500)
+  `).run(eventId, profileId, JSON.stringify(summary));
 }
 
 function totalDojoMilli(value: { dojoLevel: number; dojoXpMilli: number }): number {

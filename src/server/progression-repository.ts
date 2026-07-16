@@ -1,4 +1,8 @@
 import type { PokerDatabase } from './persistence/database';
+import {
+  getBalance,
+  type ProgressionBalance,
+} from '@/lib/progression/balance';
 
 export const PLAYABLE_CHARACTER_IDS = [
   'sakura',
@@ -300,7 +304,10 @@ export class ProgressionRepository {
       WHERE profile_id = ?
       ORDER BY character_id
     `).all(profileId) as unknown as CharacterAffinityRow[];
-      const affinities = affinityRows.map(mapCharacterAffinity);
+      const affinities = affinityRows.map(row => mapCharacterAffinity(
+        row,
+        profile.balanceVersion,
+      ));
       if (
         affinities.length === 0
         || !affinities.some(value => (
@@ -709,7 +716,10 @@ function mapProgressionProfile(row: ProgressionProfileRow): ProgressionProfile {
   };
 }
 
-function mapCharacterAffinity(row: CharacterAffinityRow): CharacterAffinity {
+function mapCharacterAffinity(
+  row: CharacterAffinityRow,
+  balanceVersion: number,
+): CharacterAffinity {
   if (typeof row.profile_id !== 'string' || row.profile_id.length === 0) {
     throw persistenceInvalid();
   }
@@ -719,6 +729,7 @@ function mapCharacterAffinity(row: CharacterAffinityRow): CharacterAffinity {
     assertAffinityValue(
       { level: row.level, xpMilli: row.xp_milli },
       'PROGRESSION_PERSISTENCE_INVALID',
+      balanceVersion,
     );
   } catch {
     throw persistenceInvalid();
@@ -825,13 +836,16 @@ function assertProgressionCore(
   value: ProgressionCore,
   code: ProgressionErrorCode,
 ): void {
+  const balance = getSupportedBalance(value.balanceVersion, code);
   if (
-    value.balanceVersion !== SUPPORTED_BALANCE_VERSION
-    || !Number.isSafeInteger(value.dojoLevel)
+    !Number.isSafeInteger(value.dojoLevel)
     || value.dojoLevel < 1
-    || value.dojoLevel > 50
+    || value.dojoLevel > balance.dojoMaxLevel
     || !isNonnegativeSafeInteger(value.dojoXpMilli)
-    || (value.dojoLevel === 50 && value.dojoXpMilli !== 0)
+    || (value.dojoLevel === balance.dojoMaxLevel
+      && value.dojoXpMilli !== 0)
+    || (value.dojoLevel < balance.dojoMaxLevel
+      && value.dojoXpMilli >= balance.dojoXpForNextLevel(value.dojoLevel))
   ) {
     throw new ProgressionPersistenceError(code);
   }
@@ -863,14 +877,32 @@ function assertProgressionCounters(
 function assertAffinityValue(
   value: Pick<CharacterAffinity, 'level' | 'xpMilli'>,
   code: ProgressionErrorCode,
+  balanceVersion = SUPPORTED_BALANCE_VERSION,
 ): void {
+  const balance = getSupportedBalance(balanceVersion, code);
   if (
     !Number.isSafeInteger(value.level)
     || value.level < 1
-    || value.level > 20
+    || value.level > balance.affinityMaxLevel
     || !isNonnegativeSafeInteger(value.xpMilli)
-    || (value.level === 20 && value.xpMilli !== 0)
+    || (value.level === balance.affinityMaxLevel && value.xpMilli !== 0)
+    || (value.level < balance.affinityMaxLevel
+      && value.xpMilli >= balance.affinityForNextLevel(value.level))
   ) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function getSupportedBalance(
+  version: number,
+  code: ProgressionErrorCode,
+): ProgressionBalance {
+  if (version !== SUPPORTED_BALANCE_VERSION) {
+    throw new ProgressionPersistenceError(code);
+  }
+  try {
+    return getBalance(version);
+  } catch {
     throw new ProgressionPersistenceError(code);
   }
 }

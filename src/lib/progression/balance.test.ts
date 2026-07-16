@@ -103,10 +103,14 @@ describe('progression balance version 1', () => {
       expect(() => applyDojoXp({ level: 1, xpMilli: 0 }, reward))
         .toThrowError('PROGRESSION_REWARD_INVALID');
     }
-    expect(() => applyDojoXp(
+    expect(applyDojoXp(
       { level: 49, xpMilli: 1_299_999 },
       Number.MAX_SAFE_INTEGER,
-    )).toThrowError('PROGRESSION_REWARD_OVERFLOW');
+    )).toEqual({ level: 50, xpMilli: 0 });
+    expect(applyAffinityXp(
+      { level: 19, xpMilli: 309_999 },
+      Number.MAX_SAFE_INTEGER,
+    )).toEqual({ level: 20, xpMilli: 0 });
     expect(() => applyAffinityXp({ level: 1, xpMilli: 40_000 }, 0))
       .toThrowError('PROGRESSION_XP_STATE_INVALID');
   });

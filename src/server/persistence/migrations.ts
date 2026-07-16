@@ -173,10 +173,16 @@ export const migrations: readonly Migration[] = [
     sql: `
       CREATE TABLE progression_profiles (
         profile_id TEXT PRIMARY KEY REFERENCES profiles(id) ON DELETE CASCADE,
-        balance_version INTEGER NOT NULL CHECK (balance_version > 0),
+        balance_version INTEGER NOT NULL CHECK (balance_version = 1),
         dojo_level INTEGER NOT NULL CHECK (dojo_level BETWEEN 1 AND 50),
         dojo_xp_milli INTEGER NOT NULL CHECK (
-          dojo_xp_milli >= 0 AND (dojo_level < 50 OR dojo_xp_milli = 0)
+          dojo_xp_milli >= 0 AND (
+            (dojo_level = 50 AND dojo_xp_milli = 0)
+            OR (
+              dojo_level < 50
+              AND dojo_xp_milli < (100 + 25 * (dojo_level - 1)) * 1000
+            )
+          )
         ),
         selected_character_id TEXT NOT NULL CHECK (
           selected_character_id IN ('sakura','ara','hana','chloe','vivian','elena')
@@ -206,7 +212,13 @@ export const migrations: readonly Migration[] = [
         ),
         level INTEGER NOT NULL CHECK (level BETWEEN 1 AND 20),
         xp_milli INTEGER NOT NULL CHECK (
-          xp_milli >= 0 AND (level < 20 OR xp_milli = 0)
+          xp_milli >= 0 AND (
+            (level = 20 AND xp_milli = 0)
+            OR (
+              level < 20
+              AND xp_milli < (40 + 15 * (level - 1)) * 1000
+            )
+          )
         ),
         PRIMARY KEY (profile_id, character_id)
       ) STRICT;

@@ -654,15 +654,45 @@ describe('ProgressionRepository', () => {
       'PROGRESSION_PERSISTENCE_INVALID',
     );
 
+    database.db.exec('PRAGMA ignore_check_constraints = ON;');
     database.db.prepare(`
       UPDATE progression_profiles
       SET practice_date = NULL, balance_version = 2
       WHERE profile_id = 'profile-a'
     `).run();
+    database.db.exec('PRAGMA ignore_check_constraints = OFF;');
     expectErrorCode(
       () => repository.getOrCreate('profile-a', 'sakura', 2_000),
       'PROGRESSION_PERSISTENCE_INVALID',
     );
+  });
+
+  it('rejects non-normalized dojo and affinity XP from legacy storage', () => {
+    for (const [profileId, corruption] of [
+      [
+        'dojo-corrupt',
+        `UPDATE progression_profiles
+         SET dojo_level = 1, dojo_xp_milli = 100000
+         WHERE profile_id = 'dojo-corrupt'`,
+      ],
+      [
+        'affinity-corrupt',
+        `UPDATE character_affinity
+         SET level = 1, xp_milli = 40000
+         WHERE profile_id = 'affinity-corrupt' AND character_id = 'sakura'`,
+      ],
+    ] as const) {
+      insertProfile(database, profileId);
+      repository.getOrCreate(profileId, 'sakura', 1_000);
+      database.db.exec('PRAGMA ignore_check_constraints = ON;');
+      database.db.exec(corruption);
+      database.db.exec('PRAGMA ignore_check_constraints = OFF;');
+
+      expectErrorCode(
+        () => repository.getOrCreate(profileId, 'sakura', 2_000),
+        'PROGRESSION_PERSISTENCE_INVALID',
+      );
+    }
   });
 
   it('rejects malformed persisted event JSON with the generic persistence error', () => {

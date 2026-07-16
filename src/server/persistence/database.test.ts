@@ -420,6 +420,26 @@ describe('PokerDatabase migrations', () => {
       UPDATE character_affinity SET level = 20, xp_milli = 1
       WHERE profile_id = 'durable-constraints' AND character_id = 'sakura'
     `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 1, dojo_xp_milli = 100000
+      WHERE profile_id = 'durable-constraints'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 49, dojo_xp_milli = 1300000
+      WHERE profile_id = 'durable-constraints'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE character_affinity SET level = 1, xp_milli = 40000
+      WHERE profile_id = 'durable-constraints' AND character_id = 'sakura'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE character_affinity SET level = 19, xp_milli = 310000
+      WHERE profile_id = 'durable-constraints' AND character_id = 'sakura'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE progression_profiles SET balance_version = 2
+      WHERE profile_id = 'durable-constraints'
+    `).run()).toThrow();
 
     db.prepare(`
       UPDATE progression_profiles SET dojo_level = 50, dojo_xp_milli = 0

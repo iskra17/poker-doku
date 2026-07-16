@@ -22,6 +22,20 @@ import { getKstDateKey } from './economy-service';
 const EVENT_TYPE_COMPLETED_HAND = 'completed-hand';
 const EVENT_TYPE_SNG_FINISH = 'sng-finish';
 const MAX_EVENT_ID_COMPONENT_LENGTH = 128;
+const MAX_EVENT_ID_LENGTH = 384;
+const INTERNAL_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
+const MISSION_ID_PATTERN = /^[A-Z][A-Z0-9_]{0,127}$/;
+const CATALOG_ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+const REQUIRED_SUMMARY_KEYS = [
+  'eventId',
+  'dojoXpMilli',
+  'dojoLevelsGained',
+  'characterId',
+  'affinityMilli',
+  'affinityLevelsGained',
+  'missionCompletions',
+  'grantedItemIds',
+] as const;
 
 export type ProgressionServiceErrorCode =
   | 'PROGRESSION_INPUT_INVALID'
@@ -58,6 +72,7 @@ interface ValidCompletedHandInput extends Omit<
   'selectedCharacterId'
 > {
   selectedCharacterId: PlayableCharacterId;
+  kstDate: string | null;
 }
 
 interface ValidSngFinishInput extends Omit<SngFinishInput, 'selectedCharacterId'> {
@@ -105,11 +120,8 @@ export class ProgressionService {
         snapshot.affinities,
         snapshot.profile.selectedCharacterId,
       );
-      const kstDate = safeInput.mode === 'practice'
-        ? getKstDateKey(safeInput.completedAt)
-        : null;
       const nextPracticeHands = safeInput.mode === 'practice'
-        ? snapshot.profile.practiceDate === kstDate
+        ? snapshot.profile.practiceDate === safeInput.kstDate
           ? safeIncrement(snapshot.profile.practiceHands)
           : 1
         : snapshot.profile.practiceHands;
@@ -127,7 +139,7 @@ export class ProgressionService {
       );
       const nextCounters: ProgressionCounters = {
         practiceDate: safeInput.mode === 'practice'
-          ? kstDate
+          ? safeInput.kstDate
           : snapshot.profile.practiceDate,
         practiceHands: nextPracticeHands,
         completedHands: safeIncrement(snapshot.profile.completedHands),
@@ -321,12 +333,24 @@ export function buildCompletedHandEventId(
   roomId: string,
   handNumber: number,
 ): string {
-  return `completed-hand:${lengthPrefixed(roomId)}:${handNumber}:` +
+  assertBoundedId(profileId);
+  assertBoundedId(roomId);
+  if (!Number.isSafeInteger(handNumber) || handNumber < 1) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  const eventId = `completed-hand:${lengthPrefixed(roomId)}:${handNumber}:` +
     lengthPrefixed(profileId);
+  assertEventIdLength(eventId);
+  return eventId;
 }
 
 export function buildSngFinishEventId(profileId: string, roomId: string): string {
-  return `sng-finish:${lengthPrefixed(roomId)}:${lengthPrefixed(profileId)}`;
+  assertBoundedId(profileId);
+  assertBoundedId(roomId);
+  const eventId = `sng-finish:${lengthPrefixed(roomId)}:` +
+    lengthPrefixed(profileId);
+  assertEventIdLength(eventId);
+  return eventId;
 }
 
 function lengthPrefixed(value: string): string {
@@ -359,7 +383,15 @@ function validateCompletedHandInput(
   }
   const selectedCharacterId = assertCharacter(copy.selectedCharacterId);
   assertTimestamp(copy.completedAt);
-  return { ...copy, selectedCharacterId };
+  let kstDate: string | null = null;
+  if (copy.mode === 'practice') {
+    try {
+      kstDate = getKstDateKey(copy.completedAt);
+    } catch {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+  }
+  return { ...copy, selectedCharacterId, kstDate };
 }
 
 function validateSngFinishInput(input: SngFinishInput): ValidSngFinishInput {
@@ -388,9 +420,15 @@ function validateSngFinishInput(input: SngFinishInput): ValidSngFinishInput {
 function assertBoundedId(value: string): void {
   if (
     typeof value !== 'string'
-    || value.trim().length === 0
+    || !INTERNAL_ID_PATTERN.test(value)
     || value.length > MAX_EVENT_ID_COMPONENT_LENGTH
   ) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+}
+
+function assertEventIdLength(value: string): void {
+  if (value.length > MAX_EVENT_ID_LENGTH) {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
 }
@@ -469,22 +507,28 @@ function parseStoredSummary(
   event: ProgressionEvent,
   expectedEventId: string,
 ): ProgressionRewardSummary {
-  const value = event.summary;
-  if (
-    value.eventId !== expectedEventId
-    || !isNonnegativeSafeInteger(value.dojoXpMilli)
-    || !isLevelArray(value.dojoLevelsGained, 50)
-    || typeof value.characterId !== 'string'
-    || !(PLAYABLE_CHARACTER_IDS as readonly string[]).includes(value.characterId)
-    || !isNonnegativeSafeInteger(value.affinityMilli)
-    || !isLevelArray(value.affinityLevelsGained, 20)
-    || !isObjectArray(value.missionCompletions)
-    || !isStringArray(value.grantedItemIds)
-    || (value.streak !== undefined && !isPlainObject(value.streak))
-  ) {
+  try {
+    const value = event.summary;
+    if (
+      !hasExactSummaryKeys(value)
+      || value.eventId !== expectedEventId
+      || !isNonnegativeSafeInteger(value.dojoXpMilli)
+      || !isConsecutiveLevelArray(value.dojoLevelsGained, 50)
+      || typeof value.characterId !== 'string'
+      || !(PLAYABLE_CHARACTER_IDS as readonly string[])
+        .includes(value.characterId)
+      || !isNonnegativeSafeInteger(value.affinityMilli)
+      || !isConsecutiveLevelArray(value.affinityLevelsGained, 20)
+      || !isMissionCompletionArray(value.missionCompletions)
+      || !isUniqueCatalogItemIdArray(value.grantedItemIds)
+      || (hasOwn(value, 'streak') && !isStreakChange(value.streak))
+    ) {
+      throw new Error('invalid summary');
+    }
+    return value as unknown as ProgressionRewardSummary;
+  } catch {
     throw new ProgressionServiceError('PROGRESSION_STORED_SUMMARY_INVALID');
   }
-  return value as unknown as ProgressionRewardSummary;
 }
 
 function isNonnegativeSafeInteger(value: unknown): value is number {
@@ -493,18 +537,110 @@ function isNonnegativeSafeInteger(value: unknown): value is number {
     && value >= 0;
 }
 
-function isLevelArray(value: unknown, maxLevel: number): value is number[] {
-  return Array.isArray(value) && value.every(level => (
-    Number.isSafeInteger(level) && level >= 2 && level <= maxLevel
+function isConsecutiveLevelArray(
+  value: unknown,
+  maxLevel: number,
+): value is number[] {
+  return Array.isArray(value) && value.every((level, index) => (
+    Number.isSafeInteger(level)
+    && level >= 2
+    && level <= maxLevel
+    && (index === 0 || level === value[index - 1] + 1)
   ));
 }
 
-function isObjectArray(value: unknown): value is Record<string, unknown>[] {
-  return Array.isArray(value) && value.every(isPlainObject);
+function hasExactSummaryKeys(value: unknown): value is Record<string, unknown> {
+  if (!isPlainObject(value)) return false;
+  const keys = getOwnStringKeys(value);
+  if (!keys) return false;
+  const hasStreak = hasOwn(value, 'streak');
+  if (keys.length !== REQUIRED_SUMMARY_KEYS.length + (hasStreak ? 1 : 0)) {
+    return false;
+  }
+  return REQUIRED_SUMMARY_KEYS.every(key => hasOwn(value, key))
+    && keys.every(key => (
+      (REQUIRED_SUMMARY_KEYS as readonly string[]).includes(key)
+      || key === 'streak'
+    ));
 }
 
-function isStringArray(value: unknown): value is string[] {
-  return Array.isArray(value) && value.every(item => typeof item === 'string');
+function isMissionCompletionArray(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const missionIds = new Set<string>();
+  const slots = new Set<number>();
+  return value.every(item => {
+    if (!hasExactKeys(item, ['missionId', 'slot', 'dojoXpMilli'])) {
+      return false;
+    }
+    const { missionId, slot, dojoXpMilli } = item;
+    if (
+      typeof missionId !== 'string'
+      || !MISSION_ID_PATTERN.test(missionId)
+      || missionIds.has(missionId)
+      || typeof slot !== 'number'
+      || !Number.isSafeInteger(slot)
+      || slot < 0
+      || slot > 2
+      || slots.has(slot)
+      || !isNonnegativeSafeInteger(dojoXpMilli)
+    ) {
+      return false;
+    }
+    missionIds.add(missionId);
+    slots.add(slot);
+    return true;
+  });
+}
+
+function isStreakChange(value: unknown): boolean {
+  if (!hasExactKeys(value, [
+    'previousStreak',
+    'currentStreak',
+    'restPassUsed',
+  ])) {
+    return false;
+  }
+  return isNonnegativeSafeInteger(value.previousStreak)
+    && isNonnegativeSafeInteger(value.currentStreak)
+    && typeof value.restPassUsed === 'boolean';
+}
+
+function isUniqueCatalogItemIdArray(value: unknown): value is string[] {
+  if (!Array.isArray(value)) return false;
+  const seen = new Set<string>();
+  return value.every(item => {
+    if (
+      typeof item !== 'string'
+      || !CATALOG_ITEM_ID_PATTERN.test(item)
+      || seen.has(item)
+    ) {
+      return false;
+    }
+    seen.add(item);
+    return true;
+  });
+}
+
+function hasExactKeys(
+  value: unknown,
+  expected: readonly string[],
+): value is Record<string, unknown> {
+  if (!isPlainObject(value)) return false;
+  const keys = getOwnStringKeys(value);
+  if (!keys) return false;
+  return keys.length === expected.length
+    && expected.every(key => hasOwn(value, key));
+}
+
+function getOwnStringKeys(value: object): string[] | null {
+  const keys = Reflect.ownKeys(value);
+  return keys.every((key): key is string => typeof key === 'string')
+    ? keys
+    : null;
+}
+
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

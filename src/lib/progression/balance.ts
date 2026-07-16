@@ -189,9 +189,6 @@ function applyLevelXp(
   if (state.level === maxLevel) return { level: maxLevel, xpMilli: 0 };
 
   let remaining = BigInt(state.xpMilli) + BigInt(rewardMilli);
-  if (remaining > MAX_SAFE_BIGINT) {
-    throw new Error('PROGRESSION_REWARD_OVERFLOW');
-  }
   let level = state.level;
   while (level < maxLevel) {
     const threshold = BigInt(thresholdForLevel(level));
@@ -200,6 +197,9 @@ function applyLevelXp(
     level += 1;
   }
   if (level === maxLevel) return { level, xpMilli: 0 };
+  if (remaining > MAX_SAFE_BIGINT) {
+    throw new Error('PROGRESSION_REWARD_OVERFLOW');
+  }
   return { level, xpMilli: Number(remaining) };
 }
 
