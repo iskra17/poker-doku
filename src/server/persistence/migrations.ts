@@ -95,6 +95,27 @@ export const migrations: readonly Migration[] = [
       ON rescue_claims(profile_id, claimed_at DESC);
     `,
   },
+  {
+    version: 3,
+    name: 'durable_cash_hand_settlement_identity',
+    sql: `
+      CREATE TABLE cash_hand_settlements (
+        room_id TEXT NOT NULL,
+        settlement_seq INTEGER NOT NULL CHECK (settlement_seq > 0),
+        engine_hand_number INTEGER NOT NULL CHECK (engine_hand_number > 0),
+        start_fingerprint TEXT NOT NULL CHECK (length(start_fingerprint) = 64),
+        settlement_fingerprint TEXT CHECK (
+          settlement_fingerprint IS NULL OR length(settlement_fingerprint) = 64
+        ),
+        status TEXT NOT NULL CHECK (status IN ('prepared','settled','voided')),
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY (room_id, settlement_seq)
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_prepared_cash_hand_per_room
+        ON cash_hand_settlements(room_id) WHERE status = 'prepared';
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

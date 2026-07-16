@@ -211,6 +211,8 @@ describe('RoomManager wallet cash persistence hooks', () => {
     expect(state.players.every(player => player.holeCards.length === 0)).toBe(true);
     expect(manager.getChatHistory(roomId).at(-1)?.message)
       .toBe('저장 연결을 확인 중이에요');
+    expect(manager.disposeRoom(roomId)).toBe(true);
+    expect(economy.voidRoom).toHaveBeenCalledOnce();
   });
 
   it('persists a completed hand before settling a player who left during it', () => {
@@ -290,6 +292,10 @@ describe('RoomManager wallet cash persistence hooks', () => {
         paidTotal: expect.any(Number),
         settlementOk: false,
       });
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    manager.shutdown();
+    expect(economy.voidRoom).not.toHaveBeenCalled();
+    expect(manager.getRoom(roomId)).toBeDefined();
   });
 
   it('refuses to dispose an active wallet hand before its persisted settlement', () => {

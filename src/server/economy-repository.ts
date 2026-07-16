@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { PublicProfile } from '@/lib/profile/types';
 import type { PokerDatabase } from './persistence/database';
 
@@ -193,6 +193,15 @@ interface CashEscrowRow {
   checkpoint_hand: number;
 }
 
+interface CashHandSettlementRow {
+  room_id: string;
+  settlement_seq: number;
+  engine_hand_number: number;
+  start_fingerprint: string;
+  settlement_fingerprint: string | null;
+  status: 'prepared' | 'settled' | 'voided';
+}
+
 export class EconomyRepository {
   constructor(private readonly database: PokerDatabase) {}
 
@@ -364,6 +373,11 @@ export class EconomyRepository {
       for (const escrow of escrows) {
         this.closeEscrowInTransaction(escrow, 'CASH_CASHOUT', at);
       }
+      this.database.db.prepare(`
+        UPDATE cash_hand_settlements
+        SET status = 'voided', updated_at = ?
+        WHERE room_id = ? AND status = 'prepared'
+      `).run(at, roomId);
       return escrows.length;
     });
   }
@@ -381,14 +395,52 @@ export class EconomyRepository {
     handNumber: number,
     stacks: readonly CashHandStack[],
     at: number,
-  ): void {
+  ): number {
     this.assertCashHandNumber(handNumber);
     assertValidEconomyTimestamp(at);
     this.assertUniqueProfiles(stacks);
     for (const stack of stacks) {
       this.assertCashAmount(stack.amount, true, 'CASH_CHECKPOINT_INVALID');
     }
-    this.database.transaction(() => {
+    const startFingerprint = this.fingerprintCashHandStart(stacks);
+    return this.database.transaction(() => {
+      const prepared = this.database.db.prepare(`
+        SELECT room_id, settlement_seq, engine_hand_number, start_fingerprint,
+               settlement_fingerprint, status
+        FROM cash_hand_settlements
+        WHERE room_id = ? AND status = 'prepared'
+      `).get(roomId) as CashHandSettlementRow | undefined;
+      let settlementSeq: number;
+      if (prepared) {
+        this.assertPersistedSettlementRow(prepared);
+        if (
+          prepared.engine_hand_number !== handNumber
+          || prepared.start_fingerprint !== startFingerprint
+        ) {
+          throw new EconomyDomainError('CASH_CHECKPOINT_INVALID');
+        }
+        settlementSeq = prepared.settlement_seq;
+      } else {
+        const latest = this.database.db.prepare(`
+          SELECT COALESCE(MAX(settlement_seq), 0) AS settlement_seq
+          FROM cash_hand_settlements WHERE room_id = ?
+        `).get(roomId) as { settlement_seq: number };
+        if (!Number.isSafeInteger(latest.settlement_seq) || latest.settlement_seq < 0) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        settlementSeq = this.safeAdd(
+          latest.settlement_seq,
+          1,
+          'CASH_CHECKPOINT_INVALID',
+        );
+        this.database.db.prepare(`
+          INSERT INTO cash_hand_settlements (
+            room_id, settlement_seq, engine_hand_number, start_fingerprint,
+            settlement_fingerprint, status, updated_at
+          ) VALUES (?, ?, ?, ?, NULL, 'prepared', ?)
+        `).run(roomId, settlementSeq, handNumber, startFingerprint, at);
+      }
+
       for (const stack of stacks) {
         const escrow = this.requireActiveCashEscrow(stack.profileId, roomId);
         if (escrow.amount !== stack.amount) {
@@ -400,6 +452,7 @@ export class EconomyRepository {
           WHERE id = ? AND status = 'active'
         `).run(stack.amount, handNumber, at, escrow.id);
       }
+      return settlementSeq;
     });
   }
 
@@ -437,47 +490,52 @@ export class EconomyRepository {
       throw new EconomyDomainError('CASH_CONSERVATION_INVALID');
     }
 
-    const prefix = `cash-hand:${roomId}:${handNumber}`;
+    const startFingerprint = this.fingerprintCashHandStart(
+      humans.map(human => ({
+        profileId: human.profileId,
+        amount: human.startAmount,
+      })),
+    );
+    const settlementFingerprint = this.fingerprintCashHandSettlement(
+      humans,
+      botDelta,
+      rake,
+    );
     this.database.transaction(() => {
-      const existingMarker = this.database.db.prepare(`
-        SELECT profile_id, account, delta, reason, ref_id
-        FROM chip_ledger WHERE idempotency_key = ?
-      `).get(`${prefix}:bot`) as LedgerOperationRow | undefined;
-      if (existingMarker) {
-        this.assertMatchingLedger(existingMarker, {
-          profileId: null,
-          account: 'bot',
-          delta: botDelta,
-          reason: this.deltaReason(botDelta, 'BOT_NET_WIN', 'BOT_NET_LOSS'),
-          refId: roomId,
-        });
-        for (const human of humans) {
-          const delta = human.endAmount - human.startAmount;
-          const row = this.database.db.prepare(`
-            SELECT profile_id, account, delta, reason, ref_id
-            FROM chip_ledger WHERE idempotency_key = ?
-          `).get(`${prefix}:human:${human.profileId}`) as LedgerOperationRow | undefined;
-          this.assertMatchingLedger(row, {
-            profileId: human.profileId,
-            account: 'escrow',
-            delta,
-            reason: this.deltaReason(delta, 'CASH_HAND_WIN', 'CASH_HAND_LOSS'),
-            refId: roomId,
-          });
+      const prepared = this.database.db.prepare(`
+        SELECT room_id, settlement_seq, engine_hand_number, start_fingerprint,
+               settlement_fingerprint, status
+        FROM cash_hand_settlements
+        WHERE room_id = ? AND status = 'prepared'
+      `).get(roomId) as CashHandSettlementRow | undefined;
+      const identity = prepared ?? this.database.db.prepare(`
+        SELECT room_id, settlement_seq, engine_hand_number, start_fingerprint,
+               settlement_fingerprint, status
+        FROM cash_hand_settlements
+        WHERE room_id = ? AND status = 'settled' AND engine_hand_number = ?
+        ORDER BY settlement_seq DESC
+        LIMIT 1
+      `).get(roomId, handNumber) as CashHandSettlementRow | undefined;
+      if (!identity) throw new EconomyDomainError('CASH_CHECKPOINT_INVALID');
+      this.assertPersistedSettlementRow(identity);
+      if (
+        identity.engine_hand_number !== handNumber
+        || identity.start_fingerprint !== startFingerprint
+      ) {
+        throw new EconomyDomainError(
+          identity.status === 'settled'
+            ? 'IDEMPOTENCY_KEY_CONFLICT'
+            : 'CASH_CHECKPOINT_INVALID',
+        );
+      }
+      if (identity.status === 'settled') {
+        if (identity.settlement_fingerprint !== settlementFingerprint) {
+          throw new EconomyDomainError('IDEMPOTENCY_KEY_CONFLICT');
         }
-        const rakeRow = this.database.db.prepare(`
-          SELECT profile_id, account, delta, reason, ref_id
-          FROM chip_ledger WHERE idempotency_key = ?
-        `).get(`${prefix}:rake`) as LedgerOperationRow | undefined;
-        this.assertMatchingLedger(rakeRow, {
-          profileId: null,
-          account: 'burn',
-          delta: rake,
-          reason: 'RAKE_BURN',
-          refId: roomId,
-        });
         return;
       }
+
+      const prefix = `cash-hand:${roomId}:${identity.settlement_seq}`;
 
       for (const human of humans) {
         const escrow = this.requireActiveCashEscrow(human.profileId, roomId);
@@ -522,6 +580,19 @@ export class EconomyRepository {
         idempotencyKey: `${prefix}:rake`,
         at,
       });
+      const completed = this.database.db.prepare(`
+        UPDATE cash_hand_settlements
+        SET settlement_fingerprint = ?, status = 'settled', updated_at = ?
+        WHERE room_id = ? AND settlement_seq = ? AND status = 'prepared'
+      `).run(
+        settlementFingerprint,
+        at,
+        roomId,
+        identity.settlement_seq,
+      );
+      if (completed.changes !== 1) {
+        throw new EconomyDomainError('CASH_SETTLEMENT_INVALID');
+      }
     });
   }
 
@@ -536,6 +607,18 @@ export class EconomyRepository {
           'ECONOMY_PERSISTENCE_INVALID',
         );
         this.assertCashHandNumber(escrow.checkpointHand, true);
+        const latestIdentity = this.database.db.prepare(`
+          SELECT room_id, settlement_seq, engine_hand_number, start_fingerprint,
+                 settlement_fingerprint, status
+          FROM cash_hand_settlements
+          WHERE room_id = ?
+          ORDER BY settlement_seq DESC
+          LIMIT 1
+        `).get(escrow.roomId) as CashHandSettlementRow | undefined;
+        if (latestIdentity) this.assertPersistedSettlementRow(latestIdentity);
+        const durableCheckpoint = latestIdentity?.settlement_seq ?? 0;
+        const voidKey = `void:${escrow.profileId}:${escrow.roomId}`
+          + `:${escrow.checkpointHand}:s${durableCheckpoint}:e${escrow.id}`;
         const profile = this.requirePublicProfile(escrow.profileId);
         const nextBalance = this.safeAdd(
           profile.wallet.balance,
@@ -551,7 +634,7 @@ export class EconomyRepository {
           delta: escrow.checkpointAmount,
           reason: 'CASH_VOID_REFUND',
           refId: escrow.roomId,
-          idempotencyKey: `void:${escrow.profileId}:${escrow.roomId}:${escrow.checkpointHand}`,
+          idempotencyKey: voidKey,
           at,
         });
         this.insertLedger({
@@ -560,13 +643,18 @@ export class EconomyRepository {
           delta: -escrow.checkpointAmount,
           reason: 'CASH_VOID_REFUND',
           refId: escrow.roomId,
-          idempotencyKey: `void-escrow:${escrow.profileId}:${escrow.roomId}:${escrow.checkpointHand}`,
+          idempotencyKey: `${voidKey}:escrow`,
           at,
         });
         this.database.db.prepare(`
           UPDATE seat_escrows SET status = 'settled', amount = 0, updated_at = ?
           WHERE id = ? AND status = 'active'
         `).run(at, escrow.id);
+        this.database.db.prepare(`
+          UPDATE cash_hand_settlements
+          SET status = 'voided', updated_at = ?
+          WHERE room_id = ? AND status = 'prepared'
+        `).run(at, escrow.roomId);
       }
       return escrows.length;
     });
@@ -949,6 +1037,55 @@ export class EconomyRepository {
     negative: string,
   ): string {
     return delta >= 0 ? positive : negative;
+  }
+
+  private fingerprintCashHandStart(
+    stacks: readonly CashHandStack[],
+  ): string {
+    const canonical = [...stacks]
+      .sort((left, right) => left.profileId < right.profileId ? -1 : left.profileId > right.profileId ? 1 : 0)
+      .map(stack => [stack.profileId, stack.amount] as const);
+    return this.sha256Fingerprint({ humans: canonical });
+  }
+
+  private fingerprintCashHandSettlement(
+    humans: readonly CashHandDelta[],
+    botDelta: number,
+    rake: number,
+  ): string {
+    const canonical = [...humans]
+      .sort((left, right) => left.profileId < right.profileId ? -1 : left.profileId > right.profileId ? 1 : 0)
+      .map(human => [
+        human.profileId,
+        human.startAmount,
+        human.endAmount,
+      ] as const);
+    return this.sha256Fingerprint({ humans: canonical, botDelta, rake });
+  }
+
+  private sha256Fingerprint(value: unknown): string {
+    return createHash('sha256')
+      .update(JSON.stringify(value), 'utf8')
+      .digest('hex');
+  }
+
+  private assertPersistedSettlementRow(row: CashHandSettlementRow): void {
+    const fingerprintPattern = /^[a-f0-9]{64}$/;
+    if (
+      !Number.isSafeInteger(row.settlement_seq)
+      || row.settlement_seq <= 0
+      || !Number.isSafeInteger(row.engine_hand_number)
+      || row.engine_hand_number <= 0
+      || !fingerprintPattern.test(row.start_fingerprint)
+      || (
+        row.settlement_fingerprint !== null
+        && !fingerprintPattern.test(row.settlement_fingerprint)
+      )
+      || (row.status === 'prepared' && row.settlement_fingerprint !== null)
+      || (row.status === 'settled' && row.settlement_fingerprint === null)
+    ) {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
   }
 
   private requirePublicProfile(profileId: string): PublicProfile {

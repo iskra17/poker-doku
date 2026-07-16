@@ -60,6 +60,8 @@ export class RoomManager {
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
   /** 영속 정산 실패 방은 현재 엔진 스냅샷을 보존한 채 다음 핸드를 시작하지 않는다. */
   private economyBlockedRooms = new Set<string>();
+  /** 완료된 엔진 핸드의 DB 정산이 확정되지 않아 cashout/void가 금지된 방. */
+  private unresolvedSettlementRooms = new Set<string>();
   private handSettlementStatus = new Map<string, {
     handNumber: number;
     ok: boolean;
@@ -127,6 +129,7 @@ export class RoomManager {
   ): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    if (this.unresolvedSettlementRooms.has(roomId)) return false;
     if (
       this.isWalletCash(room)
       && room.engine.state.isHandInProgress
@@ -163,6 +166,7 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
+    this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
@@ -401,6 +405,7 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
+    this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
   }
 
@@ -1176,6 +1181,7 @@ export class RoomManager {
       } catch {
         settlementOk = false;
         this.economyBlockedRooms.add(roomId);
+        this.unresolvedSettlementRooms.add(roomId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
       }
     }

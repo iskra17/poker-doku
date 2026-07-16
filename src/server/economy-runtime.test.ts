@@ -1,18 +1,20 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PokerEngine } from '../lib/poker/engine';
 import type { Player, RoomConfig } from '../lib/poker/types';
 import { EconomyRepository, EconomyDomainError } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { RoomManager } from './room-manager';
 
 const databases: PokerDatabase[] = [];
 const tempDirectories: string[] = [];
 
 afterEach(() => {
+  vi.useRealTimers();
   while (databases.length > 0) databases.pop()?.close();
   while (tempDirectories.length > 0) {
     rmSync(tempDirectories.pop()!, { recursive: true, force: true });
@@ -232,6 +234,65 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     );
   });
 
+  it('rejects a duplicate settlement that omits an original zero-delta human', () => {
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    seedProfile(database, 'human-2');
+    const service = new EconomyService(new EconomyRepository(database), () => 100);
+    service.openCashEscrow('human-1', 'room-1', 4_000);
+    service.openCashEscrow('human-2', 'room-1', 4_000);
+    service.checkpointCashHand('room-1', 1, [
+      { profileId: 'human-1', amount: 4_000 },
+      { profileId: 'human-2', amount: 4_000 },
+    ]);
+    service.settleCashHand('room-1', 1, [
+      { profileId: 'human-1', startAmount: 4_000, endAmount: 4_100 },
+      { profileId: 'human-2', startAmount: 4_000, endAmount: 4_000 },
+    ], -100, 0);
+
+    expect(() => service.settleCashHand('room-1', 1, [
+      { profileId: 'human-1', startAmount: 4_000, endAmount: 4_100 },
+    ], -100, 0)).toThrowError(
+      expect.objectContaining({ code: 'IDEMPOTENCY_KEY_CONFLICT' }),
+    );
+  });
+
+  it('uses a new durable hand identity when the same room id starts over at hand one', () => {
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    const runtime = createRuntime(database);
+
+    const playSession = (humanEnd: number): PokerEngine => {
+      runtime.openCashEscrow('human-1', 'persistent-room', 4_000);
+      const engine = new PokerEngine(walletCashConfig, 'persistent-room');
+      engine.addPlayer(makePlayer('human-1', 'human', 4_000, 0));
+      engine.addPlayer(makePlayer('bot-1', 'bot', 4_000, 1));
+      runtime.beforeHand('persistent-room', engine);
+      engine.startHand();
+      engine.state.players[0].chips = humanEnd;
+      engine.state.players[1].chips = 8_000 - humanEnd;
+      engine.state.handRake = 0;
+      engine.state.isHandInProgress = false;
+      runtime.afterHand('persistent-room', engine);
+      return engine;
+    };
+
+    const first = playSession(4_100);
+    runtime.settleExit('persistent-room', first.state.players[0]);
+    const second = playSession(4_200);
+
+    expect(second.state.handNumber).toBe(1);
+    expect(activeEscrow(database, 'human-1')).toMatchObject({ amount: 4_200 });
+    expect(database.db.prepare(`
+      SELECT idempotency_key FROM chip_ledger
+      WHERE idempotency_key LIKE 'cash-hand:persistent-room:%:bot'
+      ORDER BY idempotency_key
+    `).all()).toEqual([
+      { idempotency_key: 'cash-hand:persistent-room:1:bot' },
+      { idempotency_key: 'cash-hand:persistent-room:2:bot' },
+    ]);
+  });
+
   it('validates admission and compensates a failed seat without minting chips', () => {
     const database = openDatabase();
     seedProfile(database, 'human-1', 3_999);
@@ -270,6 +331,47 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
 });
 
 describe('EconomyRuntime startup recovery', () => {
+  it('keeps an unresolved completed hand checkpoint through shutdown for startup recovery', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    const runtime = createRuntime(database);
+    const voidRoom = vi.fn((roomId: string) => runtime.voidRoom(roomId));
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: {
+        beforeHand: (roomId, engine) => runtime.beforeHand(roomId, engine),
+        afterHand: () => { throw new Error('settlement write failed'); },
+        settleExit: (roomId, player) => runtime.settleExit(roomId, player),
+        voidRoom,
+      },
+    });
+    const roomId = manager.createRoom({
+      ...walletCashConfig,
+      name: 'Blocked',
+      botCount: 0,
+      tableType: 'humans',
+    });
+    runtime.openCashEscrow('human-1', roomId, 4_000);
+    manager.joinRoom(roomId, makePlayer('human-1', 'human', 4_000, 0));
+    manager.joinRoom(roomId, makePlayer('bot-1', 'bot', 4_000, 1));
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    const active = room.engine.state.players[room.engine.state.activePlayerIndex];
+    manager.leaveRoom(roomId, active.id);
+
+    expect(room.engine.state.isHandInProgress).toBe(false);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    manager.shutdown();
+    expect(voidRoom).not.toHaveBeenCalled();
+    expect(activeEscrow(database, 'human-1')).toMatchObject({
+      checkpoint_amount: 4_000,
+      checkpoint_hand: 1,
+    });
+    expect(runtime.recoverActiveEscrows()).toBe(1);
+    expect(walletBalance(database, 'human-1')).toBe(10_000);
+    vi.useRealTimers();
+  });
+
   it('void-refunds persisted checkpoints, not transient engine stacks, for every active cash escrow', () => {
     const directory = mkdtempSync(join(tmpdir(), 'poker-doku-economy-'));
     tempDirectories.push(directory);
@@ -319,14 +421,48 @@ describe('EconomyRuntime startup recovery', () => {
       expect.objectContaining({
         profile_id: 'between-hands',
         delta: 4_700,
-        idempotency_key: 'void:between-hands:room-b:1',
+        idempotency_key: expect.stringMatching(
+          /^void:between-hands:room-b:1:s1:e[0-9a-f-]+$/,
+        ),
       }),
       expect.objectContaining({
         profile_id: 'in-hand',
         delta: 4_000,
-        idempotency_key: 'void:in-hand:room-a:1',
+        idempotency_key: expect.stringMatching(
+          /^void:in-hand:room-a:1:s1:e[0-9a-f-]+$/,
+        ),
       }),
     ]);
+  });
+
+  it('does not reuse a void key when the same profile and room restart at hand one again', () => {
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    const runtime = createRuntime(database);
+
+    for (let incarnation = 0; incarnation < 2; incarnation += 1) {
+      runtime.openCashEscrow('human-1', 'persistent-room', 4_000);
+      const engine = new PokerEngine(walletCashConfig, 'persistent-room');
+      engine.addPlayer(makePlayer('human-1', 'human', 4_000, 0));
+      engine.addPlayer(makePlayer(`bot-${incarnation}`, 'bot', 4_000, 1));
+      runtime.beforeHand('persistent-room', engine);
+      engine.startHand();
+      expect(engine.state.handNumber).toBe(1);
+      expect(runtime.recoverActiveEscrows()).toBe(1);
+      expect(walletBalance(database, 'human-1')).toBe(10_000);
+    }
+
+    const keys = database.db.prepare(`
+      SELECT idempotency_key FROM chip_ledger
+      WHERE profile_id = 'human-1'
+        AND account = 'wallet'
+        AND reason = 'CASH_VOID_REFUND'
+      ORDER BY created_at, idempotency_key
+    `).all().map(row => (row as { idempotency_key: string }).idempotency_key);
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    expect(keys[0]).toContain(':1:s1:e');
+    expect(keys[1]).toContain(':1:s2:e');
   });
 
   it('keeps all active escrows open if any recovery row is invalid', () => {
