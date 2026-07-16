@@ -409,6 +409,67 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     manager.shutdown();
   });
 
+  it('allows an explicit retry after startHand throws before mutating engine state', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    seedProfile(database, 'human-2');
+    const runtime = createRuntime(database);
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: runtime,
+    });
+    const roomId = manager.createRoom({
+      ...walletCashConfig,
+      botCount: 0,
+      tableType: 'humans',
+    });
+    for (const [id, seat] of [['human-1', 0], ['human-2', 1]] as const) {
+      runtime.openCashEscrow(id, roomId, 4_000);
+      manager.joinRoom(roomId, makePlayer(id, 'human', 4_000, seat));
+    }
+    const room = manager.getRoom(roomId)!;
+    const start = vi.spyOn(room.engine, 'startHand').mockImplementationOnce(() => {
+      throw new Error('transient engine failure');
+    });
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(room.engine.state.handNumber).toBe(0);
+    expect(room.engine.state.isHandInProgress).toBe(false);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    expect(database.db.prepare(`
+      SELECT settlement_seq, engine_hand_number, status
+      FROM cash_hand_settlements
+      WHERE room_id = ? ORDER BY settlement_seq
+    `).all(roomId)).toEqual([
+      { settlement_seq: 1, engine_hand_number: 1, status: 'voided' },
+    ]);
+    expect(manager.getChatHistory(roomId).at(-1)?.message)
+      .toBe('저장 연결을 확인 중이에요');
+
+    vi.advanceTimersByTime(10_000);
+    expect(start).toHaveBeenCalledOnce();
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+
+    start.mockRestore();
+    manager.resumeRoom(roomId);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+    vi.advanceTimersByTime(2_001);
+
+    expect(room.engine.state.handNumber).toBe(1);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    expect(database.db.prepare(`
+      SELECT settlement_seq, engine_hand_number, status
+      FROM cash_hand_settlements
+      WHERE room_id = ? ORDER BY settlement_seq
+    `).all(roomId)).toEqual([
+      { settlement_seq: 1, engine_hand_number: 1, status: 'voided' },
+      { settlement_seq: 2, engine_hand_number: 1, status: 'prepared' },
+    ]);
+    manager.shutdown();
+  });
+
   it('records zero human and bot deltas with neutral ledger reasons', () => {
     const database = openDatabase();
     seedProfile(database, 'human-1');

@@ -535,30 +535,17 @@ export class RoomManager {
     }
 
     const prevHandNumber = room.engine.state.handNumber;
+    const preStartState = JSON.stringify(room.engine.state);
     try {
       room.engine.startHand();
     } catch {
-      if (
-        cashHandPrepared
-        && room.engine.state.handNumber === prevHandNumber
-        && !room.engine.state.isHandInProgress
-      ) {
-        try {
-          this.requireEconomy().cancelPreparedHand(roomId, room.engine);
-        } catch {
-          // 아래 공통 차단 경로가 현재 checkpoint를 보존한다.
-        }
-      }
-      if (
-        cashHandPrepared
-        && (
-          room.engine.state.handNumber > prevHandNumber
-          || room.engine.state.isHandInProgress
-        )
-      ) {
-        this.unresolvedSettlementRooms.add(roomId);
-      }
-      this.economyBlockedRooms.add(roomId);
+      const classification = this.classifyUnstartedHand(
+        roomId,
+        room.engine,
+        cashHandPrepared,
+        preStartState,
+      );
+      if (classification === 'blocked') this.economyBlockedRooms.add(roomId);
       this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
       this.onUpdate(roomId, room.engine);
       return;
@@ -586,15 +573,17 @@ export class RoomManager {
         this.handleCompletedHand(roomId);
       } else {
         // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
-        if (cashHandPrepared) {
-          try {
-            this.requireEconomy().cancelPreparedHand(roomId, room.engine);
-          } catch {
-            this.economyBlockedRooms.add(roomId);
-            this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
-            this.onUpdate(roomId, room.engine);
-            return;
-          }
+        const classification = this.classifyUnstartedHand(
+          roomId,
+          room.engine,
+          cashHandPrepared,
+          preStartState,
+        );
+        if (classification === 'blocked') {
+          this.economyBlockedRooms.add(roomId);
+          this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+          this.onUpdate(roomId, room.engine);
+          return;
         }
         this.tryStartGame(roomId);
       }
@@ -1226,6 +1215,29 @@ export class RoomManager {
   private requireEconomy(): RoomEconomyHooks {
     if (!this.options.economy) throw new Error('wallet economy is unavailable');
     return this.options.economy;
+  }
+
+  private classifyUnstartedHand(
+    roomId: string,
+    engine: PokerEngine,
+    cashHandPrepared: boolean,
+    preStartState: string,
+  ): 'retryable' | 'blocked' {
+    if (JSON.stringify(engine.state) !== preStartState) {
+      if (cashHandPrepared) this.unresolvedSettlementRooms.add(roomId);
+      return 'blocked';
+    }
+    if (!cashHandPrepared) return 'retryable';
+
+    try {
+      if (this.requireEconomy().cancelPreparedHand(roomId, engine)) {
+        return 'retryable';
+      }
+    } catch {
+      // Without a durable exact-cancel result, the prepared identity is unresolved.
+    }
+    this.unresolvedSettlementRooms.add(roomId);
+    return 'blocked';
   }
 
   /**

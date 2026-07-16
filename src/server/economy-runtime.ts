@@ -10,7 +10,7 @@ export interface CashHandPersistenceResult {
 
 export interface RoomEconomyHooks {
   beforeHand(roomId: string, engine: PokerEngine): void;
-  cancelPreparedHand(roomId: string, engine: PokerEngine): void;
+  cancelPreparedHand(roomId: string, engine: PokerEngine): boolean;
   afterHand(roomId: string, engine: PokerEngine): CashHandPersistenceResult;
   settleExit(roomId: string, player: Player): void;
   voidRoom(roomId: string): void;
@@ -51,8 +51,8 @@ export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
     this.economy.checkpointCashHand(roomId, nextHandNumber, humans);
   }
 
-  cancelPreparedHand(roomId: string, engine: PokerEngine): void {
-    this.economy.cancelPreparedCashHand(
+  cancelPreparedHand(roomId: string, engine: PokerEngine): boolean {
+    return this.economy.cancelPreparedCashHand(
       roomId,
       this.safeAdd(engine.state.handNumber, 1),
     );

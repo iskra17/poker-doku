@@ -194,7 +194,7 @@ describe('RoomManager wallet cash persistence hooks', () => {
   function hooks(overrides: Partial<RoomEconomyHooks> = {}): RoomEconomyHooks {
     return {
       beforeHand: vi.fn(),
-      cancelPreparedHand: vi.fn(),
+      cancelPreparedHand: vi.fn(() => true),
       afterHand: vi.fn(() => ({ paidTotal: 0, rake: 0 })),
       settleExit: vi.fn(),
       voidRoom: vi.fn(),
@@ -223,6 +223,57 @@ describe('RoomManager wallet cash persistence hooks', () => {
       .toBe('저장 연결을 확인 중이에요');
     expect(manager.disposeRoom(roomId)).toBe(true);
     expect(economy.voidRoom).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a partially mutated failed hand blocked without cancelling its checkpoint', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    const room = manager.getRoom(roomId)!;
+    vi.spyOn(room.engine, 'startHand').mockImplementationOnce(() => {
+      room.engine.state.handNumber += 1;
+      throw new Error('failed after mutation');
+    });
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(economy.cancelPreparedHand).not.toHaveBeenCalled();
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    manager.resumeRoom(roomId);
+    vi.advanceTimersByTime(2_001);
+    expect(room.engine.state.handNumber).toBe(1);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    expect(economy.voidRoom).not.toHaveBeenCalled();
+  });
+
+  it('keeps an unchanged failed hand blocked when exact checkpoint cancellation fails', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      cancelPreparedHand: vi.fn(() => false),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    const room = manager.getRoom(roomId)!;
+    vi.spyOn(room.engine, 'startHand').mockImplementationOnce(() => {
+      throw new Error('failed before mutation');
+    });
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(economy.cancelPreparedHand).toHaveBeenCalledOnce();
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    manager.resumeRoom(roomId);
+    vi.advanceTimersByTime(2_001);
+    expect(room.engine.state.handNumber).toBe(0);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    expect(economy.voidRoom).not.toHaveBeenCalled();
   });
 
   it('persists a completed hand before settling a player who left during it', () => {
