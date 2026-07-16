@@ -10,7 +10,7 @@ import type {
 
 export type ProgressionRuntimeService = Pick<
   ProgressionService,
-  'getRuntimeSnapshot' | 'recordCompletedHand' | 'recordSngFinish'
+  'getRuntimeSnapshot' | 'recordRuntimeCompletedHand' | 'recordRuntimeSngFinish'
 >;
 
 export type ProgressionRuntimeEmitter = (
@@ -21,8 +21,8 @@ export type ProgressionRuntimeEmitter = (
 
 export interface RoomProgressionHooks {
   captureHandStart(input: CaptureHandStartInput): void;
-  confirmHandStart(roomId: string, handNumber: number): void;
-  cancelHand(roomId: string, handNumber: number): void;
+  confirmHandStart(roomId: string, roomRunId: string, handNumber: number): void;
+  cancelHand(roomId: string, roomRunId: string, handNumber: number): void;
   completeHand(input: CompleteHandInput): void;
   completeSng(input: CompleteSngInput): void;
   disposeRoom(roomId: string): void;
@@ -38,6 +38,7 @@ export interface RuntimeHandPlayer {
 
 export interface CaptureHandStartInput {
   roomId: string;
+  roomRunId: string;
   handNumber: number;
   mode: RuntimeGameMode;
   players: RuntimeHandPlayer[];
@@ -45,12 +46,14 @@ export interface CaptureHandStartInput {
 
 export interface CompleteHandInput {
   roomId: string;
+  roomRunId: string;
   handNumber: number;
   pendingRemovalProfileIds: string[];
 }
 
 export interface CompleteSngInput {
   roomId: string;
+  roomRunId: string;
   results: Array<{ profileId: string; place: number }>;
 }
 
@@ -97,10 +100,11 @@ export class ProgressionRuntime {
     }
 
     if (input.mode === 'sng') {
-      let tournament = this.tournamentCharacters.get(input.roomId);
+      const lifecycle = lifecycleKey(input.roomId, input.roomRunId);
+      let tournament = this.tournamentCharacters.get(lifecycle);
       if (!tournament) {
         tournament = new Map();
-        this.tournamentCharacters.set(input.roomId, tournament);
+        this.tournamentCharacters.set(lifecycle, tournament);
       }
       const additions: string[] = [];
       for (const [profileId, characterId] of selected) {
@@ -109,35 +113,36 @@ export class ProgressionRuntime {
         additions.push(profileId);
       }
       this.pendingTournamentAdditions.set(
-        handKey(input.roomId, input.handNumber),
+        handKey(input.roomId, input.roomRunId, input.handNumber),
         additions,
       );
       return;
     }
 
-    this.handContexts.set(handKey(input.roomId, input.handNumber), {
+    this.handContexts.set(handKey(input.roomId, input.roomRunId, input.handNumber), {
       mode: input.mode,
       selectedCharacterByProfileId: selected,
     });
   }
 
-  confirmHandStart(roomId: string, handNumber: number): void {
-    this.pendingTournamentAdditions.delete(handKey(roomId, handNumber));
+  confirmHandStart(roomId: string, roomRunId: string, handNumber: number): void {
+    this.pendingTournamentAdditions.delete(handKey(roomId, roomRunId, handNumber));
   }
 
-  cancelHand(roomId: string, handNumber: number): void {
-    const key = handKey(roomId, handNumber);
+  cancelHand(roomId: string, roomRunId: string, handNumber: number): void {
+    const key = handKey(roomId, roomRunId, handNumber);
     this.handContexts.delete(key);
     const additions = this.pendingTournamentAdditions.get(key);
     if (!additions) return;
-    const tournament = this.tournamentCharacters.get(roomId);
+    const lifecycle = lifecycleKey(roomId, roomRunId);
+    const tournament = this.tournamentCharacters.get(lifecycle);
     for (const profileId of additions) tournament?.delete(profileId);
-    if (tournament?.size === 0) this.tournamentCharacters.delete(roomId);
+    if (tournament?.size === 0) this.tournamentCharacters.delete(lifecycle);
     this.pendingTournamentAdditions.delete(key);
   }
 
   completeHand(input: CompleteHandInput): void {
-    const key = handKey(input.roomId, input.handNumber);
+    const key = handKey(input.roomId, input.roomRunId, input.handNumber);
     const context = this.handContexts.get(key);
     if (!context) return;
     const pendingRemoval = new Set(input.pendingRemovalProfileIds);
@@ -150,12 +155,13 @@ export class ProgressionRuntime {
       const rewardInput: CompletedHandInput = {
         profileId,
         roomId: input.roomId,
+        roomRunId: input.roomRunId,
         handNumber: input.handNumber,
         mode: context.mode,
         selectedCharacterId,
         completedAt,
       };
-      const reward = this.service.recordCompletedHand(rewardInput);
+      const reward = this.service.recordRuntimeCompletedHand(rewardInput);
       this.processedEvents.add(processedKey);
       const current = this.service.getRuntimeSnapshot(
         profileId,
@@ -174,7 +180,9 @@ export class ProgressionRuntime {
   }
 
   completeSng(input: CompleteSngInput): void {
-    const tournament = this.tournamentCharacters.get(input.roomId);
+    const tournament = this.tournamentCharacters.get(
+      lifecycleKey(input.roomId, input.roomRunId),
+    );
     if (!tournament) return;
     const completedAt = this.now();
     const seenProfiles = new Set<string>();
@@ -184,16 +192,17 @@ export class ProgressionRuntime {
       seenProfiles.add(result.profileId);
       const selectedCharacterId = tournament.get(result.profileId);
       if (!selectedCharacterId) continue;
-      const processedKey = `sng:${input.roomId}:${result.profileId}`;
+      const processedKey = `sng:${input.roomId}:${input.roomRunId}:${result.profileId}`;
       if (this.processedEvents.has(processedKey)) continue;
       const rewardInput: SngFinishInput = {
         profileId: result.profileId,
         roomId: input.roomId,
+        roomRunId: input.roomRunId,
         place: result.place,
         selectedCharacterId,
         completedAt,
       };
-      const reward = this.service.recordSngFinish(rewardInput);
+      const reward = this.service.recordRuntimeSngFinish(rewardInput);
       this.processedEvents.add(processedKey);
       const current = this.service.getRuntimeSnapshot(
         result.profileId,
@@ -205,7 +214,9 @@ export class ProgressionRuntime {
   }
 
   disposeRoom(roomId: string): void {
-    this.tournamentCharacters.delete(roomId);
+    for (const key of this.tournamentCharacters.keys()) {
+      if (key.startsWith(`${roomId}:`)) this.tournamentCharacters.delete(key);
+    }
     for (const key of this.pendingTournamentAdditions.keys()) {
       if (key.startsWith(`${roomId}:`)) this.pendingTournamentAdditions.delete(key);
     }
@@ -218,6 +229,10 @@ export class ProgressionRuntime {
   }
 }
 
-function handKey(roomId: string, handNumber: number): string {
-  return `${roomId}:${handNumber}`;
+function lifecycleKey(roomId: string, roomRunId: string): string {
+  return `${roomId}:${roomRunId}`;
+}
+
+function handKey(roomId: string, roomRunId: string, handNumber: number): string {
+  return `${lifecycleKey(roomId, roomRunId)}:${handNumber}`;
 }

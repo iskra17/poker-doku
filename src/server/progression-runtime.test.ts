@@ -79,8 +79,8 @@ function makeService(characters: Record<string, 'sakura' | 'hana'> = {}): {
   return {
     service: {
       getRuntimeSnapshot,
-      recordCompletedHand,
-      recordSngFinish,
+      recordRuntimeCompletedHand: recordCompletedHand,
+      recordRuntimeSngFinish: recordSngFinish,
     },
     getRuntimeSnapshot,
     recordCompletedHand,
@@ -103,6 +103,7 @@ describe('ProgressionRuntime', () => {
 
     runtime.captureHandStart({
       roomId: 'cash-room',
+      roomRunId: 'run-a',
       handNumber: 7,
       mode: 'cash',
       players: [
@@ -113,6 +114,7 @@ describe('ProgressionRuntime', () => {
     });
     runtime.completeHand({
       roomId: 'cash-room',
+      roomRunId: 'run-a',
       handNumber: 7,
       pendingRemovalProfileIds: ['left-mid-hand'],
     });
@@ -121,6 +123,7 @@ describe('ProgressionRuntime', () => {
     expect(service.recordCompletedHand).toHaveBeenCalledWith({
       profileId: 'alice',
       roomId: 'cash-room',
+      roomRunId: 'run-a',
       handNumber: 7,
       mode: 'cash',
       selectedCharacterId: 'hana',
@@ -140,12 +143,14 @@ describe('ProgressionRuntime', () => {
 
     runtime.captureHandStart({
       roomId: 'practice-room',
+      roomRunId: 'run-a',
       handNumber: 1,
       mode: 'practice',
       players: [{ profileId: 'trainee', fallbackCharacterId: 'sakura', dealt: true }],
     });
     runtime.completeHand({
       roomId: 'practice-room',
+      roomRunId: 'run-a',
       handNumber: 1,
       pendingRemovalProfileIds: [],
     });
@@ -162,16 +167,17 @@ describe('ProgressionRuntime', () => {
     const runtime = new ProgressionRuntime(service.service, emit, () => 4_000);
     runtime.captureHandStart({
       roomId: 'cash-room',
+      roomRunId: 'run-a',
       handNumber: 2,
       mode: 'cash',
       players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
     });
 
     runtime.completeHand({
-      roomId: 'cash-room', handNumber: 2, pendingRemovalProfileIds: [],
+      roomId: 'cash-room', roomRunId: 'run-a', handNumber: 2, pendingRemovalProfileIds: [],
     });
     runtime.completeHand({
-      roomId: 'cash-room', handNumber: 2, pendingRemovalProfileIds: [],
+      roomId: 'cash-room', roomRunId: 'run-a', handNumber: 2, pendingRemovalProfileIds: [],
     });
 
     expect(service.recordCompletedHand).toHaveBeenCalledOnce();
@@ -184,6 +190,7 @@ describe('ProgressionRuntime', () => {
     const runtime = new ProgressionRuntime(service.service, emit, () => 5_000);
     runtime.captureHandStart({
       roomId: 'sng-room',
+      roomRunId: 'run-a',
       handNumber: 1,
       mode: 'sng',
       players: [
@@ -194,6 +201,7 @@ describe('ProgressionRuntime', () => {
     // A later final hand has only one survivor. The first-hand tournament snapshot is retained.
     runtime.captureHandStart({
       roomId: 'sng-room',
+      roomRunId: 'run-a',
       handNumber: 9,
       mode: 'sng',
       players: [{ profileId: 'human1', fallbackCharacterId: 'sakura', dealt: true }],
@@ -201,6 +209,7 @@ describe('ProgressionRuntime', () => {
 
     runtime.completeSng({
       roomId: 'sng-room',
+      roomRunId: 'run-a',
       results: [
         { profileId: 'human1', place: 1 },
         { profileId: 'bot-a', place: 2 },
@@ -210,11 +219,11 @@ describe('ProgressionRuntime', () => {
 
     expect(service.recordSngFinish.mock.calls.map(call => call[0])).toEqual([
       {
-        profileId: 'human1', roomId: 'sng-room', place: 1,
+        profileId: 'human1', roomId: 'sng-room', roomRunId: 'run-a', place: 1,
         selectedCharacterId: 'hana', completedAt: 5_000,
       },
       {
-        profileId: 'human2', roomId: 'sng-room', place: 3,
+        profileId: 'human2', roomId: 'sng-room', roomRunId: 'run-a', place: 3,
         selectedCharacterId: 'sakura', completedAt: 5_000,
       },
     ]);
@@ -226,12 +235,14 @@ describe('ProgressionRuntime', () => {
     const runtime = new ProgressionRuntime(service.service, () => {}, () => 6_000);
     runtime.captureHandStart({
       roomId: 'sng-room',
+      roomRunId: 'run-a',
       handNumber: 1,
       mode: 'sng',
       players: [{ profileId: 'human', fallbackCharacterId: 'sakura', dealt: true }],
     });
     const completion = {
       roomId: 'sng-room',
+      roomRunId: 'run-a',
       results: [{ profileId: 'human', place: 1 }],
     };
 
@@ -246,6 +257,7 @@ describe('ProgressionRuntime', () => {
     const runtime = new ProgressionRuntime(service.service, () => {}, () => 6_500);
     runtime.captureHandStart({
       roomId: 'sng-retry',
+      roomRunId: 'run-a',
       handNumber: 1,
       mode: 'sng',
       players: [
@@ -253,17 +265,19 @@ describe('ProgressionRuntime', () => {
         { profileId: 'survivor', fallbackCharacterId: 'sakura', dealt: true },
       ],
     });
-    runtime.cancelHand('sng-retry', 1);
+    runtime.cancelHand('sng-retry', 'run-a', 1);
     runtime.captureHandStart({
       roomId: 'sng-retry',
+      roomRunId: 'run-a',
       handNumber: 1,
       mode: 'sng',
       players: [{ profileId: 'survivor', fallbackCharacterId: 'sakura', dealt: true }],
     });
-    runtime.confirmHandStart('sng-retry', 1);
+    runtime.confirmHandStart('sng-retry', 'run-a', 1);
 
     runtime.completeSng({
       roomId: 'sng-retry',
+      roomRunId: 'run-a',
       results: [
         { profileId: 'survivor', place: 1 },
         { profileId: 'removed-before-deal', place: 2 },
@@ -287,13 +301,14 @@ describe('ProgressionRuntime', () => {
     );
     runtime.captureHandStart({
       roomId: 'cash-room',
+      roomRunId: 'run-a',
       handNumber: 3,
       mode: 'cash',
       players: [{ profileId: 'offline', fallbackCharacterId: 'sakura', dealt: true }],
     });
 
     runtime.completeHand({
-      roomId: 'cash-room', handNumber: 3, pendingRemovalProfileIds: [],
+      roomId: 'cash-room', roomRunId: 'run-a', handNumber: 3, pendingRemovalProfileIds: [],
     });
 
     expect(service.recordCompletedHand).toHaveBeenCalledOnce();

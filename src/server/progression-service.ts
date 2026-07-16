@@ -69,6 +69,7 @@ export class ProgressionServiceError extends Error {
 export interface CompletedHandInput {
   profileId: string;
   roomId: string;
+  roomRunId?: string;
   handNumber: number;
   mode: 'cash' | 'practice';
   selectedCharacterId: string;
@@ -78,6 +79,7 @@ export interface CompletedHandInput {
 export interface SngFinishInput {
   profileId: string;
   roomId: string;
+  roomRunId?: string;
   place: number;
   selectedCharacterId: string;
   completedAt: number;
@@ -295,11 +297,23 @@ export class ProgressionService {
   }
 
   recordCompletedHand(input: CompletedHandInput): ProgressionRewardSummary {
+    return this.recordCompletedHandInternal(input, true);
+  }
+
+  recordRuntimeCompletedHand(input: CompletedHandInput): ProgressionRewardSummary {
+    return this.recordCompletedHandInternal(input, false);
+  }
+
+  private recordCompletedHandInternal(
+    input: CompletedHandInput,
+    requireCurrentCharacter: boolean,
+  ): ProgressionRewardSummary {
     const safeInput = validateCompletedHandInput(input);
     const eventId = buildCompletedHandEventId(
       safeInput.profileId,
       safeInput.roomId,
       safeInput.handNumber,
+      safeInput.roomRunId,
     );
 
     return this.database.transaction(() => {
@@ -316,15 +330,17 @@ export class ProgressionService {
         safeInput.selectedCharacterId,
         safeInput.completedAt,
       );
-      assertAuthoritativeCharacter(
-        snapshot.profile.selectedCharacterId,
-        safeInput.selectedCharacterId,
-      );
+      if (requireCurrentCharacter) {
+        assertAuthoritativeCharacter(
+          snapshot.profile.selectedCharacterId,
+          safeInput.selectedCharacterId,
+        );
+      }
       snapshot = this.reconcileWeeklyRestPass(snapshot, safeInput.completedAt);
       const balance = getBalance(snapshot.profile.balanceVersion);
       const affinity = getSelectedAffinity(
         snapshot.affinities,
-        snapshot.profile.selectedCharacterId,
+        safeInput.selectedCharacterId,
       );
       const missionCompletions = this.progressDailyMissions(
         safeInput.profileId,
@@ -395,10 +411,22 @@ export class ProgressionService {
   }
 
   recordSngFinish(input: SngFinishInput): ProgressionRewardSummary {
+    return this.recordSngFinishInternal(input, true);
+  }
+
+  recordRuntimeSngFinish(input: SngFinishInput): ProgressionRewardSummary {
+    return this.recordSngFinishInternal(input, false);
+  }
+
+  private recordSngFinishInternal(
+    input: SngFinishInput,
+    requireCurrentCharacter: boolean,
+  ): ProgressionRewardSummary {
     const safeInput = validateSngFinishInput(input);
     const eventId = buildSngFinishEventId(
       safeInput.profileId,
       safeInput.roomId,
+      safeInput.roomRunId,
     );
 
     return this.database.transaction(() => {
@@ -415,15 +443,17 @@ export class ProgressionService {
         safeInput.selectedCharacterId,
         safeInput.completedAt,
       );
-      assertAuthoritativeCharacter(
-        snapshot.profile.selectedCharacterId,
-        safeInput.selectedCharacterId,
-      );
+      if (requireCurrentCharacter) {
+        assertAuthoritativeCharacter(
+          snapshot.profile.selectedCharacterId,
+          safeInput.selectedCharacterId,
+        );
+      }
       snapshot = this.reconcileWeeklyRestPass(snapshot, safeInput.completedAt);
       const balance = getBalance(snapshot.profile.balanceVersion);
       const affinity = getSelectedAffinity(
         snapshot.affinities,
-        snapshot.profile.selectedCharacterId,
+        safeInput.selectedCharacterId,
       );
       const missionCompletions = this.progressDailyMissions(
         safeInput.profileId,
@@ -828,7 +858,7 @@ export class ProgressionService {
         input.profile.dojoLevel,
         nextDojo.level,
       ),
-      characterId: input.profile.selectedCharacterId,
+      characterId: input.affinity.characterId,
       affinityMilli: input.affinityReward,
       affinityLevelsGained: levelsBetween(
         input.affinity.level,
@@ -897,23 +927,35 @@ export function buildCompletedHandEventId(
   profileId: string,
   roomId: string,
   handNumber: number,
+  roomRunId?: string,
 ): string {
   assertBoundedId(profileId);
   assertBoundedId(roomId);
+  if (roomRunId !== undefined) assertBoundedId(roomRunId);
   if (!Number.isSafeInteger(handNumber) || handNumber < 1) {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
-  const eventId = `completed-hand:${lengthPrefixed(roomId)}:${handNumber}:` +
-    lengthPrefixed(profileId);
+  const eventId = roomRunId === undefined
+    ? `completed-hand:${lengthPrefixed(roomId)}:${handNumber}:` +
+      lengthPrefixed(profileId)
+    : `completed-hand:${lengthPrefixed(roomId)}:run:${lengthPrefixed(roomRunId)}` +
+      `:hand:${handNumber}:${lengthPrefixed(profileId)}`;
   assertEventIdLength(eventId);
   return eventId;
 }
 
-export function buildSngFinishEventId(profileId: string, roomId: string): string {
+export function buildSngFinishEventId(
+  profileId: string,
+  roomId: string,
+  roomRunId?: string,
+): string {
   assertBoundedId(profileId);
   assertBoundedId(roomId);
-  const eventId = `sng-finish:${lengthPrefixed(roomId)}:` +
-    lengthPrefixed(profileId);
+  if (roomRunId !== undefined) assertBoundedId(roomRunId);
+  const eventId = roomRunId === undefined
+    ? `sng-finish:${lengthPrefixed(roomId)}:${lengthPrefixed(profileId)}`
+    : `sng-finish:${lengthPrefixed(roomId)}:run:${lengthPrefixed(roomRunId)}` +
+      `:tournament:${lengthPrefixed(profileId)}`;
   assertEventIdLength(eventId);
   return eventId;
 }
@@ -930,6 +972,7 @@ function validateCompletedHandInput(
     copy = {
       profileId: input.profileId,
       roomId: input.roomId,
+      roomRunId: input.roomRunId,
       handNumber: input.handNumber,
       mode: input.mode,
       selectedCharacterId: input.selectedCharacterId,
@@ -940,6 +983,7 @@ function validateCompletedHandInput(
   }
   assertBoundedId(copy.profileId);
   assertBoundedId(copy.roomId);
+  if (copy.roomRunId !== undefined) assertBoundedId(copy.roomRunId);
   if (!Number.isSafeInteger(copy.handNumber) || copy.handNumber < 1) {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
@@ -963,6 +1007,7 @@ function validateSngFinishInput(input: SngFinishInput): ValidSngFinishInput {
     copy = {
       profileId: input.profileId,
       roomId: input.roomId,
+      roomRunId: input.roomRunId,
       place: input.place,
       selectedCharacterId: input.selectedCharacterId,
       completedAt: input.completedAt,
@@ -972,6 +1017,7 @@ function validateSngFinishInput(input: SngFinishInput): ValidSngFinishInput {
   }
   assertBoundedId(copy.profileId);
   assertBoundedId(copy.roomId);
+  if (copy.roomRunId !== undefined) assertBoundedId(copy.roomRunId);
   if (!Number.isSafeInteger(copy.place) || copy.place < 1 || copy.place > 6) {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }

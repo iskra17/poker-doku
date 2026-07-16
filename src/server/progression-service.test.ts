@@ -615,6 +615,95 @@ describe('ProgressionService', () => {
     expect(rowCount(database, 'progression_events')).toBe(0);
   });
 
+  it('separates identical room and hand numbers across durable room generations', () => {
+    insertProfile(database, 'generation-profile');
+    const at = Date.UTC(2026, 6, 17);
+    const base = {
+      profileId: 'generation-profile',
+      roomId: 'persistent-room',
+      handNumber: 1,
+      mode: 'cash' as const,
+      selectedCharacterId: 'sakura',
+      completedAt: at,
+    };
+
+    const first = service.recordCompletedHand({
+      ...base,
+      roomRunId: 'generation-a',
+    });
+    const retry = service.recordCompletedHand({
+      ...base,
+      roomRunId: 'generation-a',
+      completedAt: at + 1,
+    });
+    const secondGeneration = service.recordCompletedHand({
+      ...base,
+      roomRunId: 'generation-b',
+      completedAt: at + 2,
+    });
+
+    expect(retry.eventId).toBe(first.eventId);
+    expect(secondGeneration.eventId).not.toBe(first.eventId);
+    expect(repository.getOrCreate('generation-profile', 'sakura', at + 3).profile)
+      .toMatchObject({ completedHands: 2, dojoXpMilli: 20_000 });
+  });
+
+  it('trusted runtime rewards the hand-start character after selection changes', () => {
+    insertProfile(database, 'runtime-character-profile');
+    const at = Date.UTC(2026, 6, 17);
+    service.getSnapshot('runtime-character-profile', 'sakura', at);
+    service.selectCharacter('runtime-character-profile', 'hana', at + 100);
+    const reward = service.recordRuntimeCompletedHand({
+      profileId: 'runtime-character-profile',
+      roomId: 'cash-room',
+      roomRunId: 'generation-a',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: at + 1_000,
+    });
+    const current = service.getRuntimeSnapshot(
+      'runtime-character-profile',
+      'sakura',
+      at + 1_001,
+    );
+
+    expect(reward.characterId).toBe('sakura');
+    expect(current.profile.selectedCharacterId).toBe('hana');
+    expect(current.affinities).toEqual(expect.arrayContaining([
+      expect.objectContaining({ characterId: 'sakura', xpMilli: 2_000 }),
+      expect.objectContaining({ characterId: 'hana', xpMilli: 0 }),
+    ]));
+
+    expectServiceError(() => service.recordSngFinish({
+      profileId: 'runtime-character-profile',
+      roomId: 'untrusted-sng',
+      roomRunId: 'generation-b',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: at + 2_000,
+    }), 'PROGRESSION_CHARACTER_STALE');
+    const sngReward = service.recordRuntimeSngFinish({
+      profileId: 'runtime-character-profile',
+      roomId: 'trusted-sng',
+      roomRunId: 'generation-b',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: at + 2_001,
+    });
+    const afterSng = service.getRuntimeSnapshot(
+      'runtime-character-profile',
+      'sakura',
+      at + 2_002,
+    );
+    expect(sngReward.characterId).toBe('sakura');
+    expect(afterSng.profile.selectedCharacterId).toBe('hana');
+    expect(afterSng.affinities).toContainEqual(expect.objectContaining({
+      characterId: 'sakura',
+      xpMilli: 32_000,
+    }));
+  });
+
   it('returns the exact stored duplicate before recomputing or changing timestamps', () => {
     insertProfile(database, 'duplicate-profile');
     const first = service.recordCompletedHand({

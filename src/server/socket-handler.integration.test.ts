@@ -176,6 +176,49 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     ).profile.completedHands).toBe(0);
   });
 
+  it('awards hand one again after a persistent room receives a new lifecycle generation', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM, true);
+    const firstProfile = await harness.createProfile({ avatarId: 'sakura' });
+    const secondProfile = await harness.createProfile({ avatarId: 'hana' });
+    const first = await harness.connect('generation-first', {
+      profileCookie: firstProfile.cookie,
+    });
+    const second = await harness.connect('generation-second', {
+      profileCookie: secondProfile.cookie,
+    });
+    const rewardIds: string[] = [];
+    first.socket.on('reward-summary', reward => rewardIds.push(reward.eventId));
+
+    const playHandOne = async (): Promise<void> => {
+      await expect(joinRoom(first, roomId, 0)).resolves.toMatchObject({ ok: true });
+      await expect(joinRoom(second, roomId, 1)).resolves.toMatchObject({ ok: true });
+      await wait(2_100);
+      const room = harness!.runtime.roomManager.getRoom(roomId)!;
+      expect(room.engine.state.handNumber).toBe(1);
+      room.engine.state.isHandInProgress = false;
+      room.engine.state.winners = [];
+      (harness!.runtime.roomManager as unknown as {
+        handleCompletedHand(roomId: string): void;
+      }).handleCompletedHand(roomId);
+      await wait(10);
+    };
+
+    await playHandOne();
+    expect(harness.runtime.roomManager.leaveRoom(roomId, first.playerId)).toBe(true);
+    expect(harness.runtime.roomManager.leaveRoom(roomId, second.playerId)).toBe(true);
+    expect(harness.runtime.roomManager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
+    await playHandOne();
+
+    expect(rewardIds).toHaveLength(2);
+    expect(new Set(rewardIds).size).toBe(2);
+    expect(harness.progressionService.getRuntimeSnapshot(
+      first.playerId,
+      'sakura',
+      Date.now(),
+    ).profile.completedHands).toBe(2);
+  });
+
   it('rejects missing and invalid profile cookies with a safe handshake error', async () => {
     harness = await createSocketTestHarness();
 

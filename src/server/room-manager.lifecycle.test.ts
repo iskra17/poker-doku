@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Player, RoomConfig } from '../lib/poker/types';
 import type { RoomEconomyHooks } from './economy-runtime';
+import type { RoomProgressionHooks } from './progression-runtime';
 import { eventLog } from './event-log';
 import { RoomManager } from './room-manager';
 
@@ -466,6 +467,138 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
       });
     }
   }
+
+  function progressionHooks(
+    overrides: Partial<RoomProgressionHooks> = {},
+  ): RoomProgressionHooks {
+    return {
+      captureHandStart: vi.fn(),
+      confirmHandStart: vi.fn(),
+      cancelHand: vi.fn(),
+      completeHand: vi.fn(),
+      completeSng: vi.fn(),
+      disposeRoom: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('settles and rewards an SnG that finishes from a between-hand leave before announcing', () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const economy = hooks({
+      afterTournament: vi.fn(() => { order.push('economy'); }),
+    });
+    const progression = progressionHooks({
+      completeSng: vi.fn(() => { order.push('progression'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy,
+      progression,
+      roomRunIdFactory: () => 'generation-a',
+    });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    for (let index = 2; index < 6; index += 1) {
+      const player = room.engine.state.players[index];
+      player.chips = 0;
+      player.finishPlace = 7 - index;
+      room.engine.state.tournament!.results.push({
+        playerId: player.id,
+        name: player.name,
+        place: player.finishPlace,
+        prize: 0,
+      });
+    }
+
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(true);
+
+    expect(room.engine.state.tournament).toMatchObject({ finished: true });
+    expect(order).toEqual(['economy', 'progression']);
+    expect(economy.afterTournament).toHaveBeenCalledOnce();
+    expect(progression.completeSng).toHaveBeenCalledOnce();
+    expect(progression.completeSng).toHaveBeenCalledWith(expect.objectContaining({
+      roomId,
+      roomRunId: 'generation-a',
+      results: expect.arrayContaining([
+        expect.objectContaining({ profileId: 'sng-1', place: 1 }),
+        expect.objectContaining({ profileId: 'sng-2', place: 2 }),
+      ]),
+    }));
+    expect(manager.getChatHistory(roomId).some(message => (
+      message.message.includes('Sit & Go')
+    ))).toBe(true);
+  });
+
+  it('blocks a between-hand SnG finish when progression persistence fails', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    const completeSng = vi.fn()
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+    const progression = progressionHooks({ completeSng });
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy,
+      progression,
+      roomRunIdFactory: () => 'generation-a',
+    });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    for (let index = 2; index < 6; index += 1) {
+      const player = room.engine.state.players[index];
+      player.chips = 0;
+      player.finishPlace = 7 - index;
+      room.engine.state.tournament!.results.push({
+        playerId: player.id,
+        name: player.name,
+        place: player.finishPlace,
+        prize: 0,
+      });
+    }
+
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(false);
+    expect(economy.afterTournament).toHaveBeenCalledOnce();
+    expect(completeSng).toHaveBeenCalledOnce();
+    expect(manager.disposeRoom(roomId)).toBe(false);
+  });
+
+  it('rewards a casual SnG between-hand finish without an economy ledger', () => {
+    vi.useFakeTimers();
+    const progression = progressionHooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression,
+      roomRunIdFactory: () => 'generation-casual',
+    });
+    const roomId = manager.createRoom({
+      ...makeWalletSngConfig(),
+      economyMode: 'practice',
+    });
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    for (let index = 2; index < 6; index += 1) {
+      const player = room.engine.state.players[index];
+      player.chips = 0;
+      player.finishPlace = 7 - index;
+      room.engine.state.tournament!.results.push({
+        playerId: player.id,
+        name: player.name,
+        place: player.finishPlace,
+        prize: 0,
+      });
+    }
+
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(true);
+    expect(progression.completeSng).toHaveBeenCalledOnce();
+    expect(progression.completeSng).toHaveBeenCalledWith(expect.objectContaining({
+      roomRunId: 'generation-casual',
+    }));
+  });
 
   it('commits six human reservations before starting the tournament and rejects bot fill', () => {
     vi.useFakeTimers();
