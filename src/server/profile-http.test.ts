@@ -869,4 +869,41 @@ describe('profile HTTP lifecycle', () => {
     expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
     expectNoStore(response);
   });
+
+  it('maps an invalid server economy clock to a safe 500 without mutation', async () => {
+    const server = await startServer({ economyClock: () => -1 });
+    const created = await createProfile(server);
+    const profile = created.body.profile as PublicProfile;
+
+    const response = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: created.cookie },
+    });
+    const body = await response.json() as Record<string, unknown>;
+    const wallet = server.database.db.prepare(`
+      SELECT balance FROM wallets WHERE profile_id = ?
+    `).get(profile.id);
+    const grants = server.database.db.prepare(`
+      SELECT COUNT(*) AS count FROM daily_claims WHERE profile_id = ?
+    `).get(profile.id);
+    const grantLedger = server.database.db.prepare(`
+      SELECT COUNT(*) AS count FROM chip_ledger
+      WHERE profile_id = ? AND reason = 'DAILY_GRANT'
+    `).get(profile.id);
+
+    expect(response.status).toBe(500);
+    expect(body).toEqual({
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: '요청을 처리하지 못했습니다.',
+      },
+    });
+    expect(JSON.stringify(body)).not.toContain('SQLite');
+    expect(JSON.stringify(body)).not.toContain('127.0.0.1');
+    expect(JSON.stringify(body)).not.toContain(cookieCredential(created.response));
+    expect(wallet).toEqual({ balance: 10_000 });
+    expect(grants).toEqual({ count: 0 });
+    expect(grantLedger).toEqual({ count: 0 });
+    expectNoStore(response);
+  });
 });

@@ -87,6 +87,14 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 2,
+    name: 'index_rescue_claims_by_profile_and_latest_claim',
+    sql: `
+      CREATE INDEX idx_rescue_claims_profile_claimed_at_desc
+      ON rescue_claims(profile_id, claimed_at DESC);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { PublicProfile } from '@/lib/profile/types';
 import type { PokerDatabase } from './persistence/database';
 
+const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
+const CANONICAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 export type EconomyErrorCode =
   | 'PROFILE_NOT_FOUND'
   | 'WALLET_DELTA_INVALID'
@@ -12,7 +15,12 @@ export type EconomyErrorCode =
   | 'RESCUE_ACTIVE_ESCROW'
   | 'RESCUE_NOT_ELIGIBLE'
   | 'RESCUE_DAILY_LIMIT'
-  | 'RESCUE_COOLDOWN';
+  | 'RESCUE_COOLDOWN'
+  | 'ECONOMY_TIME_INVALID'
+  | 'ECONOMY_DATE_INVALID'
+  | 'ECONOMY_RULES_INVALID'
+  | 'ECONOMY_DERIVED_VALUE_INVALID'
+  | 'ECONOMY_PERSISTENCE_INVALID';
 
 export class EconomyDomainError extends Error {
   constructor(
@@ -21,6 +29,98 @@ export class EconomyDomainError extends Error {
   ) {
     super(code);
     this.name = 'EconomyDomainError';
+  }
+}
+
+export function assertValidEconomyTimestamp(
+  value: number,
+  code: EconomyErrorCode = 'ECONOMY_TIME_INVALID',
+): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new EconomyDomainError(code);
+  }
+  const date = new Date(value);
+  const utcYear = date.getUTCFullYear();
+  const kstValue = value + KST_OFFSET_MS;
+  const kstDate = new Date(kstValue);
+  const kstYear = kstDate.getUTCFullYear();
+  if (
+    !Number.isFinite(date.getTime())
+    || utcYear < 1
+    || utcYear > 9_999
+    || !Number.isSafeInteger(kstValue)
+    || !Number.isFinite(kstDate.getTime())
+    || kstYear < 1
+    || kstYear > 9_999
+  ) {
+    throw new EconomyDomainError(code);
+  }
+}
+
+function assertCanonicalClaimDate(value: string): void {
+  const match = CANONICAL_DATE_PATTERN.exec(value);
+  if (!match) throw new EconomyDomainError('ECONOMY_DATE_INVALID');
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [
+    31,
+    leapYear ? 29 : 28,
+    31,
+    30,
+    31,
+    30,
+    31,
+    31,
+    30,
+    31,
+    30,
+    31,
+  ];
+  if (
+    year < 1
+    || year > 9_999
+    || month < 1
+    || month > 12
+    || day < 1
+    || day > daysInMonth[month - 1]
+  ) {
+    throw new EconomyDomainError('ECONOMY_DATE_INVALID');
+  }
+}
+
+function assertPositiveSafeInteger(value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new EconomyDomainError('ECONOMY_RULES_INVALID');
+  }
+}
+
+function assertValidRescueRules(rules: RescueClaimRules): void {
+  assertPositiveSafeInteger(rules.threshold);
+  assertPositiveSafeInteger(rules.target);
+  assertPositiveSafeInteger(rules.dailyLimit);
+  assertPositiveSafeInteger(rules.cooldownMs);
+  if (rules.target <= rules.threshold) {
+    throw new EconomyDomainError('ECONOMY_RULES_INVALID');
+  }
+}
+
+function assertPersistedNonnegativeSafeInteger(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+  }
+}
+
+function deriveTimestamp(left: number, right: number): number {
+  const result = left + right;
+  assertValidEconomyTimestamp(result, 'ECONOMY_DERIVED_VALUE_INVALID');
+  return result;
+}
+
+function assertPositiveDerivedInteger(value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new EconomyDomainError('ECONOMY_DERIVED_VALUE_INVALID');
   }
 }
 
@@ -69,6 +169,7 @@ export class EconomyRepository {
     at = Date.now(),
   ): EconomyResult {
     this.validateDelta(delta);
+    assertValidEconomyTimestamp(at);
     return this.database.transaction(() => this.applyWalletDeltaInTransaction(
       profileId,
       delta,
@@ -86,7 +187,13 @@ export class EconomyRepository {
     availableAt: number,
     at: number,
   ): EconomyResult {
-    this.validateDelta(amount);
+    assertCanonicalClaimDate(claimDate);
+    assertPositiveSafeInteger(amount);
+    assertValidEconomyTimestamp(at);
+    assertValidEconomyTimestamp(availableAt);
+    if (availableAt <= at) {
+      throw new EconomyDomainError('ECONOMY_DERIVED_VALUE_INVALID');
+    }
     return this.database.transaction(() => {
       this.requirePublicProfile(profileId);
       const existing = this.database.db.prepare(`
@@ -118,6 +225,13 @@ export class EconomyRepository {
     nextKstMidnight: number,
     at: number,
   ): EconomyResult {
+    assertCanonicalClaimDate(claimDate);
+    assertValidRescueRules(rules);
+    assertValidEconomyTimestamp(at);
+    assertValidEconomyTimestamp(nextKstMidnight);
+    if (nextKstMidnight <= at) {
+      throw new EconomyDomainError('ECONOMY_DERIVED_VALUE_INVALID');
+    }
     return this.database.transaction(() => {
       const current = this.requirePublicProfile(profileId);
       const activeEscrow = this.database.db.prepare(`
@@ -137,27 +251,46 @@ export class EconomyRepository {
         WHERE profile_id = ? AND claim_date = ?
       `).get(profileId, claimDate) as { count: number; max_ordinal: number };
       const latest = this.database.db.prepare(`
-        SELECT MAX(claimed_at) AS claimed_at
+        SELECT claimed_at
         FROM rescue_claims
         WHERE profile_id = ?
-      `).get(profileId) as { claimed_at: number | null };
-      const cooldownAvailableAt = latest.claimed_at === null
-        ? 0
-        : latest.claimed_at + rules.cooldownMs;
-
-      if (today.count >= rules.dailyLimit) {
-        throw new EconomyDomainError(
-          'RESCUE_DAILY_LIMIT',
-          Math.max(nextKstMidnight, cooldownAvailableAt),
+        ORDER BY claimed_at DESC
+        LIMIT 1
+      `).get(profileId) as { claimed_at: number } | undefined;
+      assertPersistedNonnegativeSafeInteger(today.count);
+      assertPersistedNonnegativeSafeInteger(today.max_ordinal);
+      if (latest) {
+        assertValidEconomyTimestamp(
+          latest.claimed_at,
+          'ECONOMY_PERSISTENCE_INVALID',
         );
       }
-      if (latest.claimed_at !== null && at < cooldownAvailableAt) {
+      const cooldownAvailableAt = latest === undefined
+        ? 0
+        : deriveTimestamp(latest.claimed_at, rules.cooldownMs);
+
+      if (today.count >= rules.dailyLimit) {
+        const dailyAvailableAt = Math.max(
+          nextKstMidnight,
+          cooldownAvailableAt,
+        );
+        assertValidEconomyTimestamp(
+          dailyAvailableAt,
+          'ECONOMY_DERIVED_VALUE_INVALID',
+        );
+        throw new EconomyDomainError(
+          'RESCUE_DAILY_LIMIT',
+          dailyAvailableAt,
+        );
+      }
+      if (latest && at < cooldownAvailableAt) {
         throw new EconomyDomainError('RESCUE_COOLDOWN', cooldownAvailableAt);
       }
 
       const delta = rules.target - current.wallet.balance;
-      this.validateDelta(delta);
+      assertPositiveDerivedInteger(delta);
       const ordinal = today.max_ordinal + 1;
+      assertPositiveDerivedInteger(ordinal);
       this.database.db.prepare(`
         INSERT INTO rescue_claims (
           profile_id, claim_date, ordinal, amount, claimed_at

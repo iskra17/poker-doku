@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './database';
 import {
   type Migration,
+  migrations,
   validateMigrations,
 } from './migrations';
 
@@ -33,7 +34,11 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(1);
+    const indexes = database.db.prepare(`
+      SELECT name FROM sqlite_schema WHERE type = 'index'
+    `).all().map(row => (row as { name: string }).name);
+
+    expect(migration.version).toBe(2);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -48,6 +53,7 @@ describe('PokerDatabase migrations', () => {
     expect(profileColumns).toEqual(
       expect.arrayContaining(['credential_lookup', 'recovery_lookup']),
     );
+    expect(indexes).toContain('idx_rescue_claims_profile_claimed_at_desc');
   });
 
   it('does not reapply migrations when reopening a file database', () => {
@@ -62,7 +68,82 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(1);
+    expect(result.count).toBe(2);
+  });
+
+  it('upgrades an existing V1 database to V2 once while preserving data', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV1Database(path);
+
+    database = openPokerDatabase(path);
+    database.close();
+    database = openPokerDatabase(path);
+
+    const versions = database.db.prepare(`
+      SELECT version FROM schema_migrations ORDER BY version
+    `).all();
+    const marker = database.db.prepare(`
+      SELECT alias FROM profiles WHERE id = 'v1-marker'
+    `).get();
+    const index = database.db.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'index' AND name = 'idx_rescue_claims_profile_claimed_at_desc'
+    `).get();
+
+    expect(versions).toEqual([{ version: 1 }, { version: 2 }]);
+    expect(marker).toEqual({ alias: 'v1-marker-alias' });
+    expect(index).toEqual({
+      name: 'idx_rescue_claims_profile_claimed_at_desc',
+    });
+  });
+
+  it('rolls back the V2 version record when its index creation fails', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV1Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      CREATE INDEX idx_rescue_claims_profile_claimed_at_desc
+      ON rescue_claims(claimed_at)
+    `);
+    rawDatabase.close();
+
+    let unexpectedlyOpened: PokerDatabase | undefined;
+    try {
+      expect(() => {
+        unexpectedlyOpened = openPokerDatabase(path);
+      }).toThrowError(
+        'index idx_rescue_claims_profile_claimed_at_desc already exists',
+      );
+    } finally {
+      unexpectedlyOpened?.close();
+    }
+
+    const reopened = new DatabaseSync(path);
+    const versions = reopened.prepare(`
+      SELECT version FROM schema_migrations ORDER BY version
+    `).all();
+    reopened.close();
+    expect(versions).toEqual([{ version: 1 }]);
+  });
+
+  it('uses the rescue claimed-at index for the latest-claim query', () => {
+    database = openPokerDatabase(':memory:');
+
+    const plan = database.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT claimed_at
+      FROM rescue_claims
+      WHERE profile_id = ?
+      ORDER BY claimed_at DESC
+      LIMIT 1
+    `).all('profile-1') as Array<{ detail: string }>;
+
+    expect(plan.map(row => row.detail).join('\n'))
+      .toContain('idx_rescue_claims_profile_claimed_at_desc');
   });
 
   it('rejects migration versions unknown to this binary', () => {
@@ -377,6 +458,34 @@ function createConflictingV1Database(path: string): void {
     CREATE TABLE profiles (id TEXT PRIMARY KEY) STRICT;
   `);
   rawDatabase.close();
+}
+
+function createV1Database(path: string): void {
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at INTEGER NOT NULL
+      ) STRICT;
+      BEGIN IMMEDIATE;
+      ${migrations[0].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (1, 'anonymous_progression_foundation', 1);
+      INSERT INTO profiles (
+        id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+        alias, avatar_id, adult_confirmed_at, created_at, updated_at
+      ) VALUES (
+        'v1-marker', 'v1-credential-hash', 'v1-credential-lookup',
+        'v1-recovery-hash', 'v1-recovery-lookup', 'v1-marker-alias',
+        'sakura', 1, 1, 1
+      );
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
 }
 
 function insertProfile(database: PokerDatabase, id: string): void {

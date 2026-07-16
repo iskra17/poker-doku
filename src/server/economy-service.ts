@@ -1,6 +1,9 @@
-import type {
-  EconomyRepository,
-  EconomyResult,
+import {
+  EconomyDomainError,
+  assertValidEconomyTimestamp,
+  type EconomyErrorCode,
+  type EconomyRepository,
+  type EconomyResult,
 } from './economy-repository';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
@@ -27,7 +30,11 @@ interface KstDateParts {
   day: number;
 }
 
-function getKstDateParts(at: number): KstDateParts {
+function getKstDateParts(
+  at: number,
+  errorCode: EconomyErrorCode = 'ECONOMY_TIME_INVALID',
+): KstDateParts {
+  assertValidEconomyTimestamp(at, errorCode);
   const values: Partial<Record<'year' | 'month' | 'day', number>> = {};
   for (const part of KST_DATE_FORMATTER.formatToParts(new Date(at))) {
     if (part.type === 'year' || part.type === 'month' || part.type === 'day') {
@@ -36,7 +43,20 @@ function getKstDateParts(at: number): KstDateParts {
   }
   const { year, month, day } = values;
   if (year === undefined || month === undefined || day === undefined) {
-    throw new Error('KST_DATE_FORMAT_FAILED');
+    throw new EconomyDomainError(errorCode);
+  }
+  if (
+    !Number.isSafeInteger(year)
+    || year < 1
+    || year > 9_999
+    || !Number.isSafeInteger(month)
+    || month < 1
+    || month > 12
+    || !Number.isSafeInteger(day)
+    || day < 1
+    || day > 31
+  ) {
+    throw new EconomyDomainError(errorCode);
   }
   return { year, month, day };
 }
@@ -52,10 +72,12 @@ export function getKstDateKey(at: number): string {
 
 export function getNextKstMidnight(at: number): number {
   const { year, month, day } = getKstDateParts(at);
-  return Date.UTC(year, month - 1, day + 1) - KST_OFFSET_MS;
+  const nextMidnight = Date.UTC(year, month - 1, day + 1) - KST_OFFSET_MS;
+  getKstDateParts(nextMidnight, 'ECONOMY_DERIVED_VALUE_INVALID');
+  return nextMidnight;
 }
 
-export { EconomyDomainError } from './economy-repository';
+export { EconomyDomainError };
 
 export class EconomyService {
   constructor(

@@ -73,6 +73,34 @@ describe('KST economy clock', () => {
     expect(getNextKstMidnight(Date.parse('2026-12-31T15:00:00.000Z')))
       .toBe(Date.parse('2027-01-01T15:00:00.000Z'));
   });
+
+  it.each([
+    { label: 'fractional', at: 1.5 },
+    { label: 'negative', at: -1 },
+    { label: 'NaN', at: Number.NaN },
+    { label: 'infinite', at: Number.POSITIVE_INFINITY },
+    { label: 'outside JavaScript Date', at: 8_640_000_000_000_001 },
+    { label: 'outside four-digit years', at: 8_640_000_000_000_000 },
+  ])('rejects a $label timestamp before formatting', ({ at }) => {
+    expectEconomyError(
+      () => getKstDateKey(at),
+      'ECONOMY_TIME_INVALID',
+    );
+    expectEconomyError(
+      () => getNextKstMidnight(at),
+      'ECONOMY_TIME_INVALID',
+    );
+  });
+
+  it('rejects a next midnight outside canonical four-digit KST dates', () => {
+    const lastSupportedKstDay = Date.parse('9999-12-31T14:59:59.999Z');
+
+    expect(getKstDateKey(lastSupportedKstDay)).toBe('9999-12-31');
+    expectEconomyError(
+      () => getNextKstMidnight(lastSupportedKstDay),
+      'ECONOMY_DERIVED_VALUE_INVALID',
+    );
+  });
 });
 
 describe('EconomyRepository wallet ledger', () => {
@@ -177,6 +205,272 @@ describe('EconomyRepository wallet ledger', () => {
       'profile-1', 500, 'FORCE_LEDGER_FAILURE', 'forced-ledger', undefined, 100,
     )).toThrow();
     expect(walletBalance()).toBe(1_000);
+    expect(ledgerCount()).toBe(0);
+  });
+
+  it.each([
+    { label: 'fractional', at: 1.5 },
+    { label: 'negative', at: -1 },
+    { label: 'NaN', at: Number.NaN },
+    { label: 'infinite', at: Number.POSITIVE_INFINITY },
+    { label: 'unsupported Date year', at: 8_640_000_000_000_000 },
+  ])('rejects a $label ledger timestamp before SQL', ({ at }) => {
+    seedProfile();
+
+    expectEconomyError(
+      () => repository.applyWalletDelta(
+        'profile-1', 100, 'TEST_TIME', `invalid-time:${String(at)}`, undefined, at,
+      ),
+      'ECONOMY_TIME_INVALID',
+    );
+    expect(walletBalance()).toBe(1_000);
+    expect(ledgerCount()).toBe(0);
+  });
+});
+
+describe('EconomyRepository grant input boundaries', () => {
+  const at = Date.parse('2026-07-15T15:00:00.000Z');
+  const availableAt = Date.parse('2026-07-16T15:00:00.000Z');
+
+  it.each([
+    {
+      label: 'non-canonical date',
+      input: { claimDate: '2026-7-16' },
+      code: 'ECONOMY_DATE_INVALID',
+    },
+    {
+      label: 'impossible calendar date',
+      input: { claimDate: '2026-02-29' },
+      code: 'ECONOMY_DATE_INVALID',
+    },
+    {
+      label: 'five-digit year',
+      input: { claimDate: '10000-01-01' },
+      code: 'ECONOMY_DATE_INVALID',
+    },
+    {
+      label: 'zero amount',
+      input: { amount: 0 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'fractional amount',
+      input: { amount: 1.5 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'unsafe amount',
+      input: { amount: Number.MAX_SAFE_INTEGER + 1 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'negative availability',
+      input: { availableAt: -1 },
+      code: 'ECONOMY_TIME_INVALID',
+    },
+    {
+      label: 'fractional claim timestamp',
+      input: { at: 1.5 },
+      code: 'ECONOMY_TIME_INVALID',
+    },
+    {
+      label: 'availability not after claim',
+      input: { availableAt: at },
+      code: 'ECONOMY_DERIVED_VALUE_INVALID',
+    },
+  ])('rejects daily $label without mutation', ({ input, code }) => {
+    seedProfile();
+    const values = {
+      claimDate: '2026-07-16',
+      amount: 1_000,
+      availableAt,
+      at,
+      ...input,
+    };
+
+    expectEconomyError(
+      () => repository.claimDaily(
+        'profile-1',
+        values.claimDate,
+        values.amount,
+        values.availableAt,
+        values.at,
+      ),
+      code,
+    );
+    expect(walletBalance()).toBe(1_000);
+    expect(dailyClaimCount()).toBe(0);
+    expect(ledgerCount()).toBe(0);
+  });
+
+  it.each([
+    {
+      label: 'zero threshold',
+      rules: { threshold: 0 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'target at threshold',
+      rules: { target: 800 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'fractional target',
+      rules: { target: 2_000.5 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'zero daily limit',
+      rules: { dailyLimit: 0 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'fractional daily limit',
+      rules: { dailyLimit: 1.5 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+    {
+      label: 'zero cooldown',
+      rules: { cooldownMs: 0 },
+      code: 'ECONOMY_RULES_INVALID',
+    },
+  ])('rejects rescue $label without mutation', ({ rules, code }) => {
+    seedProfile('profile-1', 799);
+    const values = {
+      threshold: 800,
+      target: 2_000,
+      dailyLimit: 3,
+      cooldownMs: 4 * 60 * 60 * 1_000,
+      ...rules,
+    };
+
+    expectEconomyError(
+      () => repository.claimRescue(
+        'profile-1', '2026-07-16', values, availableAt, at,
+      ),
+      code,
+    );
+    expect(walletBalance()).toBe(799);
+    expect(rescueClaimCount()).toBe(0);
+    expect(ledgerCount()).toBe(0);
+  });
+
+  it.each([
+    {
+      label: 'negative claim timestamp',
+      nextMidnight: availableAt,
+      claimAt: -1,
+      code: 'ECONOMY_TIME_INVALID',
+    },
+    {
+      label: 'fractional next midnight',
+      nextMidnight: 1.5,
+      claimAt: at,
+      code: 'ECONOMY_TIME_INVALID',
+    },
+    {
+      label: 'next midnight not after claim',
+      nextMidnight: at,
+      claimAt: at,
+      code: 'ECONOMY_DERIVED_VALUE_INVALID',
+    },
+  ])('rejects rescue $label without mutation', ({
+    nextMidnight,
+    claimAt,
+    code,
+  }) => {
+    seedProfile('profile-1', 799);
+
+    expectEconomyError(
+      () => repository.claimRescue(
+        'profile-1',
+        '2026-07-16',
+        {
+          threshold: 800,
+          target: 2_000,
+          dailyLimit: 3,
+          cooldownMs: 4 * 60 * 60 * 1_000,
+        },
+        nextMidnight,
+        claimAt,
+      ),
+      code,
+    );
+    expect(walletBalance()).toBe(799);
+    expect(rescueClaimCount()).toBe(0);
+    expect(ledgerCount()).toBe(0);
+  });
+});
+
+describe('EconomyRepository persisted and derived boundaries', () => {
+  const at = Date.parse('2026-07-15T15:00:00.000Z');
+  const nextMidnight = Date.parse('2026-07-16T15:00:00.000Z');
+  const rules = {
+    threshold: 800,
+    target: 2_000,
+    dailyLimit: 3,
+    cooldownMs: 4 * 60 * 60 * 1_000,
+  };
+
+  it.each([
+    { label: 'negative', claimedAt: -1 },
+    { label: 'unsupported Date year', claimedAt: 8_640_000_000_000_000 },
+    {
+      label: 'unsafe cooldown source',
+      claimedAt: Number.MAX_SAFE_INTEGER - rules.cooldownMs + 1,
+    },
+  ])('rejects a $label persisted claimed_at without mutation', ({
+    claimedAt,
+  }) => {
+    seedProfile('profile-1', 799);
+    insertRescueClaim('2026-07-15', 1, claimedAt);
+
+    expectEconomyError(
+      () => repository.claimRescue(
+        'profile-1', '2026-07-16', rules, nextMidnight, at,
+      ),
+      'ECONOMY_PERSISTENCE_INVALID',
+    );
+    expect(walletBalance()).toBe(799);
+    expect(rescueClaimCount()).toBe(1);
+    expect(ledgerCount()).toBe(0);
+  });
+
+  it('rejects a cooldown timestamp derived outside supported KST dates', () => {
+    seedProfile('profile-1', 799);
+    insertRescueClaim(
+      '9999-12-31',
+      1,
+      Date.parse('9999-12-31T14:00:00.000Z'),
+    );
+
+    expectEconomyError(
+      () => repository.claimRescue(
+        'profile-1', '2026-07-16', rules, nextMidnight, at,
+      ),
+      'ECONOMY_DERIVED_VALUE_INVALID',
+    );
+    expect(walletBalance()).toBe(799);
+    expect(rescueClaimCount()).toBe(1);
+    expect(ledgerCount()).toBe(0);
+  });
+
+  it('rejects an unsafe next ordinal from a persisted ordinal gap', () => {
+    seedProfile('profile-1', 799);
+    insertRescueClaim(
+      '2026-07-16',
+      Number.MAX_SAFE_INTEGER,
+      at - rules.cooldownMs,
+    );
+
+    expectEconomyError(
+      () => repository.claimRescue(
+        'profile-1', '2026-07-16', rules, nextMidnight, at,
+      ),
+      'ECONOMY_DERIVED_VALUE_INVALID',
+    );
+    expect(walletBalance()).toBe(799);
+    expect(rescueClaimCount()).toBe(1);
     expect(ledgerCount()).toBe(0);
   });
 });
@@ -487,4 +781,16 @@ function drainWalletTo(balance: number, key: string, at: number): void {
   repository.applyWalletDelta(
     'profile-1', balance - current, 'TEST_DRAIN', key, undefined, at,
   );
+}
+
+function insertRescueClaim(
+  claimDate: string,
+  ordinal: number,
+  claimedAt: number,
+): void {
+  database.db.prepare(`
+    INSERT INTO rescue_claims (
+      profile_id, claim_date, ordinal, amount, claimed_at
+    ) VALUES ('profile-1', ?, ?, 1, ?)
+  `).run(claimDate, ordinal, claimedAt);
 }
