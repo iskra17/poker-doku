@@ -6,6 +6,7 @@ import { useProfileStore } from '@/lib/store/profile-store';
 import CharacterImage from '@/components/characters/CharacterImage';
 import RecoveryWordsCard from '@/components/profile/RecoveryWordsCard';
 import Button from '@/components/ui/Button';
+import { canEnterExistingProfileRecovery } from './onboarding-rules';
 
 type OnboardingStep = 'adult' | 'avatar' | 'recover';
 
@@ -78,8 +79,11 @@ export default function ProfileOnboarding() {
           </Button>
           <button
             type="button"
-            onClick={() => setStep('recover')}
-            className="w-full text-xs text-mystic hover:text-ink"
+            disabled={!canEnterExistingProfileRecovery(adultConfirmed)}
+            onClick={() => {
+              if (canEnterExistingProfileRecovery(adultConfirmed)) setStep('recover');
+            }}
+            className="w-full text-xs text-mystic hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
           >
             기존 익명 프로필 복구하기
           </button>

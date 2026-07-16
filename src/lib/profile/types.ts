@@ -12,6 +12,7 @@ export type RescueIneligibilityReason =
   | 'daily-limit';
 
 export interface EconomyStatus {
+  hasActiveSeat: boolean;
   daily: {
     claimed: boolean;
     grantAmount: number;

@@ -5,11 +5,13 @@ import { useProfileStore } from '@/lib/store/profile-store';
 import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
 import RecoveryWordsCard from './RecoveryWordsCard';
+import { getProfileDeletionAvailability } from './recovery-rules';
 
 export default function RecoveryPanel() {
   const phase = useProfileStore(state => state.phase);
   const action = useProfileStore(state => state.action);
   const profile = useProfileStore(state => state.profile);
+  const economy = useProfileStore(state => state.economy);
   const recoveryWords = useProfileStore(state => state.recoveryWords);
   const recoveryWarning = useProfileStore(state => state.recoveryWarning);
   const error = useProfileStore(state => state.error);
@@ -34,7 +36,7 @@ export default function RecoveryPanel() {
     );
   }
 
-  const hasActiveEscrow = profile.wallet.activeEscrow > 0;
+  const deletion = getProfileDeletionAvailability(economy?.hasActiveSeat ?? true);
   return (
     <div className="space-y-5">
       <section>
@@ -78,9 +80,9 @@ export default function RecoveryPanel() {
 
       <section className="border-t border-mystic/20 pt-4">
         <SectionTitle>프로필 삭제</SectionTitle>
-        {hasActiveEscrow ? (
+        {!deletion.allowed ? (
           <p className="rounded-lg border border-gilded/30 bg-gilded/10 px-3 py-2 text-xs text-gilded">
-            참가 중인 게임/좌석을 완전히 나가 칩을 정산한 뒤 삭제할 수 있어요.
+            {deletion.guidance}
           </p>
         ) : (
           <p className="text-xs leading-relaxed text-ink-dim">
@@ -91,14 +93,14 @@ export default function RecoveryPanel() {
           type="text"
           value={deleteText}
           onChange={event => setDeleteText(event.target.value)}
-          disabled={hasActiveEscrow}
+          disabled={!deletion.allowed}
           placeholder="삭제"
           className="mt-2 w-full rounded-lg border border-mystic/20 bg-elevated/70 px-3 py-2 text-sm text-ink outline-none focus:border-blossom/50 disabled:opacity-40"
         />
         <Button
           variant="danger"
           className="mt-2 w-full"
-          disabled={hasActiveEscrow || deleteText !== '삭제' || action !== null}
+          disabled={!deletion.allowed || deleteText !== '삭제' || action !== null}
           onClick={() => void deleteProfile(deleteText)}
         >
           {action === 'deleting' ? '삭제 중…' : '프로필 영구 삭제'}

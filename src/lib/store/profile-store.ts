@@ -122,7 +122,8 @@ function parseEconomyStatus(value: unknown): EconomyStatus | null {
   const rescueAvailableAt = value.rescue.availableAt;
   const reason = value.rescue.reason;
   if (
-    typeof value.daily.claimed !== 'boolean'
+    typeof value.hasActiveSeat !== 'boolean'
+    || typeof value.daily.claimed !== 'boolean'
     || !isNonnegativeSafeInteger(value.daily.grantAmount)
     || !isNonnegativeSafeInteger(dailyAvailableAt)
     || typeof value.rescue.eligible !== 'boolean'
@@ -133,6 +134,7 @@ function parseEconomyStatus(value: unknown): EconomyStatus | null {
     || (reason !== null && (typeof reason !== 'string' || !RESCUE_REASONS.has(reason)))
   ) return null;
   return {
+    hasActiveSeat: value.hasActiveSeat,
     daily: {
       claimed: value.daily.claimed,
       grantAmount: value.daily.grantAmount,
@@ -244,6 +246,24 @@ export function createProfileStore(
   };
 
   return create<ProfileStoreState>((set, get) => {
+    const resetAnonymous = (error: string | null): void => {
+      const hadPublishedIdentity = connectedProfileId !== null || get().profile !== null;
+      connectedProfileId = null;
+      if (hadPublishedIdentity) {
+        dependencies.game.disconnect();
+        dependencies.game.clearPublicProfile();
+      }
+      set({
+        phase: 'anonymous',
+        action: null,
+        profile: null,
+        economy: null,
+        recoveryWords: null,
+        recoveryWarning: false,
+        error,
+      });
+    };
+
     const publishReady = (
       profile: PublicProfile,
       economy: EconomyStatus,
@@ -333,13 +353,7 @@ export function createProfileStore(
             return;
           }
           if (isRecord(session) && session.state === 'anonymous') {
-            connectedProfileId = null;
-            dependencies.game.disconnect();
-            dependencies.game.clearPublicProfile();
-            set({
-              phase: 'anonymous', action: null, profile: null, economy: null,
-              recoveryWords: null, recoveryWarning: false, error: claimError,
-            });
+            resetAnonymous(claimError);
             return;
           }
         } catch {
@@ -368,16 +382,7 @@ export function createProfileStore(
             const payload = await requestJson(dependencies, '/api/profile/session');
             if (version !== requestVersion) return;
             if (isRecord(payload) && payload.state === 'anonymous') {
-              connectedProfileId = null;
-              set({
-                phase: 'anonymous',
-                action: null,
-                profile: null,
-                economy: null,
-                recoveryWords: null,
-                recoveryWarning: false,
-                error: null,
-              });
+              resetAnonymous(null);
               return;
             }
             if (!isRecord(payload) || payload.state !== 'ready') {
@@ -388,15 +393,7 @@ export function createProfileStore(
             publishReady(profile, economy, !acknowledged);
           } catch (error) {
             if (version !== requestVersion) return;
-            set({
-              phase: 'anonymous',
-              action: null,
-              profile: null,
-              economy: null,
-              recoveryWords: null,
-              recoveryWarning: false,
-              error: requestErrorMessage(error),
-            });
+            resetAnonymous(requestErrorMessage(error));
           }
         })();
         bootstrapPromise = pending;
@@ -421,13 +418,7 @@ export function createProfileStore(
               return;
             }
             if (isRecord(payload) && payload.state === 'anonymous') {
-              connectedProfileId = null;
-              dependencies.game.disconnect();
-              dependencies.game.clearPublicProfile();
-              set({
-                phase: 'anonymous', action: null, profile: null, economy: null,
-                recoveryWords: null, recoveryWarning: false, error: null,
-              });
+              resetAnonymous(null);
               return;
             }
             throw new ProfileRequestError(DEFAULT_ERROR);
@@ -570,13 +561,7 @@ export function createProfileStore(
           if (currentProfile) {
             forgetRecoveryAcknowledgement(currentProfile.id);
           }
-          connectedProfileId = null;
-          dependencies.game.disconnect();
-          dependencies.game.clearPublicProfile();
-          set({
-            phase: 'anonymous', action: null, profile: null, economy: null,
-            recoveryWords: null, recoveryWarning: false, error: null,
-          });
+          resetAnonymous(null);
         } catch (error) {
           if (version !== requestVersion) return;
           set({ phase: 'ready', action: null, error: requestErrorMessage(error) });

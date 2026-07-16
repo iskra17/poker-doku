@@ -13,6 +13,7 @@ const PROFILE = {
 };
 
 const ECONOMY = {
+  hasActiveSeat: false,
   daily: {
     claimed: false,
     grantAmount: 1_000,
@@ -120,6 +121,24 @@ describe('anonymous profile store', () => {
     expect(game.connect).toHaveBeenCalledTimes(1);
   });
 
+  it('preserves a zero-chip active-seat flag independently of escrow amount', async () => {
+    const zeroSeatProfile = {
+      ...PROFILE,
+      wallet: { balance: 799, activeEscrow: 0 },
+    };
+    const fetchImpl = vi.fn(async () => jsonResponse({
+      state: 'ready',
+      profile: zeroSeatProfile,
+      economy: { ...ECONOMY, hasActiveSeat: true },
+    }));
+    const { store } = setup(fetchImpl);
+
+    await store.getState().bootstrap();
+
+    expect(store.getState().economy?.hasActiveSeat).toBe(true);
+    expect(store.getState().profile?.wallet.activeEscrow).toBe(0);
+  });
+
   it('rejects an out-of-contract rescue count without connecting', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({
       state: 'ready',
@@ -174,6 +193,41 @@ describe('anonymous profile store', () => {
     expect(game.connect).toHaveBeenCalledTimes(1);
   });
 
+  it('clears realtime identity when a forced bootstrap becomes anonymous', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
+      .mockResolvedValueOnce(jsonResponse({ state: 'anonymous' }));
+    const { store, game } = setup(fetchImpl);
+    await store.getState().bootstrap();
+
+    await store.getState().bootstrap();
+
+    expect(store.getState()).toMatchObject({
+      phase: 'anonymous', profile: null, economy: null,
+      recoveryWords: null, recoveryWarning: false, error: null,
+    });
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.clearPublicProfile).toHaveBeenCalledOnce();
+  });
+
+  it('clears realtime identity when a forced bootstrap request fails', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
+      .mockRejectedValueOnce(new Error('offline'));
+    const { store, game } = setup(fetchImpl);
+    await store.getState().bootstrap();
+
+    await store.getState().bootstrap();
+
+    expect(store.getState()).toMatchObject({
+      phase: 'anonymous', profile: null, economy: null,
+      recoveryWords: null, recoveryWarning: false,
+      error: '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.',
+    });
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.clearPublicProfile).toHaveBeenCalledOnce();
+  });
+
   it('retains the last ready snapshot when a refresh request fails', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
@@ -188,6 +242,20 @@ describe('anonymous profile store', () => {
       error: '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.',
     });
     expect(game.connect).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears realtime identity when a refresh confirms an anonymous session', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))
+      .mockResolvedValueOnce(jsonResponse({ state: 'anonymous' }));
+    const { store, game } = setup(fetchImpl);
+    await store.getState().bootstrap();
+
+    await store.getState().refresh();
+
+    expect(store.getState()).toMatchObject({ phase: 'anonymous', profile: null, economy: null });
+    expect(game.disconnect).toHaveBeenCalledOnce();
+    expect(game.clearPublicProfile).toHaveBeenCalledOnce();
   });
 
   it('creates with the exact public payload and waits for recovery acknowledgement', async () => {
@@ -303,16 +371,19 @@ describe('anonymous profile store', () => {
       .mockResolvedValueOnce(jsonResponse({
         profile: PROFILE, economy: ECONOMY, recoveryWords: WORDS,
       }, 201));
-    const { store } = setup(fetchImpl);
+    const { store, game } = setup(fetchImpl);
 
     const bootstrap = store.getState().bootstrap();
     await store.getState().create('sakura');
+    store.getState().acknowledgeRecovery();
     pending.resolve(jsonResponse({ state: 'anonymous' }));
     await bootstrap;
 
     expect(store.getState()).toMatchObject({
-      phase: 'recovery-required', profile: PROFILE,
+      phase: 'ready', profile: PROFILE,
     });
+    expect(game.disconnect).not.toHaveBeenCalled();
+    expect(game.clearPublicProfile).not.toHaveBeenCalled();
   });
 
   it('rotates recovery words atomically and retains ready data on failure', async () => {

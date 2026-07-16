@@ -7,8 +7,8 @@ import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import {
   CASUAL_SNG_BUY_IN,
-  getCasualSngEntryAvailability,
 } from './sng-entry';
+import { getRoomEntryAvailability } from './entry-availability';
 
 interface JoinRoomModalProps {
   room: RoomInfo; // 부모가 key={room.id}로 마운트해 방이 바뀌면 상태가 리셋된다
@@ -37,7 +37,13 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
   const [buyIn, setBuyIn] = useState(defaultBuyIn);
   const [password, setPassword] = useState('');
   const profileBalance = useProfileStore(state => state.profile?.wallet.balance ?? null);
-  const sngAvailability = getCasualSngEntryAvailability(profileBalance);
+  const entryAvailability = getRoomEntryAvailability({
+    mode: room.mode,
+    economyMode: room.economyMode,
+    buyIn,
+    balance: profileBalance,
+    isRebuy: isRebuyReturn,
+  });
 
   const handleJoin = () => {
     joinRoom(
@@ -62,13 +68,13 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           <div className="bg-gray-800/30 rounded-lg p-3 text-sm space-y-1">
             <div className="flex justify-between text-gray-400">
               <span>바이인 1,500 + 참가 수수료 150</span>
-              <span className="text-yellow-300">총 {sngAvailability.cost.toLocaleString()}</span>
+              <span className="text-yellow-300">총 {entryAvailability.cost.toLocaleString()}</span>
             </div>
             <p className="text-[11px] text-gilded/90">상금 풀에는 바이인만 포함</p>
             <p className="text-[11px] text-gray-500 pt-1">
               6명이 모이면 시작해요. 탈락하면 리바이 없이 관전으로 전환됩니다.
             </p>
-            {sngAvailability.insufficient && (
+            {entryAvailability.insufficient && (
               <p className="text-xs text-blossom pt-1">
                 보유한 무료 칩이 참가 비용 1,650보다 부족해요.
               </p>
@@ -105,17 +111,26 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
                 <button
                   key={preset.label}
                   onClick={() => setBuyIn(preset.value)}
+                  disabled={entryAvailability.walletRequired
+                    && profileBalance !== null
+                    && preset.value > profileBalance}
                   className={`py-1.5 rounded-lg text-xs font-bold transition-all ${
                     buyIn === preset.value
                       ? 'bg-purple-600 text-white border border-purple-400'
                       : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
-                  }`}
+                  } disabled:cursor-not-allowed disabled:opacity-40`}
                 >
                   {preset.label}
                 </button>
               ))}
             </div>
           </div>
+        )}
+
+        {!isSng && entryAvailability.insufficient && (
+          <p className="rounded-lg border border-blossom/30 bg-blossom/10 px-3 py-2 text-xs text-blossom">
+            보유한 무료 칩보다 바이인이 큽니다. 바이인을 낮춰 주세요.
+          </p>
         )}
 
         {isRebuyReturn && (
@@ -150,7 +165,7 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           size="lg"
           className="w-full"
           onClick={handleJoin}
-          disabled={(needPassword && !password.trim()) || (isSng && sngAvailability.insufficient)}
+          disabled={(needPassword && !password.trim()) || entryAvailability.insufficient}
         >
           {isRebuyReturn ? '리바이하고 복귀' : isSng ? '참가하기' : '앉기'}
         </Button>

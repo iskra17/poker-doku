@@ -52,6 +52,16 @@ describe('getRoomList mySeat — 보존 좌석의 로비 노출', () => {
     );
   });
 
+  it('지갑/연습 경제 모드를 방 이름 추측 없이 공개한다', () => {
+    const walletRoom = manager.createRoom({ ...makeConfig(), economyMode: 'wallet' });
+    const practiceRoom = manager.createRoom({ ...makeConfig(), economyMode: 'practice' });
+
+    expect(manager.getRoomList().find(room => room.id === walletRoom)?.economyMode)
+      .toBe('wallet');
+    expect(manager.getRoomList().find(room => room.id === practiceRoom)?.economyMode)
+      .toBe('practice');
+  });
+
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();

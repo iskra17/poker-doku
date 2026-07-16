@@ -118,6 +118,7 @@ describe('EconomyService read-only status', () => {
         wallet: { balance: 799, activeEscrow: 0 },
       },
       economy: {
+        hasActiveSeat: false,
         daily: {
           claimed: false,
           grantAmount: ECONOMY_RULES.dailyGrant,
@@ -152,6 +153,7 @@ describe('EconomyService read-only status', () => {
         wallet: { balance: 799, activeEscrow: 0 },
       }),
       economy: {
+        hasActiveSeat: false,
         daily: {
           claimed: true,
           grantAmount: ECONOMY_RULES.dailyGrant,
@@ -178,7 +180,9 @@ describe('EconomyService read-only status', () => {
     `).run(`escrow-${mode}`, mode, at);
     const service = new EconomyService(repository, () => at);
 
-    expect(service.getStatus('profile-1').economy.rescue).toEqual({
+    const status = service.getStatus('profile-1').economy;
+    expect(status.hasActiveSeat).toBe(true);
+    expect(status.rescue).toEqual({
       eligible: false,
       grantAmount: 0,
       remainingToday: 3,

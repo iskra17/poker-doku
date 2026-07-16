@@ -256,6 +256,7 @@ export class RoomManager {
         bigBlind: room.config.bigBlind,
         minBuyIn: room.config.minBuyIn,
         maxBuyIn: room.config.maxBuyIn,
+        economyMode: room.config.economyMode ?? 'practice',
         entryBuyIn: room.config.entryBuyIn,
         entryFee: room.config.entryFee,
         difficulty: room.config.difficulty ?? 'normal',

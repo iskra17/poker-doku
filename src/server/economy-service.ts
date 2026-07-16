@@ -175,6 +175,7 @@ export class EconomyService {
     return {
       profile: snapshot.profile,
       economy: {
+        hasActiveSeat: snapshot.hasActiveEscrow,
         daily: {
           claimed: snapshot.dailyClaimed,
           grantAmount: ECONOMY_RULES.dailyGrant,

@@ -212,6 +212,7 @@ describe('profile HTTP lifecycle', () => {
       state: 'ready',
       profile: created.body.profile,
       economy: {
+        hasActiveSeat: false,
         daily: {
           claimed: false,
           grantAmount: 1_000,
@@ -233,6 +234,37 @@ describe('profile HTTP lifecycle', () => {
              (SELECT COUNT(*) FROM chip_ledger) AS ledger_count
     `).get()).toEqual(before);
     expectNoStore(response);
+  });
+
+  it.each(['cash', 'sng'] as const)('exposes a zero-chip active %s seat on session and claim responses', async mode => {
+    const now = Date.parse('2026-07-15T15:00:00.000Z');
+    const server = await startServer({ economyClock: () => now });
+    const created = await createProfile(server);
+    const profile = created.body.profile as PublicProfile;
+    server.database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount,
+        checkpoint_amount, checkpoint_hand, status, updated_at
+      ) VALUES (?, ?, ?, ?, 0, 0, 0, 'active', ?)
+    `).run(`zero-${mode}`, profile.id, `room-${mode}`, mode, now);
+
+    const session = await fetch(`${server.baseUrl}/api/profile/session`, {
+      headers: { cookie: created.cookie },
+    });
+    const daily = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: created.cookie },
+    });
+
+    expect(await session.json()).toMatchObject({
+      state: 'ready',
+      profile: { wallet: { activeEscrow: 0 } },
+      economy: { hasActiveSeat: true },
+    });
+    expect(await daily.json()).toMatchObject({
+      profile: { wallet: { activeEscrow: 0 } },
+      economy: { hasActiveSeat: true },
+    });
   });
 
   it('treats malformed target cookies as invalid while ignoring unrelated cookies', async () => {
@@ -590,6 +622,7 @@ describe('profile HTTP lifecycle', () => {
       getStatus: vi.fn(() => ({
         profile,
         economy: {
+          hasActiveSeat: false,
           daily: { claimed: false, grantAmount: 1_000, availableAt: 1 },
           rescue: {
             eligible: false,
@@ -658,6 +691,7 @@ describe('profile HTTP lifecycle', () => {
         wallet: { balance: 11_000, activeEscrow: 0 },
       },
       economy: {
+        hasActiveSeat: false,
         daily: {
           claimed: true,
           grantAmount: 1_000,
@@ -729,6 +763,7 @@ describe('profile HTTP lifecycle', () => {
         wallet: { balance: 2_000, activeEscrow: 0 },
       },
       economy: {
+        hasActiveSeat: false,
         daily: {
           claimed: false,
           grantAmount: 1_000,
