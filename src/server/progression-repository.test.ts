@@ -173,6 +173,21 @@ describe('ProgressionRepository', () => {
     expect(rowCount(database, 'profile_equipment')).toBe(0);
   });
 
+  it('fails closed when a stored equipment timestamp bypasses DB guards', () => {
+    insertProfile(database, 'unsafe-equipment-snapshot');
+    repository.getOrCreate('unsafe-equipment-snapshot', 'sakura', 1);
+    database.db.exec('DROP TRIGGER validate_collection_equipment_shape_update');
+    database.db.prepare(`
+      UPDATE profile_equipment SET updated_at = 253402300800000
+      WHERE profile_id = 'unsafe-equipment-snapshot' AND slot = 'title'
+    `).run();
+
+    expectErrorCode(
+      () => repository.getOrCreate('unsafe-equipment-snapshot', 'sakura', 2),
+      'PROGRESSION_PERSISTENCE_INVALID',
+    );
+  });
+
   it('requires explicit transaction ownership for scoped helpers', () => {
     insertProfile(database, 'profile-a');
 
@@ -333,6 +348,73 @@ describe('ProgressionRepository', () => {
       }), 'PROGRESSION_EVENT_CONFLICT');
     }
     expect(rowCount(database, 'progression_events')).toBe(1);
+  });
+
+  it.each([
+    [
+      'partial reward summary',
+      1,
+      {
+        dojoLevelsGained: [5],
+        grantedItemIds: ['dojo-frame-cherry-blossom'],
+      },
+    ],
+    [
+      'unsupported balance',
+      2,
+      validRewardSummary('repository-balance-two', {
+        dojoLevelsGained: [5],
+        grantedItemIds: ['dojo-frame-cherry-blossom'],
+      }),
+    ],
+  ])('rolls a permanent grant back for a %s source', (
+    _label,
+    balanceVersion,
+    summary,
+  ) => {
+    insertProfile(database, 'repository-source-proof');
+    repository.getOrCreate('repository-source-proof', 'sakura', 1);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'repository-source-proof'
+    `).run();
+
+    expect(() => database.transaction(() => {
+      repository.grantPermanentInventoryItemInTransaction({
+        profileId: 'repository-source-proof',
+        itemId: 'dojo-frame-cherry-blossom',
+        sourceEventId: balanceVersion === 1
+          ? 'repository-partial'
+          : 'repository-balance-two',
+        source: { kind: 'dojo-level', level: 5 },
+        grantedAt: 10,
+      });
+      repository.insertProgressionEvent({
+        idempotencyKey: balanceVersion === 1
+          ? 'repository-partial'
+          : 'repository-balance-two',
+        profileId: 'repository-source-proof',
+        eventType: 'completed-hand',
+        balanceVersion,
+        summary,
+        createdAt: 10,
+      });
+    })).toThrowError(ProgressionPersistenceError);
+    expect(rowCount(
+      database,
+      'permanent_progression_grants',
+      'repository-source-proof',
+    )).toBe(0);
+    expect(rowCount(
+      database,
+      'inventory_items',
+      'repository-source-proof',
+    )).toBe(0);
+    expect(rowCount(
+      database,
+      'progression_events',
+      'repository-source-proof',
+    )).toBe(0);
   });
 
   it('returns duplicate or conflict before inspecting a caller retry summary', () => {
@@ -1400,6 +1482,23 @@ function fragmentSourceSummary(eventId: string) {
       restPassUsed: false,
     },
     grantedItemIds: ['streak-fragment'],
+  };
+}
+
+function validRewardSummary(
+  eventId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    eventId,
+    dojoXpMilli: 10_000,
+    dojoLevelsGained: [],
+    characterId: 'sakura',
+    affinityMilli: 2_000,
+    affinityLevelsGained: [],
+    missionCompletions: [],
+    grantedItemIds: [],
+    ...overrides,
   };
 }
 

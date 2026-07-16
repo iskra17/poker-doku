@@ -2286,19 +2286,6 @@ export const migrations: readonly Migration[] = [
         ('affinity-elena-cutin','cutin',0,'affinity-level',15,'elena','cutin'),
         ('affinity-elena-skin','skin',0,'affinity-level',20,'elena','skin');
 
-      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
-      SELECT profile.profile_id, slots.slot, NULL, profile.updated_at
-      FROM progression_profiles AS profile
-      CROSS JOIN (
-        SELECT 'title' AS slot UNION ALL SELECT 'frame'
-        UNION ALL SELECT 'skin' UNION ALL SELECT 'cutin'
-      ) AS slots
-      WHERE NOT EXISTS (
-        SELECT 1 FROM profile_equipment AS equipment
-        WHERE equipment.profile_id = profile.profile_id
-          AND equipment.slot = slots.slot
-      );
-
       CREATE TABLE v12_collection_validation (
         invalid INTEGER NOT NULL CHECK (invalid = 0)
       ) STRICT;
@@ -2309,7 +2296,10 @@ export const migrations: readonly Migration[] = [
       LEFT JOIN collection_catalog AS catalog ON catalog.item_id = inventory.item_id
       WHERE catalog.item_id IS NULL
         OR (catalog.stackable = 0 AND inventory.quantity != 1)
-        OR (catalog.stackable = 1 AND inventory.quantity < 1);
+        OR (catalog.stackable = 1 AND inventory.quantity < 1)
+        OR inventory.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR inventory.updated_at NOT BETWEEN
+          inventory.granted_at AND 253402300799999;
 
       INSERT INTO v12_collection_validation(invalid)
       SELECT 1
@@ -2319,15 +2309,17 @@ export const migrations: readonly Migration[] = [
       LEFT JOIN inventory_items AS inventory
         ON inventory.profile_id = equipment.profile_id
         AND inventory.item_id = equipment.item_id
-      WHERE profile.profile_id IS NULL OR (equipment.item_id IS NOT NULL AND (
-        catalog.item_id IS NULL
-        OR catalog.equip_slot IS NULL
-        OR catalog.equip_slot != equipment.slot
-        OR inventory.quantity IS NULL
-        OR inventory.quantity < 1
-        OR (catalog.kind = 'skin'
-          AND catalog.character_id != profile.selected_character_id)
-      ));
+      WHERE profile.profile_id IS NULL
+        OR equipment.updated_at NOT BETWEEN 0 AND 253402300799999
+        OR (equipment.item_id IS NOT NULL AND (
+          catalog.item_id IS NULL
+          OR catalog.equip_slot IS NULL
+          OR catalog.equip_slot != equipment.slot
+          OR inventory.quantity IS NULL
+          OR inventory.quantity < 1
+          OR (catalog.kind = 'skin'
+            AND catalog.character_id != profile.selected_character_id)
+        ));
 
       INSERT INTO v12_collection_validation(invalid)
       SELECT 1
@@ -2585,6 +2577,465 @@ export const migrations: readonly Migration[] = [
           )
       )
       BEGIN SELECT RAISE(ABORT, 'invalid permanent grant source proof'); END;
+    `,
+  },
+  {
+    version: 13,
+    name: 'canonicalize_permanent_sources_and_collection_rows',
+    sql: `
+      CREATE VIEW canonical_progression_reward_source_events AS
+      SELECT
+        source_event.idempotency_key,
+        source_event.profile_id,
+        source_event.created_at,
+        source_event.summary_json
+      FROM progression_events AS source_event
+      WHERE
+        source_event.event_type IN ('completed-hand', 'sng-finish')
+        AND source_event.balance_version = 1
+        AND source_event.created_at BETWEEN 0 AND 253402300799999
+        AND json_valid(source_event.summary_json)
+        AND json_type(source_event.summary_json) = 'object'
+        AND (
+          SELECT COUNT(*) FROM json_each(source_event.summary_json)
+        ) IN (8, 9)
+        AND (
+          SELECT COUNT(DISTINCT summary_field.key)
+          FROM json_each(source_event.summary_json) AS summary_field
+        ) = (
+          SELECT COUNT(*) FROM json_each(source_event.summary_json)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(source_event.summary_json) AS summary_field
+          WHERE summary_field.key NOT IN (
+            'eventId', 'dojoXpMilli', 'dojoLevelsGained', 'characterId',
+            'affinityMilli', 'affinityLevelsGained', 'missionCompletions',
+            'grantedItemIds', 'streak'
+          )
+        )
+        AND json_type(source_event.summary_json, '$.eventId') = 'text'
+        AND json_extract(source_event.summary_json, '$.eventId')
+          = source_event.idempotency_key
+        AND json_type(source_event.summary_json, '$.dojoXpMilli') = 'integer'
+        AND json_extract(source_event.summary_json, '$.dojoXpMilli')
+          BETWEEN 0 AND 9007199254740991
+        AND json_type(source_event.summary_json, '$.dojoLevelsGained') = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_type(
+              source_event.summary_json, '$.dojoLevelsGained'
+            ) = 'array' THEN json_extract(
+              source_event.summary_json, '$.dojoLevelsGained'
+            ) ELSE '[]' END
+          ) AS dojo_level
+          WHERE dojo_level.type != 'integer'
+            OR dojo_level.value NOT BETWEEN 2 AND 50
+            OR (
+              CAST(dojo_level.key AS INTEGER) > 0
+              AND dojo_level.value != json_extract(
+                source_event.summary_json,
+                '$.dojoLevelsGained['
+                  || (CAST(dojo_level.key AS INTEGER) - 1) || ']'
+              ) + 1
+            )
+        )
+        AND json_type(source_event.summary_json, '$.characterId') = 'text'
+        AND json_extract(source_event.summary_json, '$.characterId') IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )
+        AND json_type(source_event.summary_json, '$.affinityMilli') = 'integer'
+        AND json_extract(source_event.summary_json, '$.affinityMilli')
+          BETWEEN 0 AND 9007199254740991
+        AND json_type(
+          source_event.summary_json, '$.affinityLevelsGained'
+        ) = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_type(
+              source_event.summary_json, '$.affinityLevelsGained'
+            ) = 'array' THEN json_extract(
+              source_event.summary_json, '$.affinityLevelsGained'
+            ) ELSE '[]' END
+          ) AS affinity_level
+          WHERE affinity_level.type != 'integer'
+            OR affinity_level.value NOT BETWEEN 2 AND 20
+            OR (
+              CAST(affinity_level.key AS INTEGER) > 0
+              AND affinity_level.value != json_extract(
+                source_event.summary_json,
+                '$.affinityLevelsGained['
+                  || (CAST(affinity_level.key AS INTEGER) - 1) || ']'
+              ) + 1
+            )
+        )
+        AND json_type(
+          source_event.summary_json, '$.missionCompletions'
+        ) = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_type(
+              source_event.summary_json, '$.missionCompletions'
+            ) = 'array' THEN json_extract(
+              source_event.summary_json, '$.missionCompletions'
+            ) ELSE '[]' END
+          ) AS mission
+          WHERE mission.type != 'object'
+            OR (
+              SELECT COUNT(*) FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              )
+            ) != 3
+            OR (
+              SELECT COUNT(DISTINCT mission_field.key)
+              FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              ) AS mission_field
+            ) != 3
+            OR EXISTS (
+              SELECT 1 FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              ) AS mission_field
+              WHERE mission_field.key NOT IN (
+                'missionId', 'slot', 'dojoXpMilli'
+              )
+            )
+            OR json_type(mission.value, '$.missionId') != 'text'
+            OR json_extract(mission.value, '$.missionId') NOT IN (
+              'COMPLETE_HANDS_ANY_10', 'COMPLETE_HANDS_CASH_10',
+              'COMPLETE_HANDS_PRACTICE_10', 'COMPLETE_HANDS_ANY_20',
+              'COMPLETE_ONE_SNG', 'COMPLETE_TWO_MODES'
+            )
+            OR json_type(mission.value, '$.slot') != 'integer'
+            OR json_extract(mission.value, '$.slot') NOT BETWEEN 0 AND 2
+            OR json_type(mission.value, '$.dojoXpMilli') != 'integer'
+            OR json_extract(mission.value, '$.dojoXpMilli') != 100000
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(source_event.summary_json, '$.missionCompletions')
+        ) = (
+          SELECT COUNT(DISTINCT json_extract(mission.value, '$.missionId'))
+          FROM json_each(
+            source_event.summary_json, '$.missionCompletions'
+          ) AS mission
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(source_event.summary_json, '$.missionCompletions')
+        ) = (
+          SELECT COUNT(DISTINCT json_extract(mission.value, '$.slot'))
+          FROM json_each(
+            source_event.summary_json, '$.missionCompletions'
+          ) AS mission
+        )
+        AND json_extract(source_event.summary_json, '$.dojoXpMilli')
+          >= COALESCE((
+            SELECT SUM(json_extract(mission.value, '$.dojoXpMilli'))
+            FROM json_each(
+              source_event.summary_json, '$.missionCompletions'
+            ) AS mission
+          ), 0)
+        AND json_type(source_event.summary_json, '$.grantedItemIds') = 'array'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM json_each(
+            CASE WHEN json_type(
+              source_event.summary_json, '$.grantedItemIds'
+            ) = 'array' THEN json_extract(
+              source_event.summary_json, '$.grantedItemIds'
+            ) ELSE '[]' END
+          ) AS granted_item
+          LEFT JOIN collection_catalog AS catalog
+            ON catalog.item_id = granted_item.value
+          WHERE granted_item.type != 'text' OR catalog.item_id IS NULL
+        )
+        AND (
+          SELECT COUNT(*)
+          FROM json_each(source_event.summary_json, '$.grantedItemIds')
+        ) = (
+          SELECT COUNT(DISTINCT granted_item.value)
+          FROM json_each(
+            source_event.summary_json, '$.grantedItemIds'
+          ) AS granted_item
+        )
+        AND (
+          json_type(source_event.summary_json, '$.streak') IS NULL
+          OR (
+            json_type(source_event.summary_json, '$.streak') = 'object'
+            AND (
+              SELECT COUNT(*)
+              FROM json_each(source_event.summary_json, '$.streak')
+            ) = 3
+            AND (
+              SELECT COUNT(DISTINCT streak_field.key)
+              FROM json_each(
+                source_event.summary_json, '$.streak'
+              ) AS streak_field
+            ) = 3
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(
+                source_event.summary_json, '$.streak'
+              ) AS streak_field
+              WHERE streak_field.key NOT IN (
+                'previousStreak', 'currentStreak', 'restPassUsed'
+              )
+            )
+            AND json_type(
+              source_event.summary_json, '$.streak.previousStreak'
+            ) = 'integer'
+            AND json_extract(
+              source_event.summary_json, '$.streak.previousStreak'
+            ) BETWEEN 0 AND 9007199254740991
+            AND json_type(
+              source_event.summary_json, '$.streak.currentStreak'
+            ) = 'integer'
+            AND json_extract(
+              source_event.summary_json, '$.streak.currentStreak'
+            ) BETWEEN 1 AND 9007199254740991
+            AND (
+              json_extract(
+                source_event.summary_json, '$.streak.currentStreak'
+              ) = 1
+              OR json_extract(
+                source_event.summary_json, '$.streak.currentStreak'
+              ) = json_extract(
+                source_event.summary_json, '$.streak.previousStreak'
+              ) + 1
+            )
+            AND json_type(
+              source_event.summary_json, '$.streak.restPassUsed'
+            ) IN ('true', 'false')
+            AND (
+              json_extract(
+                source_event.summary_json, '$.streak.restPassUsed'
+              ) = 0
+              OR (
+                json_extract(
+                  source_event.summary_json, '$.streak.previousStreak'
+                ) > 0
+                AND json_extract(
+                  source_event.summary_json, '$.streak.currentStreak'
+                ) = json_extract(
+                  source_event.summary_json, '$.streak.previousStreak'
+                ) + 1
+              )
+            )
+          )
+        );
+
+      CREATE TABLE v13_collection_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v13_collection_validation(invalid)
+      SELECT 1 FROM inventory_items
+      WHERE granted_at NOT BETWEEN 0 AND 253402300799999
+        OR updated_at NOT BETWEEN granted_at AND 253402300799999;
+
+      INSERT INTO v13_collection_validation(invalid)
+      SELECT 1 FROM profile_equipment
+      WHERE updated_at NOT BETWEEN 0 AND 253402300799999;
+
+      INSERT INTO v13_collection_validation(invalid)
+      SELECT 1
+      FROM progression_profiles AS profile
+      LEFT JOIN profile_equipment AS equipment
+        ON equipment.profile_id = profile.profile_id
+      GROUP BY profile.profile_id
+      HAVING COUNT(equipment.slot) != 4
+        OR COUNT(DISTINCT equipment.slot) != 4;
+
+      INSERT INTO v13_collection_validation(invalid)
+      SELECT 1
+      FROM permanent_progression_grants AS grant_row
+      LEFT JOIN collection_catalog AS catalog ON catalog.item_id = grant_row.item_id
+      LEFT JOIN progression_profiles AS profile
+        ON profile.profile_id = grant_row.profile_id
+      LEFT JOIN character_affinity AS affinity
+        ON affinity.profile_id = grant_row.profile_id
+        AND affinity.character_id = catalog.character_id
+      LEFT JOIN inventory_items AS inventory
+        ON inventory.profile_id = grant_row.profile_id
+        AND inventory.item_id = grant_row.item_id
+      LEFT JOIN canonical_progression_reward_source_events AS source_event
+        ON source_event.idempotency_key = grant_row.source_event_id
+        AND source_event.profile_id = grant_row.profile_id
+        AND source_event.created_at = grant_row.granted_at
+      WHERE profile.profile_id IS NULL
+        OR catalog.item_id IS NULL
+        OR catalog.stackable != 0
+        OR catalog.source_kind != grant_row.source_kind
+        OR catalog.required_level != grant_row.source_level
+        OR catalog.character_id IS NOT grant_row.source_character_id
+        OR inventory.item_id IS NULL
+        OR inventory.quantity != 1
+        OR inventory.granted_at != grant_row.granted_at
+        OR inventory.updated_at != grant_row.granted_at
+        OR source_event.idempotency_key IS NULL
+        OR NOT EXISTS (
+          SELECT 1 FROM json_each(source_event.summary_json, '$.grantedItemIds')
+          WHERE type = 'text' AND value = grant_row.item_id
+        )
+        OR (catalog.source_kind = 'dojo-level' AND (
+          profile.dojo_level < catalog.required_level
+          OR NOT EXISTS (
+            SELECT 1 FROM json_each(source_event.summary_json, '$.dojoLevelsGained')
+            WHERE type = 'integer' AND value = catalog.required_level
+          )
+        ))
+        OR (catalog.source_kind = 'affinity-level' AND (
+          affinity.level IS NULL
+          OR affinity.level < catalog.required_level
+          OR json_extract(source_event.summary_json, '$.characterId')
+            IS NOT catalog.character_id
+          OR NOT EXISTS (
+            SELECT 1 FROM json_each(source_event.summary_json, '$.affinityLevelsGained')
+            WHERE type = 'integer' AND value = catalog.required_level
+          )
+        ));
+
+      DROP TABLE v13_collection_validation;
+
+      DROP TRIGGER validate_permanent_grant_insert;
+      DROP TRIGGER validate_permanent_grant_source_event_insert;
+      DROP TRIGGER validate_permanent_grant_catalog_insert;
+      DROP TRIGGER validate_permanent_grant_source_proof_insert;
+
+      CREATE TRIGGER validate_permanent_grant_insert
+      BEFORE INSERT ON permanent_progression_grants
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM collection_catalog AS catalog
+        JOIN progression_profiles AS profile ON profile.profile_id = NEW.profile_id
+        LEFT JOIN character_affinity AS affinity
+          ON affinity.profile_id = NEW.profile_id
+          AND affinity.character_id = catalog.character_id
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.stackable = 0
+          AND catalog.source_kind = NEW.source_kind
+          AND catalog.required_level = NEW.source_level
+          AND catalog.character_id IS NEW.source_character_id
+          AND ((catalog.source_kind = 'dojo-level'
+              AND profile.dojo_level >= catalog.required_level)
+            OR (catalog.source_kind = 'affinity-level'
+              AND affinity.level >= catalog.required_level))
+          AND (NOT EXISTS (
+              SELECT 1 FROM progression_events
+              WHERE idempotency_key = NEW.source_event_id
+            ) OR EXISTS (
+              SELECT 1
+              FROM canonical_progression_reward_source_events AS source_event
+              WHERE source_event.idempotency_key = NEW.source_event_id
+                AND source_event.profile_id = NEW.profile_id
+                AND source_event.created_at = NEW.granted_at
+                AND EXISTS (
+                  SELECT 1
+                  FROM json_each(source_event.summary_json, '$.grantedItemIds')
+                  WHERE type = 'text' AND value = NEW.item_id
+                )
+                AND ((catalog.source_kind = 'dojo-level' AND EXISTS (
+                    SELECT 1
+                    FROM json_each(source_event.summary_json, '$.dojoLevelsGained')
+                    WHERE type = 'integer' AND value = catalog.required_level
+                  )) OR (catalog.source_kind = 'affinity-level'
+                    AND json_extract(source_event.summary_json, '$.characterId')
+                      IS catalog.character_id
+                    AND EXISTS (
+                      SELECT 1
+                      FROM json_each(
+                        source_event.summary_json, '$.affinityLevelsGained'
+                      )
+                      WHERE type = 'integer' AND value = catalog.required_level
+                    )))
+            ))
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid permanent grant source'); END;
+
+      CREATE TRIGGER validate_permanent_grant_source_event_insert
+      AFTER INSERT ON progression_events
+      WHEN EXISTS (
+        SELECT 1
+        FROM permanent_progression_grants AS grant_row
+        JOIN collection_catalog AS catalog ON catalog.item_id = grant_row.item_id
+        JOIN progression_profiles AS profile
+          ON profile.profile_id = grant_row.profile_id
+        LEFT JOIN character_affinity AS affinity
+          ON affinity.profile_id = grant_row.profile_id
+          AND affinity.character_id = catalog.character_id
+        LEFT JOIN canonical_progression_reward_source_events AS source_event
+          ON source_event.idempotency_key = NEW.idempotency_key
+          AND source_event.profile_id = grant_row.profile_id
+          AND source_event.created_at = grant_row.granted_at
+        WHERE grant_row.source_event_id = NEW.idempotency_key
+          AND (
+            source_event.idempotency_key IS NULL
+            OR NOT EXISTS (
+              SELECT 1
+              FROM json_each(source_event.summary_json, '$.grantedItemIds')
+              WHERE type = 'text' AND value = grant_row.item_id
+            )
+            OR (catalog.source_kind = 'dojo-level' AND (
+              profile.dojo_level < catalog.required_level
+              OR NOT EXISTS (
+                SELECT 1
+                FROM json_each(source_event.summary_json, '$.dojoLevelsGained')
+                WHERE type = 'integer' AND value = catalog.required_level
+              )
+            ))
+            OR (catalog.source_kind = 'affinity-level' AND (
+              affinity.level IS NULL
+              OR affinity.level < catalog.required_level
+              OR json_extract(source_event.summary_json, '$.characterId')
+                IS NOT catalog.character_id
+              OR NOT EXISTS (
+                SELECT 1
+                FROM json_each(
+                  source_event.summary_json, '$.affinityLevelsGained'
+                )
+                WHERE type = 'integer' AND value = catalog.required_level
+              )
+            ))
+          )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid permanent grant source event'); END;
+
+      CREATE TRIGGER validate_collection_inventory_shape_insert
+      BEFORE INSERT ON inventory_items
+      WHEN NEW.item_id != 'streak-fragment'
+        AND (NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.granted_at AND 253402300799999
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid inventory timestamps'); END;
+
+      CREATE TRIGGER validate_collection_inventory_shape_update
+      BEFORE UPDATE ON inventory_items
+      WHEN NEW.item_id != 'streak-fragment'
+        AND OLD.item_id != 'streak-fragment'
+        AND (NEW.profile_id != OLD.profile_id
+        OR NEW.item_id != OLD.item_id
+        OR NEW.granted_at NOT BETWEEN 0 AND 253402300799999
+        OR NEW.updated_at NOT BETWEEN NEW.granted_at AND 253402300799999
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid inventory row'); END;
+
+      CREATE TRIGGER validate_collection_equipment_shape_insert
+      BEFORE INSERT ON profile_equipment
+      WHEN NEW.updated_at NOT BETWEEN 0 AND 253402300799999
+      BEGIN SELECT RAISE(ABORT, 'invalid equipment timestamp'); END;
+
+      CREATE TRIGGER validate_collection_equipment_shape_update
+      BEFORE UPDATE ON profile_equipment
+      WHEN NEW.profile_id != OLD.profile_id
+        OR NEW.slot != OLD.slot
+        OR NEW.updated_at NOT BETWEEN 0 AND 253402300799999
+      BEGIN SELECT RAISE(ABORT, 'invalid equipment row'); END;
     `,
   },
 ];

@@ -7,6 +7,7 @@ import { openPokerDatabase, type PokerDatabase } from './database';
 import { ProfileRepository } from '../profile-repository';
 import { ProgressionRepository } from '../progression-repository';
 import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
+import { parseProgressionRewardSummary } from '@/lib/progression/reward-summary';
 import {
   type Migration,
   migrations,
@@ -46,7 +47,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(12);
+    expect(migration.version).toBe(13);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -170,7 +171,171 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(12);
+    expect(result.count).toBe(13);
+  });
+
+  it('keeps the SQL reward-source validator equivalent to the shared parser', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'canonical-summary');
+    const fixtures = [
+      validPermanentSummary('canonical-valid', {
+        dojoLevelsGained: [5],
+        grantedItemIds: ['dojo-frame-cherry-blossom'],
+      }),
+      { dojoLevelsGained: [5], grantedItemIds: ['dojo-frame-cherry-blossom'] },
+      validPermanentSummary('wrong-event-id', { eventId: 'other-event' }),
+      validPermanentSummary('unsafe-summary', {
+        dojoXpMilli: Number.MAX_SAFE_INTEGER + 1,
+      }),
+      validPermanentSummary('unknown-character', { characterId: 'miyako' }),
+      validPermanentSummary('duplicate-level', { dojoLevelsGained: [5, 5] }),
+      validPermanentSummary('duplicate-item', {
+        grantedItemIds: [
+          'dojo-frame-cherry-blossom',
+          'dojo-frame-cherry-blossom',
+        ],
+      }),
+      validPermanentSummary('bad-mission', {
+        dojoXpMilli: 100_000,
+        missionCompletions: [{
+          missionId: 'COMPLETE_ONE_SNG',
+          slot: 0,
+          dojoXpMilli: 99_999,
+        }],
+      }),
+      validPermanentSummary('bad-streak', {
+        streak: { previousStreak: 3, currentStreak: 5, restPassUsed: false },
+      }),
+    ];
+
+    for (const [index, summary] of fixtures.entries()) {
+      const eventId = typeof summary.eventId === 'string'
+        ? summary.eventId
+        : `partial-${index}`;
+      database.db.prepare(`
+        INSERT INTO progression_events (
+          idempotency_key, profile_id, event_type, balance_version,
+          summary_json, created_at
+        ) VALUES (?, 'canonical-summary', 'completed-hand', 1, ?, ?)
+      `).run(eventId, JSON.stringify(summary), index + 1);
+      const sqlAccepted = database.db.prepare(`
+        SELECT 1 FROM canonical_progression_reward_source_events
+        WHERE idempotency_key = ?
+      `).get(eventId) !== undefined;
+      expect(sqlAccepted).toBe(
+        parseProgressionRewardSummary(summary, eventId, 1) !== null,
+      );
+    }
+  });
+
+  it('rejects partial and unsupported-balance permanent sources in both orders', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'source-proof-runtime');
+    const repository = new ProgressionRepository(database);
+    repository.getOrCreate('source-proof-runtime', 'sakura', 1);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'source-proof-runtime'
+    `).run();
+
+    for (const [eventId, balanceVersion, summary] of [
+      [
+        'partial-existing',
+        1,
+        { dojoLevelsGained: [5], grantedItemIds: ['dojo-frame-cherry-blossom'] },
+      ],
+      [
+        'balance-two-existing',
+        2,
+        validPermanentSummary('balance-two-existing', {
+          dojoLevelsGained: [5],
+          grantedItemIds: ['dojo-frame-cherry-blossom'],
+        }),
+      ],
+    ] as const) {
+      database.db.prepare(`
+        INSERT INTO progression_events VALUES (
+          ?, 'source-proof-runtime', 'completed-hand', ?, ?, 10
+        )
+      `).run(eventId, balanceVersion, JSON.stringify(summary));
+      expect(() => database?.db.prepare(`
+        INSERT INTO permanent_progression_grants (
+          profile_id, item_id, source_event_id, source_kind,
+          source_level, source_character_id, granted_at
+        ) VALUES (
+          'source-proof-runtime', 'dojo-frame-cherry-blossom', ?,
+          'dojo-level', 5, NULL, 10
+        )
+      `).run(eventId)).toThrow();
+    }
+
+    expect(() => database?.transaction(() => {
+      database?.db.prepare(`
+        INSERT INTO permanent_progression_grants (
+          profile_id, item_id, source_event_id, source_kind,
+          source_level, source_character_id, granted_at
+        ) VALUES (
+          'source-proof-runtime', 'dojo-frame-cherry-blossom',
+          'partial-later', 'dojo-level', 5, NULL, 11
+        )
+      `).run();
+      database?.db.prepare(`
+        INSERT INTO progression_events VALUES (
+          'partial-later', 'source-proof-runtime', 'completed-hand', 1,
+          '{"dojoLevelsGained":[5],"grantedItemIds":["dojo-frame-cherry-blossom"]}',
+          11
+        )
+      `).run();
+    })).toThrow();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM permanent_progression_grants
+      WHERE profile_id = 'source-proof-runtime'
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('enforces bounded inventory and equipment times plus immutable row identities', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'runtime-shape-a');
+    insertProfile(database, 'runtime-shape-b');
+    const repository = new ProgressionRepository(database);
+    repository.getOrCreate('runtime-shape-a', 'sakura', 1);
+    repository.getOrCreate('runtime-shape-b', 'sakura', 1);
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'runtime-shape-a', 'dojo-frame-cherry-blossom', 1,
+        253402300800000, 253402300800000
+      )
+    `).run()).toThrow();
+    database.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'runtime-shape-a', 'dojo-frame-cherry-blossom', 1, 2, 2
+      )
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET item_id = 'dojo-title-steady-trainee'
+      WHERE profile_id = 'runtime-shape-a'
+        AND item_id = 'dojo-frame-cherry-blossom'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET granted_at = 3, updated_at = 2
+      WHERE profile_id = 'runtime-shape-a'
+        AND item_id = 'dojo-frame-cherry-blossom'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE profile_equipment SET updated_at = 253402300800000
+      WHERE profile_id = 'runtime-shape-a' AND slot = 'title'
+    `).run()).toThrow();
+
+    bypassTrigger(database.db, 'reject_catalog_equipment_delete', `
+      DELETE FROM profile_equipment
+      WHERE profile_id = 'runtime-shape-b' AND slot = 'frame'
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE profile_equipment
+      SET profile_id = 'runtime-shape-b', slot = 'frame'
+      WHERE profile_id = 'runtime-shape-a' AND slot = 'title'
+    `).run()).toThrow();
   });
 
   it('upgrades a V10 preowned cosmetic without inventing a grant receipt', () => {
@@ -281,6 +446,20 @@ describe('PokerDatabase migrations', () => {
       WHERE profile_id = 'v1-marker'
         AND item_id = 'dojo-frame-cherry-blossom';
     `],
+    ['missing equipment slot', `
+      DELETE FROM profile_equipment
+      WHERE profile_id = 'v1-marker' AND slot = 'cutin';
+    `],
+    ['inventory timestamp outside canonical range', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 1,
+        253402300800000, 253402300800000
+      );
+    `],
+    ['equipment timestamp outside canonical range', `
+      UPDATE profile_equipment SET updated_at = 253402300800000
+      WHERE profile_id = 'v1-marker' AND slot = 'title';
+    `],
   ])('atomically rejects corrupt V11 %s during V12 upgrade', (_label, mutation) => {
     const directory = mkdtempSync(join(tmpdir(), 'poker-doku-v11-invalid-'));
     temporaryDirectories.push(directory);
@@ -304,6 +483,77 @@ describe('PokerDatabase migrations', () => {
       expect(after.prepare(`
         SELECT COUNT(*) AS count FROM sqlite_schema
         WHERE type = 'table' AND name = 'collection_catalog'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      after.close();
+    }
+  });
+
+  it.each([
+    ['missing equipment slot', `
+      DROP TRIGGER reject_catalog_equipment_delete;
+      DELETE FROM profile_equipment
+      WHERE profile_id = 'v1-marker' AND slot = 'cutin';
+    `],
+    ['inventory timestamp outside canonical range', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 1,
+        253402300800000, 253402300800000
+      );
+    `],
+    ['equipment timestamp outside canonical range', `
+      UPDATE profile_equipment SET updated_at = 253402300800000
+      WHERE profile_id = 'v1-marker' AND slot = 'title';
+    `],
+    ['partial permanent source summary', `
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'v1-marker';
+      INSERT INTO progression_events VALUES (
+        'v12-partial-source', 'v1-marker', 'completed-hand', 1,
+        '{"dojoLevelsGained":[5],"grantedItemIds":["dojo-frame-cherry-blossom"]}',
+        1
+      );
+      INSERT INTO permanent_progression_grants VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 'v12-partial-source',
+        'dojo-level', 5, NULL, 1
+      );
+    `],
+    ['unsupported-balance permanent source', `
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'v1-marker';
+      INSERT INTO progression_events VALUES (
+        'v12-balance-source', 'v1-marker', 'completed-hand', 2,
+        '{"eventId":"v12-balance-source","dojoXpMilli":10000,"dojoLevelsGained":[5],"characterId":"sakura","affinityMilli":2000,"affinityLevelsGained":[],"missionCompletions":[],"grantedItemIds":["dojo-frame-cherry-blossom"]}',
+        1
+      );
+      INSERT INTO permanent_progression_grants VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 'v12-balance-source',
+        'dojo-level', 5, NULL, 1
+      );
+    `],
+  ])('atomically rejects corrupt V12 %s during V13 upgrade', (_label, mutation) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-v12-invalid-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV12Database(path);
+    const raw = new DatabaseSync(path);
+    try {
+      raw.exec(mutation);
+    } finally {
+      raw.close();
+    }
+
+    expectOpenDatabaseToThrow(path);
+
+    const after = new DatabaseSync(path);
+    try {
+      expect(after.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 12 });
+      expect(after.prepare(`
+        SELECT COUNT(*) AS count FROM sqlite_schema
+        WHERE type = 'view'
+          AND name = 'canonical_progression_reward_source_events'
       `).get()).toEqual({ count: 0 });
     } finally {
       after.close();
@@ -335,7 +585,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -357,7 +607,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -398,7 +648,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
   });
 
@@ -437,7 +687,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -742,7 +992,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -976,6 +1226,11 @@ describe('PokerDatabase migrations', () => {
         'v1-marker', 1, 1, 0, 'sakura', NULL,
         0, 0, 0, 0, 0, 3, 1, 1
       );
+      INSERT INTO profile_equipment VALUES
+        ('v1-marker', 'title', NULL, 1),
+        ('v1-marker', 'frame', NULL, 1),
+        ('v1-marker', 'skin', NULL, 1),
+        ('v1-marker', 'cutin', NULL, 1);
       INSERT INTO streak_state VALUES (
         'v1-marker', 3, 1, '2026-07-17', '2026-W29', 1, 1
       );
@@ -990,7 +1245,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 }, { version: 12 },
+      { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1238,6 +1493,11 @@ describe('PokerDatabase migrations', () => {
         'v1-marker', 1, 1, 0, 'sakura', NULL,
         0, 0, 0, 0, 0, 1, 10, 10
       );
+      INSERT INTO profile_equipment VALUES
+        ('v1-marker', 'title', NULL, 10),
+        ('v1-marker', 'frame', NULL, 10),
+        ('v1-marker', 'skin', NULL, 10),
+        ('v1-marker', 'cutin', NULL, 10);
       INSERT INTO streak_state VALUES (
         'v1-marker', 1, 1, '2026-07-17', '2026-W29', 10, 10
       );
@@ -1252,7 +1512,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 12 });
+    `).get()).toEqual({ version: 13 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -1595,7 +1855,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 12 });
+    `).get()).toEqual({ version: 13 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -2908,6 +3168,22 @@ function createV11Database(path: string): void {
   }
 }
 
+function createV12Database(path: string): void {
+  createV11Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[11].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (12, 'enforce_durable_collection_catalog_and_reward_proofs', 12);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
 function expectOpenDatabaseToThrow(path: string): void {
   let opened: PokerDatabase | undefined;
   let thrown: unknown;
@@ -3008,6 +3284,11 @@ function insertValidV7FragmentGrant(
       'v1-marker', 1, 1, 0, 'sakura', NULL,
       0, 0, 0, 0, 0, 7, 10, 10
     );
+    INSERT INTO profile_equipment VALUES
+      ('v1-marker', 'title', NULL, 10),
+      ('v1-marker', 'frame', NULL, 10),
+      ('v1-marker', 'skin', NULL, 10),
+      ('v1-marker', 'cutin', NULL, 10);
     INSERT INTO streak_state VALUES (
       'v1-marker', 7, 1, '2026-07-17', '2026-W29', 10, 10
     );
@@ -3067,6 +3348,23 @@ function fragmentSourceSummaryJson(eventId: string): string {
     },
     grantedItemIds: ['streak-fragment'],
   });
+}
+
+function validPermanentSummary(
+  eventId: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    eventId,
+    dojoXpMilli: 10_000,
+    dojoLevelsGained: [],
+    characterId: 'sakura',
+    affinityMilli: 2_000,
+    affinityLevelsGained: [],
+    missionCompletions: [],
+    grantedItemIds: [],
+    ...overrides,
+  };
 }
 
 function insertProfile(database: PokerDatabase, id: string): void {
