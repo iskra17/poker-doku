@@ -256,7 +256,12 @@ export const migrations: readonly Migration[] = [
         slot TEXT NOT NULL CHECK (slot IN ('title','frame','skin','cutin')),
         item_id TEXT,
         updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
-        PRIMARY KEY (profile_id, slot)
+        PRIMARY KEY (profile_id, slot),
+        FOREIGN KEY (profile_id, item_id)
+          REFERENCES inventory_items(profile_id, item_id)
+          ON UPDATE CASCADE
+          ON DELETE NO ACTION
+          DEFERRABLE INITIALLY DEFERRED
       ) STRICT;
 
       CREATE TABLE progression_events (

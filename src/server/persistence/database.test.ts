@@ -235,6 +235,15 @@ describe('PokerDatabase migrations', () => {
     const foreignKeys = database.db.prepare(`
       PRAGMA foreign_key_list(progression_profiles)
     `).all() as Array<{ table: string; on_delete: string }>;
+    const equipmentForeignKeys = database.db.prepare(`
+      PRAGMA foreign_key_list(profile_equipment)
+    `).all() as Array<{
+      table: string;
+      from: string;
+      to: string;
+      on_update: string;
+      on_delete: string;
+    }>;
     const indexes = database.db.prepare(`
       SELECT name FROM sqlite_schema
       WHERE type = 'index' AND name LIKE 'idx_progression_%'
@@ -246,6 +255,24 @@ describe('PokerDatabase migrations', () => {
     expect(foreignKeys).toEqual(expect.arrayContaining([
       expect.objectContaining({ table: 'profiles', on_delete: 'CASCADE' }),
     ]));
+    expect(equipmentForeignKeys).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        table: 'inventory_items',
+        from: 'profile_id',
+        to: 'profile_id',
+        on_update: 'CASCADE',
+        on_delete: 'NO ACTION',
+      }),
+      expect.objectContaining({
+        table: 'inventory_items',
+        from: 'item_id',
+        to: 'item_id',
+        on_update: 'CASCADE',
+        on_delete: 'NO ACTION',
+      }),
+    ]));
+    expect(tableSql.find(table => table.name === 'profile_equipment')?.sql)
+      .toContain('DEFERRABLE INITIALLY DEFERRED');
     expect(indexes).toEqual(expect.arrayContaining([
       'idx_progression_daily_date_profile',
       'idx_progression_events_profile_created_at_desc',
@@ -265,6 +292,65 @@ describe('PokerDatabase migrations', () => {
       INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
       VALUES (?, 'weapon', NULL, 1)
     `).run('progression-constraints')).toThrow();
+  });
+
+  it('enforces same-profile equipment ownership while allowing null slots', () => {
+    database = openPokerDatabase(':memory:');
+    const db = database.db;
+    insertProfile(database, 'equipment-owner');
+    insertProfile(database, 'equipment-other');
+    const insertEquipment = db.prepare(`
+      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
+      VALUES (?, ?, NULL, 1)
+    `);
+    for (const slot of ['title', 'frame', 'skin', 'cutin']) {
+      insertEquipment.run('equipment-owner', slot);
+    }
+    insertEquipment.run('equipment-other', 'title');
+    db.prepare(`
+      INSERT INTO inventory_items (
+        profile_id, item_id, quantity, granted_at, updated_at
+      ) VALUES ('equipment-owner', 'owner-title', 1, 1, 1)
+    `).run();
+
+    expect(db.prepare(`
+      SELECT slot, item_id FROM profile_equipment
+      WHERE profile_id = 'equipment-owner' ORDER BY slot
+    `).all()).toEqual([
+      { slot: 'cutin', item_id: null },
+      { slot: 'frame', item_id: null },
+      { slot: 'skin', item_id: null },
+      { slot: 'title', item_id: null },
+    ]);
+    expect(() => db.prepare(`
+      UPDATE profile_equipment SET item_id = 'missing-item'
+      WHERE profile_id = 'equipment-owner' AND slot = 'frame'
+    `).run()).toThrow();
+    expect(() => db.prepare(`
+      UPDATE profile_equipment SET item_id = 'owner-title'
+      WHERE profile_id = 'equipment-other' AND slot = 'title'
+    `).run()).toThrow();
+
+    db.prepare(`
+      UPDATE profile_equipment SET item_id = 'owner-title'
+      WHERE profile_id = 'equipment-owner' AND slot = 'title'
+    `).run();
+    expect(db.prepare(`
+      SELECT item_id FROM profile_equipment
+      WHERE profile_id = 'equipment-owner' AND slot = 'title'
+    `).get()).toEqual({ item_id: 'owner-title' });
+    db.prepare(`
+      UPDATE inventory_items SET item_id = 'owner-title-renamed'
+      WHERE profile_id = 'equipment-owner' AND item_id = 'owner-title'
+    `).run();
+    expect(db.prepare(`
+      SELECT item_id FROM profile_equipment
+      WHERE profile_id = 'equipment-owner' AND slot = 'title'
+    `).get()).toEqual({ item_id: 'owner-title-renamed' });
+    expect(() => db.prepare(`
+      DELETE FROM inventory_items
+      WHERE profile_id = 'equipment-owner' AND item_id = 'owner-title-renamed'
+    `).run()).toThrow();
   });
 
   it('rolls back all V5 tables and its version when a middle object conflicts', () => {
