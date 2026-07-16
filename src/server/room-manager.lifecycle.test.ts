@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, Player, RoomConfig } from '../lib/poker/types';
+import type { RoomEconomyHooks } from './economy-runtime';
+import { eventLog } from './event-log';
 import { RoomManager } from './room-manager';
 
 function makeConfig(): RoomConfig {
@@ -15,6 +17,10 @@ function makeConfig(): RoomConfig {
     botCount: 0,
     tableType: 'humans',
   };
+}
+
+function makeWalletConfig(): RoomConfig {
+  return { ...makeConfig(), economyMode: 'wallet' };
 }
 
 function makeHuman(id: string, seatIndex = 0): Player {
@@ -165,5 +171,139 @@ describe('RoomManager 메모리 수명주기', () => {
 
     expect(manager.getRoom(roomId)).toBeUndefined();
     expect(manager.getRuntimeStats().finishedRoomTimers).toBe(0);
+  });
+});
+
+describe('RoomManager wallet cash persistence hooks', () => {
+  let manager: RoomManager;
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.useRealTimers();
+  });
+
+  function hooks(overrides: Partial<RoomEconomyHooks> = {}): RoomEconomyHooks {
+    return {
+      beforeHand: vi.fn(),
+      afterHand: vi.fn(() => ({ paidTotal: 0, rake: 0 })),
+      settleExit: vi.fn(),
+      voidRoom: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it('does not deal or mutate a hand when its pre-hand checkpoint fails', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      beforeHand: vi.fn(() => { throw new Error('database unavailable'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+
+    vi.advanceTimersByTime(2_001);
+
+    const state = manager.getRoom(roomId)!.engine.state;
+    expect(economy.beforeHand).toHaveBeenCalledOnce();
+    expect(state.handNumber).toBe(0);
+    expect(state.isHandInProgress).toBe(false);
+    expect(state.players.every(player => player.holeCards.length === 0)).toBe(true);
+    expect(manager.getChatHistory(roomId).at(-1)?.message)
+      .toBe('저장 연결을 확인 중이에요');
+  });
+
+  it('persists a completed hand before settling a player who left during it', () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const economy = hooks({
+      beforeHand: vi.fn(),
+      afterHand: vi.fn(() => {
+        order.push('after-hand');
+        return { paidTotal: 3_980, rake: 20 };
+      }),
+      settleExit: vi.fn((_roomId, player) => {
+        order.push(`exit:${player.id}`);
+      }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    const leaver = room.engine.state.players[room.engine.state.activePlayerIndex];
+
+    manager.leaveRoom(roomId, leaver.id);
+
+    expect(order).toEqual(['after-hand', `exit:${leaver.id}`]);
+    expect(economy.afterHand).toHaveBeenCalledOnce();
+    expect(economy.settleExit).toHaveBeenCalledOnce();
+    expect(room.engine.state.isHandInProgress).toBe(false);
+  });
+
+  it('preserves escrow on disconnect and settles between-hands exits and room disposal once', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const exitRoom = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(exitRoom, makeHuman('p1'));
+
+    manager.handleDisconnect(exitRoom, 'p1');
+    expect(economy.settleExit).not.toHaveBeenCalled();
+    manager.handleReconnect(exitRoom, 'p1');
+    manager.leaveRoom(exitRoom, 'p1');
+    expect(economy.settleExit).toHaveBeenCalledOnce();
+
+    const disposedRoom = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(disposedRoom, makeHuman('p2'));
+    expect(manager.disposeRoom(disposedRoom)).toBe(true);
+    expect(manager.disposeRoom(disposedRoom)).toBe(false);
+    expect(vi.mocked(economy.voidRoom).mock.calls)
+      .toEqual([[exitRoom], [disposedRoom]]);
+  });
+
+  it('keeps the completed snapshot and blocks the next hand when post-hand persistence fails', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      afterHand: vi.fn(() => { throw new Error('write failed'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    const leaver = room.engine.state.players[room.engine.state.activePlayerIndex];
+
+    manager.leaveRoom(roomId, leaver.id);
+    const completedState = room.engine.getPublicState();
+    vi.advanceTimersByTime(20_000);
+
+    expect(economy.afterHand).toHaveBeenCalledOnce();
+    expect(room.engine.getPublicState()).toEqual(completedState);
+    expect(room.engine.state.handNumber).toBe(1);
+    expect(room.engine.state.isHandInProgress).toBe(false);
+    expect(eventLog.recent({ roomId, type: 'hand-end', limit: 1 })[0]?.data)
+      .toMatchObject({
+        rake: expect.any(Number),
+        paidTotal: expect.any(Number),
+        settlementOk: false,
+      });
+  });
+
+  it('refuses to dispose an active wallet hand before its persisted settlement', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    vi.advanceTimersByTime(2_001);
+
+    expect(manager.getRoom(roomId)!.engine.state.isHandInProgress).toBe(true);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    expect(economy.voidRoom).not.toHaveBeenCalled();
   });
 });

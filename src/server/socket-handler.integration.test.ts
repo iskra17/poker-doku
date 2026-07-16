@@ -32,6 +32,12 @@ const HUMAN_ROOM: RoomConfig = {
   tableType: 'humans',
 };
 
+const WALLET_CASH_ROOM: RoomConfig = {
+  ...HUMAN_ROOM,
+  name: '지갑 캐시 방',
+  economyMode: 'wallet',
+};
+
 function joinRoom(
   client: ConnectedTestClient,
   roomId: string,
@@ -205,6 +211,139 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(JSON.stringify(
       harness.runtime.roomManager.getRoom(roomId)?.engine.getPublicState(client.playerId),
     )).not.toContain(credential);
+  });
+
+  it('atomically funds a wallet cash seat, reuses it on rejoin, and cashes out on clean exit', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-seat-token', {
+      profileCookie: created.cookie,
+    });
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 6_000,
+      activeEscrow: 4_000,
+      activeRoomId: roomId,
+    });
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id).balance).toBe(6_000);
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room',
+      { mode: 'exit' },
+      done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+  });
+
+  it('refunds wallet admission when seat insertion fails', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-rollback-token', {
+      profileCookie: created.cookie,
+    });
+    vi.spyOn(harness.runtime.roomManager, 'joinRoom').mockReturnValueOnce(false);
+
+    const joined = await withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done));
+
+    expect(joined).toMatchObject({ ok: false, code: 'room-full' });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+  });
+
+  it('keeps wallet cash escrow during disconnect grace', async () => {
+    harness = await createSocketTestHarness({ graceMs: 500 });
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-disconnect-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+
+    client.socket.disconnect();
+    await wait(30);
+
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 6_000,
+      activeEscrow: 4_000,
+      activeRoomId: roomId,
+    });
+  });
+
+  it('debits exactly once when a busted wallet seat rebuys on rejoin', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-rebuy-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    room.engine.addPlayer({
+      id: 'rebuy-bot',
+      name: '리바이 봇',
+      type: 'bot',
+      avatar: 'bot',
+      chips: 4_000,
+      seatIndex: 1,
+      holeCards: [],
+      currentBet: 0,
+      totalContributed: 0,
+      status: 'waiting',
+      hasActed: false,
+    });
+    harness.economyRuntime.beforeHand(roomId, room.engine);
+    room.engine.startHand();
+    room.engine.state.players.find(player => player.id === created.profile.id)!.chips = 0;
+    room.engine.state.players.find(player => player.id === 'rebuy-bot')!.chips = 8_000;
+    room.engine.state.handRake = 0;
+    room.engine.state.isHandInProgress = false;
+    harness.economyRuntime.afterHand(roomId, room.engine);
+
+    const rebuy = () => withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 2_000,
+      seatIndex: 0,
+    }, done));
+    await expect(rebuy()).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 4_000,
+      activeEscrow: 2_000,
+      activeRoomId: roomId,
+    });
+    await expect(rebuy()).resolves.toMatchObject({ ok: true });
+    expect(harness.walletState(created.profile.id).balance).toBe(4_000);
   });
 
   it('rejects an old credential after recovery rotates it', async () => {

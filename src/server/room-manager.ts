@@ -7,8 +7,12 @@ import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/
 import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, shouldRemoveForMissedBlinds } from './sitout';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
-import { eventLog } from './event-log';
+import { eventLog, handSettlementLogFields } from './event-log';
 import type { RoomListItem } from '../lib/realtime/protocol';
+import type {
+  CashHandPersistenceResult,
+  RoomEconomyHooks,
+} from './economy-runtime';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -17,6 +21,7 @@ const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
 
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
+  economy?: RoomEconomyHooks;
   onRoomDisposed?: (
     roomId: string,
     playerIds: string[],
@@ -53,6 +58,14 @@ export class RoomManager {
   private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
+  /** 영속 정산 실패 방은 현재 엔진 스냅샷을 보존한 채 다음 핸드를 시작하지 않는다. */
+  private economyBlockedRooms = new Set<string>();
+  private handSettlementStatus = new Map<string, {
+    handNumber: number;
+    ok: boolean;
+    paidTotal: number;
+    rake: number;
+  }>();
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
@@ -114,6 +127,21 @@ export class RoomManager {
   ): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    if (
+      this.isWalletCash(room)
+      && room.engine.state.isHandInProgress
+    ) {
+      return false;
+    }
+    if (this.isWalletCash(room)) {
+      try {
+        this.requireEconomy().voidRoom(roomId);
+      } catch {
+        this.economyBlockedRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+        return false;
+      }
+    }
     const playerIds = room.engine.state.players
       .filter(player => player.type === 'human')
       .map(player => player.id);
@@ -134,6 +162,8 @@ export class RoomManager {
     this.chatHistory.delete(roomId);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
+    this.economyBlockedRooms.delete(roomId);
+    this.handSettlementStatus.delete(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
       this.options.onRoomDisposed?.(roomId, playerIds, reason);
@@ -277,6 +307,20 @@ export class RoomManager {
     if (!room) return;
 
     const wasInProgress = room.engine.state.isHandInProgress;
+    const leavingPlayer = room.engine.state.players.find(p => p.id === playerId);
+    if (
+      !wasInProgress
+      && leavingPlayer?.type === 'human'
+      && this.isWalletCash(room)
+    ) {
+      try {
+        this.requireEconomy().settleExit(roomId, leavingPlayer);
+      } catch {
+        this.economyBlockedRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+        return;
+      }
+    }
     // 이탈자 턴에 걸려 있던 stale 타이머 제거 (아니어도 아래 startPlayerLoop가 재설정)
     this.clearTurnTimer(roomId);
     // 좌석이 정리되므로 남아 있던 자리비움 최종 정리 타이머도 취소 (orphan 방지)
@@ -287,20 +331,19 @@ export class RoomManager {
       this.sendSystemChat(roomId, `${player.name}님이 테이블을 떠났습니다.`);
     }
 
-    // Clean up empty rooms — 제거 예약자는 휴먼 수에서 제외.
+    // 진행 중 wallet cash 핸드는 마지막 휴먼이 나가도 봇 액션/정산이 끝날 때까지 보존한다.
+    // 엔진을 먼저 초기화하면 마지막 체크포인트만 남고 현재 핸드 정산이 사라진다.
     const humans = room.engine.state.players.filter(p => p.type === 'human' && !p.pendingRemoval);
-    if (humans.length === 0) {
-      this.stopBotLoop(roomId);
-      this.clearPendingStart(roomId);
-      this.clearTurnTimer(roomId);
-      if (room.persistent) {
-        // 영속(기본 로비) 방은 삭제하지 않고 대기 상태로 리셋 — 남은 봇/진행 중 핸드를 비워
-        // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
-        this.resetRoomToIdle(roomId);
-        if (player) this.onRoomsChanged?.();
-      } else {
-        this.disposeRoom(roomId, 'empty');
+    const preserveForEconomicSettlement = this.isWalletCash(room)
+      && wasInProgress
+      && room.engine.state.isHandInProgress;
+    if (humans.length === 0 && !preserveForEconomicSettlement) {
+      if (wasInProgress && handComplete) {
+        this.handleCompletedHand(roomId);
+        this.cleanupEmptyRoom(roomId, player !== null);
+        return;
       }
+      this.cleanupEmptyRoom(roomId, player !== null);
       return;
     }
 
@@ -310,9 +353,7 @@ export class RoomManager {
 
     if (wasInProgress && player) {
       if (handComplete) {
-        this.onUpdate(roomId, room.engine);
-        this.announceWinner(roomId);
-        this.scheduleNextHand(roomId);
+        this.handleCompletedHand(roomId);
       } else if (room.engine.state.isHandInProgress) {
         // 이탈이 턴/라운드를 진행시켰을 수 있으므로 루프 재가동 (핸드 정지 방지)
         this.startPlayerLoop(roomId);
@@ -323,6 +364,22 @@ export class RoomManager {
     }
   }
 
+  private cleanupEmptyRoom(roomId: string, roomsChanged: boolean): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    this.stopBotLoop(roomId);
+    this.clearPendingStart(roomId);
+    this.clearTurnTimer(roomId);
+    if (room.persistent) {
+      // 영속(기본 로비) 방은 삭제하지 않고 대기 상태로 리셋 — 남은 봇/진행 중 핸드를 비워
+      // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
+      this.resetRoomToIdle(roomId);
+      if (roomsChanged) this.onRoomsChanged?.();
+    } else {
+      this.disposeRoom(roomId, 'empty');
+    }
+  }
+
   /**
    * 영속 방을 대기 상태로 초기화 — 휴먼이 모두 떠났을 때 호출.
    * 남은 봇을 비우고 진행 중이던 핸드를 정리해, 다음 입장자가 새 핸드를 깨끗이 시작하게 한다.
@@ -330,10 +387,21 @@ export class RoomManager {
   private resetRoomToIdle(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (this.isWalletCash(room)) {
+      if (room.engine.state.isHandInProgress) return;
+      try {
+        this.requireEconomy().voidRoom(roomId);
+      } catch {
+        this.economyBlockedRooms.add(roomId);
+        return;
+      }
+    }
     room.engine = new PokerEngine(room.config, roomId);
     this.chatHistory.set(roomId, []);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
+    this.economyBlockedRooms.delete(roomId);
+    this.handSettlementStatus.delete(roomId);
   }
 
   // --- [FIX 1] Hand start 중복 방지 ---
@@ -385,9 +453,21 @@ export class RoomManager {
   private startNewHand(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (this.economyBlockedRooms.has(roomId)) return;
 
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
+
+    if (this.isWalletCash(room)) {
+      try {
+        this.requireEconomy().beforeHand(roomId, room.engine);
+      } catch {
+        this.economyBlockedRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+        this.onUpdate(roomId, room.engine);
+        return;
+      }
+    }
 
     // 시트앤고: 첫 핸드 직전 토너먼트 개시, 이후엔 시간 경과에 따른 레벨 인상
     const tournament = room.engine.state.tournament;
@@ -454,9 +534,7 @@ export class RoomManager {
     if (!room.engine.state.isHandInProgress) {
       if (room.engine.state.handNumber > prevHandNumber) {
         // 딜은 됐지만 블라인드 전원 올인 런아웃으로 즉시 쇼다운까지 끝난 핸드 — 정상 종료 플로우
-        this.onUpdate(roomId, room.engine);
-        this.announceWinner(roomId);
-        this.scheduleNextHand(roomId);
+        this.handleCompletedHand(roomId);
       } else {
         // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
         this.tryStartGame(roomId);
@@ -744,9 +822,7 @@ export class RoomManager {
     if (result.valid) {
       this.sendSystemChat(roomId, `${activePlayer.name}님 ${reason} — 자동 ${action === 'check' ? '체크' : '폴드'}되었습니다.`);
       if (result.handComplete) {
-        this.onUpdate(roomId, room.engine);
-        this.announceWinner(roomId);
-        this.scheduleNextHand(roomId);
+        this.handleCompletedHand(roomId);
       } else {
         // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
         this.startPlayerLoop(roomId);
@@ -872,9 +948,7 @@ export class RoomManager {
 
         if (!room.engine.state.isHandInProgress) {
           // Hand ended
-          this.onUpdate(roomId, room.engine);
-          this.announceWinner(roomId);
-          this.scheduleNextHand(roomId);
+          this.handleCompletedHand(roomId);
           return;
         }
 
@@ -899,6 +973,7 @@ export class RoomManager {
 
   private scheduleNextHand(roomId: string): void {
     this.clearPendingStart(roomId);
+    if (this.economyBlockedRooms.has(roomId)) return;
 
     // 시트앤고: 탈락/우승 공지 후, 종료됐으면 다음 핸드를 잡지 않는다
     const room = this.rooms.get(roomId);
@@ -1007,7 +1082,19 @@ export class RoomManager {
   }
 
   shutdown(): void {
-    for (const roomId of [...this.rooms.keys()]) this.disposeRoom(roomId, 'shutdown', false);
+    for (const roomId of [...this.rooms.keys()]) {
+      if (this.disposeRoom(roomId, 'shutdown', false)) continue;
+      // 진행 중 wallet hand는 마지막 checkpoint를 startup recovery가 환불해야 하므로
+      // 엔진을 dispose/reset하지 않고 타이머만 멈춘다. 프로세스 종료와 함께 메모리만 사라진다.
+      this.stopBotLoop(roomId);
+      this.clearPendingStart(roomId);
+      this.clearTurnTimer(roomId);
+      for (const [key, timer] of this.sitOutAbandonTimers) {
+        if (!key.startsWith(`${roomId}:`)) continue;
+        clearTimeout(timer);
+        this.sitOutAbandonTimers.delete(key);
+      }
+    }
     for (const timer of this.finishedRoomTimers.values()) clearTimeout(timer);
     this.finishedRoomTimers.clear();
     this.dialogue.shutdown();
@@ -1029,9 +1116,7 @@ export class RoomManager {
     this.clearTurnTimer(roomId);
 
     if (result.handComplete) {
-      this.onUpdate(roomId, room.engine);
-      this.announceWinner(roomId);
-      this.scheduleNextHand(roomId);
+      this.handleCompletedHand(roomId);
     } else {
       // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
       this.startPlayerLoop(roomId);
@@ -1039,6 +1124,80 @@ export class RoomManager {
     }
 
     return true;
+  }
+
+  private isWalletCash(room: {
+    config: RoomConfig;
+    engine: PokerEngine;
+  }): boolean {
+    return (
+      (room.config.gameMode ?? 'cash') === 'cash'
+      && room.config.economyMode === 'wallet'
+    );
+  }
+
+  private requireEconomy(): RoomEconomyHooks {
+    if (!this.options.economy) throw new Error('wallet economy is unavailable');
+    return this.options.economy;
+  }
+
+  /**
+   * 모든 핸드 종료 진입점. 엔진 스냅샷을 먼저 영속 정산하고, 성공한 뒤에만
+   * 진행 중 이탈 escrow를 닫고 다음 핸드를 예약한다.
+   */
+  private handleCompletedHand(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.engine.state.isHandInProgress) return;
+    const state = room.engine.state;
+    const previous = this.handSettlementStatus.get(roomId);
+    if (previous?.handNumber === state.handNumber) return;
+
+    let paidTotal = (state.winners ?? []).reduce(
+      (sum, winner) => sum + winner.amount,
+      0,
+    );
+    let rake = state.handRake;
+    let settlementOk = true;
+
+    if (this.isWalletCash(room)) {
+      try {
+        const economy = this.requireEconomy();
+        const result: CashHandPersistenceResult = economy.afterHand(
+          roomId,
+          room.engine,
+        );
+        paidTotal = result.paidTotal;
+        rake = result.rake;
+        for (const player of state.players) {
+          if (player.type === 'human' && player.pendingRemoval) {
+            economy.settleExit(roomId, player);
+          }
+        }
+      } catch {
+        settlementOk = false;
+        this.economyBlockedRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+      }
+    }
+
+    this.handSettlementStatus.set(roomId, {
+      handNumber: state.handNumber,
+      ok: settlementOk,
+      paidTotal,
+      rake,
+    });
+    this.onUpdate(roomId, room.engine);
+    this.announceWinner(roomId, { paidTotal, rake, settlementOk });
+    if (!settlementOk) return;
+
+    const remainingHumans = state.players.filter(
+      player => player.type === 'human' && !player.pendingRemoval,
+    );
+    if (remainingHumans.length === 0) {
+      this.cleanupEmptyRoom(roomId, true);
+      return;
+    }
+    this.scheduleNextHand(roomId);
   }
 
   /**
@@ -1059,7 +1218,10 @@ export class RoomManager {
     if (text) this.sendBotChat(roomId, player.id, player.name, text);
   }
 
-  private announceWinner(roomId: string): void {
+  private announceWinner(
+    roomId: string,
+    settlement: { paidTotal: number; rake: number; settlementOk: boolean },
+  ): void {
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.winners) return;
 
@@ -1074,6 +1236,11 @@ export class RoomManager {
         street: s.street,
         potTotal: s.pots.reduce((sum, p) => sum + p.amount, 0),
         contributedTotal: s.players.reduce((sum, p) => sum + p.totalContributed, 0),
+        ...handSettlementLogFields({
+          rake: settlement.rake,
+          paidTotal: settlement.paidTotal,
+          settlementOk: settlement.settlementOk,
+        }),
         winners: (s.winners ?? []).map(w => ({ playerId: w.playerId, amount: w.amount, rank: w.hand?.rank ?? null })),
         stacks: s.players.map(p => ({ id: p.id, name: p.name, seat: p.seatIndex, chips: p.chips, status: p.status })),
       },

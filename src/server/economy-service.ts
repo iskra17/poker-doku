@@ -2,6 +2,9 @@ import {
   EconomyDomainError,
   assertValidEconomyTimestamp,
   type EconomyErrorCode,
+  type CashEscrow,
+  type CashHandDelta,
+  type CashHandStack,
   type EconomyRepository,
   type EconomyResult,
 } from './economy-repository';
@@ -108,5 +111,88 @@ export class EconomyService {
       getNextKstMidnight(at),
       at,
     );
+  }
+
+  openCashEscrow(
+    profileId: string,
+    roomId: string,
+    buyIn: number,
+    at = this.clock(),
+  ): CashEscrow {
+    return this.repository.openCashEscrow(profileId, roomId, buyIn, at);
+  }
+
+  rebuyCashEscrow(
+    profileId: string,
+    roomId: string,
+    buyIn: number,
+    at = this.clock(),
+  ): CashEscrow {
+    return this.repository.rebuyCashEscrow(profileId, roomId, buyIn, at);
+  }
+
+  cancelCashEscrow(
+    profileId: string,
+    roomId: string,
+    at = this.clock(),
+  ): CashEscrow | null {
+    return this.repository.closeCashEscrow(
+      profileId,
+      roomId,
+      'CASH_JOIN_REFUND',
+      at,
+    );
+  }
+
+  settleCashExit(
+    profileId: string,
+    roomId: string,
+    at = this.clock(),
+  ): CashEscrow | null {
+    return this.repository.closeCashEscrow(
+      profileId,
+      roomId,
+      'CASH_CASHOUT',
+      at,
+    );
+  }
+
+  settleCashRoom(roomId: string, at = this.clock()): number {
+    return this.repository.closeCashEscrowsByRoom(roomId, at);
+  }
+
+  hasActiveCashEscrows(roomId: string): boolean {
+    return this.repository.hasActiveCashEscrows(roomId);
+  }
+
+  checkpointCashHand(
+    roomId: string,
+    handNumber: number,
+    stacks: readonly CashHandStack[],
+    at = this.clock(),
+  ): void {
+    this.repository.checkpointCashHand(roomId, handNumber, stacks, at);
+  }
+
+  settleCashHand(
+    roomId: string,
+    handNumber: number,
+    humans: readonly CashHandDelta[],
+    botDelta: number,
+    rake: number,
+    at = this.clock(),
+  ): void {
+    this.repository.settleCashHand(
+      roomId,
+      handNumber,
+      humans,
+      botDelta,
+      rake,
+      at,
+    );
+  }
+
+  recoverActiveCashEscrows(at = this.clock()): number {
+    return this.repository.recoverActiveCashEscrows(at);
   }
 }

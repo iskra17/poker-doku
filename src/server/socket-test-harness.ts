@@ -10,6 +10,9 @@ import type {
   ServerToClientEvents,
 } from '../lib/realtime/protocol';
 import { eventLog, type LogEvent } from './event-log';
+import { EconomyRepository } from './economy-repository';
+import { EconomyRuntime } from './economy-runtime';
+import { EconomyService } from './economy-service';
 import {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -42,6 +45,7 @@ export interface TestConnectOptions {
 
 export interface SocketTestHarness {
   runtime: SocketRuntime;
+  economyRuntime: EconomyRuntime;
   profileManager: ProfileManager;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
@@ -54,6 +58,11 @@ export interface SocketTestHarness {
   getServerSocketRawHeaders: (socketId: string) => string[] | undefined;
   getServerSocketAuth: (socketId: string) => Record<string, unknown> | undefined;
   recentEvents: () => LogEvent[];
+  walletState: (profileId: string) => {
+    balance: number;
+    activeEscrow: number;
+    activeRoomId: string | null;
+  };
   close: () => Promise<void>;
 }
 
@@ -86,6 +95,10 @@ export async function createSocketTestHarness(
     undefined,
     options.profileKdf ?? fastTestKdf,
   );
+  const economyRuntime = new EconomyRuntime(
+    new EconomyService(new EconomyRepository(database)),
+  );
+  economyRuntime.recoverActiveEscrows();
   const profileRateLimiter = new TransientHttpRateLimiter({
     profileAuth: {
       limit: options.profileAuthLimit ?? 1_000,
@@ -114,6 +127,7 @@ export async function createSocketTestHarness(
     sweepIntervalMs: 0,
     graceMs: options.graceMs ?? 50,
     sngRetentionMs: options.sngRetentionMs,
+    economy: economyRuntime,
   });
   const clients = new Set<PokerClientSocket>();
   const legacyProfiles = new Map<string, TestProfileCredential>();
@@ -156,6 +170,7 @@ export async function createSocketTestHarness(
 
   return {
     runtime,
+    economyRuntime,
     profileManager,
     createProfile,
     recoverProfile,
@@ -204,6 +219,28 @@ export async function createSocketTestHarness(
     getServerSocketAuth: socketId => io.sockets.sockets
       .get(socketId)?.handshake.auth as Record<string, unknown> | undefined,
     recentEvents: () => eventLog.recent(),
+    walletState: profileId => {
+      const row = database.db.prepare(`
+        SELECT
+          wallets.balance,
+          COALESCE(seat_escrows.amount, 0) AS active_escrow,
+          seat_escrows.room_id AS active_room_id
+        FROM wallets
+        LEFT JOIN seat_escrows
+          ON seat_escrows.profile_id = wallets.profile_id
+          AND seat_escrows.status = 'active'
+        WHERE wallets.profile_id = ?
+      `).get(profileId) as {
+        balance: number;
+        active_escrow: number;
+        active_room_id: string | null;
+      };
+      return {
+        balance: row.balance,
+        activeEscrow: row.active_escrow,
+        activeRoomId: row.active_room_id,
+      };
+    },
     close: async () => {
       if (closed) return;
       closed = true;

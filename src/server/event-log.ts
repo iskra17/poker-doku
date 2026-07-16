@@ -83,3 +83,29 @@ export function tokenHint(
     .digest('base64url');
   return `t_${digest.slice(0, 12)}`;
 }
+
+export interface HandSettlementLogFields {
+  rake: number;
+  paidTotal: number;
+  settlementOk: boolean;
+}
+
+/** 민감한 경제 상태 대신 핸드 단위 합계와 성공 여부만 로그에 싣는다. */
+export function handSettlementLogFields(
+  input: HandSettlementLogFields,
+): HandSettlementLogFields {
+  if (
+    !Number.isSafeInteger(input.rake)
+    || input.rake < 0
+    || !Number.isSafeInteger(input.paidTotal)
+    || input.paidTotal < 0
+    || typeof input.settlementOk !== 'boolean'
+  ) {
+    throw new Error('invalid hand settlement log fields');
+  }
+  return {
+    rake: input.rake,
+    paidTotal: input.paidTotal,
+    settlementOk: input.settlementOk,
+  };
+}

@@ -6,6 +6,7 @@ import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
 import { EconomyRepository } from './economy-repository';
+import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
 import {
   TransientHttpConcurrencyGate,
@@ -80,6 +81,10 @@ async function listen(): Promise<void> {
   const profileManager = new ProfileManager(profileRepository);
   const economyRepository = new EconomyRepository(database);
   const economyService = new EconomyService(economyRepository);
+  const economyRuntime = new EconomyRuntime(economyService);
+  // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
+  // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
+  economyRuntime.recoverActiveEscrows();
   profileRateLimiter = new TransientHttpRateLimiter();
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
 
@@ -125,6 +130,7 @@ async function listen(): Promise<void> {
       rateLimiter: profileRateLimiter,
       concurrencyGate: profileConcurrencyGate,
     },
+    economy: economyRuntime,
   });
 
   await new Promise<void>((resolve, reject) => {

@@ -29,6 +29,11 @@ import type {
   TransientHttpRateLimiter,
 } from './http-rate-limit';
 import { readProfileCredentialCookie } from './profile-http';
+import { EconomyDomainError } from './economy-repository';
+import type {
+  CashAdmissionEconomy,
+  RoomEconomyHooks,
+} from './economy-runtime';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -49,6 +54,7 @@ export interface SocketRuntimeOptions {
   sweepIntervalMs?: number;
   graceMs?: number;
   sngRetentionMs?: number;
+  economy?: CashAdmissionEconomy & RoomEconomyHooks;
 }
 
 export interface SocketRuntime {
@@ -116,6 +122,7 @@ export function setupSocketHandlers(
     sweepIntervalMs = 60_000,
     graceMs = GRACE_MS,
     sngRetentionMs,
+    economy,
   } = options;
   const sessions = new SessionManager();
 
@@ -225,6 +232,7 @@ export function setupSocketHandlers(
     () => broadcastRoomList(),
     {
       sngRetentionMs,
+      economy,
       onRoomDisposed: (roomId, playerIds, reason) => {
         for (const playerId of playerIds) {
           const session = sessions.getByPlayerId(playerId);
@@ -259,6 +267,7 @@ export function setupSocketHandlers(
       difficulty: 'easy',
       botCount: 5,
       tableType: 'bots',
+      economyMode: 'practice',
     }, true);
 
     // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
@@ -273,6 +282,7 @@ export function setupSocketHandlers(
       difficulty: 'easy',
       botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
       tableType: 'mixed',
+      economyMode: 'wallet',
     }, true);
 
     roomManager.createRoom({
@@ -286,6 +296,7 @@ export function setupSocketHandlers(
       difficulty: 'normal',
       botCount: 5,
       tableType: 'mixed',
+      economyMode: 'wallet',
     }, true);
 
     roomManager.createRoom({
@@ -299,6 +310,7 @@ export function setupSocketHandlers(
       difficulty: 'hard',
       botCount: 5,
       tableType: 'mixed',
+      economyMode: 'wallet',
     }, true);
   }
 
@@ -519,6 +531,8 @@ export function setupSocketHandlers(
         Math.max(Math.floor(Number(buyIn) || room.config.minBuyIn), room.config.minBuyIn),
         room.config.maxBuyIn,
       );
+      const walletCash = (room.config.gameMode ?? 'cash') === 'cash'
+        && room.config.economyMode === 'wallet';
 
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
       // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
@@ -536,10 +550,38 @@ export function setupSocketHandlers(
             }
           }
           // 캐시 파산 좌석 복귀는 새 바이인으로 리바이 — 0칩 좌석에 고착되는 문제 방지
-          // (핸드 중이면 다음 핸드부터 딜인 — startHand가 chips>0을 waiting으로 되살린다)
-          if (room.config.gameMode !== 'sng' && seated.chips <= 0) {
+          // 진행 중 핸드의 스택은 건드리지 않고, 핸드 사이 재입장에서만 지갑을 다시 예치한다.
+          if (
+            room.config.gameMode !== 'sng'
+            && seated.chips <= 0
+            && !room.engine.state.isHandInProgress
+          ) {
+            if (walletCash) {
+              if (!economy) {
+                ack?.({
+                  ok: false,
+                  code: 'server-error',
+                  message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+                });
+                return;
+              }
+              try {
+                economy.rebuyCashEscrow(session.playerId, roomId, safeBuyIn);
+              } catch (error) {
+                const insufficient = error instanceof EconomyDomainError
+                  && error.code === 'INSUFFICIENT_BALANCE';
+                ack?.({
+                  ok: false,
+                  code: 'server-error',
+                  message: insufficient
+                    ? '보유한 무료 칩이 바이인보다 부족해요.'
+                    : '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+                });
+                return;
+              }
+            }
             seated.chips = safeBuyIn;
-            if (!room.engine.state.isHandInProgress && !seated.isDisconnected) {
+            if (!seated.isDisconnected) {
               seated.status = 'waiting';
             }
           }
@@ -610,6 +652,7 @@ export function setupSocketHandlers(
       }
       // 만석이면 봇이 휴먼에게 자리를 양보한다.
       // 핸드 진행 중 splice는 인덱스를 밀어 핸드를 깨뜨리므로, 핸드 사이에만 즉시 제거.
+      let botToRemove: Player | null = null;
       if (room.engine.state.players.length >= 6) {
         if (room.engine.state.isHandInProgress) {
           const bot = room.engine.state.players.find(p => p.type === 'bot' && !p.pendingRemoval);
@@ -627,13 +670,12 @@ export function setupSocketHandlers(
           return;
         }
         // 핸드 사이: 예약된 봇(pendingRemoval) 포함 아무 봇이나 즉시 정리하고 그 자리에 착석
-        const bot = room.engine.state.players.find(p => p.type === 'bot');
-        if (!bot) {
+        botToRemove = room.engine.state.players.find(p => p.type === 'bot') ?? null;
+        if (!botToRemove) {
           ack?.({ ok: false, code: 'room-full', message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
           return;
         }
-        room.engine.processLeave(bot.id);
-        assignedSeat = bot.seatIndex;
+        assignedSeat = botToRemove.seatIndex;
       }
 
       // 빈 좌석 탐색이 실패하면 assignedSeat이 -1로 남는다 — 그대로 앉히면 좌석 좌표가 없는
@@ -663,7 +705,109 @@ export function setupSocketHandlers(
         timeBankChips: 1, // 입장 시 기본 타임칩 1개
       };
 
-      const success = roomManager.joinRoom(roomId, player);
+      let escrowOpened = false;
+      if (walletCash) {
+        if (!economy) {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        // 한 프로필당 active escrow는 하나다. 새 테이블 입장 직전에 기존 보존 좌석을
+        // 정상 cash-out한 뒤 새 escrow를 연다. 대상 방의 모든 정적 검증은 이미 끝난 시점이다.
+        const previousRoomId = session.roomId;
+        if (previousRoomId && previousRoomId !== roomId) {
+          if (roomManager.getRoom(previousRoomId)?.engine.state.isHandInProgress) {
+            ack?.({
+              ok: false,
+              code: 'action-rejected',
+              message: '현재 핸드가 끝난 뒤 다른 테이블로 이동해 주세요.',
+            });
+            return;
+          }
+          roomManager.leaveRoom(previousRoomId, session.playerId);
+          const previousSeatStillExists = roomManager.getRoom(previousRoomId)
+            ?.engine.state.players.some(player => (
+              player.id === session.playerId && !player.pendingRemoval
+            ));
+          if (previousSeatStillExists) {
+            ack?.({
+              ok: false,
+              code: 'server-error',
+              message: '기존 좌석 저장을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+            });
+            return;
+          }
+          socket.leave(previousRoomId);
+          session.roomId = null;
+        }
+        const activePreservedSeat = roomManager.getRoomList(session.playerId)
+          .find(item => (
+            item.id !== roomId
+            && item.mySeat !== undefined
+            && roomManager.getRoom(item.id)?.engine.state.isHandInProgress
+          ));
+        if (activePreservedSeat) {
+          ack?.({
+            ok: false,
+            code: 'action-rejected',
+            message: '기존 좌석의 핸드가 끝난 뒤 이동해 주세요.',
+          });
+          return;
+        }
+        roomManager.leaveAllSeatsExcept(session.playerId, roomId);
+        const preservedElsewhere = roomManager.getRoomList(session.playerId)
+          .some(item => item.id !== roomId && item.mySeat !== undefined);
+        if (preservedElsewhere) {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '기존 좌석 저장을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        try {
+          economy.openCashEscrow(session.playerId, roomId, safeBuyIn);
+          escrowOpened = true;
+        } catch (error) {
+          const insufficient = error instanceof EconomyDomainError
+            && error.code === 'INSUFFICIENT_BALANCE';
+          eventLog.log('join-room:reject', {
+            roomId,
+            playerId: session.playerId,
+            data: { reason: insufficient ? 'insufficient-chips' : 'economy-unavailable' },
+          });
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: insufficient
+              ? '보유한 무료 칩이 바이인보다 부족해요.'
+              : '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+      }
+
+      if (botToRemove) room.engine.processLeave(botToRemove.id);
+      let success = false;
+      try {
+        success = roomManager.joinRoom(roomId, player);
+      } catch {
+        success = false;
+      }
+      if (!success && escrowOpened) {
+        try {
+          economy?.cancelCashEscrow(session.playerId, roomId);
+        } catch {
+          eventLog.log('join-room:compensation-failed', {
+            roomId,
+            playerId: session.playerId,
+            data: { reason: 'economy-unavailable' },
+          });
+        }
+      }
       eventLog.log(success ? 'join-room:seated' : 'join-room:reject', {
         roomId,
         playerId: session.playerId,
@@ -943,6 +1087,7 @@ export function setupSocketHandlers(
             }
           : {
               gameMode: 'cash' as const,
+              economyMode: 'wallet' as const,
               // 캐시 바이인 범위는 서버가 강제 (40~200BB)
               bigBlind,
               smallBlind: Math.max(Math.floor(bigBlind / 2), 1),
