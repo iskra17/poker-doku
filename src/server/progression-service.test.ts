@@ -376,6 +376,21 @@ describe('ProgressionService', () => {
         currentStreak: 2,
         restPassUsed: 0,
       } },
+      { streak: {
+        previousStreak: 6,
+        currentStreak: 9,
+        restPassUsed: false,
+      } },
+      { streak: {
+        previousStreak: 0,
+        currentStreak: 1,
+        restPassUsed: true,
+      } },
+      { streak: {
+        previousStreak: 2,
+        currentStreak: 1,
+        restPassUsed: true,
+      } },
       { dojoLevelsGained: [2, 2] },
       { dojoLevelsGained: [2, 4] },
       { affinityLevelsGained: [3, 2] },
@@ -1095,6 +1110,295 @@ describe('ProgressionService', () => {
       .toContain('COMPLETE_HANDS_ANY_10');
     expect(repository.getOrCreate(profileId, 'sakura', at + 100).profile)
       .toMatchObject({ dojoLevel: 50, dojoXpMilli: 0 });
+  });
+
+  it('reconciles the weekly rest pass lazily on snapshots and caps it at one', () => {
+    insertProfile(database, 'weekly-snapshot');
+    const sunday = Date.parse('2026-07-19T23:59:59.999+09:00');
+    const monday = Date.parse('2026-07-20T00:00:00.000+09:00');
+
+    const first = service.getSnapshot('weekly-snapshot', 'sakura', sunday);
+    expect(first.streak).toMatchObject({
+      restPasses: 1,
+      lastWeekKey: '2026-W29',
+    });
+    expect(service.getSnapshot('weekly-snapshot', 'sakura', sunday).streak)
+      .toEqual(first.streak);
+    expect(service.getSnapshot('weekly-snapshot', 'sakura', monday).streak)
+      .toMatchObject({ restPasses: 1, lastWeekKey: '2026-W30' });
+  });
+
+  it('qualifies a streak once on the tenth completed hand, not the ninth or a duplicate', () => {
+    const profileId = 'ten-hand-streak';
+    const at = Date.parse('2026-07-14T12:00:00+09:00');
+    insertProfile(database, profileId);
+
+    let ninth;
+    for (let handNumber = 1; handNumber <= 9; handNumber += 1) {
+      ninth = service.recordCompletedHand({
+        profileId,
+        roomId: 'streak-cash',
+        handNumber,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: at + handNumber,
+      });
+    }
+    expect(ninth).not.toHaveProperty('streak');
+    expect(database.db.prepare(`
+      SELECT hands, sngs, qualified_at FROM streak_daily_progress
+      WHERE profile_id = ? AND kst_date = '2026-07-14'
+    `).get(profileId)).toEqual({ hands: 9, sngs: 0, qualified_at: null });
+
+    const tenth = service.recordCompletedHand({
+      profileId,
+      roomId: 'streak-cash',
+      handNumber: 10,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: at + 10,
+    });
+    expect(tenth.streak).toEqual({
+      previousStreak: 0,
+      currentStreak: 1,
+      restPassUsed: false,
+    });
+    expect(service.getSnapshot(profileId, 'sakura', at + 11)).toMatchObject({
+      profile: { bestStreak: 1 },
+      streak: {
+        currentStreak: 1,
+        restPasses: 1,
+        lastQualifiedDate: '2026-07-14',
+      },
+    });
+
+    expect(service.recordCompletedHand({
+      profileId,
+      roomId: 'streak-cash',
+      handNumber: 10,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: at + 10,
+    })).toEqual(tenth);
+    expect(database.db.prepare(`
+      SELECT hands, sngs, qualified_at FROM streak_daily_progress
+      WHERE profile_id = ? AND kst_date = '2026-07-14'
+    `).get(profileId)).toEqual({ hands: 10, sngs: 0, qualified_at: at + 10 });
+  });
+
+  it('qualifies immediately on the first SNG and ignores later SNGs that day', () => {
+    const profileId = 'sng-streak';
+    const at = Date.parse('2026-07-14T13:00:00+09:00');
+    insertProfile(database, profileId);
+    const first = service.recordSngFinish({
+      profileId,
+      roomId: 'streak-sng-1',
+      place: 6,
+      selectedCharacterId: 'hana',
+      completedAt: at,
+    });
+    const second = service.recordSngFinish({
+      profileId,
+      roomId: 'streak-sng-2',
+      place: 1,
+      selectedCharacterId: 'hana',
+      completedAt: at + 1,
+    });
+
+    expect(first.streak).toMatchObject({ previousStreak: 0, currentStreak: 1 });
+    expect(second).not.toHaveProperty('streak');
+    expect(database.db.prepare(`
+      SELECT hands, sngs, qualified_at FROM streak_daily_progress
+      WHERE profile_id = ? AND kst_date = '2026-07-14'
+    `).get(profileId)).toEqual({ hands: 0, sngs: 1, qualified_at: at });
+  });
+
+  it('auto-uses one pass for one missed day and resets after two missed days', () => {
+    const profileId = 'streak-gap';
+    insertProfile(database, profileId);
+    const qualify = (roomId: string, localDate: string) => service.recordSngFinish({
+      profileId,
+      roomId,
+      place: 6,
+      selectedCharacterId: 'elena',
+      completedAt: Date.parse(`${localDate}T12:00:00+09:00`),
+    });
+
+    expect(qualify('gap-day-1', '2026-07-14').streak).toMatchObject({
+      previousStreak: 0,
+      currentStreak: 1,
+      restPassUsed: false,
+    });
+    expect(qualify('gap-day-3', '2026-07-16').streak).toEqual({
+      previousStreak: 1,
+      currentStreak: 2,
+      restPassUsed: true,
+    });
+    expect(qualify('gap-day-6', '2026-07-19').streak).toEqual({
+      previousStreak: 2,
+      currentStreak: 1,
+      restPassUsed: false,
+    });
+    expect(service.getSnapshot(
+      profileId,
+      'elena',
+      Date.parse('2026-07-19T13:00:00+09:00'),
+    )).toMatchObject({
+      profile: { bestStreak: 2 },
+      streak: { currentStreak: 1, restPasses: 0 },
+    });
+  });
+
+  it('stacks one durable fragment on streak days seven and fourteen', () => {
+    const profileId = 'fragment-streak';
+    insertProfile(database, profileId);
+    const start = Date.parse('2026-07-06T12:00:00+09:00');
+    const summaries = Array.from({ length: 14 }, (_, index) => (
+      service.recordSngFinish({
+        profileId,
+        roomId: `fragment-sng-${index + 1}`,
+        place: 6,
+        selectedCharacterId: 'vivian',
+        completedAt: start + index * 24 * 60 * 60 * 1_000,
+      })
+    ));
+
+    expect(summaries[5].grantedItemIds).toEqual([]);
+    expect(summaries[6].grantedItemIds).toEqual(['streak-fragment']);
+    expect(summaries[13].grantedItemIds).toEqual(['streak-fragment']);
+    expect(database.db.prepare(`
+      SELECT quantity FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).get(profileId)).toEqual({ quantity: 2 });
+    expect(database.db.prepare(`
+      SELECT idempotency_key FROM progression_events
+      WHERE profile_id = ? AND event_type = 'streak-fragment'
+      ORDER BY created_at
+    `).all(profileId)).toEqual([
+      { idempotency_key: `streak-fragment:${profileId}:2026-07-12` },
+      { idempotency_key: `streak-fragment:${profileId}:2026-07-19` },
+    ]);
+  });
+
+  it('qualifies historical progress without regressing the current streak', () => {
+    const profileId = 'past-streak';
+    insertProfile(database, profileId);
+    service.recordSngFinish({
+      profileId,
+      roomId: 'current-sng',
+      place: 1,
+      selectedCharacterId: 'ara',
+      completedAt: Date.parse('2026-07-17T12:00:00+09:00'),
+    });
+    const historical = service.recordSngFinish({
+      profileId,
+      roomId: 'historical-sng',
+      place: 2,
+      selectedCharacterId: 'ara',
+      completedAt: Date.parse('2026-07-16T12:00:00+09:00'),
+    });
+
+    expect(historical).not.toHaveProperty('streak');
+    expect(service.getSnapshot(
+      profileId,
+      'ara',
+      Date.parse('2026-07-17T13:00:00+09:00'),
+    ).streak).toMatchObject({
+      currentStreak: 1,
+      lastQualifiedDate: '2026-07-17',
+    });
+  });
+
+  it('rolls daily qualification and streak mutations back with a failed event', () => {
+    const profileId = 'streak-rollback';
+    const at = Date.parse('2026-07-14T12:00:00+09:00');
+    insertProfile(database, profileId);
+    for (let handNumber = 1; handNumber <= 9; handNumber += 1) {
+      service.recordCompletedHand({
+        profileId,
+        roomId: 'streak-rollback-room',
+        handNumber,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: at + handNumber,
+      });
+    }
+    database.db.exec(`
+      CREATE TRIGGER fail_tenth_streak_event
+      BEFORE INSERT ON progression_events
+      WHEN NEW.event_type = 'completed-hand'
+      BEGIN SELECT RAISE(ABORT, 'blocked tenth streak event'); END;
+    `);
+
+    expect(() => service.recordCompletedHand({
+      profileId,
+      roomId: 'streak-rollback-room',
+      handNumber: 10,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: at + 10,
+    })).toThrowError(ProgressionPersistenceError);
+    expect(database.db.prepare(`
+      SELECT hands, qualified_at FROM streak_daily_progress
+      WHERE profile_id = ? AND kst_date = '2026-07-14'
+    `).get(profileId)).toEqual({ hands: 9, qualified_at: null });
+    expect(database.db.prepare(`
+      SELECT current_streak, last_qualified_date FROM streak_state
+      WHERE profile_id = ?
+    `).get(profileId)).toEqual({
+      current_streak: 0,
+      last_qualified_date: null,
+    });
+    expect(progressionRow(database, profileId)).toMatchObject({
+      completed_hands: 9,
+      best_streak: 0,
+    });
+  });
+
+  it('rolls a seventh-day fragment receipt and inventory increment back with its event', () => {
+    const profileId = 'fragment-rollback';
+    const start = Date.parse('2026-07-06T12:00:00+09:00');
+    insertProfile(database, profileId);
+    for (let index = 0; index < 6; index += 1) {
+      service.recordSngFinish({
+        profileId,
+        roomId: `fragment-rollback-${index + 1}`,
+        place: 6,
+        selectedCharacterId: 'chloe',
+        completedAt: start + index * 24 * 60 * 60 * 1_000,
+      });
+    }
+    database.db.exec(`
+      CREATE TRIGGER fail_fragment_main_event
+      BEFORE INSERT ON progression_events
+      WHEN NEW.event_type = 'sng-finish'
+      BEGIN SELECT RAISE(ABORT, 'blocked fragment main event'); END;
+    `);
+
+    expect(() => service.recordSngFinish({
+      profileId,
+      roomId: 'fragment-rollback-7',
+      place: 6,
+      selectedCharacterId: 'chloe',
+      completedAt: start + 6 * 24 * 60 * 60 * 1_000,
+    })).toThrowError(ProgressionPersistenceError);
+    expect(service.getSnapshot(
+      profileId,
+      'chloe',
+      start + 6 * 24 * 60 * 60 * 1_000,
+    )).toMatchObject({
+      profile: { bestStreak: 6 },
+      streak: { currentStreak: 6 },
+      inventory: [],
+    });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_events
+      WHERE idempotency_key = ?
+    `).get(`streak-fragment:${profileId}:2026-07-12`)).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM streak_daily_progress
+      WHERE profile_id = ? AND kst_date = '2026-07-12'
+    `).get(profileId)).toEqual({ count: 0 });
   });
 });
 

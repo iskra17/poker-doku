@@ -157,6 +157,45 @@ describe('ProgressionRepository', () => {
       () => repository.getProgressionEvent('event-a'),
       'PROGRESSION_TRANSACTION_REQUIRED',
     );
+    expectErrorCode(
+      () => repository.advanceStreakDailyProgressInTransaction({
+        profileId: 'profile-a',
+        kstDate: '2026-07-17',
+        kind: 'hand',
+        completedAt: 1_000,
+      }),
+      'PROGRESSION_TRANSACTION_REQUIRED',
+    );
+    expectErrorCode(
+      () => repository.compareAndUpdateStreakInTransaction({
+        profileId: 'profile-a',
+        expected: {
+          currentStreak: 0,
+          restPasses: 0,
+          lastQualifiedDate: null,
+          lastWeekKey: null,
+          updatedAt: 1_000,
+        },
+        next: {
+          currentStreak: 0,
+          restPasses: 1,
+          lastQualifiedDate: null,
+          lastWeekKey: '2026-W29',
+        },
+        updatedAt: 1_000,
+      }),
+      'PROGRESSION_TRANSACTION_REQUIRED',
+    );
+    expectErrorCode(
+      () => repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: 'streak-fragment:profile-a:2026-07-17',
+        profileId: 'profile-a',
+        itemId: 'streak-fragment',
+        balanceVersion: 1,
+        grantedAt: 1_000,
+      }),
+      'PROGRESSION_TRANSACTION_REQUIRED',
+    );
     expect(rowCount(database, 'progression_profiles')).toBe(0);
   });
 
@@ -1045,6 +1084,33 @@ describe('ProgressionRepository', () => {
       );
     }), 'PROGRESSION_PERSISTENCE_INVALID');
     expect(rowCount(database, 'daily_missions', 'missing-mission-day')).toBe(0);
+  });
+
+  it('rejects a duplicate fragment receipt whose inventory mutation is missing', () => {
+    const profileId = 'fragment-receipt-corrupt';
+    const key = `streak-fragment:${profileId}:2026-07-17`;
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1_000);
+    database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: key,
+        profileId,
+        eventType: 'streak-fragment',
+        balanceVersion: 1,
+        summary: { itemId: 'streak-fragment', quantity: 1 },
+        createdAt: 2_000,
+      });
+    });
+
+    expectErrorCode(() => database.transaction(() => {
+      repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: key,
+        profileId,
+        itemId: 'streak-fragment',
+        balanceVersion: 1,
+        grantedAt: 2_000,
+      });
+    }), 'PROGRESSION_PERSISTENCE_INVALID');
   });
 });
 

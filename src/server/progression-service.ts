@@ -9,6 +9,11 @@ import {
   getMissionDefinition,
   selectRerollMission,
 } from '@/lib/progression/missions';
+import {
+  advanceStreakDay,
+  reconcileWeeklyRestPass,
+} from '@/lib/progression/streak';
+import { STREAK_FRAGMENT_ITEM } from '@/lib/collection/catalog';
 import type {
   MissionCompletion,
   ProgressionRewardSummary,
@@ -24,6 +29,8 @@ import {
   type ProgressionCounters,
   type ProgressionEvent,
   type ProgressionProfile,
+  type ProgressionSnapshot,
+  type StreakState,
 } from './progression-repository';
 import { getKstDateKey } from './economy-service';
 
@@ -91,6 +98,12 @@ interface ValidSngFinishInput extends Omit<SngFinishInput, 'selectedCharacterId'
   kstDate: string;
 }
 
+interface StreakReward {
+  change?: ProgressionRewardSummary['streak'];
+  grantedItemIds: string[];
+  bestStreak: number;
+}
+
 export class ProgressionService {
   private readonly repository: ProgressionRepository;
 
@@ -99,6 +112,28 @@ export class ProgressionService {
     repository?: ProgressionRepository,
   ) {
     this.repository = repository ?? new ProgressionRepository(database);
+  }
+
+  getSnapshot(
+    profileId: string,
+    selectedCharacterId: string,
+    at = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    const characterId = assertCharacter(selectedCharacterId);
+    assertTimestamp(at);
+    return this.database.transaction(() => {
+      const snapshot = this.repository.getOrCreateInTransaction(
+        profileId,
+        characterId,
+        at,
+      );
+      assertAuthoritativeCharacter(
+        snapshot.profile.selectedCharacterId,
+        characterId,
+      );
+      return this.reconcileWeeklyRestPass(snapshot, at);
+    });
   }
 
   recordCompletedHand(input: CompletedHandInput): ProgressionRewardSummary {
@@ -118,7 +153,7 @@ export class ProgressionService {
       );
       if (duplicate) return duplicate;
 
-      const snapshot = this.repository.getOrCreateInTransaction(
+      let snapshot = this.repository.getOrCreateInTransaction(
         safeInput.profileId,
         safeInput.selectedCharacterId,
         safeInput.completedAt,
@@ -127,6 +162,7 @@ export class ProgressionService {
         snapshot.profile.selectedCharacterId,
         safeInput.selectedCharacterId,
       );
+      snapshot = this.reconcileWeeklyRestPass(snapshot, safeInput.completedAt);
       const balance = getBalance(snapshot.profile.balanceVersion);
       const affinity = getSelectedAffinity(
         snapshot.affinities,
@@ -160,6 +196,12 @@ export class ProgressionService {
         balance.affinityPerCompletedHand,
         ratePermille,
       );
+      const streakReward = this.progressStreak(
+        snapshot,
+        safeInput.kstDate,
+        'hand',
+        safeInput.completedAt,
+      );
       const nextCounters: ProgressionCounters = {
         practiceDate: safeInput.mode === 'practice'
           ? safeInput.kstDate
@@ -173,7 +215,7 @@ export class ProgressionService {
           ? safeIncrement(snapshot.profile.practiceHandsTotal)
           : snapshot.profile.practiceHandsTotal,
         sngCompletions: snapshot.profile.sngCompletions,
-        bestStreak: snapshot.profile.bestStreak,
+        bestStreak: streakReward.bestStreak,
       };
 
       return this.applyReward({
@@ -186,6 +228,8 @@ export class ProgressionService {
         dojoReward,
         affinityReward,
         missionCompletions,
+        streakChange: streakReward.change,
+        grantedItemIds: streakReward.grantedItemIds,
         completedAt: safeInput.completedAt,
       });
     });
@@ -207,7 +251,7 @@ export class ProgressionService {
       );
       if (duplicate) return duplicate;
 
-      const snapshot = this.repository.getOrCreateInTransaction(
+      let snapshot = this.repository.getOrCreateInTransaction(
         safeInput.profileId,
         safeInput.selectedCharacterId,
         safeInput.completedAt,
@@ -216,6 +260,7 @@ export class ProgressionService {
         snapshot.profile.selectedCharacterId,
         safeInput.selectedCharacterId,
       );
+      snapshot = this.reconcileWeeklyRestPass(snapshot, safeInput.completedAt);
       const balance = getBalance(snapshot.profile.balanceVersion);
       const affinity = getSelectedAffinity(
         snapshot.affinities,
@@ -238,6 +283,12 @@ export class ProgressionService {
         baseDojoReward,
         missionCompletions,
       );
+      const streakReward = this.progressStreak(
+        snapshot,
+        safeInput.kstDate,
+        'sng',
+        safeInput.completedAt,
+      );
       const nextCounters: ProgressionCounters = {
         practiceDate: snapshot.profile.practiceDate,
         practiceHands: snapshot.profile.practiceHands,
@@ -245,7 +296,7 @@ export class ProgressionService {
         cashHands: snapshot.profile.cashHands,
         practiceHandsTotal: snapshot.profile.practiceHandsTotal,
         sngCompletions: safeIncrement(snapshot.profile.sngCompletions),
-        bestStreak: snapshot.profile.bestStreak,
+        bestStreak: streakReward.bestStreak,
       };
 
       return this.applyReward({
@@ -258,6 +309,8 @@ export class ProgressionService {
         dojoReward,
         affinityReward,
         missionCompletions,
+        streakChange: streakReward.change,
+        grantedItemIds: streakReward.grantedItemIds,
         completedAt: safeInput.completedAt,
       });
     });
@@ -314,6 +367,123 @@ export class ProgressionService {
     } catch (error) {
       throwMissionServiceError(error);
     }
+  }
+
+  private reconcileWeeklyRestPass(
+    snapshot: ProgressionSnapshot,
+    at: number,
+  ): ProgressionSnapshot {
+    const balance = getBalance(snapshot.profile.balanceVersion);
+    let reconciled;
+    try {
+      reconciled = reconcileWeeklyRestPass({
+        restPasses: snapshot.streak.restPasses,
+        lastWeekKey: snapshot.streak.lastWeekKey,
+      }, at, balance);
+    } catch {
+      throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+    }
+    if (
+      reconciled.restPasses === snapshot.streak.restPasses
+      && reconciled.lastWeekKey === snapshot.streak.lastWeekKey
+    ) {
+      return snapshot;
+    }
+    const updatedAt = Math.max(snapshot.streak.updatedAt, at);
+    this.repository.compareAndUpdateStreakInTransaction({
+      profileId: snapshot.profile.profileId,
+      expected: mutableStreakWithTimestamp(snapshot.streak),
+      next: {
+        currentStreak: snapshot.streak.currentStreak,
+        restPasses: reconciled.restPasses,
+        lastQualifiedDate: snapshot.streak.lastQualifiedDate,
+        lastWeekKey: reconciled.lastWeekKey,
+      },
+      updatedAt,
+    });
+    return {
+      ...snapshot,
+      streak: {
+        ...snapshot.streak,
+        restPasses: reconciled.restPasses,
+        lastWeekKey: reconciled.lastWeekKey,
+        updatedAt,
+      },
+    };
+  }
+
+  private progressStreak(
+    snapshot: ProgressionSnapshot,
+    kstDate: string,
+    kind: 'hand' | 'sng',
+    completedAt: number,
+  ): StreakReward {
+    const daily = this.repository.advanceStreakDailyProgressInTransaction({
+      profileId: snapshot.profile.profileId,
+      kstDate,
+      kind,
+      completedAt,
+    });
+    if (!daily.becameQualified) {
+      return {
+        grantedItemIds: [],
+        bestStreak: snapshot.profile.bestStreak,
+      };
+    }
+
+    const balance = getBalance(snapshot.profile.balanceVersion);
+    let advanced;
+    try {
+      advanced = advanceStreakDay({
+        currentStreak: snapshot.streak.currentStreak,
+        restPasses: snapshot.streak.restPasses,
+        lastQualifiedDate: snapshot.streak.lastQualifiedDate,
+      }, kstDate, balance);
+    } catch {
+      throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+    }
+    if (!advanced.changed) {
+      return {
+        grantedItemIds: [],
+        bestStreak: snapshot.profile.bestStreak,
+      };
+    }
+
+    this.repository.compareAndUpdateStreakInTransaction({
+      profileId: snapshot.profile.profileId,
+      expected: mutableStreakWithTimestamp(snapshot.streak),
+      next: {
+        currentStreak: advanced.currentStreak,
+        restPasses: advanced.restPasses,
+        lastQualifiedDate: advanced.lastQualifiedDate,
+        lastWeekKey: snapshot.streak.lastWeekKey,
+      },
+      updatedAt: Math.max(snapshot.streak.updatedAt, completedAt),
+    });
+
+    const grantedItemIds: string[] = [];
+    if (advanced.fragmentDue) {
+      const granted = this.repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: `streak-fragment:${snapshot.profile.profileId}:${kstDate}`,
+        profileId: snapshot.profile.profileId,
+        itemId: STREAK_FRAGMENT_ITEM.id,
+        balanceVersion: snapshot.profile.balanceVersion,
+        grantedAt: completedAt,
+      });
+      if (granted) grantedItemIds.push(STREAK_FRAGMENT_ITEM.id);
+    }
+    return {
+      change: {
+        previousStreak: advanced.previousStreak,
+        currentStreak: advanced.currentStreak,
+        restPassUsed: advanced.restPassUsed,
+      },
+      grantedItemIds,
+      bestStreak: Math.max(
+        snapshot.profile.bestStreak,
+        advanced.currentStreak,
+      ),
+    };
   }
 
   private progressDailyMissions(
@@ -384,6 +554,8 @@ export class ProgressionService {
     dojoReward: number;
     affinityReward: number;
     missionCompletions: MissionCompletion[];
+    streakChange?: ProgressionRewardSummary['streak'];
+    grantedItemIds: string[];
     completedAt: number;
   }): ProgressionRewardSummary {
     const nextDojo = applyDojoXp(
@@ -410,8 +582,9 @@ export class ProgressionService {
         nextAffinity.level,
       ),
       missionCompletions: input.missionCompletions,
-      grantedItemIds: [],
+      grantedItemIds: input.grantedItemIds,
     };
+    if (input.streakChange) summary.streak = input.streakChange;
     const updatedAt = Math.max(input.profile.updatedAt, input.completedAt);
 
     this.repository.compareAndUpdateProgressionInTransaction({
@@ -658,6 +831,16 @@ function countersFromProfile(profile: ProgressionProfile): ProgressionCounters {
   };
 }
 
+function mutableStreakWithTimestamp(streak: StreakState) {
+  return {
+    currentStreak: streak.currentStreak,
+    restPasses: streak.restPasses,
+    lastQualifiedDate: streak.lastQualifiedDate,
+    lastWeekKey: streak.lastWeekKey,
+    updatedAt: streak.updatedAt,
+  };
+}
+
 function levelsBetween(previous: number, next: number): number[] {
   return Array.from(
     { length: next - previous },
@@ -796,9 +979,26 @@ function isStreakChange(value: unknown): boolean {
   ])) {
     return false;
   }
-  return isNonnegativeSafeInteger(value.previousStreak)
-    && isNonnegativeSafeInteger(value.currentStreak)
-    && typeof value.restPassUsed === 'boolean';
+  if (
+    !isNonnegativeSafeInteger(value.previousStreak)
+    || !isNonnegativeSafeInteger(value.currentStreak)
+    || value.currentStreak < 1
+    || typeof value.restPassUsed !== 'boolean'
+    || (
+      value.currentStreak !== 1
+      && value.currentStreak !== value.previousStreak + 1
+    )
+    || (
+      value.restPassUsed
+      && (
+        value.previousStreak === 0
+        || value.currentStreak !== value.previousStreak + 1
+      )
+    )
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function isUniqueCatalogItemIdArray(value: unknown): value is string[] {

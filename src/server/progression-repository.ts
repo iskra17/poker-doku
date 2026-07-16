@@ -38,6 +38,7 @@ const EQUIPMENT_SLOTS: readonly EquipmentSlot[] = [
 const SUPPORTED_BALANCE_VERSION = 1;
 const CANONICAL_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const WEEK_KEY_PATTERN = /^(\d{4})-W(\d{2})$/;
+const CATALOG_ITEM_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 const DANGEROUS_SUMMARY_KEYS = new Set([
   '__proto__',
   'constructor',
@@ -179,6 +180,48 @@ export interface DailyMissionReplacement {
   replacedAt: number;
 }
 
+export interface StreakMutableState {
+  currentStreak: number;
+  restPasses: number;
+  lastQualifiedDate: string | null;
+  lastWeekKey: string | null;
+}
+
+export interface StreakStateUpdate {
+  profileId: string;
+  expected: StreakMutableState & { updatedAt: number };
+  next: StreakMutableState;
+  updatedAt: number;
+}
+
+export interface StreakDailyProgress {
+  profileId: string;
+  kstDate: string;
+  hands: number;
+  sngs: number;
+  qualifiedAt: number | null;
+}
+
+export interface StreakDailyProgressResult {
+  progress: StreakDailyProgress;
+  becameQualified: boolean;
+}
+
+export interface StreakDailyProgressUpdate {
+  profileId: string;
+  kstDate: string;
+  kind: 'hand' | 'sng';
+  completedAt: number;
+}
+
+export interface StackableInventoryGrant {
+  idempotencyKey: string;
+  profileId: string;
+  itemId: string;
+  balanceVersion: number;
+  grantedAt: number;
+}
+
 interface ProgressionProfileRow {
   profile_id: string;
   balance_version: number;
@@ -256,6 +299,14 @@ interface DailyMissionModeRow {
   mission_date: string;
   mode: string;
   created_at: number;
+}
+
+interface StreakDailyProgressRow {
+  profile_id: string;
+  kst_date: string;
+  hands: number;
+  sngs: number;
+  qualified_at: number | null;
 }
 
 export class ProgressionRepository {
@@ -538,6 +589,50 @@ export class ProgressionRepository {
       safeUpdate.expected.level,
       safeUpdate.expected.xpMilli,
     );
+      if (result.changes !== 1) {
+        throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+      }
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  compareAndUpdateStreakInTransaction(update: StreakStateUpdate): void {
+    this.assertTransaction();
+    const safe = copyStreakStateUpdate(update);
+    assertProfileId(safe.profileId);
+    assertStreakMutableState(safe.expected, 'PROGRESSION_VALUE_INVALID');
+    assertStreakMutableState(safe.next, 'PROGRESSION_VALUE_INVALID');
+    assertTimestamp(safe.expected.updatedAt, 'PROGRESSION_TIME_INVALID');
+    assertTimestamp(safe.updatedAt, 'PROGRESSION_TIME_INVALID');
+    if (safe.updatedAt < safe.expected.updatedAt) {
+      throw new ProgressionPersistenceError('PROGRESSION_TIME_INVALID');
+    }
+    try {
+      const result = this.database.db.prepare(`
+        UPDATE streak_state
+        SET current_streak = ?, rest_passes = ?, last_qualified_date = ?,
+            last_week_key = ?, updated_at = ?
+        WHERE profile_id = ?
+          AND current_streak = ?
+          AND rest_passes = ?
+          AND last_qualified_date IS ?
+          AND last_week_key IS ?
+          AND updated_at = ?
+      `).run(
+        safe.next.currentStreak,
+        safe.next.restPasses,
+        safe.next.lastQualifiedDate,
+        safe.next.lastWeekKey,
+        safe.updatedAt,
+        safe.profileId,
+        safe.expected.currentStreak,
+        safe.expected.restPasses,
+        safe.expected.lastQualifiedDate,
+        safe.expected.lastWeekKey,
+        safe.expected.updatedAt,
+      );
       if (result.changes !== 1) {
         throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
       }
@@ -836,6 +931,170 @@ export class ProgressionRepository {
   }
 
   /** Must be called inside a caller-owned PokerDatabase transaction. */
+  advanceStreakDailyProgressInTransaction(
+    update: StreakDailyProgressUpdate,
+  ): StreakDailyProgressResult {
+    this.assertTransaction();
+    const safe = copyStreakDailyProgressUpdate(update);
+    assertMissionProfileId(safe.profileId);
+    assertMissionDate(safe.kstDate);
+    if (safe.kind !== 'hand' && safe.kind !== 'sng') {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertTimestamp(safe.completedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const row = this.database.db.prepare(`
+        SELECT profile_id, kst_date, hands, sngs, qualified_at
+        FROM streak_daily_progress
+        WHERE profile_id = ? AND kst_date = ?
+      `).get(safe.profileId, safe.kstDate) as StreakDailyProgressRow | undefined;
+      const current = row
+        ? mapStreakDailyProgress(row, safe.profileId, safe.kstDate)
+        : null;
+      const hands = safe.kind === 'hand'
+        ? Math.min(10, (current?.hands ?? 0) + 1)
+        : current?.hands ?? 0;
+      const sngs = safe.kind === 'sng'
+        ? Math.min(1, (current?.sngs ?? 0) + 1)
+        : current?.sngs ?? 0;
+      const qualifiedAt = current?.qualifiedAt
+        ?? (hands === 10 || sngs === 1 ? safe.completedAt : null);
+      const next = Object.freeze({
+        profileId: safe.profileId,
+        kstDate: safe.kstDate,
+        hands,
+        sngs,
+        qualifiedAt,
+      });
+
+      if (!current) {
+        if (!this.profileExists(safe.profileId)) {
+          throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+        }
+        this.database.db.prepare(`
+          INSERT INTO streak_daily_progress (
+            profile_id, kst_date, hands, sngs, qualified_at
+          ) VALUES (?, ?, ?, ?, ?)
+        `).run(
+          next.profileId,
+          next.kstDate,
+          next.hands,
+          next.sngs,
+          next.qualifiedAt,
+        );
+      } else if (
+        current.hands !== next.hands
+        || current.sngs !== next.sngs
+        || current.qualifiedAt !== next.qualifiedAt
+      ) {
+        const result = this.database.db.prepare(`
+          UPDATE streak_daily_progress
+          SET hands = ?, sngs = ?, qualified_at = ?
+          WHERE profile_id = ? AND kst_date = ?
+            AND hands = ? AND sngs = ? AND qualified_at IS ?
+        `).run(
+          next.hands,
+          next.sngs,
+          next.qualifiedAt,
+          current.profileId,
+          current.kstDate,
+          current.hands,
+          current.sngs,
+          current.qualifiedAt,
+        );
+        if (result.changes !== 1) {
+          throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+        }
+      }
+      return Object.freeze({
+        progress: next,
+        becameQualified: current?.qualifiedAt === null
+          ? qualifiedAt !== null
+          : current === null && qualifiedAt !== null,
+      });
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  grantStackableInventoryItemInTransaction(
+    grant: StackableInventoryGrant,
+  ): boolean {
+    this.assertTransaction();
+    const safe = copyStackableInventoryGrant(grant);
+    assertNonemptyString(safe.idempotencyKey, 'PROGRESSION_VALUE_INVALID');
+    assertProfileId(safe.profileId);
+    if (!CATALOG_ITEM_ID_PATTERN.test(safe.itemId)) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    if (safe.balanceVersion !== SUPPORTED_BALANCE_VERSION) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertTimestamp(safe.grantedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      const receipt = this.insertProgressionEvent({
+        idempotencyKey: safe.idempotencyKey,
+        profileId: safe.profileId,
+        eventType: 'streak-fragment',
+        balanceVersion: safe.balanceVersion,
+        summary: { itemId: safe.itemId, quantity: 1 },
+        createdAt: safe.grantedAt,
+      });
+      if (receipt.status === 'duplicate') {
+        if (!isExactStackableGrantSummary(receipt.event.summary, safe.itemId)) {
+          throw persistenceInvalid();
+        }
+        const inventoryRow = this.database.db.prepare(`
+          SELECT profile_id, item_id, quantity, granted_at, updated_at
+          FROM inventory_items WHERE profile_id = ? AND item_id = ?
+        `).get(safe.profileId, safe.itemId) as InventoryItemRow | undefined;
+        if (!inventoryRow) throw persistenceInvalid();
+        mapInventoryItem(inventoryRow);
+        return false;
+      }
+
+      const row = this.database.db.prepare(`
+        SELECT profile_id, item_id, quantity, granted_at, updated_at
+        FROM inventory_items WHERE profile_id = ? AND item_id = ?
+      `).get(safe.profileId, safe.itemId) as InventoryItemRow | undefined;
+      if (!row) {
+        this.database.db.prepare(`
+          INSERT INTO inventory_items (
+            profile_id, item_id, quantity, granted_at, updated_at
+          ) VALUES (?, ?, 1, ?, ?)
+        `).run(safe.profileId, safe.itemId, safe.grantedAt, safe.grantedAt);
+        return true;
+      }
+      const current = mapInventoryItem(row);
+      if (current.quantity === Number.MAX_SAFE_INTEGER) {
+        throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+      }
+      const updatedAt = Math.max(current.updatedAt, safe.grantedAt);
+      const result = this.database.db.prepare(`
+        UPDATE inventory_items
+        SET quantity = ?, updated_at = ?
+        WHERE profile_id = ? AND item_id = ?
+          AND quantity = ? AND granted_at = ? AND updated_at = ?
+      `).run(
+        current.quantity + 1,
+        updatedAt,
+        current.profileId,
+        current.itemId,
+        current.quantity,
+        current.grantedAt,
+        current.updatedAt,
+      );
+      if (result.changes !== 1) {
+        throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+      }
+      return true;
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
   getProgressionEvent(idempotencyKey: string): ProgressionEvent | null {
     this.assertTransaction();
     assertNonemptyString(idempotencyKey, 'PROGRESSION_VALUE_INVALID');
@@ -1043,6 +1302,61 @@ function copyDailyMissionReplacement(
       slot: replacement.slot,
       replacementMissionId: replacement.replacementMissionId,
       replacedAt: replacement.replacedAt,
+    };
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function copyStreakStateUpdate(update: StreakStateUpdate): StreakStateUpdate {
+  try {
+    return {
+      profileId: update.profileId,
+      expected: {
+        currentStreak: update.expected.currentStreak,
+        restPasses: update.expected.restPasses,
+        lastQualifiedDate: update.expected.lastQualifiedDate,
+        lastWeekKey: update.expected.lastWeekKey,
+        updatedAt: update.expected.updatedAt,
+      },
+      next: {
+        currentStreak: update.next.currentStreak,
+        restPasses: update.next.restPasses,
+        lastQualifiedDate: update.next.lastQualifiedDate,
+        lastWeekKey: update.next.lastWeekKey,
+      },
+      updatedAt: update.updatedAt,
+    };
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function copyStreakDailyProgressUpdate(
+  update: StreakDailyProgressUpdate,
+): StreakDailyProgressUpdate {
+  try {
+    return {
+      profileId: update.profileId,
+      kstDate: update.kstDate,
+      kind: update.kind,
+      completedAt: update.completedAt,
+    };
+  } catch {
+    throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+  }
+}
+
+function copyStackableInventoryGrant(
+  grant: StackableInventoryGrant,
+): StackableInventoryGrant {
+  try {
+    return {
+      idempotencyKey: grant.idempotencyKey,
+      profileId: grant.profileId,
+      itemId: grant.itemId,
+      balanceVersion: grant.balanceVersion,
+      grantedAt: grant.grantedAt,
     };
   } catch {
     throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
@@ -1296,6 +1610,36 @@ function mapDailyMissionMode(
   return row.mode as ProgressionMode;
 }
 
+function mapStreakDailyProgress(
+  row: StreakDailyProgressRow,
+  profileId: string,
+  kstDate: string,
+): StreakDailyProgress {
+  if (
+    row.profile_id !== profileId
+    || row.kst_date !== kstDate
+    || !isNonnegativeSafeInteger(row.hands)
+    || row.hands > 10
+    || !isNonnegativeSafeInteger(row.sngs)
+    || row.sngs > 1
+    || (row.qualified_at !== null && (
+      !Number.isSafeInteger(row.qualified_at)
+      || row.qualified_at < 0
+    ))
+    || (row.qualified_at === null) !== (row.hands < 10 && row.sngs === 0)
+  ) {
+    throw persistenceInvalid();
+  }
+  if (row.qualified_at !== null) assertStoredTimestamp(row.qualified_at);
+  return Object.freeze({
+    profileId: row.profile_id,
+    kstDate: row.kst_date,
+    hands: row.hands,
+    sngs: row.sngs,
+    qualifiedAt: row.qualified_at,
+  });
+}
+
 function validateDailyMissionSet(missions: readonly DailyMission[]): void {
   if (
     missions.length !== 3
@@ -1352,6 +1696,23 @@ function assertProgressionCounters(
     || !isNonnegativeSafeInteger(value.sngCompletions)
     || !isNonnegativeSafeInteger(value.bestStreak)
     || (value.practiceDate === null && value.practiceHands !== 0)
+  ) {
+    throw new ProgressionPersistenceError(code);
+  }
+}
+
+function assertStreakMutableState(
+  value: StreakMutableState,
+  code: ProgressionErrorCode,
+): void {
+  if (
+    !isNonnegativeSafeInteger(value.currentStreak)
+    || !Number.isSafeInteger(value.restPasses)
+    || value.restPasses < 0
+    || value.restPasses > 1
+    || (value.lastQualifiedDate === null) !== (value.currentStreak === 0)
+    || !isCanonicalNullableDate(value.lastQualifiedDate)
+    || !isCanonicalNullableWeekKey(value.lastWeekKey)
   ) {
     throw new ProgressionPersistenceError(code);
   }
@@ -1548,6 +1909,19 @@ function emptyEquipment(): Record<EquipmentSlot, string | null> {
 
 function isEquipmentSlot(value: string): value is EquipmentSlot {
   return (EQUIPMENT_SLOTS as readonly string[]).includes(value);
+}
+
+function isExactStackableGrantSummary(
+  value: Record<string, unknown>,
+  itemId: string,
+): boolean {
+  const keys = Reflect.ownKeys(value);
+  return keys.length === 2
+    && keys.every(key => typeof key === 'string')
+    && Object.prototype.hasOwnProperty.call(value, 'itemId')
+    && Object.prototype.hasOwnProperty.call(value, 'quantity')
+    && value.itemId === itemId
+    && value.quantity === 1;
 }
 
 type CanonicalJsonPrimitive = null | string | boolean | number;

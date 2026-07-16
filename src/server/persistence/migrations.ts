@@ -503,6 +503,216 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 7,
+    name: 'durable_streak_daily_progress',
+    sql: `
+      CREATE TABLE v7_streak_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v7_streak_validation (invalid)
+      SELECT 1
+      FROM streak_state AS streak
+      JOIN progression_profiles AS profile
+        ON profile.profile_id = streak.profile_id
+      WHERE
+        (streak.current_streak = 0) != (streak.last_qualified_date IS NULL)
+        OR streak.current_streak > profile.best_streak
+        OR (
+          streak.last_week_key IS NOT NULL
+          AND CAST(substr(streak.last_week_key, 7, 2) AS INTEGER) = 53
+          AND NOT (
+            strftime(
+              '%w', substr(streak.last_week_key, 1, 4) || '-01-01'
+            ) = '4'
+            OR (
+              strftime(
+                '%w', substr(streak.last_week_key, 1, 4) || '-01-01'
+              ) = '3'
+              AND (
+                CAST(substr(streak.last_week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(streak.last_week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(streak.last_week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+      LIMIT 1;
+
+      INSERT INTO v7_streak_validation (invalid)
+      SELECT 1
+      FROM (
+        SELECT profile.profile_id
+        FROM progression_profiles AS profile
+        LEFT JOIN streak_state AS streak
+          ON streak.profile_id = profile.profile_id
+        WHERE streak.profile_id IS NULL
+        UNION ALL
+        SELECT streak.profile_id
+        FROM streak_state AS streak
+        LEFT JOIN progression_profiles AS profile
+          ON profile.profile_id = streak.profile_id
+        WHERE profile.profile_id IS NULL
+      )
+      LIMIT 1;
+
+      DROP TABLE v7_streak_validation;
+
+      CREATE TABLE streak_daily_progress (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        kst_date TEXT NOT NULL CHECK (
+          length(kst_date) = 10
+          AND kst_date GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND CAST(substr(kst_date, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+          AND COALESCE(date(kst_date, '+0 days') = kst_date, 0)
+        ),
+        hands INTEGER NOT NULL CHECK (hands BETWEEN 0 AND 10),
+        sngs INTEGER NOT NULL CHECK (sngs BETWEEN 0 AND 1),
+        qualified_at INTEGER CHECK (qualified_at IS NULL OR qualified_at >= 0),
+        PRIMARY KEY (profile_id, kst_date),
+        CHECK (
+          (qualified_at IS NULL AND hands < 10 AND sngs = 0)
+          OR (
+            qualified_at IS NOT NULL
+            AND (hands = 10 OR sngs = 1)
+          )
+        )
+      ) STRICT;
+
+      CREATE INDEX idx_streak_daily_progress_date_profile
+        ON streak_daily_progress(kst_date, profile_id);
+
+      CREATE TRIGGER validate_streak_daily_progress_update
+      BEFORE UPDATE ON streak_daily_progress
+      WHEN
+        NEW.profile_id != OLD.profile_id
+        OR NEW.kst_date != OLD.kst_date
+        OR NEW.hands < OLD.hands
+        OR NEW.sngs < OLD.sngs
+        OR (
+          OLD.qualified_at IS NOT NULL
+          AND NEW.qualified_at IS NOT OLD.qualified_at
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak daily progress');
+      END;
+
+      CREATE TRIGGER validate_streak_state_insert
+      BEFORE INSERT ON streak_state
+      WHEN
+        (NEW.current_streak = 0) != (NEW.last_qualified_date IS NULL)
+        OR (
+          NEW.last_week_key IS NOT NULL
+          AND CAST(substr(NEW.last_week_key, 7, 2) AS INTEGER) = 53
+          AND NOT (
+            strftime('%w', substr(NEW.last_week_key, 1, 4) || '-01-01') = '4'
+            OR (
+              strftime('%w', substr(NEW.last_week_key, 1, 4) || '-01-01') = '3'
+              AND (
+                CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak state');
+      END;
+
+      CREATE TRIGGER validate_streak_state_update
+      BEFORE UPDATE ON streak_state
+      WHEN
+        NEW.profile_id != OLD.profile_id
+        OR (NEW.current_streak = 0) != (NEW.last_qualified_date IS NULL)
+        OR (
+          NEW.last_week_key IS NOT NULL
+          AND CAST(substr(NEW.last_week_key, 7, 2) AS INTEGER) = 53
+          AND NOT (
+            strftime('%w', substr(NEW.last_week_key, 1, 4) || '-01-01') = '4'
+            OR (
+              strftime('%w', substr(NEW.last_week_key, 1, 4) || '-01-01') = '3'
+              AND (
+                CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(NEW.last_week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+        OR NEW.updated_at < OLD.updated_at
+        OR (
+          NEW.last_week_key IS NOT OLD.last_week_key
+          AND NOT (
+            NEW.last_week_key IS NOT NULL
+            AND (OLD.last_week_key IS NULL OR NEW.last_week_key > OLD.last_week_key)
+            AND NEW.last_qualified_date IS OLD.last_qualified_date
+            AND NEW.current_streak = OLD.current_streak
+            AND NEW.rest_passes = 1
+          )
+        )
+        OR (
+          NEW.last_week_key IS OLD.last_week_key
+          AND NEW.last_qualified_date IS OLD.last_qualified_date
+          AND (
+            NEW.current_streak != OLD.current_streak
+            OR NEW.rest_passes != OLD.rest_passes
+          )
+        )
+        OR (
+          NEW.last_week_key IS OLD.last_week_key
+          AND NEW.last_qualified_date IS NOT OLD.last_qualified_date
+          AND NOT (
+            (
+              OLD.last_qualified_date IS NULL
+              AND NEW.last_qualified_date IS NOT NULL
+              AND NEW.current_streak = 1
+              AND NEW.rest_passes = OLD.rest_passes
+            )
+            OR (
+              OLD.last_qualified_date IS NOT NULL
+              AND NEW.last_qualified_date IS NOT NULL
+              AND julianday(NEW.last_qualified_date)
+                - julianday(OLD.last_qualified_date) = 1
+              AND NEW.current_streak = OLD.current_streak + 1
+              AND NEW.rest_passes = OLD.rest_passes
+            )
+            OR (
+              OLD.last_qualified_date IS NOT NULL
+              AND NEW.last_qualified_date IS NOT NULL
+              AND julianday(NEW.last_qualified_date)
+                - julianday(OLD.last_qualified_date) = 2
+              AND OLD.rest_passes = 1
+              AND NEW.current_streak = OLD.current_streak + 1
+              AND NEW.rest_passes = 0
+            )
+            OR (
+              OLD.last_qualified_date IS NOT NULL
+              AND NEW.last_qualified_date IS NOT NULL
+              AND julianday(NEW.last_qualified_date)
+                - julianday(OLD.last_qualified_date) >= 2
+              AND NOT (
+                julianday(NEW.last_qualified_date)
+                  - julianday(OLD.last_qualified_date) = 2
+                AND OLD.rest_passes = 1
+              )
+              AND NEW.current_streak = 1
+              AND NEW.rest_passes = OLD.rest_passes
+            )
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid streak state');
+      END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {
