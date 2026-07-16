@@ -1833,6 +1833,13 @@ export const migrations: readonly Migration[] = [
                 END
               )
             ) != 3
+            OR (
+              SELECT COUNT(DISTINCT mission_field.key)
+              FROM json_each(
+                CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+                END
+              ) AS mission_field
+            ) != 3
             OR EXISTS (
               SELECT 1
               FROM json_each(
@@ -1843,6 +1850,11 @@ export const migrations: readonly Migration[] = [
                 'missionId', 'slot', 'dojoXpMilli'
               )
             )
+            OR json_type(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.missionId'
+            ) != 'text'
             OR json_extract(
               CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
               END,
@@ -1862,6 +1874,11 @@ export const migrations: readonly Migration[] = [
               END,
               '$.slot'
             ) NOT BETWEEN 0 AND 2
+            OR json_type(
+              CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
+              END,
+              '$.dojoXpMilli'
+            ) != 'integer'
             OR json_extract(
               CASE WHEN mission.type = 'object' THEN mission.value ELSE '{}'
               END,

@@ -1753,6 +1753,83 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ quantity: 1 });
   });
 
+  it('rejects a current raw mission with missing reward and duplicate slot keys', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'duplicate-mission-current');
+    const at = Date.parse('2026-07-17T12:00:00+09:00');
+    database.db.prepare(`
+      INSERT INTO progression_profiles VALUES (
+        'duplicate-mission-current', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 7, ?, ?
+      )
+    `).run(at, at);
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'duplicate-mission-current', '2026-07-17', 0, 1, ?
+      )
+    `).run(at);
+    const summary = fragmentSourceSummaryJson('duplicate-mission-main').replace(
+      '"missionCompletions":[]',
+      '"missionCompletions":[{' +
+        '"missionId":"COMPLETE_ONE_SNG","slot":0,"slot":0}]',
+    );
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'duplicate-mission-main', 'duplicate-mission-current',
+        'sng-finish', 1, ?, ?
+      )
+    `).run(summary, at);
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (
+        'streak-fragment:duplicate-mission-current:2026-07-17',
+        'duplicate-mission-current', 'streak-fragment', 'streak',
+        'streak-fragment:duplicate-mission-current:2026-07-17',
+        'duplicate-mission-main', '2026-07-17', 1, ?
+      )
+    `).run(at)).toThrowError('invalid progression item grant source');
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_item_grants
+      WHERE profile_id = 'duplicate-mission-current'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_items
+      WHERE profile_id = 'duplicate-mission-current'
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('rejects a V9 mission with missing reward and duplicate slot atomically', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    applyV9Migration(path);
+    const rawDatabase = new DatabaseSync(path);
+    const summary = fragmentSourceSummaryJson('sng-finish:legacy-main').replace(
+      '"missionCompletions":[]',
+      '"missionCompletions":[{' +
+        '"missionId":"COMPLETE_ONE_SNG","slot":0,"slot":0}]',
+    );
+    bypassTrigger(rawDatabase, 'reject_fragment_source_event_update', `
+      UPDATE progression_events SET summary_json = '${summary}'
+      WHERE idempotency_key = 'sng-finish:legacy-main';
+    `);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 9 });
+    } finally {
+      reopened.close();
+    }
+  });
+
   it('rejects a fragment grant whose source summary does not prove the claim', () => {
     database = openPokerDatabase(':memory:');
     insertProfile(database, 'invalid-source-summary');

@@ -58,6 +58,18 @@ describe('progression reward summary validation', () => {
     expect(parseProgressionRewardSummary(summary, 'event-a', 1)).toEqual(summary);
     expect(isStreakFragmentSourceSummary(summary, 'event-a', 1)).toBe(true);
   });
+
+  it('rejects a mission missing its reward after duplicate keys are parsed', () => {
+    const raw = JSON.stringify(fragmentSourceSummary()).replace(
+      '"missionCompletions":[]',
+      '"missionCompletions":[{' +
+        '"missionId":"COMPLETE_ONE_SNG","slot":0,"slot":0}]',
+    );
+    const summary = JSON.parse(raw) as unknown;
+
+    expect(parseProgressionRewardSummary(summary, 'event-a', 1)).toBeNull();
+    expect(isStreakFragmentSourceSummary(summary, 'event-a', 1)).toBe(false);
+  });
 });
 
 function fragmentSourceSummary() {
