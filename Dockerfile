@@ -1,7 +1,7 @@
 # Poker Doku — Fly.io 배포 이미지 (Next 커스텀 서버 + Socket.io)
 # 빌드는 Fly 원격 빌더에서 수행 (로컬 Docker 불필요): fly deploy
 
-FROM node:22-slim AS builder
+FROM node:22.17-slim AS builder
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 COPY package*.json ./
@@ -11,7 +11,7 @@ RUN npm run build \
   && rm -rf .next/cache \
   && npm prune --omit=dev
 
-FROM node:22-slim
+FROM node:22.17-slim
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1

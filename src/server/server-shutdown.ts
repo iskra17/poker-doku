@@ -17,7 +17,7 @@ export type ServerShutdown = (reason: string) => Promise<void>;
 export type ShutdownSignal = 'SIGTERM' | 'SIGINT';
 
 export interface ServerProcess {
-  exitCode?: string | number;
+  exitCode?: string | number | null;
   once: (
     signal: ShutdownSignal,
     listener: (signal: ShutdownSignal) => void,

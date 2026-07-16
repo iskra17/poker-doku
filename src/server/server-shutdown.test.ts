@@ -8,7 +8,7 @@ import {
 type SignalListener = (signal: ShutdownSignal) => void;
 
 class FakeProcess {
-  exitCode: string | number | undefined;
+  exitCode: string | number | null | undefined;
   readonly listeners = new Map<ShutdownSignal, SignalListener>();
   readonly onceCalls: ShutdownSignal[] = [];
   readonly offCalls: ShutdownSignal[] = [];
