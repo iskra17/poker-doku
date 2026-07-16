@@ -1,16 +1,18 @@
 import {
+  chmodSync,
+  closeSync,
   createReadStream,
-  createWriteStream,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   renameSync,
   rmSync,
-  writeFileSync,
 } from 'node:fs';
-import { open, appendFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { link, open, unlink, type FileHandle } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 import {
   createCipheriv,
   createDecipheriv,
@@ -18,6 +20,7 @@ import {
   randomUUID,
 } from 'node:crypto';
 import { pipeline } from 'node:stream/promises';
+import { Writable } from 'node:stream';
 import * as sqlite from 'node:sqlite';
 import { DatabaseSync } from 'node:sqlite';
 import type { PokerDatabase } from './database';
@@ -28,6 +31,13 @@ const MAGIC = Buffer.from('PDKUBAK1', 'ascii');
 const IV_BYTES = 12;
 const AUTH_TAG_BYTES = 16;
 const BACKUP_NAME = /^poker-doku-(\d{4})-(\d{2})-(\d{2})\.sqlite(?:\.enc)?$/;
+const UUID_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const STALE_PARTIAL_NAME = new RegExp(
+  `^\\.poker-doku-\\d{4}-\\d{2}-\\d{2}\\.${UUID_PATTERN}\\.sqlite(?:\\.enc)?\\.tmp$`,
+);
+const ORPHAN_PREVIOUS_NAME = new RegExp(
+  `^(poker-doku-\\d{4}-\\d{2}-\\d{2}\\.sqlite(?:\\.enc)?)\\.previous\\.${UUID_PATTERN}\\.tmp$`,
+);
 const INVALID_ENCRYPTION_CONFIGURATION =
   'Invalid backup encryption configuration';
 
@@ -53,12 +63,132 @@ export interface DailyBackupSchedulerOptions {
   logger: { error: (message: string, error?: unknown) => void };
 }
 
+export interface EncryptBackupOptions {
+  afterHeader?: () => void | Promise<void>;
+}
+
+export interface DecryptBackupOptions {
+  beforePublish?: () => void | Promise<void>;
+}
+
 export interface BackupPromotionDependencies {
   exists: (path: string) => boolean;
   isRegularFile: (path: string) => boolean;
   rename: (source: string, destination: string) => void;
   remove: (path: string) => void;
   uniqueId: () => string;
+  syncDirectory: (path: string) => void;
+}
+
+function isNarrowWindowsDirectorySyncError(error: unknown): boolean {
+  return process.platform === 'win32'
+    && typeof error === 'object'
+    && error !== null
+    && 'code' in error
+    && ['EACCES', 'EBADF', 'EISDIR', 'EPERM'].includes(String(error.code));
+}
+
+export function syncDirectoryDurably(directory: string): void {
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(directory, 'r');
+    fsyncSync(descriptor);
+  } catch (error) {
+    if (!isNarrowWindowsDirectorySyncError(error)) throw error;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function secureAndSyncFileSync(path: string): void {
+  chmodSync(path, 0o600);
+  const descriptor = openSync(path, 'r+');
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+async function secureAndSyncFile(path: string): Promise<void> {
+  const handle = await open(path, 'r+');
+  try {
+    await handle.chmod(0o600);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+class PositionedFileWriter extends Writable {
+  position: number;
+
+  constructor(
+    private readonly handle: FileHandle,
+    start: number,
+  ) {
+    super();
+    this.position = start;
+  }
+
+  override _write(
+    chunk: Buffer | string,
+    encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+    void writeFully(this.handle, buffer, this.position).then(
+      () => {
+        this.position += buffer.length;
+        callback();
+      },
+      error => callback(error as Error),
+    );
+  }
+}
+
+async function writeFully(
+  handle: FileHandle,
+  buffer: Buffer,
+  position: number,
+): Promise<void> {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesWritten } = await handle.write(
+      buffer,
+      offset,
+      buffer.length - offset,
+      position + offset,
+    );
+    if (bytesWritten === 0) throw new Error('Backup file write made no progress');
+    offset += bytesWritten;
+  }
+}
+
+async function readFully(
+  handle: FileHandle,
+  buffer: Buffer,
+  position: number,
+): Promise<void> {
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      offset,
+      buffer.length - offset,
+      position + offset,
+    );
+    if (bytesRead === 0) throw new Error('Invalid encrypted backup');
+    offset += bytesRead;
+  }
+}
+
+function sameFile(left: { dev: number | bigint; ino: number | bigint }, right: {
+  dev: number | bigint;
+  ino: number | bigint;
+}): boolean {
+  return left.ino === right.ino
+    && (process.platform === 'win32' || left.dev === right.dev);
 }
 
 function safeDateParts(year: string, month: string, day: string): number | undefined {
@@ -73,6 +203,74 @@ function safeDateParts(year: string, month: string, day: string): number | undef
     || parsed.getUTCDate() !== numericDay
   ) return undefined;
   return utc;
+}
+
+function isValidBackupDateInName(name: string): boolean {
+  const match = /(?:^|-)\b(\d{4})-(\d{2})-(\d{2})(?:\.|$)/.exec(name);
+  return Boolean(match && safeDateParts(match[1], match[2], match[3]) !== undefined);
+}
+
+function preparePrivateBackupDirectory(directory: string): void {
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const directoryStat = lstatSync(directory);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    throw new Error('Backup directory must be a real directory');
+  }
+  chmodSync(directory, 0o700);
+
+  const previousByFinal = new Map<string, string[]>();
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isFile()) continue;
+    const completedMatch = BACKUP_NAME.exec(entry.name);
+    if (
+      completedMatch
+      && safeDateParts(
+        completedMatch[1],
+        completedMatch[2],
+        completedMatch[3],
+      ) !== undefined
+    ) {
+      secureAndSyncFileSync(join(directory, entry.name));
+    }
+    if (STALE_PARTIAL_NAME.test(entry.name) && isValidBackupDateInName(entry.name)) {
+      rmSync(join(directory, entry.name));
+      continue;
+    }
+    const previousMatch = ORPHAN_PREVIOUS_NAME.exec(entry.name);
+    if (!previousMatch || !isValidBackupDateInName(previousMatch[1])) continue;
+    const candidates = previousByFinal.get(previousMatch[1]) ?? [];
+    candidates.push(entry.name);
+    previousByFinal.set(previousMatch[1], candidates);
+  }
+
+  for (const [finalName, candidates] of previousByFinal) {
+    candidates.sort();
+    const finalPath = join(directory, finalName);
+    let finalStat: ReturnType<typeof lstatSync> | undefined;
+    try {
+      finalStat = lstatSync(finalPath);
+    } catch (error) {
+      if (
+        typeof error !== 'object'
+        || error === null
+        || !('code' in error)
+        || error.code !== 'ENOENT'
+      ) throw error;
+    }
+    if (!finalStat) {
+      const selected = candidates.shift();
+      if (selected) {
+        renameSync(join(directory, selected), finalPath);
+        secureAndSyncFileSync(finalPath);
+      }
+    } else if (!finalStat.isFile() || finalStat.isSymbolicLink()) {
+      continue;
+    }
+    for (const obsolete of candidates) {
+      rmSync(join(directory, obsolete));
+    }
+  }
+  syncDirectoryDurably(directory);
 }
 
 function ensureEncryptionKey(key: Buffer): void {
@@ -110,6 +308,7 @@ export function promoteCompletedBackup(
     rename: renameSync,
     remove: path => rmSync(path),
     uniqueId: randomUUID,
+    syncDirectory: syncDirectoryDurably,
   },
 ): void {
   if (dependencies.exists(finalPath) && !dependencies.isRegularFile(finalPath)) {
@@ -118,7 +317,6 @@ export function promoteCompletedBackup(
 
   try {
     dependencies.rename(temporaryPath, finalPath);
-    return;
   } catch (directPromotionError) {
     if (
       !dependencies.exists(finalPath)
@@ -132,11 +330,24 @@ export function promoteCompletedBackup(
     // fails. Every path is in the same backup directory/volume.
     const previousPath = `${finalPath}.previous.${dependencies.uniqueId()}.tmp`;
     dependencies.rename(finalPath, previousPath);
+    let replacementPromoted = false;
+    let previousRemoved = false;
     try {
+      dependencies.syncDirectory(dirname(finalPath));
       dependencies.rename(temporaryPath, finalPath);
+      replacementPromoted = true;
+      dependencies.syncDirectory(dirname(finalPath));
+      dependencies.remove(previousPath);
+      previousRemoved = true;
+      dependencies.syncDirectory(dirname(finalPath));
     } catch (replacementError) {
+      if (previousRemoved) throw replacementError;
       try {
+        if (replacementPromoted) {
+          dependencies.rename(finalPath, temporaryPath);
+        }
         dependencies.rename(previousPath, finalPath);
+        dependencies.syncDirectory(dirname(finalPath));
       } catch (restoreError) {
         throw new AggregateError(
           [replacementError, restoreError],
@@ -145,8 +356,9 @@ export function promoteCompletedBackup(
       }
       throw replacementError;
     }
-    dependencies.remove(previousPath);
+    return;
   }
+  dependencies.syncDirectory(dirname(finalPath));
 }
 
 export function formatKstBackupDate(now: Date): string {
@@ -204,62 +416,131 @@ export async function encryptBackupFile(
   sourcePath: string,
   destinationPath: string,
   key: Buffer,
+  options: EncryptBackupOptions = {},
 ): Promise<void> {
   ensureEncryptionKey(key);
   const iv = randomBytes(IV_BYTES);
-  writeFileSync(destinationPath, Buffer.concat([MAGIC, iv]), { flag: 'wx' });
+  const header = Buffer.concat([MAGIC, iv]);
+  let handle: FileHandle | undefined;
+  let openedStat: Awaited<ReturnType<FileHandle['stat']>> | undefined;
+  let completed = false;
+  let failure: unknown;
   try {
+    handle = await open(destinationPath, 'wx', 0o600);
+    await handle.chmod(0o600);
+    openedStat = await handle.stat();
+    await writeFully(handle, header, 0);
+    await options.afterHeader?.();
     const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const output = new PositionedFileWriter(handle, header.length);
     await pipeline(
       createReadStream(sourcePath),
       cipher,
-      createWriteStream(destinationPath, { flags: 'a' }),
+      output,
     );
-    await appendFile(destinationPath, cipher.getAuthTag());
+    await writeFully(
+      handle,
+      cipher.getAuthTag(),
+      output.position,
+    );
+    await handle.sync();
+    const pathStat = lstatSync(destinationPath);
+    if (!pathStat.isFile() || !sameFile(openedStat, pathStat)) {
+      throw new Error('Encrypted backup path changed while writing');
+    }
+    completed = true;
   } catch (error) {
-    rmSync(destinationPath, { force: true });
-    throw error;
+    failure = error;
   }
+  try {
+    await handle?.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  if (!completed && openedStat) {
+    try {
+      const pathStat = lstatSync(destinationPath);
+      if (pathStat.isFile() && sameFile(openedStat, pathStat)) {
+        rmSync(destinationPath);
+        syncDirectoryDurably(dirname(resolve(destinationPath)));
+      }
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (failure) throw failure;
 }
 
 export async function decryptBackupFile(
   sourcePath: string,
   destinationPath: string,
   key: Buffer,
+  options: DecryptBackupOptions = {},
 ): Promise<void> {
   ensureEncryptionKey(key);
-  if (existsSync(destinationPath)) {
-    throw new Error('Restore destination already exists');
-  }
   const source = await open(sourcePath, 'r');
   const temporary = `${destinationPath}.${randomUUID()}.tmp`;
+  const outputDirectory = dirname(resolve(destinationPath));
+  let output: FileHandle | undefined;
+  let temporaryCreated = false;
+  let failure: unknown;
   try {
     const stat = await source.stat();
     const minimumSize = MAGIC.length + IV_BYTES + AUTH_TAG_BYTES;
     if (stat.size < minimumSize) throw new Error('Invalid encrypted backup');
     const header = Buffer.alloc(MAGIC.length + IV_BYTES);
     const tag = Buffer.alloc(AUTH_TAG_BYTES);
-    await source.read(header, 0, header.length, 0);
-    await source.read(tag, 0, tag.length, stat.size - AUTH_TAG_BYTES);
+    await readFully(source, header, 0);
+    await readFully(source, tag, stat.size - AUTH_TAG_BYTES);
     if (!header.subarray(0, MAGIC.length).equals(MAGIC)) {
       throw new Error('Invalid encrypted backup');
     }
     const iv = header.subarray(MAGIC.length);
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
     decipher.setAuthTag(tag);
+    output = await open(temporary, 'wx', 0o600);
+    temporaryCreated = true;
+    await output.chmod(0o600);
     await pipeline(
-      createReadStream(sourcePath, {
+      source.createReadStream({
+        autoClose: false,
         start: header.length,
         end: stat.size - AUTH_TAG_BYTES - 1,
       }),
       decipher,
-      createWriteStream(temporary, { flags: 'wx' }),
+      new PositionedFileWriter(output, 0),
     );
-    renameSync(temporary, destinationPath);
-  } finally {
-    await source.close();
-    rmSync(temporary, { force: true });
+    await output.sync();
+    await output.close();
+    output = undefined;
+    await options.beforePublish?.();
+    await link(temporary, destinationPath);
+    syncDirectoryDurably(outputDirectory);
+    await unlink(temporary);
+    temporaryCreated = false;
+    syncDirectoryDurably(outputDirectory);
+  } catch (error) {
+    failure = error;
   }
+  try {
+    await output?.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  try {
+    await source.close();
+  } catch (error) {
+    failure ??= error;
+  }
+  if (temporaryCreated) {
+    try {
+      rmSync(temporary, { force: true });
+      syncDirectoryDurably(outputDirectory);
+    } catch (error) {
+      failure ??= error;
+    }
+  }
+  if (failure) throw failure;
 }
 
 export async function pruneExpiredBackups(
@@ -286,10 +567,12 @@ export async function pruneExpiredBackups(
     rmSync(candidate);
     deleted.push(entry.name);
   }
+  if (deleted.length > 0) syncDirectoryDurably(root);
   return deleted;
 }
 
 export class BackupManager {
+  private readonly backupDirectory: string;
   private readonly now: () => Date;
   private readonly backupDatabase: NativeBackup;
   private readonly validateBackup: (path: string) => void | Promise<void>;
@@ -303,6 +586,8 @@ export class BackupManager {
 
   constructor(private readonly options: BackupManagerOptions) {
     if (options.encryptionKey) ensureEncryptionKey(options.encryptionKey);
+    this.backupDirectory = resolve(options.backupDirectory);
+    preparePrivateBackupDirectory(this.backupDirectory);
     this.now = options.now ?? (() => new Date());
     this.backupDatabase = options.backupDatabase ?? defaultNativeBackup;
     this.validateBackup = options.validateBackup ?? validateSqliteBackup;
@@ -360,8 +645,7 @@ export class BackupManager {
   private async performBackup(): Promise<string> {
     const now = this.now();
     const date = formatKstBackupDate(now);
-    const directory = resolve(this.options.backupDirectory);
-    mkdirSync(directory, { recursive: true });
+    const directory = this.backupDirectory;
     const identifier = randomUUID();
     const plaintext = join(directory, `.poker-doku-${date}.${identifier}.sqlite.tmp`);
     const encrypted = join(directory, `.poker-doku-${date}.${identifier}.sqlite.enc.tmp`);
@@ -369,7 +653,14 @@ export class BackupManager {
     const finalPath = join(directory, `poker-doku-${date}${suffix}`);
 
     try {
+      const reservation = openSync(plaintext, 'wx', 0o600);
+      try {
+        chmodSync(plaintext, 0o600);
+      } finally {
+        closeSync(reservation);
+      }
       await this.backupDatabase(this.options.database.db, plaintext);
+      await secureAndSyncFile(plaintext);
       await this.validateBackup(plaintext);
       let completed = plaintext;
       if (this.options.encryptionKey) {
@@ -381,11 +672,15 @@ export class BackupManager {
         completed = encrypted;
       }
       await this.promoteBackup(completed, finalPath);
+      await secureAndSyncFile(finalPath);
+      syncDirectoryDurably(directory);
       await pruneExpiredBackups(directory, now);
       return finalPath;
     } finally {
+      const hadTemporary = existsSync(plaintext) || existsSync(encrypted);
       rmSync(plaintext, { force: true });
       rmSync(encrypted, { force: true });
+      if (hadTemporary) syncDirectoryDurably(directory);
     }
   }
 }

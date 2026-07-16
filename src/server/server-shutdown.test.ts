@@ -338,6 +338,7 @@ describe('custom server process lifecycle', () => {
   });
 
   it('logs shutdown rejection, sets a nonzero exit code, and removes listeners', async () => {
+    vi.useFakeTimers();
     const process = new FakeProcess();
     const logger = { error: vi.fn() };
     const shutdownError = new Error('shutdown failed');
@@ -348,7 +349,8 @@ describe('custom server process lifecycle', () => {
         throw shutdownError;
       },
       process,
-      production: false,
+      production: true,
+      forceExitMs: 25,
       logger,
     });
 
@@ -363,6 +365,9 @@ describe('custom server process lifecycle', () => {
     );
     expect(process.exitCode).toBe(1);
     expect(process.listeners.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(process.exitCalls).toEqual([]);
   });
 
   it('closes Next and exits nonzero when prepare rejects before listening', async () => {

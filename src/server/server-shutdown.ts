@@ -187,6 +187,7 @@ export async function startServerLifecycle(
         if (forceExitTimer) clearTimeout(forceExitTimer);
       },
       error => {
+        if (forceExitTimer) clearTimeout(forceExitTimer);
         options.logger.error(`> Poker server shutdown failed (${signal}):`, error);
         options.process.exitCode = 1;
       },

@@ -1,5 +1,6 @@
 import {
   existsSync,
+  chmodSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -7,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -72,6 +74,18 @@ function assertNoBackupTemps(directory: string): void {
   expect(readdirSync(directory).filter(name => (
     name.includes('.tmp') || name.includes('.previous.')
   ))).toEqual([]);
+}
+
+function permissions(path: string): number {
+  return statSync(path).mode & 0o777;
+}
+
+function expectPrivatePermissions(path: string, expected: 0o600 | 0o700): void {
+  if (process.platform === 'win32') {
+    expect(statSync(path).isFile() || statSync(path).isDirectory()).toBe(true);
+    return;
+  }
+  expect(permissions(path)).toBe(expected);
 }
 
 function deferred(): {
@@ -145,6 +159,8 @@ describe('backup encryption', () => {
     await decryptBackupFile(encrypted, restored, key());
 
     expect(readFileSync(restored)).toEqual(content);
+    expectPrivatePermissions(encrypted, 0o600);
+    expectPrivatePermissions(restored, 0o600);
     expect(readFileSync(encrypted).subarray(0, 8).toString('ascii'))
       .toBe('PDKUBAK1');
   });
@@ -173,6 +189,81 @@ describe('backup encryption', () => {
       expect(readdirSync(directory).some(name => name.includes('.tmp'))).toBe(false);
     },
   );
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps writing to the originally opened inode when its path is swapped',
+    async () => {
+      const directory = temporaryDirectory();
+      const source = join(directory, 'source.sqlite');
+      const encrypted = join(directory, 'backup.sqlite.enc');
+      const openedInode = join(directory, 'opened-inode.enc');
+      const symlinkTarget = join(directory, 'symlink-target');
+      writeFileSync(source, Buffer.alloc(128 * 1024, 0x51));
+      writeFileSync(symlinkTarget, 'must-not-change');
+
+      await expect(encryptBackupFile(source, encrypted, key(), {
+        afterHeader: () => {
+          renameSync(encrypted, openedInode);
+          symlinkSync(symlinkTarget, encrypted);
+        },
+      })).rejects.toThrow('Encrypted backup path changed while writing');
+
+      expect(readFileSync(symlinkTarget, 'utf8')).toBe('must-not-change');
+      expect(statSync(openedInode).size).toBeGreaterThan(20);
+    },
+  );
+
+  it('never follows an existing destination symlink for encryption', async () => {
+    const directory = temporaryDirectory();
+    const source = join(directory, 'source.sqlite');
+    const encrypted = join(directory, 'backup.sqlite.enc');
+    const symlinkTarget = join(directory, 'symlink-target');
+    writeFileSync(source, 'secret');
+    writeFileSync(symlinkTarget, 'must-not-change');
+    try {
+      symlinkSync(symlinkTarget, encrypted);
+    } catch {
+      return;
+    }
+
+    await expect(encryptBackupFile(source, encrypted, key())).rejects.toThrow();
+    expect(readFileSync(symlinkTarget, 'utf8')).toBe('must-not-change');
+  });
+
+  it('publishes decrypted output without clobbering a concurrent destination', async () => {
+    const directory = temporaryDirectory();
+    const source = join(directory, 'source.sqlite');
+    const encrypted = join(directory, 'backup.sqlite.enc');
+    const restored = join(directory, 'restored.sqlite');
+    writeFileSync(source, 'authenticated plaintext');
+    await encryptBackupFile(source, encrypted, key());
+
+    await expect(decryptBackupFile(encrypted, restored, key(), {
+      beforePublish: () => writeFileSync(restored, 'racing writer'),
+    })).rejects.toThrow();
+
+    expect(readFileSync(restored, 'utf8')).toBe('racing writer');
+    expect(readdirSync(directory).some(name => name.includes('.tmp'))).toBe(false);
+  });
+
+  it('does not replace an existing output symlink and keeps its target unchanged', async () => {
+    const directory = temporaryDirectory();
+    const source = join(directory, 'source.sqlite');
+    const encrypted = join(directory, 'backup.sqlite.enc');
+    const restored = join(directory, 'restored.sqlite');
+    const symlinkTarget = join(directory, 'existing-target');
+    writeFileSync(source, 'authenticated plaintext');
+    writeFileSync(symlinkTarget, 'existing');
+    await encryptBackupFile(source, encrypted, key());
+    try {
+      symlinkSync(symlinkTarget, restored);
+    } catch {
+      return;
+    }
+
+    await expect(decryptBackupFile(encrypted, restored, key())).rejects.toThrow();
+    expect(readFileSync(symlinkTarget, 'utf8')).toBe('existing');
+  });
 });
 
 describe('backup retention', () => {
@@ -221,24 +312,39 @@ describe('atomic backup promotion', () => {
     writeFileSync(temporary, 'B');
     writeFileSync(finalPath, 'A');
     let renames = 0;
+    const order: string[] = [];
 
     promoteCompletedBackup(temporary, finalPath, {
       exists: existsSync,
       isRegularFile: path => lstatSync(path).isFile(),
       rename: (source, destination) => {
         renames += 1;
+        order.push(`rename:${basename(source)}->${basename(destination)}`);
         if (renames === 1) {
           throw Object.assign(new Error('destination exists'), { code: 'EEXIST' });
         }
         renameSync(source, destination);
       },
-      remove: path => rmSync(path),
+      remove: path => {
+        order.push(`remove:${basename(path)}`);
+        rmSync(path);
+      },
       uniqueId: () => 'swap-success',
+      syncDirectory: () => { order.push('sync-directory'); },
     });
 
     expect(readFileSync(finalPath, 'utf8')).toBe('B');
     expect(existsSync(temporary)).toBe(false);
     assertNoBackupTemps(directory);
+    expect(order).toEqual([
+      'rename:new.sqlite.tmp->poker-doku-2026-07-16.sqlite',
+      'rename:poker-doku-2026-07-16.sqlite->poker-doku-2026-07-16.sqlite.previous.swap-success.tmp',
+      'sync-directory',
+      'rename:new.sqlite.tmp->poker-doku-2026-07-16.sqlite',
+      'sync-directory',
+      'remove:poker-doku-2026-07-16.sqlite.previous.swap-success.tmp',
+      'sync-directory',
+    ]);
   });
 
   it('restores the previous completed file when swap promotion fails', () => {
@@ -262,10 +368,43 @@ describe('atomic backup promotion', () => {
       },
       remove: path => rmSync(path),
       uniqueId: () => 'swap-failure',
+      syncDirectory: () => undefined,
     })).toThrow('promotion failed');
 
     expect(readFileSync(finalPath, 'utf8')).toBe('A');
     expect(readFileSync(temporary, 'utf8')).toBe('B');
+    expect(readdirSync(directory).some(name => name.includes('.previous.')))
+      .toBe(false);
+  });
+
+  it('restores and syncs the previous backup when durability sync fails mid-swap', () => {
+    const directory = temporaryDirectory();
+    const temporary = join(directory, 'new.sqlite.tmp');
+    const finalPath = join(directory, 'poker-doku-2026-07-16.sqlite');
+    writeFileSync(temporary, 'B');
+    writeFileSync(finalPath, 'A');
+    let renames = 0;
+    let syncs = 0;
+
+    expect(() => promoteCompletedBackup(temporary, finalPath, {
+      exists: existsSync,
+      isRegularFile: path => lstatSync(path).isFile(),
+      rename: (source, destination) => {
+        renames += 1;
+        if (renames === 1) throw Object.assign(new Error('EEXIST'), { code: 'EEXIST' });
+        renameSync(source, destination);
+      },
+      remove: path => rmSync(path),
+      uniqueId: () => 'sync-failure',
+      syncDirectory: () => {
+        syncs += 1;
+        if (syncs === 1) throw new Error('directory sync failed');
+      },
+    })).toThrow('directory sync failed');
+
+    expect(readFileSync(finalPath, 'utf8')).toBe('A');
+    expect(readFileSync(temporary, 'utf8')).toBe('B');
+    expect(syncs).toBe(2);
     expect(readdirSync(directory).some(name => name.includes('.previous.')))
       .toBe(false);
   });
@@ -298,6 +437,102 @@ describe('BackupManager', () => {
     });
     return { manager, database, directory };
   }
+
+  it('secures its directory and removes only exact stale regular partial files at startup', () => {
+    const directory = temporaryDirectory();
+    chmodSync(directory, 0o777);
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    const stalePlain = `.poker-doku-2026-07-16.${uuid}.sqlite.tmp`;
+    const staleEncrypted = `.poker-doku-2026-07-16.${uuid}.sqlite.enc.tmp`;
+    const arbitrary = '.poker-doku-2026-07-16.not-a-uuid.sqlite.tmp';
+    const liveWal = 'poker-doku.sqlite-wal';
+    writeFileSync(join(directory, stalePlain), 'plaintext secret');
+    writeFileSync(join(directory, staleEncrypted), 'encrypted partial');
+    writeFileSync(join(directory, arbitrary), 'arbitrary');
+    writeFileSync(join(directory, liveWal), 'live wal');
+    mkdirSync(join(directory, `.poker-doku-2026-07-17.${uuid}.sqlite.tmp`));
+    const outside = join(temporaryDirectory(), 'outside');
+    writeFileSync(outside, 'outside');
+    try {
+      symlinkSync(outside, join(
+        directory,
+        `.poker-doku-2026-07-18.${uuid}.sqlite.enc.tmp`,
+      ));
+    } catch {
+      // File symlinks can require Windows developer mode.
+    }
+    const database = openPokerDatabase(':memory:');
+
+    new BackupManager({
+      database,
+      backupDirectory: directory,
+      backupDatabase: async () => 1,
+    });
+
+    expectPrivatePermissions(directory, 0o700);
+    expect(existsSync(join(directory, stalePlain))).toBe(false);
+    expect(existsSync(join(directory, staleEncrypted))).toBe(false);
+    expect(readFileSync(join(directory, arbitrary), 'utf8')).toBe('arbitrary');
+    expect(readFileSync(join(directory, liveWal), 'utf8')).toBe('live wal');
+    expect(readFileSync(outside, 'utf8')).toBe('outside');
+    database.close();
+  });
+
+  it('deterministically restores an orphan previous backup or removes it when final exists', () => {
+    const directory = temporaryDirectory();
+    const firstId = '11111111-1111-4111-8111-111111111111';
+    const secondId = '22222222-2222-4222-8222-222222222222';
+    const finalName = 'poker-doku-2026-07-16.sqlite';
+    const firstPrevious = `${finalName}.previous.${firstId}.tmp`;
+    const secondPrevious = `${finalName}.previous.${secondId}.tmp`;
+    writeFileSync(join(directory, firstPrevious), 'deterministic-first');
+    writeFileSync(join(directory, secondPrevious), 'deterministic-second');
+    const database = openPokerDatabase(':memory:');
+
+    new BackupManager({
+      database,
+      backupDirectory: directory,
+      backupDatabase: async () => 1,
+    });
+
+    const finalPath = join(directory, finalName);
+    expect(readFileSync(finalPath, 'utf8')).toBe('deterministic-first');
+    expectPrivatePermissions(finalPath, 0o600);
+    expect(existsSync(join(directory, firstPrevious))).toBe(false);
+    expect(existsSync(join(directory, secondPrevious))).toBe(false);
+
+    const thirdPrevious = `${finalName}.previous.33333333-3333-4333-8333-333333333333.tmp`;
+    writeFileSync(join(directory, thirdPrevious), 'obsolete');
+    new BackupManager({
+      database,
+      backupDirectory: directory,
+      backupDatabase: async () => 1,
+    });
+    expect(readFileSync(finalPath, 'utf8')).toBe('deterministic-first');
+    expect(existsSync(join(directory, thirdPrevious))).toBe(false);
+    database.close();
+  });
+
+  it('pre-creates plaintext backup destinations exclusively as 0600 and keeps final private', async () => {
+    const directory = temporaryDirectory();
+    chmodSync(directory, 0o777);
+    const { manager, database } = createManager({
+      directory,
+      backupDatabase: async (_database, destination) => {
+        expect(existsSync(destination)).toBe(true);
+        expect(statSync(destination).size).toBe(0);
+        expectPrivatePermissions(destination, 0o600);
+        writeFileSync(destination, 'backup content');
+        return 1;
+      },
+    });
+
+    const finalPath = await manager.backup();
+
+    expectPrivatePermissions(directory, 0o700);
+    expectPrivatePermissions(finalPath, 0o600);
+    database.close();
+  });
 
   it('shares one in-flight promise and permits a later run after settlement', async () => {
     const pending = deferred();
@@ -455,6 +690,7 @@ describe('BackupManager', () => {
               },
               remove: path => rmSync(path),
               uniqueId: () => 'manager-swap-failure',
+              syncDirectory: () => undefined,
             });
             return;
           }
@@ -562,6 +798,7 @@ describe('BackupManager', () => {
 
     expect(basename(result)).toBe('poker-doku-2026-07-16.sqlite.enc');
     expect(readdirSync(directory)).toEqual(['poker-doku-2026-07-16.sqlite.enc']);
+    expectPrivatePermissions(result, 0o600);
     database.close();
   });
 
