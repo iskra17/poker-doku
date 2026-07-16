@@ -537,7 +537,41 @@ export function setupSocketHandlers(
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
       // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
       // 동일 id의 Player가 둘 생기는 것(불변식 위반 + 새 스택 리바이 악용)을 막는다.
-      const seated = room.engine.state.players.find(p => p.id === session.playerId);
+      let seated = room.engine.state.players.find(p => p.id === session.playerId);
+      let retiredWalletSeat = false;
+      if (walletCash && seated?.pendingRemoval) {
+        if (!economy) {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        let escrowBacked = false;
+        try {
+          escrowBacked = economy.hasActiveCashEscrow(session.playerId, roomId);
+        } catch {
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        if (!escrowBacked) {
+          if (!roomManager.retirePendingSeat(roomId, session.playerId)) {
+            ack?.({
+              ok: false,
+              code: 'action-rejected',
+              message: '이전 핸드 정리를 마친 뒤 다시 입장해 주세요.',
+            });
+            return;
+          }
+          seated = undefined;
+          retiredWalletSeat = true;
+        }
+      }
       if (seated) {
         const startedTournament = !!room.engine.state.tournament && room.engine.state.tournament.entrants > 0;
         // 시작된 토너먼트에서 이탈은 탈락 확정이므로 되살리지 않고 아래 lock 체크로 넘긴다
@@ -610,7 +644,11 @@ export function setupSocketHandlers(
       }
 
       // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
-      if (room.config.password && String(data.password ?? '') !== room.config.password) {
+      if (
+        !retiredWalletSeat
+        && room.config.password
+        && String(data.password ?? '') !== room.config.password
+      ) {
         eventLog.log('join-room:reject', { roomId, playerId: session.playerId, data: { reason: 'bad-password' } });
         ack?.({ ok: false, code: 'bad-password', message: '비밀번호가 틀렸어요.' });
         return;

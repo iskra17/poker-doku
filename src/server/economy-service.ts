@@ -165,6 +165,10 @@ export class EconomyService {
     return this.repository.hasActiveCashEscrows(roomId);
   }
 
+  hasActiveCashEscrow(profileId: string, roomId: string): boolean {
+    return this.repository.hasActiveCashEscrow(profileId, roomId);
+  }
+
   checkpointCashHand(
     roomId: string,
     handNumber: number,
@@ -172,6 +176,14 @@ export class EconomyService {
     at = this.clock(),
   ): void {
     this.repository.checkpointCashHand(roomId, handNumber, stacks, at);
+  }
+
+  cancelPreparedCashHand(
+    roomId: string,
+    handNumber: number,
+    at = this.clock(),
+  ): boolean {
+    return this.repository.cancelPreparedCashHand(roomId, handNumber, at);
   }
 
   settleCashHand(

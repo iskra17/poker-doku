@@ -346,6 +346,98 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.walletState(created.profile.id).balance).toBe(4_000);
   });
 
+  it('retires a cashed-out pending wallet seat before fresh same-room admission', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const opponentProfile = await harness.createProfile();
+    const client = await harness.connect('wallet-pending-fresh-token', {
+      profileCookie: created.cookie,
+    });
+    const opponent = await harness.connect('wallet-pending-opponent-token', {
+      profileCookie: opponentProfile.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 1,
+    }, done))).resolves.toMatchObject({ ok: true });
+    await expect(withAck(done => opponent.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    await wait(2_100);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    const beforeExit = room.engine.state.players.find(
+      player => player.id === created.profile.id,
+    )!.chips;
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room',
+      { mode: 'exit' },
+      done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(room.engine.state.players.find(player => player.id === created.profile.id))
+      .toMatchObject({ chips: beforeExit, pendingRemoval: true });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 6_000 + beforeExit,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 2_000,
+      seatIndex: 1,
+    }, done))).resolves.toMatchObject({ ok: true });
+    const freshSeats = room.engine.state.players.filter(
+      player => player.id === created.profile.id,
+    );
+    expect(freshSeats).toEqual([expect.objectContaining({ chips: 2_000 })]);
+    expect(freshSeats[0]).not.toHaveProperty('pendingRemoval');
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 4_000 + beforeExit,
+      activeEscrow: 2_000,
+      activeRoomId: roomId,
+    });
+
+    await wait(2_100);
+    expect(room.engine.state.handNumber).toBe(2);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+  });
+
+  it('revives an escrow-backed pending wallet seat without another debit', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-backed-pending-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    const seated = harness.runtime.roomManager.getRoom(roomId)!.engine.state.players[0];
+    seated.pendingRemoval = true;
+    seated.status = 'folded';
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 2_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+
+    expect(seated).toMatchObject({ chips: 4_000, pendingRemoval: false });
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 6_000,
+      activeEscrow: 4_000,
+      activeRoomId: roomId,
+    });
+  });
+
   it('rejects an old credential after recovery rotates it', async () => {
     harness = await createSocketTestHarness();
     const created = await harness.createProfile({ avatarId: 'chloe' });

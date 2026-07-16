@@ -159,6 +159,15 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
       checkpoint_amount: 4_700,
       checkpoint_hand: 1,
     });
+    const cancellationProbe = new EconomyService(
+      new EconomyRepository(database),
+      () => 101,
+    );
+    expect(cancellationProbe.cancelPreparedCashHand('room-1', 1)).toBe(false);
+    expect(database.db.prepare(`
+      SELECT status FROM cash_hand_settlements
+      WHERE room_id = 'room-1' AND settlement_seq = 1
+    `).get()).toEqual({ status: 'settled' });
 
     const handLedger = database.db.prepare(`
       SELECT account, delta, reason, idempotency_key
@@ -328,6 +337,101 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
       checkpoint_hand: 0,
     });
   });
+
+  it('does not prepare a hand after a delayed departure and starts cleanly with a replacement', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    for (const id of ['human-1', 'human-2', 'human-3']) seedProfile(database, id);
+    const runtime = createRuntime(database);
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: runtime,
+    });
+    const roomId = manager.createRoom({
+      ...walletCashConfig,
+      botCount: 0,
+      tableType: 'humans',
+    });
+    for (const [id, seat] of [['human-1', 0], ['human-2', 1]] as const) {
+      runtime.openCashEscrow(id, roomId, 4_000);
+      manager.joinRoom(roomId, makePlayer(id, 'human', 4_000, seat));
+    }
+
+    manager.leaveRoom(roomId, 'human-2');
+    vi.advanceTimersByTime(2_001);
+
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM cash_hand_settlements
+      WHERE room_id = ? AND status = 'prepared'
+    `).get(roomId)).toEqual({ count: 0 });
+
+    runtime.openCashEscrow('human-3', roomId, 4_000);
+    manager.joinRoom(roomId, makePlayer('human-3', 'human', 4_000, 1));
+    vi.advanceTimersByTime(2_001);
+
+    expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(1);
+    expect(manager.getRoom(roomId)!.engine.state.isHandInProgress).toBe(true);
+    manager.shutdown();
+  });
+
+  it('cancels only the exact prepared identity when startHand returns without starting', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    seedProfile(database, 'human-2');
+    const runtime = createRuntime(database);
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: runtime,
+    });
+    const roomId = manager.createRoom({
+      ...walletCashConfig,
+      botCount: 0,
+      tableType: 'humans',
+    });
+    for (const [id, seat] of [['human-1', 0], ['human-2', 1]] as const) {
+      runtime.openCashEscrow(id, roomId, 4_000);
+      manager.joinRoom(roomId, makePlayer(id, 'human', 4_000, seat));
+    }
+    const room = manager.getRoom(roomId)!;
+    const start = vi.spyOn(room.engine, 'startHand').mockImplementationOnce(() => {});
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(database.db.prepare(`
+      SELECT status FROM cash_hand_settlements
+      WHERE room_id = ? ORDER BY settlement_seq DESC LIMIT 1
+    `).get(roomId)).toEqual({ status: 'voided' });
+    start.mockRestore();
+    manager.resumeRoom(roomId);
+    vi.advanceTimersByTime(2_001);
+    expect(room.engine.state.handNumber).toBe(1);
+    manager.shutdown();
+  });
+
+  it('records zero human and bot deltas with neutral ledger reasons', () => {
+    const database = openDatabase();
+    seedProfile(database, 'human-1');
+    const service = new EconomyService(new EconomyRepository(database), () => 100);
+    service.openCashEscrow('human-1', 'room-neutral', 4_000);
+    service.checkpointCashHand('room-neutral', 1, [
+      { profileId: 'human-1', amount: 4_000 },
+    ]);
+
+    service.settleCashHand('room-neutral', 1, [
+      { profileId: 'human-1', startAmount: 4_000, endAmount: 4_000 },
+    ], 0, 0);
+
+    expect(database.db.prepare(`
+      SELECT account, reason FROM chip_ledger
+      WHERE idempotency_key LIKE 'cash-hand:room-neutral:1:%'
+      ORDER BY account
+    `).all()).toEqual([
+      { account: 'bot', reason: 'BOT_NET_NEUTRAL' },
+      { account: 'burn', reason: 'RAKE_BURN' },
+      { account: 'escrow', reason: 'CASH_HAND_NEUTRAL' },
+    ]);
+  });
 });
 
 describe('EconomyRuntime startup recovery', () => {
@@ -340,6 +444,9 @@ describe('EconomyRuntime startup recovery', () => {
     const manager = new RoomManager(() => {}, () => {}, undefined, {
       economy: {
         beforeHand: (roomId, engine) => runtime.beforeHand(roomId, engine),
+        cancelPreparedHand: (roomId, engine) => (
+          runtime.cancelPreparedHand(roomId, engine)
+        ),
         afterHand: () => { throw new Error('settlement write failed'); },
         settleExit: (roomId, player) => runtime.settleExit(roomId, player),
         voidRoom,

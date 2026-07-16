@@ -10,6 +10,7 @@ export interface CashHandPersistenceResult {
 
 export interface RoomEconomyHooks {
   beforeHand(roomId: string, engine: PokerEngine): void;
+  cancelPreparedHand(roomId: string, engine: PokerEngine): void;
   afterHand(roomId: string, engine: PokerEngine): CashHandPersistenceResult;
   settleExit(roomId: string, player: Player): void;
   voidRoom(roomId: string): void;
@@ -19,6 +20,7 @@ export interface CashAdmissionEconomy {
   openCashEscrow(profileId: string, roomId: string, buyIn: number): unknown;
   rebuyCashEscrow(profileId: string, roomId: string, buyIn: number): unknown;
   cancelCashEscrow(profileId: string, roomId: string): unknown;
+  hasActiveCashEscrow(profileId: string, roomId: string): boolean;
 }
 
 export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
@@ -36,6 +38,10 @@ export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
     return this.economy.cancelCashEscrow(profileId, roomId);
   }
 
+  hasActiveCashEscrow(profileId: string, roomId: string): boolean {
+    return this.economy.hasActiveCashEscrow(profileId, roomId);
+  }
+
   beforeHand(roomId: string, engine: PokerEngine): void {
     if (!this.economy.hasActiveCashEscrows(roomId)) return;
     const nextHandNumber = this.safeAdd(engine.state.handNumber, 1);
@@ -43,6 +49,13 @@ export class EconomyRuntime implements RoomEconomyHooks, CashAdmissionEconomy {
       .filter(player => player.type === 'human' && !player.pendingRemoval)
       .map(player => ({ profileId: player.id, amount: player.chips }));
     this.economy.checkpointCashHand(roomId, nextHandNumber, humans);
+  }
+
+  cancelPreparedHand(roomId: string, engine: PokerEngine): void {
+    this.economy.cancelPreparedCashHand(
+      roomId,
+      this.safeAdd(engine.state.handNumber, 1),
+    );
   }
 
   afterHand(roomId: string, engine: PokerEngine): CashHandPersistenceResult {

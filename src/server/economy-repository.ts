@@ -390,6 +390,15 @@ export class EconomyRepository {
     `).get(roomId);
   }
 
+  hasActiveCashEscrow(profileId: string, roomId: string): boolean {
+    return !!this.database.db.prepare(`
+      SELECT 1 FROM seat_escrows
+      WHERE profile_id = ? AND room_id = ?
+        AND mode = 'cash' AND status = 'active'
+      LIMIT 1
+    `).get(profileId, roomId);
+  }
+
   checkpointCashHand(
     roomId: string,
     handNumber: number,
@@ -453,6 +462,26 @@ export class EconomyRepository {
         `).run(stack.amount, handNumber, at, escrow.id);
       }
       return settlementSeq;
+    });
+  }
+
+  cancelPreparedCashHand(
+    roomId: string,
+    handNumber: number,
+    at: number,
+  ): boolean {
+    this.assertCashHandNumber(handNumber);
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      const cancelled = this.database.db.prepare(`
+        UPDATE cash_hand_settlements
+        SET status = 'voided', updated_at = ?
+        WHERE room_id = ? AND engine_hand_number = ? AND status = 'prepared'
+      `).run(at, roomId, handNumber);
+      if (cancelled.changes > 1) {
+        throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+      }
+      return cancelled.changes === 1;
     });
   }
 
@@ -551,7 +580,12 @@ export class EconomyRepository {
           profileId: human.profileId,
           account: 'escrow',
           delta,
-          reason: this.deltaReason(delta, 'CASH_HAND_WIN', 'CASH_HAND_LOSS'),
+          reason: this.deltaReason(
+            delta,
+            'CASH_HAND_WIN',
+            'CASH_HAND_LOSS',
+            'CASH_HAND_NEUTRAL',
+          ),
           refId: roomId,
           idempotencyKey: `${prefix}:human:${human.profileId}`,
           at,
@@ -566,7 +600,12 @@ export class EconomyRepository {
         profileId: null,
         account: 'bot',
         delta: botDelta,
-        reason: this.deltaReason(botDelta, 'BOT_NET_WIN', 'BOT_NET_LOSS'),
+        reason: this.deltaReason(
+          botDelta,
+          'BOT_NET_WIN',
+          'BOT_NET_LOSS',
+          'BOT_NET_NEUTRAL',
+        ),
         refId: roomId,
         idempotencyKey: `${prefix}:bot`,
         at,
@@ -1035,8 +1074,9 @@ export class EconomyRepository {
     delta: number,
     positive: string,
     negative: string,
+    neutral: string,
   ): string {
-    return delta >= 0 ? positive : negative;
+    return delta > 0 ? positive : delta < 0 ? negative : neutral;
   }
 
   private fingerprintCashHandStart(

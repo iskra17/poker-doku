@@ -470,9 +470,19 @@ export class RoomManager {
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
 
-    if (this.isWalletCash(room)) {
+    const walletCash = this.isWalletCash(room);
+    // 2초 예약 뒤 최종 인원을 다시 본다. 아래 checkpoint→startHand 구간에는 await가 없어
+    // 다른 leave/join 이벤트가 끼어 prepared identity만 남길 수 없다.
+    if (walletCash && !this.canStartWalletHand(room.engine)) {
+      this.tryStartGame(roomId);
+      return;
+    }
+
+    let cashHandPrepared = false;
+    if (walletCash) {
       try {
         this.requireEconomy().beforeHand(roomId, room.engine);
+        cashHandPrepared = true;
       } catch {
         this.economyBlockedRooms.add(roomId);
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
@@ -525,7 +535,34 @@ export class RoomManager {
     }
 
     const prevHandNumber = room.engine.state.handNumber;
-    room.engine.startHand();
+    try {
+      room.engine.startHand();
+    } catch {
+      if (
+        cashHandPrepared
+        && room.engine.state.handNumber === prevHandNumber
+        && !room.engine.state.isHandInProgress
+      ) {
+        try {
+          this.requireEconomy().cancelPreparedHand(roomId, room.engine);
+        } catch {
+          // 아래 공통 차단 경로가 현재 checkpoint를 보존한다.
+        }
+      }
+      if (
+        cashHandPrepared
+        && (
+          room.engine.state.handNumber > prevHandNumber
+          || room.engine.state.isHandInProgress
+        )
+      ) {
+        this.unresolvedSettlementRooms.add(roomId);
+      }
+      this.economyBlockedRooms.add(roomId);
+      this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+      this.onUpdate(roomId, room.engine);
+      return;
+    }
 
     if (room.engine.state.handNumber > prevHandNumber) {
       const s = room.engine.state;
@@ -549,6 +586,16 @@ export class RoomManager {
         this.handleCompletedHand(roomId);
       } else {
         // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
+        if (cashHandPrepared) {
+          try {
+            this.requireEconomy().cancelPreparedHand(roomId, room.engine);
+          } catch {
+            this.economyBlockedRooms.add(roomId);
+            this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+            this.onUpdate(roomId, room.engine);
+            return;
+          }
+        }
         this.tryStartGame(roomId);
       }
       return;
@@ -789,6 +836,24 @@ export class RoomManager {
    */
   handleSeatRejoin(roomId: string, playerId: string): void {
     this.cancelSitOutAbandon(roomId, playerId);
+  }
+
+  /**
+   * 핸드 정산 뒤 escrow가 이미 cashout된 pending 좌석을 새 입장 전에 폐기한다.
+   * 일반 leaveRoom을 타면 빈 방 정리/reset이 먼저 실행될 수 있으므로 좌석만 제한적으로 제거한다.
+   */
+  retirePendingSeat(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room || room.engine.state.isHandInProgress) return false;
+    const player = room.engine.state.players.find(candidate => (
+      candidate.id === playerId && candidate.pendingRemoval
+    ));
+    if (!player) return false;
+    this.cancelSitOutAbandon(roomId, playerId);
+    const removed = room.engine.processLeave(playerId).player;
+    if (!removed) return false;
+    this.onRoomsChanged?.();
+    return true;
   }
 
   /** 다른 방에 남아 있는 좌석 정리 — 새 방 착석 시 자리비움 좌석 회수 (1세션 1테이블) */
@@ -1146,6 +1211,16 @@ export class RoomManager {
       (room.config.gameMode ?? 'cash') === 'cash'
       && room.config.economyMode === 'wallet'
     );
+  }
+
+  private canStartWalletHand(engine: PokerEngine): boolean {
+    return engine.state.players.filter(player => (
+      !player.pendingRemoval
+      && player.chips > 0
+      && player.status !== 'sitting-out'
+      && !player.isDisconnected
+      && !player.sitOutNext
+    )).length >= 2;
   }
 
   private requireEconomy(): RoomEconomyHooks {

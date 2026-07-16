@@ -194,6 +194,7 @@ describe('RoomManager wallet cash persistence hooks', () => {
   function hooks(overrides: Partial<RoomEconomyHooks> = {}): RoomEconomyHooks {
     return {
       beforeHand: vi.fn(),
+      cancelPreparedHand: vi.fn(),
       afterHand: vi.fn(() => ({ paidTotal: 0, rake: 0 })),
       settleExit: vi.fn(),
       voidRoom: vi.fn(),
