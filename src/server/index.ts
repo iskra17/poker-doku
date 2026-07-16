@@ -13,6 +13,11 @@ import {
   TransientHttpRateLimiter,
 } from './http-rate-limit';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import {
+  BackupManager,
+  DailyBackupScheduler,
+  resolveBackupEncryptionKey,
+} from './persistence/backup';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
@@ -38,8 +43,19 @@ let io: Server<
 let runtime: ReturnType<typeof setupSocketHandlers> | undefined;
 let database: PokerDatabase | undefined;
 let profileRateLimiter: TransientHttpRateLimiter | undefined;
+let profileManager: ProfileManager | undefined;
+let economyService: EconomyService | undefined;
+let economyRuntime: EconomyRuntime | undefined;
+let backupManager: BackupManager | undefined;
+let backupScheduler: DailyBackupScheduler | undefined;
 
 const shutdown = createServerShutdown({
+  backup: {
+    stopScheduler: () => backupScheduler?.close(),
+    backup: async () => {
+      await backupManager?.backup();
+    },
+  },
   runtime: {
     close: () => runtime?.close(),
   },
@@ -70,21 +86,41 @@ const shutdown = createServerShutdown({
   app,
 });
 
-async function listen(): Promise<void> {
+function initializePersistenceAndRecover(): void {
   const databasePath = process.env.POKER_DB_PATH
     ?? join(process.cwd(), 'data', 'poker-doku.sqlite');
   if (databasePath !== ':memory:') {
     mkdirSync(dirname(resolve(databasePath)), { recursive: true });
   }
   database = openPokerDatabase(databasePath);
-  const profileRepository = new ProfileRepository(database);
-  const profileManager = new ProfileManager(profileRepository);
+  profileManager = new ProfileManager(new ProfileRepository(database));
   const economyRepository = new EconomyRepository(database);
-  const economyService = new EconomyService(economyRepository);
-  const economyRuntime = new EconomyRuntime(economyService);
+  economyService = new EconomyService(economyRepository);
+  economyRuntime = new EconomyRuntime(economyService);
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
   // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
   economyRuntime.recoverActiveEscrows();
+  const backupDirectory = process.env.POKER_BACKUP_DIR
+    ?? join(process.cwd(), 'data', 'backups');
+  const encryptionKey = resolveBackupEncryptionKey(
+    process.env.BACKUP_ENCRYPTION_KEY,
+    !dev,
+  );
+  backupManager = new BackupManager({
+    database,
+    backupDirectory,
+    encryptionKey,
+  });
+  backupScheduler = new DailyBackupScheduler({
+    backup: () => backupManager!.backup(),
+    logger: console,
+  });
+}
+
+async function listen(): Promise<void> {
+  if (!database || !profileManager || !economyService || !economyRuntime) {
+    throw new Error('Persistence must be initialized before listening');
+  }
   profileRateLimiter = new TransientHttpRateLimiter();
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
 
@@ -151,7 +187,10 @@ async function listen(): Promise<void> {
 
 void startServerLifecycle({
   prepare: () => app.prepare(),
+  recover: () => initializePersistenceAndRecover(),
+  backup: () => backupManager!.backup(),
   listen,
+  startScheduler: () => backupScheduler!.start(),
   shutdown,
   process,
   production: !dev,

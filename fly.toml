@@ -10,6 +10,8 @@ primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
 [env]
   NODE_ENV = "production"
   PORT = "3000"
+  POKER_DB_PATH = "/data/poker-doku.sqlite"
+  POKER_BACKUP_DIR = "/data/backups"
   # AI 대사 일일 상한 — 동접 100 규모 권장값 (월 ~$3 하드캡)
   AI_DIALOGUE_DAILY_MAX = "1500"
   # GEMINI_API_KEY는 secrets로 주입: fly secrets set GEMINI_API_KEY=<키>
@@ -40,3 +42,7 @@ primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
   memory = "1gb"
   # 인메모리 게임 상태 보호 — 순간 스파이크에 OOM 킬 방지
   swap_size_mb = 512
+
+[mounts]
+  source = "poker_doku_data"
+  destination = "/data"

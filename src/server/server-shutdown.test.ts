@@ -87,6 +87,14 @@ describe('custom server shutdown', () => {
           order.push('database');
         },
       },
+      backup: {
+        stopScheduler: () => {
+          order.push('backup-stop');
+        },
+        backup: async () => {
+          order.push('backup');
+        },
+      },
       app: {
         close: async () => {
           order.push('next');
@@ -100,10 +108,12 @@ describe('custom server shutdown', () => {
     expect(second).toBe(first);
     await Promise.all([first, second]);
     expect(order).toEqual([
+      'backup-stop',
       'runtime',
       'socket.io',
       'http',
       'rate-limiter',
+      'backup',
       'database',
       'next',
     ]);
@@ -207,6 +217,54 @@ describe('custom server shutdown', () => {
 });
 
 describe('custom server process lifecycle', () => {
+  it('recovers economy, backs up, listens, then starts the scheduler in order', async () => {
+    const order: string[] = [];
+    const process = new FakeProcess();
+
+    await expect(startServerLifecycle({
+      prepare: async () => { order.push('prepare'); },
+      recover: async () => { order.push('recover'); },
+      backup: async () => { order.push('backup'); },
+      listen: async () => { order.push('listen'); },
+      startScheduler: () => { order.push('schedule'); },
+      shutdown: async () => undefined,
+      process,
+      production: false,
+      logger: { error: vi.fn() },
+    })).resolves.toBe(true);
+
+    expect(order).toEqual([
+      'prepare', 'recover', 'backup', 'listen', 'schedule',
+    ]);
+  });
+
+  it('surfaces a startup backup failure before listen and exits nonzero', async () => {
+    const process = new FakeProcess();
+    const backupError = new Error('startup backup failed');
+    const listen = vi.fn(async () => undefined);
+    const shutdown = vi.fn(async () => undefined);
+    const logger = { error: vi.fn() };
+
+    await expect(startServerLifecycle({
+      prepare: async () => undefined,
+      recover: async () => undefined,
+      backup: async () => { throw backupError; },
+      listen,
+      shutdown,
+      process,
+      production: true,
+      logger,
+    })).resolves.toBe(false);
+
+    expect(listen).not.toHaveBeenCalled();
+    expect(shutdown).toHaveBeenCalledWith('startup-error');
+    expect(process.exitCode).toBe(1);
+    expect(logger.error).toHaveBeenCalledWith(
+      '> Poker server failed to start:',
+      backupError,
+    );
+  });
+
   it('registers signal listeners once only after listen succeeds', async () => {
     const process = new FakeProcess();
     const listening = deferred();

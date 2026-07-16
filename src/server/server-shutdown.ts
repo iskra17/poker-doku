@@ -7,6 +7,10 @@ export interface CallbackCloseable {
 }
 
 export interface ServerShutdownResources {
+  backup?: {
+    stopScheduler: () => void | Promise<void>;
+    backup: () => void | Promise<void>;
+  };
   runtime: ImmediateCloseable;
   rateLimiter?: ImmediateCloseable;
   io: CallbackCloseable;
@@ -33,7 +37,10 @@ export interface ServerProcess {
 
 export interface ServerLifecycleOptions {
   prepare: () => Promise<void>;
+  recover?: () => void | Promise<void>;
+  backup?: () => Promise<unknown>;
   listen: () => Promise<void>;
+  startScheduler?: () => void;
   shutdown: ServerShutdown;
   process: ServerProcess;
   production: boolean;
@@ -107,11 +114,16 @@ export function createServerShutdown(
       }
     };
 
+    const backup = resources.backup;
+    if (backup) await attempt(() => backup.stopScheduler());
     await attempt(() => resources.runtime.close());
     await attempt(() => closeWithCallback(resources.io));
     await attempt(() => closeWithCallback(resources.httpServer));
     const rateLimiter = resources.rateLimiter;
     if (rateLimiter) await attempt(() => rateLimiter.close());
+    if (backup && reason !== 'startup-error') {
+      await attempt(() => backup.backup());
+    }
     const database = resources.database;
     if (database) await attempt(() => database.close());
     await attempt(() => resources.app.close());
@@ -132,7 +144,10 @@ export async function startServerLifecycle(
 ): Promise<boolean> {
   try {
     await options.prepare();
+    await options.recover?.();
+    await options.backup?.();
     await options.listen();
+    options.startScheduler?.();
   } catch (startupError) {
     let reportedError = startupError;
     try {
