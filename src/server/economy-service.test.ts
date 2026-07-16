@@ -905,7 +905,7 @@ describe('EconomyService casual wallet Sit & Go', () => {
     `).all()).toEqual([{ status: 'started' }]);
   });
 
-  it('treats a changed duplicate finish as a conflict without another payout', () => {
+  it('classifies every non-identical settled retry as a conflict without mutation', () => {
     const entrants = seedEntrants();
     const service = new EconomyService(repository, () => 100);
     for (const profileId of entrants) {
@@ -918,19 +918,74 @@ describe('EconomyService casual wallet Sit & Go', () => {
       prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
     }));
     service.settleSngTournament('sng-room', results, BUY_IN, FEE);
-    const changed = results.map(result => ({ ...result }));
-    [changed[0].playerId, changed[1].playerId] = [
-      changed[1].playerId,
-      changed[0].playerId,
+    const settledWallets = [
+      12_850, 11_050, 10_150, 8_350, 8_350, 8_350,
+    ];
+    const settledRows = database.db.prepare(`
+      SELECT profile_id, status, place, prize
+      FROM sng_entries ORDER BY profile_id
+    `).all();
+    const settledLedgerCount = (database.db.prepare(`
+      SELECT COUNT(*) AS count FROM chip_ledger
+    `).get() as { count: number }).count;
+
+    const duplicatePlayer = results.map(result => ({ ...result }));
+    duplicatePlayer[5].playerId = duplicatePlayer[0].playerId;
+    const duplicatePlace = results.map(result => ({ ...result }));
+    duplicatePlace[5].place = duplicatePlace[4].place;
+    const changedPrize = results.map(result => ({ ...result }));
+    changedPrize[0].prize += 1;
+    const changedPlace = results.map(result => ({ ...result }));
+    [changedPlace[0].place, changedPlace[1].place] = [
+      changedPlace[1].place,
+      changedPlace[0].place,
+    ];
+    [changedPlace[0].prize, changedPlace[1].prize] = [
+      changedPlace[1].prize,
+      changedPlace[0].prize,
+    ];
+    const changedPlayer = results.map(result => ({ ...result }));
+    [changedPlayer[0].playerId, changedPlayer[1].playerId] = [
+      changedPlayer[1].playerId,
+      changedPlayer[0].playerId,
+    ];
+    const cases = [
+      { label: 'omitted result', value: results.slice(0, 5) },
+      {
+        label: 'extra result',
+        value: [...results, { playerId: 'extra-profile', place: 6, prize: 0 }],
+      },
+      { label: 'duplicate player', value: duplicatePlayer },
+      { label: 'duplicate place', value: duplicatePlace },
+      { label: 'changed prize', value: changedPrize },
+      { label: 'changed place', value: changedPlace },
+      { label: 'changed player', value: changedPlayer },
     ];
 
-    expectEconomyError(
-      () => service.settleSngTournament('sng-room', changed, BUY_IN, FEE),
-      'SNG_SETTLEMENT_CONFLICT',
-    );
-    expect(entrants.map(profileId => walletBalance(profileId))).toEqual([
-      12_850, 11_050, 10_150, 8_350, 8_350, 8_350,
-    ]);
+    for (const retry of cases) {
+      const error = expectEconomyError(
+        () => service.settleSngTournament(
+          'sng-room', retry.value, BUY_IN, FEE,
+        ),
+        'SNG_SETTLEMENT_CONFLICT',
+      );
+      expect(error.message, retry.label).toBe('SNG_SETTLEMENT_CONFLICT');
+      expect(entrants.map(profileId => walletBalance(profileId)))
+        .toEqual(settledWallets);
+      expect(database.db.prepare(`
+        SELECT profile_id, status, place, prize
+        FROM sng_entries ORDER BY profile_id
+      `).all()).toEqual(settledRows);
+      expect((database.db.prepare(`
+        SELECT COUNT(*) AS count FROM chip_ledger
+      `).get() as { count: number }).count).toBe(settledLedgerCount);
+    }
+
+    expect(() => service.settleSngTournament(
+      'sng-room', [...results].reverse(), BUY_IN, FEE,
+    )).not.toThrow();
+    expect(entrants.map(profileId => walletBalance(profileId)))
+      .toEqual(settledWallets);
   });
 
   it('reverts an unmutated failed start so the exact tournament can retry with a new attempt', () => {

@@ -546,10 +546,11 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
 
   it('settles a finished snapshot before announcement and blocks cleanup when settlement fails', () => {
     vi.useFakeTimers();
+    const updates = vi.fn();
     const economy = hooks({
       afterTournament: vi.fn(() => { throw new Error('settlement unavailable'); }),
     });
-    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    manager = new RoomManager(updates, () => {}, undefined, { economy });
     const roomId = manager.createRoom(makeWalletSngConfig());
     seatSix(roomId);
     vi.advanceTimersByTime(2_001);
@@ -564,14 +565,36 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
         prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
       }),
     );
+    const announcedWinner = room.engine.state.players[0];
+    announcedWinner.type = 'bot';
+    announcedWinner.personalityId = 'sakura';
+    room.engine.state.winners = [{
+      playerId: announcedWinner.id,
+      amount: 100,
+      hand: null,
+      potIndex: 0,
+    }];
+    const updatesBeforeFinish = updates.mock.calls.length;
+    const messagesBeforeFinish = manager.getChatHistory(roomId).length;
 
     (manager as unknown as { handleCompletedHand(roomId: string): void })
       .handleCompletedHand(roomId);
 
     expect(economy.afterTournament).toHaveBeenCalledOnce();
-    expect(manager.getChatHistory(roomId).some(message => (
-      message.message.includes('Sit & Go 종료')
+    const completionMessages = manager.getChatHistory(roomId)
+      .slice(messagesBeforeFinish);
+    expect(completionMessages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: 'system',
+        message: '저장 연결을 확인 중이에요',
+      }),
+    ]));
+    expect(completionMessages.some(message => (
+      message.message.includes('칩을 획득했습니다')
+      || message.message.includes('Sit & Go 종료')
+      || message.type === 'bot'
     ))).toBe(false);
+    expect(updates.mock.calls.length).toBeGreaterThan(updatesBeforeFinish);
     expect(manager.disposeRoom(roomId)).toBe(false);
     expect(manager.getRoom(roomId)).toBeDefined();
   });
@@ -598,5 +621,39 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     expect(manager.disposeRoom(roomId)).toBe(true);
     expect(economy.afterTournament).toHaveBeenCalledOnce();
     expect(economy.voidRoom).not.toHaveBeenCalled();
+  });
+
+  it('keeps winner and tournament announcements after successful final settlement', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletSngConfig());
+    seatSix(roomId);
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.tournament!.finished = true;
+    room.engine.state.tournament!.results = room.engine.state.players.map(
+      (player, index) => ({
+        playerId: player.id,
+        name: player.name,
+        place: index + 1,
+        prize: [4_500, 2_700, 1_800, 0, 0, 0][index],
+      }),
+    );
+    room.engine.state.winners = [{
+      playerId: room.engine.state.players[0].id,
+      amount: 100,
+      hand: null,
+      potIndex: 0,
+    }];
+
+    (manager as unknown as { handleCompletedHand(roomId: string): void })
+      .handleCompletedHand(roomId);
+
+    const messages = manager.getChatHistory(roomId).map(message => message.message);
+    expect(messages.some(message => message.includes('칩을 획득했습니다'))).toBe(true);
+    expect(messages.some(message => message.includes('Sit & Go 종료'))).toBe(true);
+    expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
   });
 });

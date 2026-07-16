@@ -1529,6 +1529,10 @@ export class RoomManager {
       },
     });
 
+    // 영속 정산이 확정되기 전에는 칩 획득/봇 승리 대사 같은 완료 공지를 내보내지 않는다.
+    // hand-end 진단 로그와 최종 스냅샷 브로드캐스트는 위에서 유지한다.
+    if (!settlement.settlementOk) return;
+
     for (const winner of room.engine.state.winners) {
       const player = room.engine.state.players.find(p => p.id === winner.playerId);
       if (!player) continue;

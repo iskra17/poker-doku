@@ -548,8 +548,8 @@ export class EconomyRepository {
     fee: number,
     at: number,
   ): string {
-    this.assertSngIdentity(results[0]?.playerId ?? '', roomId);
-    const expectedPrizes = this.assertSngResults(results, buyIn, fee);
+    this.assertSngIdentity('settlement', roomId);
+    this.assertSngAmounts(buyIn, fee);
     assertValidEconomyTimestamp(at);
     return this.database.transaction(() => {
       let entries = this.listActiveSngEntriesByRoom(roomId);
@@ -558,6 +558,7 @@ export class EconomyRepository {
         this.assertSettledSngDuplicate(entries, results, buyIn, fee);
         return entries[0].tournamentId;
       }
+      const expectedPrizes = this.assertSngResults(results, buyIn, fee);
       this.assertExactSngProfiles(
         entries,
         results.map(result => result.playerId),
@@ -1501,17 +1502,21 @@ export class EconomyRepository {
   ): readonly number[] {
     this.assertSngAmounts(buyIn, fee);
     if (
-      results.length !== 6
-      || new Set(results.map(result => result.playerId)).size !== 6
-      || new Set(results.map(result => result.place)).size !== 6
+      !Array.isArray(results)
+      || results.length !== 6
       || results.some(result => (
-        !result.playerId
+        !result
+        || typeof result !== 'object'
+        || typeof result.playerId !== 'string'
+        || !result.playerId
         || !Number.isSafeInteger(result.place)
         || result.place < 1
         || result.place > 6
         || !Number.isSafeInteger(result.prize)
         || result.prize < 0
       ))
+      || new Set(results.map(result => result.playerId)).size !== 6
+      || new Set(results.map(result => result.place)).size !== 6
     ) {
       throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
     }
@@ -1729,27 +1734,41 @@ export class EconomyRepository {
     buyIn: number,
     fee: number,
   ): void {
+    let persisted: SngResult[];
     try {
       this.assertExactSngProfiles(
         entries,
-        results.map(result => result.playerId),
-        'SNG_SETTLEMENT_CONFLICT',
+        entries.map(entry => entry.profileId),
+        'ECONOMY_PERSISTENCE_INVALID',
       );
       this.assertSngTournamentRows(entries, buyIn, fee, 'settled');
-      const byProfile = new Map(results.map(result => [result.playerId, result]));
-      if (entries.some(entry => {
-        const result = byProfile.get(entry.profileId);
-        return !result || entry.place !== result.place || entry.prize !== result.prize;
-      })) {
-        throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
-      }
+      persisted = entries.map(entry => ({
+        playerId: entry.profileId,
+        place: entry.place as number,
+        prize: entry.prize,
+      }));
+      this.assertSngResults(persisted, buyIn, fee);
     } catch (error) {
       if (
         error instanceof EconomyDomainError
-        && error.code === 'SNG_SETTLEMENT_CONFLICT'
+        && error.code === 'ECONOMY_PERSISTENCE_INVALID'
       ) {
         throw error;
       }
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+
+    try {
+      this.assertSngResults(results, buyIn, fee);
+    } catch {
+      throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
+    }
+    const canonical = (values: readonly SngResult[]): string => JSON.stringify(
+      [...values]
+        .sort((left, right) => left.playerId.localeCompare(right.playerId))
+        .map(result => [result.playerId, result.place, result.prize]),
+    );
+    if (canonical(results) !== canonical(persisted)) {
       throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
     }
   }
