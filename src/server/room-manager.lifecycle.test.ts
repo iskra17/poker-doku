@@ -782,7 +782,7 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
       });
     }
 
-    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(false);
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(true);
     expect(economy.afterTournament).toHaveBeenCalledOnce();
     expect(completeSng).toHaveBeenCalledOnce();
     expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
@@ -867,7 +867,7 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
       });
     }
 
-    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(false);
+    expect(manager.leaveRoom(roomId, 'sng-2')).toBe(true);
     expect(manager.getRuntimeStats().finishedRoomTimers).toBe(1);
     vi.advanceTimersByTime(1_000);
     expect(completeSng).toHaveBeenCalledTimes(2);
@@ -900,13 +900,22 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     const economy = hooks({
       beforeTournament: vi.fn(() => { throw new Error('storage unavailable'); }),
     });
-    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const progression = progressionHooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy,
+      progression,
+    });
     const roomId = manager.createRoom(makeWalletSngConfig());
     seatSix(roomId);
 
     vi.advanceTimersByTime(2_001);
     expect(manager.getRoom(roomId)!.engine.state.tournament?.entrants).toBe(0);
     expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
+    expect(progression.captureHandStart).toHaveBeenCalledOnce();
+    expect(progression.cancelHand).toHaveBeenCalledOnce();
+    expect(progression.confirmHandStart).not.toHaveBeenCalled();
+    expect(vi.mocked(progression.captureHandStart).mock.invocationCallOrder[0])
+      .toBeLessThan(vi.mocked(economy.beforeTournament).mock.invocationCallOrder[0]);
     expect(manager.getChatHistory(roomId).at(-1)?.message)
       .toBe('저장 연결을 확인 중이에요');
 
@@ -917,7 +926,11 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
   it('reverts a durable start when engine start has no mutation and permits a retry', () => {
     vi.useFakeTimers();
     const economy = hooks();
-    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const progression = progressionHooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy,
+      progression,
+    });
     const roomId = manager.createRoom(makeWalletSngConfig());
     const room = manager.getRoom(roomId)!;
     vi.spyOn(room.engine, 'startTournament').mockImplementationOnce(() => undefined);
@@ -926,18 +939,26 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
     vi.advanceTimersByTime(2_001);
     expect(economy.beforeTournament).toHaveBeenCalledOnce();
     expect(economy.cancelTournamentStart).toHaveBeenCalledOnce();
+    expect(progression.captureHandStart).toHaveBeenCalledOnce();
+    expect(progression.cancelHand).toHaveBeenCalledOnce();
     expect(room.engine.state.tournament?.entrants).toBe(0);
 
     manager.resumeRoom(roomId);
     vi.advanceTimersByTime(2_001);
     expect(economy.beforeTournament).toHaveBeenCalledTimes(2);
+    expect(progression.captureHandStart).toHaveBeenCalledTimes(2);
+    expect(progression.confirmHandStart).toHaveBeenCalledOnce();
     expect(room.engine.state.tournament?.entrants).toBe(6);
   });
 
   it('preserves and blocks a partially mutated start without reversing its durable fee commit', () => {
     vi.useFakeTimers();
     const economy = hooks();
-    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const progression = progressionHooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy,
+      progression,
+    });
     const roomId = manager.createRoom(makeWalletSngConfig());
     const room = manager.getRoom(roomId)!;
     vi.spyOn(room.engine, 'startTournament').mockImplementationOnce(() => {
@@ -950,6 +971,7 @@ describe('RoomManager wallet Sit & Go persistence hooks', () => {
 
     expect(economy.beforeTournament).toHaveBeenCalledOnce();
     expect(economy.cancelTournamentStart).not.toHaveBeenCalled();
+    expect(progression.cancelHand).toHaveBeenCalledOnce();
     expect(room.engine.state.tournament?.entrants).toBe(1);
     expect(manager.disposeRoom(roomId)).toBe(false);
   });

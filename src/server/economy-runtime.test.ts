@@ -746,6 +746,63 @@ describe('EconomyRuntime wallet Sit & Go lifecycle', () => {
     return { runtime, engine, entrants };
   }
 
+  it('keeps six entries reserved when the first-hand progression snapshot repeatedly fails', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    const runtime = createRuntime(database);
+    const captureHandStart = vi.fn(() => { throw new Error('progression unavailable'); });
+    const cancelHand = vi.fn();
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: runtime,
+      progression: {
+        captureHandStart,
+        confirmHandStart: vi.fn(),
+        cancelHand,
+        completeHand: vi.fn(),
+        completeSng: vi.fn(),
+        disposeRoom: vi.fn(),
+      },
+    });
+    const roomId = manager.createRoom({
+      ...walletSngConfig,
+      botCount: 0,
+      tableType: 'humans',
+    });
+    const beforeTournament = vi.spyOn(runtime, 'beforeTournament');
+    const entrants = Array.from({ length: 6 }, (_, index) => {
+      const profileId = `capture-fail-${index + 1}`;
+      seedProfile(database, profileId);
+      runtime.reserveSngEntry(profileId, roomId, 1_500, 150);
+      manager.joinRoom(roomId, makePlayer(profileId, 'human', 1_500, index));
+      return profileId;
+    });
+
+    vi.advanceTimersByTime(5_001);
+
+    const state = manager.getRoom(roomId)!.engine.state;
+    expect(captureHandStart).toHaveBeenCalledTimes(4);
+    expect(cancelHand).toHaveBeenCalledTimes(4);
+    expect(beforeTournament).not.toHaveBeenCalled();
+    expect(state.tournament).toMatchObject({ entrants: 0, finished: false });
+    expect(state.handNumber).toBe(0);
+    expect(state.isHandInProgress).toBe(false);
+    expect(manager.getChatHistory(roomId).at(-1)?.message)
+      .toBe('저장 연결을 확인 중이에요');
+    expect(entrants.map(profileId => walletBalance(database, profileId)))
+      .toEqual(Array(6).fill(8_350));
+    expect(entrants.map(profileId => activeEscrow(database, profileId)?.amount))
+      .toEqual(Array(6).fill(1_650));
+    expect(database.db.prepare(`
+      SELECT DISTINCT status FROM sng_entries WHERE room_id = ?
+    `).all(roomId)).toEqual([{ status: 'reserved' }]);
+    expect(manager.disposeRoom(roomId)).toBe(true);
+    expect(entrants.map(profileId => walletBalance(database, profileId)))
+      .toEqual(Array(6).fill(10_000));
+    expect(entrants.map(profileId => activeEscrow(database, profileId)))
+      .toEqual(Array(6).fill(undefined));
+    manager.shutdown();
+  });
+
   it('commits six paid human entries before engine start and settles authoritative results', () => {
     const database = openDatabase();
     const { runtime, engine, entrants } = setupWalletSng(database);

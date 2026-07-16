@@ -1054,7 +1054,10 @@ export function setupSocketHandlers(
           socket.leave(roomId);
           roomManager.sitOutAndLeave(roomId, session.playerId);
         } else {
-          if (!roomManager.leaveRoom(roomId, session.playerId)) {
+          const leaveCompleted = roomManager.leaveRoom(roomId, session.playerId);
+          const seatStillExists = roomManager.getRoom(roomId)?.engine.state.players
+            .some(player => player.id === session.playerId) ?? false;
+          if (!leaveCompleted && seatStillExists) {
             ack?.({
               ok: false,
               code: 'server-error',

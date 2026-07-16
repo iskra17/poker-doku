@@ -675,6 +675,62 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
   });
 
+  it('clears a removed SnG leaver session while finalization retries in the background', async () => {
+    harness = await createSocketTestHarness({ sngRetentionMs: 5_000 });
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);
+    const profiles = await Promise.all(Array.from({ length: 6 }, () => (
+      harness!.createProfile()
+    )));
+    const clients = await Promise.all(profiles.map((profile, index) => (
+      harness!.connect(`sng-finalize-leave-${index}`, { profileCookie: profile.cookie })
+    )));
+    for (let index = 0; index < clients.length; index += 1) {
+      await expect(joinRoom(clients[index], roomId, index))
+        .resolves.toMatchObject({ ok: true });
+    }
+    await wait(2_100);
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    for (let index = 2; index < 6; index += 1) {
+      const player = room.engine.state.players[index];
+      player.chips = 0;
+      player.finishPlace = 8 - index;
+      room.engine.state.tournament!.results.push({
+        playerId: player.id,
+        name: player.name,
+        place: player.finishPlace,
+        prize: player.finishPlace === 3 ? 1_800 : 0,
+      });
+    }
+    const recordFinish = vi.spyOn(
+      harness.progressionService,
+      'recordRuntimeSngFinish',
+    ).mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+
+    const ack = await withAck(done => clients[1].socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ));
+
+    expect(ack).toMatchObject({ ok: true });
+    expect(room.engine.state.players.some(player => (
+      player.id === profiles[1].profile.id
+    ))).toBe(false);
+    expect(harness.runtime.sessions.getByPlayerId(profiles[1].profile.id)?.roomId)
+      .toBeNull();
+    expect(harness.getServerSocketRooms(clients[1].socket.id!)).not.toContain(roomId);
+
+    await wait(1_100);
+
+    expect(recordFinish).toHaveBeenCalledTimes(7);
+    expect(profiles.map(profile => harness!.progressionService.getRuntimeSnapshot(
+      profile.profile.id,
+      profile.profile.avatarId,
+      Date.now(),
+    ).profile.sngCompletions)).toEqual(Array(6).fill(1));
+    expect(harness.runtime.sessions.getByPlayerId(profiles[1].profile.id)?.roomId)
+      .toBeNull();
+  });
+
   it('starts only after six paid humans, keeps started exits charged, and settles exact prizes', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);

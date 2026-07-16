@@ -390,12 +390,6 @@ export class RoomManager {
         return false;
       }
     }
-    if (
-      !wasInProgress
-      && room.engine.state.tournament?.finished
-    ) {
-      if (!this.finalizeFinishedTournament(roomId)) return false;
-    }
     if (economicLeaveCommitted) this.clearEconomicLeaveBlock(roomId, playerId);
     // 이탈자 턴에 걸려 있던 stale 타이머 제거 (아니어도 아래 startPlayerLoop가 재설정)
     this.clearTurnTimer(roomId);
@@ -411,8 +405,9 @@ export class RoomManager {
       !wasInProgress
       && room.engine.state.tournament?.finished
     ) {
-      if (!this.finalizeFinishedTournament(roomId)) return false;
-      this.announceTournamentProgress(roomId);
+      if (this.finalizeFinishedTournament(roomId)) {
+        this.announceTournamentProgress(roomId);
+      }
       this.onUpdate(roomId, room.engine);
     }
 
@@ -577,11 +572,11 @@ export class RoomManager {
     }
   }
 
-  private schedulePreHandRetry(roomId: string): boolean {
+  private schedulePreHandRetry(roomId: string, blockOnExhaustion = true): boolean {
     const attempts = this.preHandStartRetryAttempts.get(roomId) ?? 0;
     if (attempts >= MAX_PRE_HAND_RETRIES) {
       this.preHandStartRetryAttempts.delete(roomId);
-      this.economyBlockedRooms.add(roomId);
+      if (blockOnExhaustion) this.economyBlockedRooms.add(roomId);
       return false;
     }
     this.clearPendingStart(roomId);
@@ -663,6 +658,25 @@ export class RoomManager {
       return;
     }
 
+    const prevHandNumber = room.engine.state.handNumber;
+    const nextHandNumber = prevHandNumber + 1;
+    const captureProgressionHand = (): void => {
+      this.options.progression?.captureHandStart({
+        roomId,
+        roomRunId: room.runId,
+        handNumber: nextHandNumber,
+        mode: this.progressionMode(room),
+        players: room.engine.state.players
+          .filter(player => player.type === 'human' && !player.pendingRemoval)
+          .map(player => ({
+            profileId: player.id,
+            fallbackCharacterId: player.avatar,
+            dealt: player.chips > 0 && player.status !== 'sitting-out',
+          })),
+      });
+    };
+    let progressionCaptured = false;
+
     let cashHandPrepared = false;
     if (walletCash) {
       try {
@@ -685,6 +699,16 @@ export class RoomManager {
         if (walletSng && !this.canStartWalletSng(room.engine, room.config)) {
           return;
         }
+        try {
+          captureProgressionHand();
+          progressionCaptured = true;
+        } catch {
+          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          this.schedulePreHandRetry(roomId, false);
+          this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+          this.onUpdate(roomId, room.engine);
+          return;
+        }
         const preTournamentState = JSON.stringify(room.engine.state);
         let tournamentStartCommitted = false;
         if (walletSng) {
@@ -692,6 +716,7 @@ export class RoomManager {
             this.requireEconomy().beforeTournament(roomId, room.engine);
             tournamentStartCommitted = true;
           } catch {
+            this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
             this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
             this.onUpdate(roomId, room.engine);
             return;
@@ -706,6 +731,7 @@ export class RoomManager {
             next?.bigBlind ?? null,
           );
         } catch {
+          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
           if (!this.revertUnmutatedTournamentStart(
             roomId,
             room.engine,
@@ -720,6 +746,7 @@ export class RoomManager {
           return;
         }
         if (walletSng && room.engine.state.tournament?.entrants !== 6) {
+          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
           if (!this.revertUnmutatedTournamentStart(
             roomId,
             room.engine,
@@ -764,23 +791,9 @@ export class RoomManager {
       }
     }
 
-    const prevHandNumber = room.engine.state.handNumber;
-    const nextHandNumber = prevHandNumber + 1;
     const preStartState = JSON.stringify(room.engine.state);
     try {
-      this.options.progression?.captureHandStart({
-        roomId,
-        roomRunId: room.runId,
-        handNumber: nextHandNumber,
-        mode: this.progressionMode(room),
-        players: room.engine.state.players
-          .filter(player => player.type === 'human' && !player.pendingRemoval)
-          .map(player => ({
-            profileId: player.id,
-            fallbackCharacterId: player.avatar,
-            dealt: player.chips > 0 && player.status !== 'sitting-out',
-          })),
-      });
+      if (!progressionCaptured) captureProgressionHand();
       room.engine.startHand();
     } catch {
       this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
