@@ -10,6 +10,7 @@ import {
   type SngEntry,
   type SngResult,
 } from './economy-repository';
+import type { EconomyStatus, PublicProfile } from '@/lib/profile/types';
 import {
   CASUAL_SNG_BUY_IN,
   CASUAL_SNG_ENTRY_FEE,
@@ -90,11 +91,99 @@ export function getNextKstMidnight(at: number): number {
 
 export { EconomyDomainError };
 
+export interface EconomyStatusResult {
+  profile: PublicProfile;
+  economy: EconomyStatus;
+}
+
 export class EconomyService {
   constructor(
     private readonly repository: EconomyRepository,
     private readonly clock: () => number = Date.now,
   ) {}
+
+  getStatus(profileId: string, at = this.clock()): EconomyStatusResult {
+    const claimDate = getKstDateKey(at);
+    const nextMidnight = getNextKstMidnight(at);
+    const snapshot = this.repository.getStatusSnapshot(profileId, claimDate);
+    if (snapshot.rescueClaimsToday > ECONOMY_RULES.rescueDailyLimit) {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+    const remainingToday = ECONOMY_RULES.rescueDailyLimit
+      - snapshot.rescueClaimsToday;
+    const cooldownAvailableAt = snapshot.latestRescueAt === null
+      ? at
+      : snapshot.latestRescueAt + ECONOMY_RULES.rescueCooldownMs;
+    assertValidEconomyTimestamp(
+      cooldownAvailableAt,
+      'ECONOMY_DERIVED_VALUE_INVALID',
+    );
+
+    let rescue: EconomyStatus['rescue'];
+    if (snapshot.hasActiveEscrow) {
+      rescue = {
+        eligible: false,
+        grantAmount: 0,
+        remainingToday,
+        availableAt: null,
+        reason: 'active-escrow',
+      };
+    } else if (snapshot.profile.wallet.balance >= ECONOMY_RULES.rescueThreshold) {
+      rescue = {
+        eligible: false,
+        grantAmount: 0,
+        remainingToday,
+        availableAt: null,
+        reason: 'balance-threshold',
+      };
+    } else if (remainingToday === 0) {
+      const availableAt = Math.max(nextMidnight, cooldownAvailableAt);
+      assertValidEconomyTimestamp(
+        availableAt,
+        'ECONOMY_DERIVED_VALUE_INVALID',
+      );
+      rescue = {
+        eligible: false,
+        grantAmount: 0,
+        remainingToday,
+        availableAt,
+        reason: 'daily-limit',
+      };
+    } else if (cooldownAvailableAt > at) {
+      rescue = {
+        eligible: false,
+        grantAmount: 0,
+        remainingToday,
+        availableAt: cooldownAvailableAt,
+        reason: 'cooldown',
+      };
+    } else {
+      const grantAmount = ECONOMY_RULES.rescueTarget
+        - snapshot.profile.wallet.balance;
+      if (!Number.isSafeInteger(grantAmount) || grantAmount <= 0) {
+        throw new EconomyDomainError('ECONOMY_DERIVED_VALUE_INVALID');
+      }
+      rescue = {
+        eligible: true,
+        grantAmount,
+        remainingToday,
+        availableAt: at,
+        reason: null,
+      };
+    }
+
+    return {
+      profile: snapshot.profile,
+      economy: {
+        daily: {
+          claimed: snapshot.dailyClaimed,
+          grantAmount: ECONOMY_RULES.dailyGrant,
+          availableAt: snapshot.dailyClaimed ? nextMidnight : at,
+        },
+        rescue,
+      },
+    };
+  }
 
   claimDaily(profileId: string, at = this.clock()): EconomyResult {
     return this.repository.claimDaily(

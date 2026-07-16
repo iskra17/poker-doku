@@ -39,7 +39,7 @@ interface RunningServer {
   database: PokerDatabase;
   manager: ProfileManager;
   economyRepository: EconomyRepository;
-  economyService: Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+  economyService: Pick<EconomyService, 'claimDaily' | 'claimRescue' | 'getStatus'>;
   stop: () => Promise<void>;
 }
 
@@ -57,7 +57,7 @@ async function startServer(options: {
   nextHandler?: Mock<NextRequestHandler>;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
   economyClock?: () => number;
-  economyService?: Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+  economyService?: Pick<EconomyService, 'claimDaily' | 'claimRescue' | 'getStatus'>;
 } = {}): Promise<RunningServer & { nextHandler: Mock<NextRequestHandler> }> {
   const database = openPokerDatabase(':memory:');
   const manager = new ProfileManager(new ProfileRepository(database));
@@ -189,6 +189,50 @@ describe('profile HTTP lifecycle', () => {
     expect(await response.json()).toEqual({ state: 'anonymous' });
     expectNoStore(response);
     expect(server.nextHandler).not.toHaveBeenCalled();
+  });
+
+  it('returns authoritative read-only economy status with a ready session', async () => {
+    const now = Date.parse('2026-07-15T15:00:00.000Z');
+    const server = await startServer({ economyClock: () => now });
+    const created = await createProfile(server);
+    const before = server.database.db.prepare(`
+      SELECT (SELECT balance FROM wallets) AS balance,
+             (SELECT COUNT(*) FROM daily_claims) AS daily_count,
+             (SELECT COUNT(*) FROM rescue_claims) AS rescue_count,
+             (SELECT COUNT(*) FROM chip_ledger) AS ledger_count
+    `).get();
+
+    const response = await fetch(`${server.baseUrl}/api/profile/session`, {
+      headers: { cookie: created.cookie },
+    });
+    const body = await response.json() as Record<string, unknown>;
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({
+      state: 'ready',
+      profile: created.body.profile,
+      economy: {
+        daily: {
+          claimed: false,
+          grantAmount: 1_000,
+          availableAt: Date.parse('2026-07-15T15:00:00.000Z'),
+        },
+        rescue: {
+          eligible: false,
+          grantAmount: 0,
+          remainingToday: 3,
+          availableAt: null,
+          reason: 'balance-threshold',
+        },
+      },
+    });
+    expect(server.database.db.prepare(`
+      SELECT (SELECT balance FROM wallets) AS balance,
+             (SELECT COUNT(*) FROM daily_claims) AS daily_count,
+             (SELECT COUNT(*) FROM rescue_claims) AS rescue_count,
+             (SELECT COUNT(*) FROM chip_ledger) AS ledger_count
+    `).get()).toEqual(before);
+    expectNoStore(response);
   });
 
   it('treats malformed target cookies as invalid while ignoring unrelated cookies', async () => {
@@ -540,8 +584,26 @@ describe('profile HTTP lifecycle', () => {
       rotateRecovery: vi.fn(),
       deleteProfile: vi.fn(),
     } as unknown as ProfileHttpManager;
+    const economyService = {
+      claimDaily: vi.fn(),
+      claimRescue: vi.fn(),
+      getStatus: vi.fn(() => ({
+        profile,
+        economy: {
+          daily: { claimed: false, grantAmount: 1_000, availableAt: 1 },
+          rescue: {
+            eligible: false,
+            grantAmount: 0,
+            remainingToday: 3,
+            availableAt: null,
+            reason: 'balance-threshold' as const,
+          },
+        },
+      })),
+    };
     const server = await startServer({
       manager,
+      economyService,
       gate: new TransientHttpConcurrencyGate(1),
     });
     const firstPromise = fetch(`${server.baseUrl}/api/profile/session`, {
@@ -595,9 +657,23 @@ describe('profile HTTP lifecycle', () => {
         ...(created.body.profile as PublicProfile),
         wallet: { balance: 11_000, activeEscrow: 0 },
       },
+      economy: {
+        daily: {
+          claimed: true,
+          grantAmount: 1_000,
+          availableAt: Date.parse('2026-07-15T15:00:00.000Z'),
+        },
+        rescue: {
+          eligible: false,
+          grantAmount: 0,
+          remainingToday: 3,
+          availableAt: null,
+          reason: 'balance-threshold',
+        },
+      },
       transaction: { reason: 'DAILY_GRANT', delta: 1_000 },
     });
-    expect(Object.keys(grantedBody).sort()).toEqual(['profile', 'transaction']);
+    expect(Object.keys(grantedBody).sort()).toEqual(['economy', 'profile', 'transaction']);
     const safeText = JSON.stringify(grantedBody);
     expect(safeText).not.toContain(cookieCredential(created.response));
     expect(safeText).not.toContain('127.0.0.1');
@@ -651,6 +727,20 @@ describe('profile HTTP lifecycle', () => {
       profile: {
         ...profile,
         wallet: { balance: 2_000, activeEscrow: 0 },
+      },
+      economy: {
+        daily: {
+          claimed: false,
+          grantAmount: 1_000,
+          availableAt: Date.parse('2026-07-15T15:00:00.000Z'),
+        },
+        rescue: {
+          eligible: false,
+          grantAmount: 0,
+          remainingToday: 2,
+          availableAt: null,
+          reason: 'balance-threshold',
+        },
       },
       transaction: { reason: 'RESCUE_GRANT', delta: 1_201 },
     });
@@ -728,7 +818,8 @@ describe('profile HTTP lifecycle', () => {
     const economyService = {
       claimDaily: vi.fn(),
       claimRescue: vi.fn(),
-    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+      getStatus: vi.fn(),
+    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue' | 'getStatus'>;
     const limiter = new TransientHttpRateLimiter({
       profileCreate: { limit: 20, windowMs: 60_000 },
       profileRecover: { limit: 5, windowMs: 60_000 },
@@ -778,7 +869,8 @@ describe('profile HTTP lifecycle', () => {
     const economyService = {
       claimDaily: vi.fn(),
       claimRescue: vi.fn(),
-    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+      getStatus: vi.fn(),
+    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue' | 'getStatus'>;
     const rateLimiter = {
       allow: vi.fn(() => false),
     } as unknown as TransientHttpRateLimiter;
@@ -852,6 +944,9 @@ describe('profile HTTP lifecycle', () => {
         throw new EconomyDomainError('PROFILE_NOT_FOUND');
       }),
       claimRescue: vi.fn(() => {
+        throw new EconomyDomainError('PROFILE_NOT_FOUND');
+      }),
+      getStatus: vi.fn(() => {
         throw new EconomyDomainError('PROFILE_NOT_FOUND');
       }),
     };

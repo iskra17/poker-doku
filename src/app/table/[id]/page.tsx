@@ -3,42 +3,37 @@
 import { useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import { useGameStore } from '@/lib/store/game-store';
+import { useProfileStore } from '@/lib/store/profile-store';
 import GameRoomView from '@/components/layout/GameRoomView';
-import Button from '@/components/ui/Button';
+import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
 
 export default function TablePage() {
   const params = useParams();
   const roomId = params.id as string;
-  const { connect, connected, currentRoomId, playerName, joinRoom, leaveRoom } = useGameStore();
+  const phase = useProfileStore(state => state.phase);
+  const bootstrap = useProfileStore(state => state.bootstrap);
+  const { connected, currentRoomId, joinRoom, leaveRoom } = useGameStore();
 
   useEffect(() => {
-    if (!connected) {
-      connect();
-    }
-  }, [connect, connected]);
+    void bootstrap();
+  }, [bootstrap]);
 
   useEffect(() => {
-    // Auto-join if we have a name and aren't in the room yet
-    if (connected && playerName && !currentRoomId && roomId) {
-      joinRoom(roomId, 1000, 0);
+    if (phase === 'ready' && connected && !currentRoomId && roomId) {
+      joinRoom(roomId, 1_000, 0);
     }
-  }, [connected, playerName, currentRoomId, roomId, joinRoom]);
+  }, [phase, connected, currentRoomId, roomId, joinRoom]);
 
   const handleLeave = (mode?: 'exit' | 'sitout') => {
-    leaveRoom(mode);
-    window.location.href = '/';
+    void leaveRoom(mode).then(left => {
+      if (left) window.location.assign('/');
+    });
   };
 
-  // Name entry if not set
-  if (!playerName) {
+  if (phase !== 'ready') {
     return (
-      <div className="h-full flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-ink-dim mb-4">로비에서 먼저 이름을 입력해주세요.</p>
-          <Button variant="primary" onClick={() => window.location.href = '/'}>
-            로비로 가기
-          </Button>
-        </div>
+      <div className="min-h-dvh bg-abyss py-8">
+        <ProfileOnboarding />
       </div>
     );
   }

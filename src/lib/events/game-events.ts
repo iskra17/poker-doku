@@ -16,7 +16,16 @@ export type GameEvent =
   | { type: 'bets-collected'; bets: { seatIndex: number; amount: number }[] }
   | { type: 'my-turn-start'; deadline: number }
   | { type: 'showdown-reveal' }
-  | { type: 'winners'; winners: WinResult[]; players: Player[]; potTotal: number; bigWin: boolean }
+  | {
+      type: 'winners';
+      winners: WinResult[];
+      players: Player[];
+      potTotal: number;
+      bigWin: boolean;
+      handNumber: number;
+      handRake: number;
+      economyMode: GameState['economyMode'];
+    }
   | { type: 'hand-end' };
 
 type Listener = (event: GameEvent) => void;
@@ -117,6 +126,9 @@ export function diffGameState(
       players: next.players,
       potTotal,
       bigWin: bigHand || bigPot,
+      handNumber: next.handNumber,
+      handRake: next.handRake,
+      economyMode: next.economyMode,
     });
   }
 

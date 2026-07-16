@@ -147,6 +147,14 @@ export interface EconomyResult {
   transaction: EconomyTransaction;
 }
 
+export interface EconomyStatusSnapshot {
+  profile: PublicProfile;
+  dailyClaimed: boolean;
+  rescueClaimsToday: number;
+  latestRescueAt: number | null;
+  hasActiveEscrow: boolean;
+}
+
 export interface RescueClaimRules {
   threshold: number;
   target: number;
@@ -252,6 +260,56 @@ interface ActiveSeatEscrowRow {
 
 export class EconomyRepository {
   constructor(private readonly database: PokerDatabase) {}
+
+  getStatusSnapshot(
+    profileId: string,
+    claimDate: string,
+  ): EconomyStatusSnapshot {
+    assertCanonicalClaimDate(claimDate);
+    const profile = this.requirePublicProfile(profileId);
+    const daily = this.database.db.prepare(`
+      SELECT claimed_at FROM daily_claims
+      WHERE profile_id = ? AND claim_date = ?
+    `).get(profileId, claimDate) as { claimed_at: number } | undefined;
+    const today = this.database.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM rescue_claims
+      WHERE profile_id = ? AND claim_date = ?
+    `).get(profileId, claimDate) as { count: number };
+    const latest = this.database.db.prepare(`
+      SELECT claimed_at
+      FROM rescue_claims
+      WHERE profile_id = ?
+      ORDER BY claimed_at DESC
+      LIMIT 1
+    `).get(profileId) as { claimed_at: number } | undefined;
+    const activeEscrow = this.database.db.prepare(`
+      SELECT 1 FROM seat_escrows
+      WHERE profile_id = ? AND status = 'active'
+      LIMIT 1
+    `).get(profileId);
+
+    if (daily) {
+      assertValidEconomyTimestamp(
+        daily.claimed_at,
+        'ECONOMY_PERSISTENCE_INVALID',
+      );
+    }
+    assertPersistedNonnegativeSafeInteger(today.count);
+    if (latest) {
+      assertValidEconomyTimestamp(
+        latest.claimed_at,
+        'ECONOMY_PERSISTENCE_INVALID',
+      );
+    }
+    return {
+      profile,
+      dailyClaimed: daily !== undefined,
+      rescueClaimsToday: today.count,
+      latestRescueAt: latest?.claimed_at ?? null,
+      hasActiveEscrow: activeEscrow !== undefined,
+    };
+  }
 
   applyWalletDelta(
     profileId: string,

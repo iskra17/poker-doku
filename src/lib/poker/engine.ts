@@ -75,6 +75,7 @@ export class PokerEngine {
       isHandInProgress: false,
       winners: null,
       handRake: 0,
+      economyMode: config.economyMode,
       lastAction: null,
       turnTimer: config.turnTime,
       handNumber: 0,

@@ -83,6 +83,7 @@ export interface GameState {
   isHandInProgress: boolean;
   winners: WinResult[] | null;
   handRake: number;
+  economyMode?: 'practice' | 'wallet' | 'arena';
   lastAction: PlayerAction | null;
   /** 이번 핸드 마지막 벳/레이즈 주체 — 봇 c벳(연속 베팅) 판정용 */
   lastAggressorId?: string | null;

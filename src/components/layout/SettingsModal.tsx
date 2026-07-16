@@ -2,16 +2,13 @@
 
 import Modal from '@/components/ui/Modal';
 import CardComponent from '@/components/table/Card';
-import CharacterImage from '@/components/characters/CharacterImage';
+import RecoveryPanel from '@/components/profile/RecoveryPanel';
 import { useSettingsStore, BetStepUnit } from '@/lib/store/settings-store';
-import { BOT_CHARACTERS, DEALER_CHARACTER } from '@/lib/characters';
 import {
   DeckStyleId, DeckColorId, DECK_STYLE_LABELS, DECK_COLOR_LABELS,
   SUIT_SYMBOLS, getSuitColor,
 } from '@/components/table/card-theme';
 import type { Card as CardType, Suit } from '@/lib/poker/types';
-
-const PROFILE_CHARACTERS = [...BOT_CHARACTERS, DEALER_CHARACTER];
 
 const BET_STEP_LABELS: Record<BetStepUnit, string> = {
   sb: 'SB 단위',
@@ -57,7 +54,6 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const {
     deckStyle, setDeckStyle, deckColor, setDeckColor,
     showDealerAvatar, toggleDealerAvatar, showDealerBubble, toggleDealerBubble,
-    profileCharacter, setProfileCharacter,
     betStepUnit, setBetStepUnit,
     stackedPot, toggleStackedPot,
     muted, toggleMuted,
@@ -120,31 +116,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           </div>
         </section>
 
-        {/* 프로필 캐릭터 */}
-        <section>
-          <SectionTitle>내 프로필 캐릭터</SectionTitle>
-          <p className="text-[10px] text-ink-dim mb-2">테이블에 앉을 때 좌석 아바타로 표시됩니다. (다음 입장부터 적용)</p>
-          <div className="flex flex-wrap gap-2">
-            {PROFILE_CHARACTERS.map(char => (
-              <button
-                key={char.id}
-                onClick={() => setProfileCharacter(char.id)}
-                aria-label={char.name}
-                className="flex flex-col items-center gap-1"
-              >
-                <span
-                  className={`block w-12 h-12 rounded-full overflow-hidden border-2 transition-colors
-                    ${profileCharacter === char.id ? 'border-blossom shadow-lg shadow-blossom/30' : 'border-white/10'}`}
-                >
-                  <CharacterImage characterId={char.id} round className="w-full h-full text-2xl" />
-                </span>
-                <span className={`text-[10px] ${profileCharacter === char.id ? 'text-blossom font-bold' : 'text-ink-dim'}`}>
-                  {char.name}
-                </span>
-              </button>
-            ))}
-          </div>
-        </section>
+        <RecoveryPanel />
 
         {/* 게임 */}
         <section>

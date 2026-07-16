@@ -5,7 +5,7 @@
 import { useState } from 'react';
 import NeonText from '../ui/NeonText';
 
-export default function LobbyHeader() {
+export default function LobbyHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
   const [logoError, setLogoError] = useState(false);
 
   return (
@@ -30,6 +30,19 @@ export default function LobbyHeader() {
           />
         )}
       </div>
+      {onOpenSettings && (
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          aria-label="설정"
+          className="absolute right-4 top-4 z-20 rounded-full border border-mystic/20 bg-panel/80 p-2 text-ink-dim transition-colors hover:text-ink"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34A1.7 1.7 0 0 0 14 20.92V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.93 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06A2 2 0 1 1 7.08 4.1l.06.06A1.7 1.7 0 0 0 9 4.5h.01A1.7 1.7 0 0 0 10.03 3V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.5 9v.01A1.7 1.7 0 0 0 21 10.03H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15z" />
+          </svg>
+        </button>
+      )}
     </header>
   );
 }

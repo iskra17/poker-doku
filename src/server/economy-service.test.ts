@@ -103,6 +103,137 @@ describe('KST economy clock', () => {
   });
 });
 
+describe('EconomyService read-only status', () => {
+  const at = Date.parse('2026-07-15T15:00:00.000Z');
+
+  it('reports an unclaimed daily grant and an immediately eligible rescue', () => {
+    seedProfile('profile-1', 799);
+    const service = new EconomyService(repository, () => at);
+
+    expect(service.getStatus('profile-1')).toEqual({
+      profile: {
+        id: 'profile-1',
+        alias: 'alias:profile-1',
+        avatarId: 'sakura',
+        wallet: { balance: 799, activeEscrow: 0 },
+      },
+      economy: {
+        daily: {
+          claimed: false,
+          grantAmount: ECONOMY_RULES.dailyGrant,
+          availableAt: at,
+        },
+        rescue: {
+          eligible: true,
+          grantAmount: ECONOMY_RULES.rescueTarget - 799,
+          remainingToday: ECONOMY_RULES.rescueDailyLimit,
+          availableAt: at,
+          reason: null,
+        },
+      },
+    });
+  });
+
+  it('reports KST daily reset, cross-midnight cooldown, and the exact remaining count', () => {
+    seedProfile('profile-1', 799);
+    const firstAt = Date.parse('2026-07-15T14:00:00.000Z');
+    const service = new EconomyService(repository);
+    service.claimRescue('profile-1', firstAt);
+    repository.applyWalletDelta(
+      'profile-1', -1_201, 'TEST_DRAIN', 'status-drain-rescue', undefined, firstAt + 1,
+    );
+    service.claimDaily('profile-1', at);
+    repository.applyWalletDelta(
+      'profile-1', -1_000, 'TEST_DRAIN', 'status-drain-daily', undefined, at + 1,
+    );
+
+    expect(service.getStatus('profile-1', at)).toEqual({
+      profile: expect.objectContaining({
+        wallet: { balance: 799, activeEscrow: 0 },
+      }),
+      economy: {
+        daily: {
+          claimed: true,
+          grantAmount: ECONOMY_RULES.dailyGrant,
+          availableAt: Date.parse('2026-07-16T15:00:00.000Z'),
+        },
+        rescue: {
+          eligible: false,
+          grantAmount: 0,
+          remainingToday: 3,
+          availableAt: firstAt + ECONOMY_RULES.rescueCooldownMs,
+          reason: 'cooldown',
+        },
+      },
+    });
+  });
+
+  it.each(['cash', 'sng'] as const)('blocks rescue for an active %s escrow', mode => {
+    seedProfile('profile-1', 799);
+    database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount,
+        checkpoint_amount, checkpoint_hand, status, updated_at
+      ) VALUES (?, 'profile-1', 'room-1', ?, 0, 0, 0, 'active', ?)
+    `).run(`escrow-${mode}`, mode, at);
+    const service = new EconomyService(repository, () => at);
+
+    expect(service.getStatus('profile-1').economy.rescue).toEqual({
+      eligible: false,
+      grantAmount: 0,
+      remainingToday: 3,
+      availableAt: null,
+      reason: 'active-escrow',
+    });
+  });
+
+  it('reports daily-limit availability as the later of reset and cooldown', () => {
+    seedProfile('profile-1', 799);
+    for (let ordinal = 1; ordinal <= 3; ordinal += 1) {
+      database.db.prepare(`
+        INSERT INTO rescue_claims (
+          profile_id, claim_date, ordinal, amount, claimed_at
+        ) VALUES ('profile-1', '2026-07-16', ?, 1201, ?)
+      `).run(ordinal, at + (ordinal - 1) * ECONOMY_RULES.rescueCooldownMs);
+    }
+    const checkedAt = at + 2 * ECONOMY_RULES.rescueCooldownMs + 1;
+    const service = new EconomyService(repository, () => checkedAt);
+
+    expect(service.getStatus('profile-1').economy.rescue).toEqual({
+      eligible: false,
+      grantAmount: 0,
+      remainingToday: 0,
+      availableAt: at + 24 * 60 * 60 * 1_000,
+      reason: 'daily-limit',
+    });
+  });
+
+  it('is read-only and rejects unsafe persisted claim timestamps', () => {
+    seedProfile('profile-1', 799);
+    database.db.prepare(`
+      INSERT INTO rescue_claims (
+        profile_id, claim_date, ordinal, amount, claimed_at
+      ) VALUES ('profile-1', '2026-07-16', 1, 1201, -1)
+    `).run();
+    const service = new EconomyService(repository, () => at);
+    const before = database.db.prepare(`
+      SELECT (SELECT balance FROM wallets WHERE profile_id = 'profile-1') AS balance,
+             (SELECT COUNT(*) FROM chip_ledger) AS ledger_count,
+             (SELECT COUNT(*) FROM rescue_claims) AS rescue_count
+    `).get();
+
+    expectEconomyError(
+      () => service.getStatus('profile-1'),
+      'ECONOMY_PERSISTENCE_INVALID',
+    );
+    expect(database.db.prepare(`
+      SELECT (SELECT balance FROM wallets WHERE profile_id = 'profile-1') AS balance,
+             (SELECT COUNT(*) FROM chip_ledger) AS ledger_count,
+             (SELECT COUNT(*) FROM rescue_claims) AS rescue_count
+    `).get()).toEqual(before);
+  });
+});
+
 describe('EconomyRepository wallet ledger', () => {
   it('applies an idempotent delta exactly once and returns the current safe profile', () => {
     seedProfile();

@@ -16,6 +16,7 @@ import BustNotice from '@/components/table/BustNotice';
 import ChatPanel from '@/components/chat/ChatPanel';
 import WinnerCutIn from '@/components/characters/WinnerCutIn';
 import LoserCutIn from '@/components/characters/LoserCutIn';
+import HandEconomySummary from '@/components/table/HandEconomySummary';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
@@ -78,6 +79,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <PokerTable />
             <WinnerCutIn isMobile={isMobile} />
             <LoserCutIn isMobile={isMobile} />
+            <HandEconomySummary />
             <ActionLog />
             <ChatPanel />
             <SngWaitingOverlay />

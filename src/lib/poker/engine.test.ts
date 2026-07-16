@@ -40,6 +40,18 @@ describe('hand rake state', () => {
     expect(engine.getPublicState('p1')).toHaveProperty('handRake', 0);
   });
 
+  it('publishes economy mode without exposing server-only room configuration', () => {
+    const { engine } = setupEconomyTable([1_000, 1_000], {
+      economyMode: 'practice',
+      password: 'server-secret',
+    });
+
+    const publicState = engine.getPublicState('p1');
+
+    expect(publicState.economyMode).toBe('practice');
+    expect(publicState).not.toHaveProperty('password');
+  });
+
   it('resets before every new hand', () => {
     const { engine } = setupTable([1000, 1000]);
     (engine.state as unknown as { handRake: number }).handRake = 7;

@@ -68,7 +68,9 @@ interface GameStore {
   socket: PokerClientSocket | null;
   connected: boolean;
   connectionState: ConnectionState;
+  publicProfileId: string | null;
   playerName: string;
+  publicAvatarId: string | null;
   myPlayerId: string | null;
   currentRoomId: string | null;
   pendingRoomId: string | null;
@@ -83,9 +85,10 @@ interface GameStore {
 
   connect: () => void;
   disconnect: () => void;
-  setPlayerName: (name: string) => void;
+  setPublicProfile: (profile: { id: string; alias: string; avatarId: string }) => void;
+  clearPublicProfile: () => void;
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
-  leaveRoom: (mode?: 'exit' | 'sitout') => void;
+  leaveRoom: (mode?: 'exit' | 'sitout') => Promise<boolean>;
   sendAction: (action: ActionType, amount?: number) => void;
   sendChat: (presetId: string) => void;
   toggleSitOut: () => void;
@@ -99,7 +102,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   socket: null,
   connected: false,
   connectionState: 'connecting',
+  publicProfileId: null,
   playerName: '',
+  publicAvatarId: null,
   myPlayerId: null,
   currentRoomId: null,
   pendingRoomId: null,
@@ -228,7 +233,18 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
   },
 
-  setPlayerName: name => set({ playerName: name }),
+  setPublicProfile: profile => set({
+    publicProfileId: profile.id,
+    playerName: profile.alias,
+    publicAvatarId: profile.avatarId,
+  }),
+
+  clearPublicProfile: () => set({
+    publicProfileId: null,
+    playerName: '',
+    publicAvatarId: null,
+    myPlayerId: null,
+  }),
 
   joinRoom: (roomId, buyIn, seatIndex, password) => {
     const { socket } = get();
@@ -258,22 +274,26 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   leaveRoom: (mode = 'exit') => {
     const { socket } = get();
-    if (!socket?.connected) return;
-    socket.emit('leave-room', { mode }, ack => {
-      if (!ack.ok) {
-        set({ tableNotice: ack.message });
-        return;
-      }
-      clearJoinTimeout();
-      clearActionAckTimeout();
-      set({
-        currentRoomId: null,
-        pendingRoomId: null,
-        pendingAction: null,
-        gameState: null,
-        chatMessages: [],
-        joinError: null,
-        tableNotice: null,
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise(resolve => {
+      socket.emit('leave-room', { mode }, ack => {
+        if (!ack.ok) {
+          set({ tableNotice: ack.message });
+          resolve(false);
+          return;
+        }
+        clearJoinTimeout();
+        clearActionAckTimeout();
+        set({
+          currentRoomId: null,
+          pendingRoomId: null,
+          pendingAction: null,
+          gameState: null,
+          chatMessages: [],
+          joinError: null,
+          tableNotice: null,
+        });
+        resolve(true);
       });
     });
   },

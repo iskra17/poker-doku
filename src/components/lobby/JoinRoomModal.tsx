@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
+import { useProfileStore } from '@/lib/store/profile-store';
 import Modal from '../ui/Modal';
 import Button from '../ui/Button';
 import {
@@ -35,33 +36,8 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
 
   const [buyIn, setBuyIn] = useState(defaultBuyIn);
   const [password, setPassword] = useState('');
-  const [profileBalance, setProfileBalance] = useState<number | null>(null);
+  const profileBalance = useProfileStore(state => state.profile?.wallet.balance ?? null);
   const sngAvailability = getCasualSngEntryAvailability(profileBalance);
-
-  useEffect(() => {
-    if (!isSng) return;
-    let cancelled = false;
-    void fetch('/api/profile/session', {
-      credentials: 'same-origin',
-      cache: 'no-store',
-    })
-      .then(async response => response.ok ? response.json() as Promise<unknown> : null)
-      .then(payload => {
-        if (cancelled || !payload || typeof payload !== 'object') return;
-        const profile = (payload as { profile?: unknown }).profile;
-        if (!profile || typeof profile !== 'object') return;
-        const wallet = (profile as { wallet?: unknown }).wallet;
-        if (!wallet || typeof wallet !== 'object') return;
-        const balance = (wallet as { balance?: unknown }).balance;
-        if (Number.isSafeInteger(balance) && (balance as number) >= 0) {
-          setProfileBalance(balance as number);
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [isSng]);
 
   const handleJoin = () => {
     joinRoom(

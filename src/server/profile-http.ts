@@ -34,7 +34,7 @@ export type ProfileHttpManager = Pick<
 
 export type EconomyHttpService = Pick<
   EconomyService,
-  'claimDaily' | 'claimRescue'
+  'claimDaily' | 'claimRescue' | 'getStatus'
 >;
 
 export interface ProfileHttpOptions {
@@ -399,7 +399,14 @@ async function handleSession(
   }
   await runKdfRequest(options, async () => {
     const profile = await authenticate(request, response, options);
-    if (profile) sendJson(response, 200, { state: 'ready', profile });
+    if (profile) {
+      const status = options.economyService.getStatus(profile.id);
+      sendJson(response, 200, {
+        state: 'ready',
+        profile: status.profile,
+        economy: status.economy,
+      });
+    }
   });
 }
 
@@ -530,8 +537,10 @@ async function handleEconomyClaim(
     const result = operation === 'daily'
       ? options.economyService.claimDaily(profile.id)
       : options.economyService.claimRescue(profile.id);
+    const status = options.economyService.getStatus(profile.id);
     sendJson(response, 200, {
-      profile: result.profile,
+      profile: status.profile,
+      economy: status.economy,
       transaction: {
         reason: result.transaction.reason,
         delta: result.transaction.delta,
