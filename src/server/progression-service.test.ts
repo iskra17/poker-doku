@@ -284,8 +284,8 @@ describe('ProgressionService', () => {
         dojoXpMilli: 100_000,
       }],
       streak: {
-        previousStreak: 6,
-        currentStreak: 7,
+        previousStreak: 5,
+        currentStreak: 6,
         restPassUsed: false,
       },
       grantedItemIds: ['dojo-title-2'],
@@ -391,6 +391,22 @@ describe('ProgressionService', () => {
         currentStreak: 1,
         restPassUsed: true,
       } },
+      {
+        streak: {
+          previousStreak: 6,
+          currentStreak: 7,
+          restPassUsed: false,
+        },
+        grantedItemIds: [],
+      },
+      {
+        streak: {
+          previousStreak: 5,
+          currentStreak: 6,
+          restPassUsed: false,
+        },
+        grantedItemIds: ['streak-fragment'],
+      },
       { dojoLevelsGained: [2, 2] },
       { dojoLevelsGained: [2, 4] },
       { affinityLevelsGained: [3, 2] },
@@ -1271,9 +1287,9 @@ describe('ProgressionService', () => {
       WHERE profile_id = ? AND item_id = 'streak-fragment'
     `).get(profileId)).toEqual({ quantity: 2 });
     expect(database.db.prepare(`
-      SELECT idempotency_key FROM progression_events
-      WHERE profile_id = ? AND event_type = 'streak-fragment'
-      ORDER BY created_at
+      SELECT idempotency_key FROM progression_item_grants
+      WHERE profile_id = ? AND source = 'streak'
+      ORDER BY granted_at
     `).all(profileId)).toEqual([
       { idempotency_key: `streak-fragment:${profileId}:2026-07-12` },
       { idempotency_key: `streak-fragment:${profileId}:2026-07-19` },
@@ -1399,6 +1415,60 @@ describe('ProgressionService', () => {
       SELECT COUNT(*) AS count FROM streak_daily_progress
       WHERE profile_id = ? AND kst_date = '2026-07-12'
     `).get(profileId)).toEqual({ count: 0 });
+  });
+
+  it('replays a seventh-day fragment summary only when its receipt and inventory agree', () => {
+    const profileId = 'fragment-duplicate-proof';
+    const start = Date.parse('2026-07-06T12:00:00+09:00');
+    insertProfile(database, profileId);
+    let seventh;
+    for (let index = 0; index < 7; index += 1) {
+      seventh = service.recordSngFinish({
+        profileId,
+        roomId: `fragment-proof-${index + 1}`,
+        place: 6,
+        selectedCharacterId: 'sakura',
+        completedAt: start + index * 24 * 60 * 60 * 1_000,
+      });
+    }
+    const before = {
+      receipt: database.db.prepare(`
+        SELECT * FROM progression_item_grants WHERE profile_id = ?
+      `).get(profileId),
+      inventory: database.db.prepare(`
+        SELECT * FROM inventory_items WHERE profile_id = ?
+      `).get(profileId),
+    };
+
+    const replay = service.recordSngFinish({
+      profileId,
+      roomId: 'fragment-proof-7',
+      place: 6,
+      selectedCharacterId: 'sakura',
+      completedAt: start + 6 * 24 * 60 * 60 * 1_000,
+    });
+    expect(replay).toEqual(seventh);
+    expect({
+      receipt: database.db.prepare(`
+        SELECT * FROM progression_item_grants WHERE profile_id = ?
+      `).get(profileId),
+      inventory: database.db.prepare(`
+        SELECT * FROM inventory_items WHERE profile_id = ?
+      `).get(profileId),
+    }).toEqual(before);
+
+    database.db.exec('DROP TRIGGER validate_fragment_inventory_update;');
+    database.db.prepare(`
+      UPDATE inventory_items SET quantity = 2
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId);
+    expectServiceError(() => service.recordSngFinish({
+      profileId,
+      roomId: 'fragment-proof-7',
+      place: 6,
+      selectedCharacterId: 'sakura',
+      completedAt: start + 6 * 24 * 60 * 60 * 1_000,
+    }), 'PROGRESSION_STORED_SUMMARY_INVALID');
   });
 });
 

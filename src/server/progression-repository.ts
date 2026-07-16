@@ -220,6 +220,20 @@ export interface StackableInventoryGrant {
   itemId: string;
   balanceVersion: number;
   grantedAt: number;
+  source: 'streak';
+  sourceRef: string;
+  sourceDate: string;
+}
+
+export interface ProgressionItemGrantReceipt {
+  idempotencyKey: string;
+  profileId: string;
+  itemId: string;
+  source: 'streak';
+  sourceRef: string;
+  sourceDate: string;
+  quantity: 1;
+  grantedAt: number;
 }
 
 interface ProgressionProfileRow {
@@ -309,6 +323,17 @@ interface StreakDailyProgressRow {
   qualified_at: number | null;
 }
 
+interface ProgressionItemGrantRow {
+  idempotency_key: string;
+  profile_id: string;
+  item_id: string;
+  source: string;
+  source_ref: string;
+  source_date: string;
+  quantity: number;
+  granted_at: number;
+}
+
 export class ProgressionRepository {
   constructor(private readonly database: PokerDatabase) {}
 
@@ -354,15 +379,9 @@ export class ProgressionRepository {
         best_streak, created_at, updated_at
       ) VALUES (?, 1, 1, 0, ?, NULL, 0, 0, 0, 0, 0, 0, ?, ?)
       ON CONFLICT(profile_id) DO NOTHING
-    `).run(profileId, characterId, at, at);
+      `).run(profileId, characterId, at, at);
 
       if (inserted.changes === 1) {
-        this.database.db.prepare(`
-        INSERT INTO streak_state (
-          profile_id, current_streak, rest_passes, last_qualified_date,
-          last_week_key, created_at, updated_at
-        ) VALUES (?, 0, 0, NULL, NULL, ?, ?)
-      `).run(profileId, at, at);
         const insertEquipment = this.database.db.prepare(`
         INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
         VALUES (?, ?, NULL, ?)
@@ -1031,64 +1050,75 @@ export class ProgressionRepository {
     if (safe.balanceVersion !== SUPPORTED_BALANCE_VERSION) {
       throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
     }
+    if (safe.source !== 'streak') {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertNonemptyString(safe.sourceRef, 'PROGRESSION_VALUE_INVALID');
+    assertMissionDate(safe.sourceDate);
     assertTimestamp(safe.grantedAt, 'PROGRESSION_TIME_INVALID');
     try {
-      const receipt = this.insertProgressionEvent({
-        idempotencyKey: safe.idempotencyKey,
-        profileId: safe.profileId,
-        eventType: 'streak-fragment',
-        balanceVersion: safe.balanceVersion,
-        summary: { itemId: safe.itemId, quantity: 1 },
-        createdAt: safe.grantedAt,
-      });
-      if (receipt.status === 'duplicate') {
-        if (!isExactStackableGrantSummary(receipt.event.summary, safe.itemId)) {
-          throw persistenceInvalid();
+      const existingRow = this.database.db.prepare(`
+        SELECT idempotency_key, profile_id, item_id, source, source_ref,
+               source_date, quantity, granted_at
+        FROM progression_item_grants WHERE idempotency_key = ?
+      `).get(safe.idempotencyKey) as ProgressionItemGrantRow | undefined;
+      if (existingRow) {
+        const existing = mapProgressionItemGrant(existingRow);
+        if (
+          existing.profileId !== safe.profileId
+          || existing.itemId !== safe.itemId
+          || existing.source !== safe.source
+          || existing.sourceRef !== safe.sourceRef
+          || existing.sourceDate !== safe.sourceDate
+          || existing.grantedAt !== safe.grantedAt
+        ) {
+          throw new ProgressionPersistenceError('PROGRESSION_EVENT_CONFLICT');
         }
-        const inventoryRow = this.database.db.prepare(`
-          SELECT profile_id, item_id, quantity, granted_at, updated_at
-          FROM inventory_items WHERE profile_id = ? AND item_id = ?
-        `).get(safe.profileId, safe.itemId) as InventoryItemRow | undefined;
-        if (!inventoryRow) throw persistenceInvalid();
-        mapInventoryItem(inventoryRow);
+        this.assertFragmentInventoryCorrespondence(safe.profileId, safe.itemId);
         return false;
       }
 
-      const row = this.database.db.prepare(`
-        SELECT profile_id, item_id, quantity, granted_at, updated_at
-        FROM inventory_items WHERE profile_id = ? AND item_id = ?
-      `).get(safe.profileId, safe.itemId) as InventoryItemRow | undefined;
-      if (!row) {
-        this.database.db.prepare(`
-          INSERT INTO inventory_items (
-            profile_id, item_id, quantity, granted_at, updated_at
-          ) VALUES (?, ?, 1, ?, ?)
-        `).run(safe.profileId, safe.itemId, safe.grantedAt, safe.grantedAt);
-        return true;
-      }
-      const current = mapInventoryItem(row);
-      if (current.quantity === Number.MAX_SAFE_INTEGER) {
-        throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
-      }
-      const updatedAt = Math.max(current.updatedAt, safe.grantedAt);
-      const result = this.database.db.prepare(`
-        UPDATE inventory_items
-        SET quantity = ?, updated_at = ?
-        WHERE profile_id = ? AND item_id = ?
-          AND quantity = ? AND granted_at = ? AND updated_at = ?
+      this.database.db.prepare(`
+        INSERT INTO progression_item_grants (
+          idempotency_key, profile_id, item_id, source, source_ref,
+          source_date, quantity, granted_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1, ?)
       `).run(
-        current.quantity + 1,
-        updatedAt,
-        current.profileId,
-        current.itemId,
-        current.quantity,
-        current.grantedAt,
-        current.updatedAt,
+        safe.idempotencyKey,
+        safe.profileId,
+        safe.itemId,
+        safe.source,
+        safe.sourceRef,
+        safe.sourceDate,
+        safe.grantedAt,
       );
-      if (result.changes !== 1) {
-        throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
-      }
+      this.assertFragmentInventoryCorrespondence(safe.profileId, safe.itemId);
       return true;
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /** Must be called inside a caller-owned PokerDatabase transaction. */
+  getFragmentGrantForSourceInTransaction(
+    profileId: string,
+    sourceRef: string,
+  ): ProgressionItemGrantReceipt | null {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    assertNonemptyString(sourceRef, 'PROGRESSION_VALUE_INVALID');
+    try {
+      const row = this.database.db.prepare(`
+        SELECT idempotency_key, profile_id, item_id, source, source_ref,
+               source_date, quantity, granted_at
+        FROM progression_item_grants
+        WHERE profile_id = ? AND item_id = 'streak-fragment'
+          AND source = 'streak' AND source_ref = ?
+      `).get(profileId, sourceRef) as ProgressionItemGrantRow | undefined;
+      if (!row) return null;
+      const receipt = mapProgressionItemGrant(row);
+      this.assertFragmentInventoryCorrespondence(profileId, receipt.itemId);
+      return receipt;
     } catch (error) {
       rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
     }
@@ -1190,6 +1220,28 @@ export class ProgressionRepository {
     return this.database.db.prepare(`
       SELECT 1 FROM profiles WHERE id = ?
     `).get(profileId) !== undefined;
+  }
+
+  private assertFragmentInventoryCorrespondence(
+    profileId: string,
+    itemId: string,
+  ): void {
+    const receiptCount = this.database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_item_grants
+      WHERE profile_id = ? AND item_id = ? AND source = 'streak'
+    `).get(profileId, itemId) as { count: number };
+    const inventoryRow = this.database.db.prepare(`
+      SELECT profile_id, item_id, quantity, granted_at, updated_at
+      FROM inventory_items WHERE profile_id = ? AND item_id = ?
+    `).get(profileId, itemId) as InventoryItemRow | undefined;
+    if (
+      !Number.isSafeInteger(receiptCount.count)
+      || receiptCount.count < 1
+      || !inventoryRow
+      || mapInventoryItem(inventoryRow).quantity !== receiptCount.count
+    ) {
+      throw persistenceInvalid();
+    }
   }
 
   private selectDailyMissionRows(
@@ -1357,6 +1409,9 @@ function copyStackableInventoryGrant(
       itemId: grant.itemId,
       balanceVersion: grant.balanceVersion,
       grantedAt: grant.grantedAt,
+      source: grant.source,
+      sourceRef: grant.sourceRef,
+      sourceDate: grant.sourceDate,
     };
   } catch {
     throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
@@ -1640,6 +1695,36 @@ function mapStreakDailyProgress(
   });
 }
 
+function mapProgressionItemGrant(
+  row: ProgressionItemGrantRow,
+): ProgressionItemGrantReceipt {
+  if (
+    typeof row.idempotency_key !== 'string'
+    || row.idempotency_key.length === 0
+    || typeof row.profile_id !== 'string'
+    || row.profile_id.length === 0
+    || row.item_id !== 'streak-fragment'
+    || row.source !== 'streak'
+    || typeof row.source_ref !== 'string'
+    || row.source_ref.length === 0
+    || !isCanonicalDate(row.source_date)
+    || row.quantity !== 1
+  ) {
+    throw persistenceInvalid();
+  }
+  assertStoredTimestamp(row.granted_at);
+  return Object.freeze({
+    idempotencyKey: row.idempotency_key,
+    profileId: row.profile_id,
+    itemId: row.item_id,
+    source: 'streak',
+    sourceRef: row.source_ref,
+    sourceDate: row.source_date,
+    quantity: 1,
+    grantedAt: row.granted_at,
+  });
+}
+
 function validateDailyMissionSet(missions: readonly DailyMission[]): void {
   if (
     missions.length !== 3
@@ -1909,19 +1994,6 @@ function emptyEquipment(): Record<EquipmentSlot, string | null> {
 
 function isEquipmentSlot(value: string): value is EquipmentSlot {
   return (EQUIPMENT_SLOTS as readonly string[]).includes(value);
-}
-
-function isExactStackableGrantSummary(
-  value: Record<string, unknown>,
-  itemId: string,
-): boolean {
-  const keys = Reflect.ownKeys(value);
-  return keys.length === 2
-    && keys.every(key => typeof key === 'string')
-    && Object.prototype.hasOwnProperty.call(value, 'itemId')
-    && Object.prototype.hasOwnProperty.call(value, 'quantity')
-    && value.itemId === itemId
-    && value.quantity === 1;
 }
 
 type CanonicalJsonPrimitive = null | string | boolean | number;

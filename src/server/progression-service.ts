@@ -198,6 +198,7 @@ export class ProgressionService {
       );
       const streakReward = this.progressStreak(
         snapshot,
+        eventId,
         safeInput.kstDate,
         'hand',
         safeInput.completedAt,
@@ -285,6 +286,7 @@ export class ProgressionService {
       );
       const streakReward = this.progressStreak(
         snapshot,
+        eventId,
         safeInput.kstDate,
         'sng',
         safeInput.completedAt,
@@ -414,6 +416,7 @@ export class ProgressionService {
 
   private progressStreak(
     snapshot: ProgressionSnapshot,
+    eventId: string,
     kstDate: string,
     kind: 'hand' | 'sng',
     completedAt: number,
@@ -469,6 +472,9 @@ export class ProgressionService {
         itemId: STREAK_FRAGMENT_ITEM.id,
         balanceVersion: snapshot.profile.balanceVersion,
         grantedAt: completedAt,
+        source: 'streak',
+        sourceRef: eventId,
+        sourceDate: kstDate,
       });
       if (granted) grantedItemIds.push(STREAK_FRAGMENT_ITEM.id);
     }
@@ -541,7 +547,52 @@ export class ProgressionService {
       summary: {},
       createdAt: completedAt,
     });
-    return parseStoredSummary(duplicate.event, eventId);
+    const summary = parseStoredSummary(duplicate.event, eventId);
+    this.validateStoredFragmentClaim(duplicate.event, summary);
+    return summary;
+  }
+
+  private validateStoredFragmentClaim(
+    event: ProgressionEvent,
+    summary: ProgressionRewardSummary,
+  ): void {
+    try {
+      const claimsFragment = summary.grantedItemIds.includes(
+        STREAK_FRAGMENT_ITEM.id,
+      );
+      const fragmentDue = summary.streak !== undefined
+        && summary.streak.currentStreak % getBalance(
+          event.balanceVersion,
+        ).streakFragmentEveryDays === 0;
+      if (claimsFragment !== fragmentDue) {
+        throw new Error('fragment summary mismatch');
+      }
+      const receipt = this.repository.getFragmentGrantForSourceInTransaction(
+        event.profileId,
+        event.idempotencyKey,
+      );
+      if (!fragmentDue) {
+        if (receipt !== null) throw new Error('unexpected fragment receipt');
+        return;
+      }
+      const sourceDate = getKstDateKey(event.createdAt);
+      if (
+        receipt === null
+        || receipt.itemId !== STREAK_FRAGMENT_ITEM.id
+        || receipt.source !== 'streak'
+        || receipt.sourceRef !== event.idempotencyKey
+        || receipt.sourceDate !== sourceDate
+        || receipt.idempotencyKey !== (
+          `streak-fragment:${event.profileId}:${sourceDate}`
+        )
+        || receipt.quantity !== 1
+        || receipt.grantedAt !== event.createdAt
+      ) {
+        throw new Error('fragment receipt mismatch');
+      }
+    } catch {
+      throw new ProgressionServiceError('PROGRESSION_STORED_SUMMARY_INVALID');
+    }
   }
 
   private applyReward(input: {

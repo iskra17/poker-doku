@@ -43,7 +43,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(7);
+    expect(migration.version).toBe(8);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -63,6 +63,7 @@ describe('PokerDatabase migrations', () => {
         'progression_events',
         'daily_mission_modes',
         'streak_daily_progress',
+        'progression_item_grants',
       ]),
     );
     expect(profileColumns).toEqual(
@@ -87,7 +88,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(7);
+    expect(result.count).toBe(8);
   });
 
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
@@ -113,7 +114,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(versions).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -133,7 +134,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -172,7 +173,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
   });
 
@@ -209,7 +210,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -382,9 +383,14 @@ describe('PokerDatabase migrations', () => {
       )
     `).run();
     db.prepare(`
-      INSERT INTO streak_state VALUES (
-        'durable-constraints', 1, 0, '2024-02-29', '2026-W53', 1, 1
-      )
+      UPDATE streak_state
+      SET rest_passes = 1, last_week_key = '2026-W53'
+      WHERE profile_id = 'durable-constraints'
+    `).run();
+    db.prepare(`
+      UPDATE streak_state
+      SET current_streak = 1, last_qualified_date = '2024-02-29'
+      WHERE profile_id = 'durable-constraints'
     `).run();
 
     for (const invalidDate of [
@@ -510,7 +516,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -756,7 +762,7 @@ describe('PokerDatabase migrations', () => {
       SELECT version FROM schema_migrations ORDER BY version
     `).all()).toEqual([
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
-      { version: 5 }, { version: 6 }, { version: 7 },
+      { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -900,9 +906,6 @@ describe('PokerDatabase migrations', () => {
         'streak-v7-constraints', 1, 1, 0, 'sakura', NULL,
         0, 0, 0, 0, 0, 0, 1, 1
       );
-      INSERT INTO streak_state VALUES (
-        'streak-v7-constraints', 0, 0, NULL, NULL, 1, 1
-      );
     `);
 
     expect(() => database?.db.prepare(`
@@ -917,7 +920,8 @@ describe('PokerDatabase migrations', () => {
     `).run()).toThrow();
     database.db.prepare(`
       INSERT INTO streak_daily_progress VALUES (
-        'streak-v7-constraints', '2026-07-17', 10, 0, 2
+        'streak-v7-constraints', '2026-07-17', 0, 1,
+        ${Date.parse('2026-07-17T12:00:00+09:00')}
       )
     `).run();
     expect(() => database?.db.prepare(`
@@ -989,6 +993,364 @@ describe('PokerDatabase migrations', () => {
       SET rest_passes = 1, last_week_key = '2026-W30', updated_at = 3
       WHERE profile_id = 'streak-v7-constraints'
     `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE streak_state SET last_week_key = '2027-W53', updated_at = 4
+      WHERE profile_id = 'streak-v7-constraints'
+    `).run()).toThrowError('invalid streak state');
+  });
+
+  it('upgrades valid V7 rows to progression-owned V8 streak tables', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v1-marker', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 1, 10, 10
+      );
+      INSERT INTO streak_state VALUES (
+        'v1-marker', 1, 1, '2026-07-17', '2026-W29', 10, 10
+      );
+      INSERT INTO streak_daily_progress VALUES (
+        'v1-marker', '2026-07-17', 0, 1,
+        ${Date.parse('2026-07-17T12:00:00+09:00')}
+      );
+    `);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT MAX(version) AS version FROM schema_migrations
+    `).get()).toEqual({ version: 8 });
+    expect(database.db.prepare(`
+      SELECT "table", "from", "to", on_delete
+      FROM pragma_foreign_key_list('streak_state')
+    `).all()).toContainEqual({
+      table: 'progression_profiles',
+      from: 'profile_id',
+      to: 'profile_id',
+      on_delete: 'CASCADE',
+    });
+    expect(database.db.prepare(`
+      SELECT "table", "from", "to", on_delete
+      FROM pragma_foreign_key_list('streak_daily_progress')
+    `).all()).toContainEqual({
+      table: 'progression_profiles',
+      from: 'profile_id',
+      to: 'profile_id',
+      on_delete: 'CASCADE',
+    });
+    expect(database.db.prepare(`
+      SELECT hands, sngs, qualified_at FROM streak_daily_progress
+      WHERE profile_id = 'v1-marker'
+    `).get()).toEqual({
+      hands: 0,
+      sngs: 1,
+      qualified_at: Date.parse('2026-07-17T12:00:00+09:00'),
+    });
+  });
+
+  it('enforces progression ownership and one-to-one streak lifecycle in V8', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'v8-owned');
+    expect(() => database?.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'v8-owned', '2026-07-17', 1, 0, NULL
+      )
+    `).run()).toThrow();
+
+    database.db.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v8-owned', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+    `);
+    expect(database.db.prepare(`
+      SELECT current_streak, rest_passes FROM streak_state
+      WHERE profile_id = 'v8-owned'
+    `).get()).toEqual({ current_streak: 0, rest_passes: 0 });
+    expect(() => database?.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_date, quantity, granted_at
+      ) VALUES (
+        'streak-fragment:v8-owned:2026-07-17', 'v8-owned',
+        'streak-fragment', 'streak', 'missing-main-event',
+        '2026-07-17', 1, ?
+      )
+    `).run(Date.parse('2026-07-17T12:00:00+09:00'))).toThrow();
+    database.db.prepare(`
+      DELETE FROM streak_state WHERE profile_id = 'v8-owned'
+    `).run();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_profiles
+      WHERE profile_id = 'v8-owned'
+    `).get()).toEqual({ count: 0 });
+
+    database.db.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v8-owned', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 2, 2
+      );
+    `);
+
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'v8-owned', '2026-07-17', 1, 0, NULL
+      )
+    `).run();
+    database.db.prepare(`
+      DELETE FROM progression_profiles WHERE profile_id = 'v8-owned'
+    `).run();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM streak_state WHERE profile_id = 'v8-owned'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM streak_daily_progress
+      WHERE profile_id = 'v8-owned'
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('accepts only one real hand or first-SNG transition per V8 daily write', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'v8-transition');
+    database.db.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v8-transition', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+    `);
+    const tenthAt = Date.parse('2026-07-17T12:00:00+09:00');
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'v8-transition', '2026-07-17', 10, 0, ?
+      )
+    `).run(tenthAt)).toThrowError('invalid streak daily transition');
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'v8-transition', '2026-07-17', 1, 0, NULL
+      )
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE streak_daily_progress SET hands = 10, qualified_at = ?
+      WHERE profile_id = 'v8-transition' AND kst_date = '2026-07-17'
+    `).run(tenthAt)).toThrowError('invalid streak daily transition');
+    for (let hands = 2; hands <= 9; hands += 1) {
+      database.db.prepare(`
+        UPDATE streak_daily_progress SET hands = ?
+        WHERE profile_id = 'v8-transition' AND kst_date = '2026-07-17'
+      `).run(hands);
+    }
+    expect(() => database?.db.prepare(`
+      UPDATE streak_daily_progress SET hands = 10, qualified_at = ?
+      WHERE profile_id = 'v8-transition' AND kst_date = '2026-07-17'
+    `).run(Number.MAX_SAFE_INTEGER + 1)).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE streak_daily_progress SET hands = 10, qualified_at = ?
+      WHERE profile_id = 'v8-transition' AND kst_date = '2026-07-17'
+    `).run(Date.parse('2026-07-18T00:00:00+09:00'))).toThrow();
+    database.db.prepare(`
+      UPDATE streak_daily_progress SET hands = 10, qualified_at = ?
+      WHERE profile_id = 'v8-transition' AND kst_date = '2026-07-17'
+    `).run(tenthAt);
+
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'v8-transition', '2026-07-18', 0, 1, ?
+      )
+    `).run(Date.parse('2026-07-18T12:00:00+09:00'));
+  });
+
+  it('rejects unsafe legacy V7 timestamps atomically before V8', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v1-marker', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+      INSERT INTO streak_state VALUES (
+        'v1-marker', 0, 0, NULL, '2026-W29', 1, 9007199254740992
+      );
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+      expect(reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE name = 'progression_item_grants'
+      `).get()).toBeUndefined();
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects a V7 progression profile whose streak row was deleted', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO progression_profiles VALUES (
+        'v1-marker', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+      INSERT INTO streak_state VALUES (
+        'v1-marker', 0, 0, NULL, NULL, 1, 1
+      );
+      DELETE FROM streak_state WHERE profile_id = 'v1-marker';
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('converts valid V7 fragment events into dedicated V8 grant receipts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV7FragmentGrant(rawDatabase, 1);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+
+    expect(database.db.prepare(`
+      SELECT idempotency_key, profile_id, item_id, source, source_ref,
+             source_date, quantity
+      FROM progression_item_grants
+    `).get()).toEqual({
+      idempotency_key: 'streak-fragment:v1-marker:2026-07-17',
+      profile_id: 'v1-marker',
+      item_id: 'streak-fragment',
+      source: 'streak',
+      source_ref: 'sng-finish:legacy-main',
+      source_date: '2026-07-17',
+      quantity: 1,
+    });
+    expect(database.db.prepare(`
+      SELECT quantity FROM inventory_items
+      WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment'
+    `).get()).toEqual({ quantity: 1 });
+  });
+
+  it('rejects a legacy fragment event and inventory quantity mismatch', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV7FragmentGrant(rawDatabase, 2);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+      expect(reopened.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE name = 'progression_item_grants'
+      `).get()).toBeUndefined();
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects a legacy fragment receipt whose inventory row is missing', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV7FragmentGrant(rawDatabase, 1);
+    rawDatabase.exec(`
+      DELETE FROM inventory_items
+      WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rejects unsafe legacy fragment inventory timestamps', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertValidV7FragmentGrant(rawDatabase, 1);
+    rawDatabase.exec(`
+      UPDATE inventory_items SET updated_at = 9007199254740992
+      WHERE profile_id = 'v1-marker' AND item_id = 'streak-fragment';
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('rolls every V8 object and rebuild back when the grant table conflicts', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV7Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec('CREATE TABLE progression_item_grants (id TEXT) STRICT;');
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrowError(
+      'table progression_item_grants already exists',
+    );
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 7 });
+      expect(reopened.prepare(`
+        SELECT "table" FROM pragma_foreign_key_list('streak_state')
+      `).all()).toContainEqual({ table: 'profiles' });
+    } finally {
+      reopened.close();
+    }
   });
 
   it('cascades profile deletion through every progression table', () => {
@@ -1008,9 +1370,6 @@ describe('PokerDatabase migrations', () => {
       ) VALUES (
         'progression-cascade', '2026-07-17', 0, 'COMPLETE_HANDS_ANY_10', 10, 0,
         1, 0, 1, NULL, NULL
-      );
-      INSERT INTO streak_state VALUES (
-        'progression-cascade', 0, 0, NULL, NULL, 1, 1
       );
       INSERT INTO inventory_items VALUES (
         'progression-cascade', 'frame-a', 1, 1, 1
@@ -1036,6 +1395,7 @@ describe('PokerDatabase migrations', () => {
       'progression_events',
       'daily_mission_modes',
       'streak_daily_progress',
+      'progression_item_grants',
     ]) {
       const row = database.db.prepare(
         `SELECT COUNT(*) AS count FROM ${table}`,
@@ -1559,6 +1919,22 @@ function createV6Database(path: string): void {
   }
 }
 
+function createV7Database(path: string): void {
+  createV6Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[6].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (7, 'durable_streak_daily_progress', 7);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
 function insertValidV5MissionDay(database: DatabaseSync): void {
   database.exec(`
     INSERT INTO daily_missions (
@@ -1578,6 +1954,60 @@ function insertValidV5MissionDay(database: DatabaseSync): void {
         1, 0, 1, NULL, NULL
       );
   `);
+}
+
+function insertValidV7FragmentGrant(
+  database: DatabaseSync,
+  inventoryQuantity: number,
+): void {
+  const grantedAt = Date.parse('2026-07-17T12:00:00+09:00');
+  const sourceRef = 'sng-finish:legacy-main';
+  database.exec(`
+    INSERT INTO progression_profiles VALUES (
+      'v1-marker', 1, 1, 0, 'sakura', NULL,
+      0, 0, 0, 0, 0, 7, 10, 10
+    );
+    INSERT INTO streak_state VALUES (
+      'v1-marker', 7, 1, '2026-07-17', '2026-W29', 10, 10
+    );
+    INSERT INTO streak_daily_progress VALUES (
+      'v1-marker', '2026-07-17', 0, 1, ${grantedAt}
+    );
+    INSERT INTO inventory_items VALUES (
+      'v1-marker', 'streak-fragment', ${inventoryQuantity},
+      ${grantedAt}, ${grantedAt}
+    );
+  `);
+  database.prepare(`
+    INSERT INTO progression_events VALUES (?, 'v1-marker', ?, 1, ?, ?)
+  `).run(
+    'streak-fragment:v1-marker:2026-07-17',
+    'streak-fragment',
+    JSON.stringify({ itemId: 'streak-fragment', quantity: 1 }),
+    grantedAt,
+  );
+  database.prepare(`
+    INSERT INTO progression_events VALUES (?, 'v1-marker', ?, 1, ?, ?)
+  `).run(
+    sourceRef,
+    'sng-finish',
+    JSON.stringify({
+      eventId: sourceRef,
+      dojoXpMilli: 30_000,
+      dojoLevelsGained: [],
+      characterId: 'sakura',
+      affinityMilli: 8_000,
+      affinityLevelsGained: [],
+      missionCompletions: [],
+      streak: {
+        previousStreak: 6,
+        currentStreak: 7,
+        restPassUsed: false,
+      },
+      grantedItemIds: ['streak-fragment'],
+    }),
+    grantedAt,
+  );
 }
 
 function insertProfile(database: PokerDatabase, id: string): void {

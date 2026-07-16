@@ -193,6 +193,9 @@ describe('ProgressionRepository', () => {
         itemId: 'streak-fragment',
         balanceVersion: 1,
         grantedAt: 1_000,
+        source: 'streak',
+        sourceRef: 'event-a',
+        sourceDate: '1970-01-01',
       }),
       'PROGRESSION_TRANSACTION_REQUIRED',
     );
@@ -786,6 +789,7 @@ describe('ProgressionRepository', () => {
       });
     }), 'PROGRESSION_VALUE_INVALID');
 
+    database.db.exec('DROP TRIGGER validate_progression_profile_safe_update;');
     database.db.exec('PRAGMA ignore_check_constraints = ON;');
     database.db.prepare(`
       UPDATE progression_profiles SET completed_hands = -1
@@ -1091,16 +1095,24 @@ describe('ProgressionRepository', () => {
     const key = `streak-fragment:${profileId}:2026-07-17`;
     insertProfile(database, profileId);
     repository.getOrCreate(profileId, 'sakura', 1_000);
+    const grantedAt = Date.parse('2026-07-17T12:00:00+09:00');
     database.transaction(() => {
       repository.insertProgressionEvent({
-        idempotencyKey: key,
+        idempotencyKey: 'corrupt-main-event',
         profileId,
-        eventType: 'streak-fragment',
+        eventType: 'completed-hand',
         balanceVersion: 1,
-        summary: { itemId: 'streak-fragment', quantity: 1 },
-        createdAt: 2_000,
+        summary: {},
+        createdAt: grantedAt,
       });
     });
+    database.db.exec('DROP TRIGGER sync_fragment_inventory_insert;');
+    database.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_date, quantity, granted_at
+      ) VALUES (?, ?, 'streak-fragment', 'streak', ?, '2026-07-17', 1, ?)
+    `).run(key, profileId, 'corrupt-main-event', grantedAt);
 
     expectErrorCode(() => database.transaction(() => {
       repository.grantStackableInventoryItemInTransaction({
@@ -1108,9 +1120,99 @@ describe('ProgressionRepository', () => {
         profileId,
         itemId: 'streak-fragment',
         balanceVersion: 1,
-        grantedAt: 2_000,
+        grantedAt,
+        source: 'streak',
+        sourceRef: 'corrupt-main-event',
+        sourceDate: '2026-07-17',
       });
     }), 'PROGRESSION_PERSISTENCE_INVALID');
+  });
+
+  it('uses a dedicated immutable grant receipt as the source of fragment quantity', () => {
+    const profileId = 'dedicated-fragment-receipt';
+    const sourceDate = '2026-07-17';
+    const key = `streak-fragment:${profileId}:${sourceDate}`;
+    insertProfile(database, profileId);
+    repository.getOrCreate(profileId, 'sakura', 1_000);
+    database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: 'completed-hand:source-event',
+        profileId,
+        eventType: 'completed-hand',
+        balanceVersion: 1,
+        summary: {},
+        createdAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
+      });
+    });
+
+    const first = database.transaction(() => (
+      repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: key,
+        profileId,
+        itemId: 'streak-fragment',
+        balanceVersion: 1,
+        grantedAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
+        source: 'streak',
+        sourceRef: 'completed-hand:source-event',
+        sourceDate,
+      })
+    ));
+    const duplicate = database.transaction(() => (
+      repository.grantStackableInventoryItemInTransaction({
+        idempotencyKey: key,
+        profileId,
+        itemId: 'streak-fragment',
+        balanceVersion: 1,
+        grantedAt: Date.parse(`${sourceDate}T12:00:00+09:00`),
+        source: 'streak',
+        sourceRef: 'completed-hand:source-event',
+        sourceDate,
+      })
+    ));
+
+    expect(first).toBe(true);
+    expect(duplicate).toBe(false);
+    expect(database.db.prepare(`
+      SELECT idempotency_key, source, source_ref, source_date, quantity
+      FROM progression_item_grants WHERE profile_id = ?
+    `).get(profileId)).toEqual({
+      idempotency_key: key,
+      source: 'streak',
+      source_ref: 'completed-hand:source-event',
+      source_date: sourceDate,
+      quantity: 1,
+    });
+    expect(database.db.prepare(`
+      SELECT quantity FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).get(profileId)).toEqual({ quantity: 1 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_events
+      WHERE profile_id = ? AND event_type = 'streak-fragment'
+    `).get(profileId)).toEqual({ count: 0 });
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET quantity = 2
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET updated_at = 9007199254740992
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).run(profileId)).toThrowError('fragment inventory receipt mismatch');
+    expect(() => database?.db.prepare(`
+      DELETE FROM progression_item_grants WHERE profile_id = ?
+    `).run(profileId)).toThrowError('immutable progression item grant');
+
+    database.db.prepare(`
+      DELETE FROM progression_profiles WHERE profile_id = ?
+    `).run(profileId);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_item_grants
+      WHERE profile_id = ?
+    `).get(profileId)).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_items
+      WHERE profile_id = ? AND item_id = 'streak-fragment'
+    `).get(profileId)).toEqual({ count: 0 });
   });
 });
 
