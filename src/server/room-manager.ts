@@ -423,7 +423,22 @@ export class RoomManager {
         this.onUpdate(roomId, room.engine);
       }
     }
+    if (economicLeaveCommitted) this.resumeAfterEconomicLeave(roomId);
     return true;
+  }
+
+  private resumeAfterEconomicLeave(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (
+      !room
+      || room.engine.state.isHandInProgress
+      || room.engine.state.tournament?.finished
+      || this.economyBlockedRooms.has(roomId)
+      || this.unresolvedSettlementRooms.has(roomId)
+    ) {
+      return;
+    }
+    this.tryStartGame(roomId);
   }
 
   private blockEconomicLeave(roomId: string, playerId: string): void {

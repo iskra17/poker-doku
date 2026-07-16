@@ -389,6 +389,60 @@ describe('EconomyRuntime wallet cash lifecycle', () => {
     manager.shutdown();
   });
 
+  it('resumes one pending start after a recovered between-hand cash exit', () => {
+    vi.useFakeTimers();
+    const database = openDatabase();
+    for (const id of ['human-1', 'human-2', 'human-3']) seedProfile(database, id);
+    const runtime = createRuntime(database);
+    const manager = new RoomManager(() => {}, () => {}, undefined, {
+      economy: runtime,
+    });
+    const roomId = manager.createRoom({
+      ...walletCashConfig,
+      botCount: 0,
+      tableType: 'humans',
+    });
+    for (const [id, seat] of [
+      ['human-1', 0],
+      ['human-2', 1],
+      ['human-3', 2],
+    ] as const) {
+      runtime.openCashEscrow(id, roomId, 4_000);
+      manager.joinRoom(roomId, makePlayer(id, 'human', 4_000, seat));
+    }
+    const room = manager.getRoom(roomId)!;
+    vi.spyOn(runtime, 'settleExit').mockImplementationOnce(() => {
+      throw new Error('storage unavailable');
+    });
+
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+    expect(manager.leaveRoom(roomId, 'human-3')).toBe(false);
+    expect(room.engine.state.players).toHaveLength(3);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+
+    vi.advanceTimersByTime(2_001);
+
+    expect(room.engine.state.handNumber).toBe(0);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+
+    expect(manager.leaveRoom(roomId, 'human-3')).toBe(true);
+    expect(room.engine.state.players.map(player => player.id)).toEqual([
+      'human-1',
+      'human-2',
+    ]);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+
+    vi.advanceTimersByTime(1_999);
+    expect(room.engine.state.handNumber).toBe(0);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(1);
+    vi.advanceTimersByTime(1);
+
+    expect(room.engine.state.handNumber).toBe(1);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    expect(manager.getRuntimeStats().pendingStartTimers).toBe(0);
+    manager.shutdown();
+  });
+
   it('cancels only the exact prepared identity when startHand returns without starting', () => {
     vi.useFakeTimers();
     const database = openDatabase();
