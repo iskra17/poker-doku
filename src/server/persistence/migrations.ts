@@ -1722,6 +1722,10 @@ export const migrations: readonly Migration[] = [
         AND (
           SELECT COUNT(*) FROM json_each(source_event.summary_json)
         ) = 9
+        AND (
+          SELECT COUNT(DISTINCT summary_field.key)
+          FROM json_each(source_event.summary_json) AS summary_field
+        ) = 9
         AND NOT EXISTS (
           SELECT 1 FROM json_each(source_event.summary_json) AS summary_field
           WHERE summary_field.key NOT IN (
@@ -1734,7 +1738,8 @@ export const migrations: readonly Migration[] = [
         AND json_extract(source_event.summary_json, '$.eventId')
           = source_event.idempotency_key
         AND json_type(source_event.summary_json, '$.dojoXpMilli') = 'integer'
-        AND json_extract(source_event.summary_json, '$.dojoXpMilli') >= 0
+        AND json_extract(source_event.summary_json, '$.dojoXpMilli')
+          BETWEEN 0 AND 9007199254740991
         AND json_type(source_event.summary_json, '$.dojoLevelsGained') = 'array'
         AND NOT EXISTS (
           SELECT 1
@@ -1767,7 +1772,8 @@ export const migrations: readonly Migration[] = [
           'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
         )
         AND json_type(source_event.summary_json, '$.affinityMilli') = 'integer'
-        AND json_extract(source_event.summary_json, '$.affinityMilli') >= 0
+        AND json_extract(source_event.summary_json, '$.affinityMilli')
+          BETWEEN 0 AND 9007199254740991
         AND json_type(
           source_event.summary_json,
           '$.affinityLevelsGained'
@@ -1900,6 +1906,13 @@ export const migrations: readonly Migration[] = [
           SELECT COUNT(*)
           FROM json_each(source_event.summary_json, '$.streak')
         ) = 3
+        AND (
+          SELECT COUNT(DISTINCT streak_field.key)
+          FROM json_each(
+            source_event.summary_json,
+            '$.streak'
+          ) AS streak_field
+        ) = 3
         AND NOT EXISTS (
           SELECT 1
           FROM json_each(source_event.summary_json, '$.streak') AS streak_field
@@ -1914,7 +1927,7 @@ export const migrations: readonly Migration[] = [
         AND json_extract(
           source_event.summary_json,
           '$.streak.previousStreak'
-        ) >= 0
+        ) BETWEEN 0 AND 9007199254740991
         AND json_type(
           source_event.summary_json,
           '$.streak.currentStreak'
@@ -1922,7 +1935,7 @@ export const migrations: readonly Migration[] = [
         AND json_extract(
           source_event.summary_json,
           '$.streak.currentStreak'
-        ) > 0
+        ) BETWEEN 1 AND 9007199254740991
         AND json_extract(
           source_event.summary_json,
           '$.streak.currentStreak'

@@ -1566,6 +1566,193 @@ describe('PokerDatabase migrations', () => {
     }
   });
 
+  it.each([
+    {
+      corruption: 'unsafe dojo XP',
+      mutate: (json: string) => json.replace(
+        '"dojoXpMilli":30000',
+        '"dojoXpMilli":9007199254740992',
+      ),
+    },
+    {
+      corruption: 'unsafe affinity XP',
+      mutate: (json: string) => json.replace(
+        '"affinityMilli":8000',
+        '"affinityMilli":9007199254740992',
+      ),
+    },
+    {
+      corruption: 'unsafe streak counters',
+      mutate: (json: string) => json
+        .replace('"previousStreak":6', '"previousStreak":9007199254740994')
+        .replace('"currentStreak":7', '"currentStreak":9007199254740995'),
+    },
+    {
+      corruption: 'duplicate summary keys',
+      mutate: (json: string) => json.replace(
+        '"dojoXpMilli":30000',
+        '"dojoXpMilli":30000,"dojoXpMilli":30000',
+      ),
+    },
+    {
+      corruption: 'duplicate streak keys',
+      mutate: (json: string) => json.replace(
+        '"previousStreak":6',
+        '"previousStreak":6,"previousStreak":6',
+      ),
+    },
+  ])('rejects an existing V9 source with $corruption atomically', ({
+    mutate,
+  }) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV8FragmentDatabase(path);
+    applyV9Migration(path);
+    const rawDatabase = new DatabaseSync(path);
+    const corrupted = mutate(fragmentSourceSummaryJson('sng-finish:legacy-main'));
+    bypassTrigger(rawDatabase, 'reject_fragment_source_event_update', `
+      UPDATE progression_events SET summary_json = '${corrupted}'
+      WHERE idempotency_key = 'sng-finish:legacy-main';
+    `);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 9 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it.each([
+    {
+      corruption: 'unsafe dojo XP',
+      mutate: (json: string) => json.replace(
+        '"dojoXpMilli":30000',
+        '"dojoXpMilli":9007199254740992',
+      ),
+    },
+    {
+      corruption: 'unsafe affinity XP',
+      mutate: (json: string) => json.replace(
+        '"affinityMilli":8000',
+        '"affinityMilli":9007199254740992',
+      ),
+    },
+    {
+      corruption: 'unsafe streak counters',
+      mutate: (json: string) => json
+        .replace('"previousStreak":6', '"previousStreak":9007199254740994')
+        .replace('"currentStreak":7', '"currentStreak":9007199254740995'),
+    },
+    {
+      corruption: 'duplicate summary keys',
+      mutate: (json: string) => json.replace(
+        '"dojoXpMilli":30000',
+        '"dojoXpMilli":30000,"dojoXpMilli":30000',
+      ),
+    },
+    {
+      corruption: 'duplicate streak keys',
+      mutate: (json: string) => json.replace(
+        '"previousStreak":6',
+        '"previousStreak":6,"previousStreak":6',
+      ),
+    },
+  ])('rejects a current raw source with $corruption before inventory', ({
+    mutate,
+  }) => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'unsafe-current-source');
+    const at = Date.parse('2026-07-17T12:00:00+09:00');
+    database.db.prepare(`
+      INSERT INTO progression_profiles VALUES (
+        'unsafe-current-source', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 7, ?, ?
+      )
+    `).run(at, at);
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'unsafe-current-source', '2026-07-17', 0, 1, ?
+      )
+    `).run(at);
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'unsafe-current-main', 'unsafe-current-source',
+        'sng-finish', 1, ?, ?
+      )
+    `).run(mutate(fragmentSourceSummaryJson('unsafe-current-main')), at);
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (
+        'streak-fragment:unsafe-current-source:2026-07-17',
+        'unsafe-current-source', 'streak-fragment', 'streak',
+        'streak-fragment:unsafe-current-source:2026-07-17',
+        'unsafe-current-main', '2026-07-17', 1, ?
+      )
+    `).run(at)).toThrowError('invalid progression item grant source');
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM progression_item_grants
+      WHERE profile_id = 'unsafe-current-source'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_items
+      WHERE profile_id = 'unsafe-current-source'
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('accepts max-safe canonical source integers at the current boundary', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'max-safe-current-source');
+    const at = Date.parse('2026-07-17T12:00:00+09:00');
+    database.db.prepare(`
+      INSERT INTO progression_profiles VALUES (
+        'max-safe-current-source', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 7, ?, ?
+      )
+    `).run(at, at);
+    database.db.prepare(`
+      INSERT INTO streak_daily_progress VALUES (
+        'max-safe-current-source', '2026-07-17', 0, 1, ?
+      )
+    `).run(at);
+    const summary = fragmentSourceSummaryJson('max-safe-current-main')
+      .replace('"dojoXpMilli":30000', '"dojoXpMilli":9007199254740991')
+      .replace('"affinityMilli":8000', '"affinityMilli":9007199254740991')
+      .replace('"previousStreak":6', '"previousStreak":9007199254740987')
+      .replace('"currentStreak":7', '"currentStreak":9007199254740988');
+    database.db.prepare(`
+      INSERT INTO progression_events VALUES (
+        'max-safe-current-main', 'max-safe-current-source',
+        'sng-finish', 1, ?, ?
+      )
+    `).run(summary, at);
+    database.db.prepare(`
+      INSERT INTO progression_item_grants (
+        idempotency_key, profile_id, item_id, source, source_ref,
+        source_event_id, source_date, quantity, granted_at
+      ) VALUES (
+        'streak-fragment:max-safe-current-source:2026-07-17',
+        'max-safe-current-source', 'streak-fragment', 'streak',
+        'streak-fragment:max-safe-current-source:2026-07-17',
+        'max-safe-current-main', '2026-07-17', 1, ?
+      )
+    `).run(at);
+
+    expect(database.db.prepare(`
+      SELECT quantity FROM inventory_items
+      WHERE profile_id = 'max-safe-current-source'
+        AND item_id = 'streak-fragment'
+    `).get()).toEqual({ quantity: 1 });
+  });
+
   it('rejects a fragment grant whose source summary does not prove the claim', () => {
     database = openPokerDatabase(':memory:');
     insertProfile(database, 'invalid-source-summary');
@@ -2526,6 +2713,24 @@ function insertValidV7FragmentGrant(
     }),
     grantedAt,
   );
+}
+
+function fragmentSourceSummaryJson(eventId: string): string {
+  return JSON.stringify({
+    eventId,
+    dojoXpMilli: 30_000,
+    dojoLevelsGained: [],
+    characterId: 'sakura',
+    affinityMilli: 8_000,
+    affinityLevelsGained: [],
+    missionCompletions: [],
+    streak: {
+      previousStreak: 6,
+      currentStreak: 7,
+      restPassUsed: false,
+    },
+    grantedItemIds: ['streak-fragment'],
+  });
 }
 
 function insertProfile(database: PokerDatabase, id: string): void {
