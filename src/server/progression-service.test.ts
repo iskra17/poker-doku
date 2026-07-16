@@ -1,0 +1,501 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import {
+  ProgressionPersistenceError,
+  ProgressionRepository,
+} from './progression-repository';
+import {
+  ProgressionService,
+  ProgressionServiceError,
+  buildCompletedHandEventId,
+} from './progression-service';
+
+describe('ProgressionService', () => {
+  let database: PokerDatabase;
+  let repository: ProgressionRepository;
+  let service: ProgressionService;
+
+  beforeEach(() => {
+    database = openPokerDatabase(':memory:');
+    repository = new ProgressionRepository(database);
+    service = new ProgressionService(database, repository);
+  });
+
+  afterEach(() => {
+    database.close();
+  });
+
+  it('awards a cash hand from completion only and updates exact counters', () => {
+    insertProfile(database, 'profile-a');
+
+    const summary = service.recordCompletedHand({
+      profileId: 'profile-a',
+      roomId: 'cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    });
+
+    expect(summary).toEqual({
+      eventId: buildCompletedHandEventId('profile-a', 'cash-room', 1),
+      dojoXpMilli: 10_000,
+      dojoLevelsGained: [],
+      characterId: 'sakura',
+      affinityMilli: 2_000,
+      affinityLevelsGained: [],
+      missionCompletions: [],
+      grantedItemIds: [],
+    });
+    expect(Object.isFrozen(summary)).toBe(true);
+    const snapshot = repository.getOrCreate('profile-a', 'sakura', 2_000);
+    expect(snapshot.profile).toMatchObject({
+      dojoLevel: 1,
+      dojoXpMilli: 10_000,
+      completedHands: 1,
+      cashHands: 1,
+      practiceHandsTotal: 0,
+      sngCompletions: 0,
+    });
+    expect(snapshot.affinities).toContainEqual({
+      profileId: 'profile-a',
+      characterId: 'sakura',
+      level: 1,
+      xpMilli: 2_000,
+    });
+    expect(database.db.prepare(`
+      SELECT event_type, balance_version FROM progression_events
+      WHERE idempotency_key = ?
+    `).get(summary.eventId)).toEqual({
+      event_type: 'completed-hand',
+      balance_version: 1,
+    });
+    expect(rowCount(database, 'wallets')).toBe(0);
+  });
+
+  it('applies full practice rewards for 30 hands and reduced exact rewards later', () => {
+    insertProfile(database, 'practice-profile');
+    for (let handNumber = 1; handNumber <= 30; handNumber += 1) {
+      service.recordCompletedHand({
+        profileId: 'practice-profile',
+        roomId: 'practice-room',
+        handNumber,
+        mode: 'practice',
+        selectedCharacterId: 'hana',
+        completedAt: Date.parse('2026-07-17T03:00:00+09:00') + handNumber,
+      });
+    }
+    const before = repository.getOrCreate('practice-profile', 'hana', 1);
+
+    const summaries = [31, 32, 33, 34].map(handNumber => (
+      service.recordCompletedHand({
+        profileId: 'practice-profile',
+        roomId: 'practice-room',
+        handNumber,
+        mode: 'practice',
+        selectedCharacterId: 'hana',
+        completedAt: Date.parse('2026-07-17T04:00:00+09:00') + handNumber,
+      })
+    ));
+
+    expect(summaries[0]).toMatchObject({
+      dojoXpMilli: 2_500,
+      affinityMilli: 500,
+    });
+    expect(summaries.reduce((sum, value) => sum + value.dojoXpMilli, 0))
+      .toBe(10_000);
+    expect(summaries.reduce((sum, value) => sum + value.affinityMilli, 0))
+      .toBe(2_000);
+    const after = repository.getOrCreate('practice-profile', 'hana', 2);
+    expect(after.profile.practiceDate).toBe('2026-07-17');
+    expect(after.profile.practiceHands).toBe(34);
+    expect(after.profile.completedHands).toBe(34);
+    expect(after.profile.practiceHandsTotal).toBe(34);
+    expect(totalDojoMilli(after.profile) - totalDojoMilli(before.profile))
+      .toBe(10_000);
+    expect(totalAffinityMilli(after.affinities[0])
+      - totalAffinityMilli(before.affinities[0])).toBe(2_000);
+  });
+
+  it('resets the practice counter exactly at KST midnight', () => {
+    insertProfile(database, 'rollover-profile');
+    const beforeMidnight = Date.parse('2026-07-17T23:59:59.000+09:00');
+    for (let handNumber = 1; handNumber <= 31; handNumber += 1) {
+      service.recordCompletedHand({
+        profileId: 'rollover-profile',
+        roomId: 'practice-room',
+        handNumber,
+        mode: 'practice',
+        selectedCharacterId: 'ara',
+        completedAt: beforeMidnight + handNumber,
+      });
+    }
+
+    const summary = service.recordCompletedHand({
+      profileId: 'rollover-profile',
+      roomId: 'practice-room',
+      handNumber: 32,
+      mode: 'practice',
+      selectedCharacterId: 'ara',
+      completedAt: Date.parse('2026-07-18T00:00:00.000+09:00'),
+    });
+
+    expect(summary).toMatchObject({ dojoXpMilli: 10_000, affinityMilli: 2_000 });
+    expect(repository.getOrCreate('rollover-profile', 'ara', 3).profile)
+      .toMatchObject({ practiceDate: '2026-07-18', practiceHands: 1 });
+  });
+
+  it.each([
+    [1, 160_000, 30_000],
+    [2, 100_000, 20_000],
+    [3, 70_000, 15_000],
+    [4, 50_000, 12_000],
+    [5, 40_000, 10_000],
+    [6, 30_000, 8_000],
+  ])('awards SNG place %i without changing completed-hand counters', (
+    place,
+    dojoXpMilli,
+    affinityMilli,
+  ) => {
+    const profileId = `sng-profile-${place}`;
+    insertProfile(database, profileId);
+
+    const summary = service.recordSngFinish({
+      profileId,
+      roomId: 'sng-room',
+      place,
+      selectedCharacterId: 'chloe',
+      completedAt: 10_000 + place,
+    });
+
+    expect(summary).toMatchObject({
+      dojoXpMilli,
+      characterId: 'chloe',
+      affinityMilli,
+    });
+    expect(repository.getOrCreate(profileId, 'chloe', 20_000).profile)
+      .toMatchObject({
+        completedHands: 0,
+        cashHands: 0,
+        practiceHandsTotal: 0,
+        sngCompletions: 1,
+      });
+  });
+
+  it('records every crossed dojo and affinity level in the summary', () => {
+    insertProfile(database, 'levels-profile');
+    repository.getOrCreate('levels-profile', 'sakura', 1_000);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_xp_milli = 99000
+      WHERE profile_id = 'levels-profile'
+    `).run();
+    database.db.prepare(`
+      UPDATE character_affinity SET xp_milli = 39000
+      WHERE profile_id = 'levels-profile' AND character_id = 'sakura'
+    `).run();
+
+    const summary = service.recordSngFinish({
+      profileId: 'levels-profile',
+      roomId: 'level-sng',
+      place: 1,
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    });
+
+    expect(summary.dojoLevelsGained).toEqual([2, 3]);
+    expect(summary.affinityLevelsGained).toEqual([2]);
+  });
+
+  it('does not let stale caller state redirect affinity', () => {
+    insertProfile(database, 'character-profile');
+    repository.getOrCreate('character-profile', 'sakura', 1_000);
+
+    expectServiceError(() => service.recordCompletedHand({
+      profileId: 'character-profile',
+      roomId: 'cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'hana',
+      completedAt: 2_000,
+    }), 'PROGRESSION_CHARACTER_STALE');
+
+    const snapshot = repository.getOrCreate('character-profile', 'sakura', 3_000);
+    expect(snapshot.profile.dojoXpMilli).toBe(0);
+    expect(snapshot.affinities).toEqual([{
+      profileId: 'character-profile',
+      characterId: 'sakura',
+      level: 1,
+      xpMilli: 0,
+    }]);
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('returns the exact stored duplicate before recomputing or changing timestamps', () => {
+    insertProfile(database, 'duplicate-profile');
+    const first = service.recordCompletedHand({
+      profileId: 'duplicate-profile',
+      roomId: 'cash-room',
+      handNumber: 7,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 5_000,
+    });
+    const firstRow = progressionRow(database, 'duplicate-profile');
+
+    const duplicate = service.recordCompletedHand({
+      profileId: 'duplicate-profile',
+      roomId: 'cash-room',
+      handNumber: 7,
+      mode: 'cash',
+      selectedCharacterId: 'hana',
+      completedAt: 9_000,
+    });
+
+    expect(duplicate).toEqual(first);
+    expect(progressionRow(database, 'duplicate-profile')).toEqual(firstRow);
+    expect(rowCount(database, 'progression_events')).toBe(1);
+  });
+
+  it('rejects an existing key with a conflicting event identity', () => {
+    insertProfile(database, 'conflict-profile');
+    repository.getOrCreate('conflict-profile', 'sakura', 1_000);
+    const key = buildCompletedHandEventId('conflict-profile', 'cash-room', 1);
+    database.transaction(() => {
+      repository.insertProgressionEvent({
+        idempotencyKey: key,
+        profileId: 'conflict-profile',
+        eventType: 'sng-finish',
+        balanceVersion: 1,
+        summary: {},
+        createdAt: 1_500,
+      });
+    });
+
+    expect(() => service.recordCompletedHand({
+      profileId: 'conflict-profile',
+      roomId: 'cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    })).toThrowError(ProgressionPersistenceError);
+    expect(progressionRow(database, 'conflict-profile')).toMatchObject({
+      dojo_xp_milli: 0,
+      completed_hands: 0,
+    });
+  });
+
+  it('keeps same-room hand events distinct for different profiles', () => {
+    insertProfile(database, 'profile-a');
+    insertProfile(database, 'profile-b');
+    const base = {
+      roomId: 'shared-room',
+      handNumber: 42,
+      mode: 'cash' as const,
+      selectedCharacterId: 'sakura',
+      completedAt: 5_000,
+    };
+
+    const a = service.recordCompletedHand({ profileId: 'profile-a', ...base });
+    const b = service.recordCompletedHand({ profileId: 'profile-b', ...base });
+
+    expect(a.eventId).not.toBe(b.eventId);
+    expect(rowCount(database, 'progression_events')).toBe(2);
+  });
+
+  it('rolls back all growth when a CAS write or event insertion fails', () => {
+    for (const [profileId, triggerSql] of [
+      ['cas-profile', `
+        CREATE TRIGGER fail_progression_cas
+        BEFORE UPDATE OF completed_hands ON progression_profiles
+        BEGIN SELECT RAISE(FAIL, 'cas blocked'); END
+      `],
+      ['event-profile', `
+        CREATE TRIGGER fail_progression_event
+        BEFORE INSERT ON progression_events
+        BEGIN SELECT RAISE(FAIL, 'event blocked'); END
+      `],
+    ] as const) {
+      insertProfile(database, profileId);
+      repository.getOrCreate(profileId, 'sakura', 1_000);
+      database.db.exec(`${triggerSql};`);
+
+      expect(() => service.recordCompletedHand({
+        profileId,
+        roomId: `${profileId}-room`,
+        handNumber: 1,
+        mode: 'cash',
+        selectedCharacterId: 'sakura',
+        completedAt: 2_000,
+      })).toThrow();
+
+      expect(progressionRow(database, profileId)).toMatchObject({
+        dojo_level: 1,
+        dojo_xp_milli: 0,
+        completed_hands: 0,
+      });
+      expect(affinityRow(database, profileId)).toMatchObject({
+        level: 1,
+        xp_milli: 0,
+      });
+      expect(rowCount(database, 'progression_events', profileId)).toBe(0);
+      database.db.exec(`DROP TRIGGER ${profileId === 'cas-profile'
+        ? 'fail_progression_cas'
+        : 'fail_progression_event'}`);
+    }
+  });
+
+  it('fails safely for an unknown persisted balance version', () => {
+    insertProfile(database, 'future-profile');
+    repository.getOrCreate('future-profile', 'sakura', 1_000);
+    database.db.prepare(`
+      UPDATE progression_profiles SET balance_version = 2
+      WHERE profile_id = 'future-profile'
+    `).run();
+
+    expect(() => service.recordCompletedHand({
+      profileId: 'future-profile',
+      roomId: 'cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    })).toThrowError('PROGRESSION_PERSISTENCE_INVALID');
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('rejects a counter overflow without granting partial growth', () => {
+    insertProfile(database, 'overflow-profile');
+    repository.getOrCreate('overflow-profile', 'sakura', 1_000);
+    database.db.prepare(`
+      UPDATE progression_profiles SET completed_hands = ?
+      WHERE profile_id = 'overflow-profile'
+    `).run(Number.MAX_SAFE_INTEGER);
+
+    expectServiceError(() => service.recordCompletedHand({
+      profileId: 'overflow-profile',
+      roomId: 'cash-room',
+      handNumber: 1,
+      mode: 'cash',
+      selectedCharacterId: 'sakura',
+      completedAt: 2_000,
+    }), 'PROGRESSION_COUNTER_OVERFLOW');
+
+    expect(progressionRow(database, 'overflow-profile')).toMatchObject({
+      dojo_xp_milli: 0,
+      completed_hands: Number.MAX_SAFE_INTEGER,
+    });
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+
+  it('rejects malformed inputs before touching the database', () => {
+    insertProfile(database, 'input-profile');
+    const valid = {
+      profileId: 'input-profile',
+      roomId: 'room-a',
+      handNumber: 1,
+      mode: 'cash' as const,
+      selectedCharacterId: 'sakura',
+      completedAt: 1_000,
+    };
+    for (const patch of [
+      { profileId: '' },
+      { profileId: 'x'.repeat(129) },
+      { roomId: '' },
+      { roomId: 'x'.repeat(129) },
+      { handNumber: 0 },
+      { handNumber: 1.5 },
+      { mode: 'arena' },
+      { selectedCharacterId: 'dealer' },
+      { completedAt: -1 },
+      { completedAt: Number.MAX_SAFE_INTEGER + 1 },
+    ]) {
+      expectServiceError(
+        () => service.recordCompletedHand({ ...valid, ...patch } as never),
+        'PROGRESSION_INPUT_INVALID',
+      );
+    }
+    for (const place of [0, 7, 1.5]) {
+      expectServiceError(() => service.recordSngFinish({
+        profileId: 'input-profile',
+        roomId: 'sng-room',
+        place,
+        selectedCharacterId: 'sakura',
+        completedAt: 1_000,
+      }), 'PROGRESSION_INPUT_INVALID');
+    }
+    expect(rowCount(database, 'progression_profiles')).toBe(0);
+    expect(rowCount(database, 'progression_events')).toBe(0);
+  });
+});
+
+function insertProfile(database: PokerDatabase, id: string): void {
+  database.db.prepare(`
+    INSERT INTO profiles (
+      id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+      alias, avatar_id, adult_confirmed_at, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, 'sakura', 1, 1, 1)
+  `).run(
+    id,
+    `credential-hash-${id}`,
+    `credential-lookup-${id}`,
+    `recovery-hash-${id}`,
+    `recovery-lookup-${id}`,
+    `alias-${id}`,
+  );
+}
+
+function rowCount(
+  database: PokerDatabase,
+  table: string,
+  profileId?: string,
+): number {
+  const row = (profileId === undefined
+    ? database.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()
+    : database.db.prepare(
+      `SELECT COUNT(*) AS count FROM ${table} WHERE profile_id = ?`,
+    ).get(profileId)) as { count: number };
+  return row.count;
+}
+
+function progressionRow(database: PokerDatabase, profileId: string) {
+  return database.db.prepare(`
+    SELECT * FROM progression_profiles WHERE profile_id = ?
+  `).get(profileId) as Record<string, unknown>;
+}
+
+function affinityRow(database: PokerDatabase, profileId: string) {
+  return database.db.prepare(`
+    SELECT level, xp_milli FROM character_affinity WHERE profile_id = ?
+  `).get(profileId) as Record<string, unknown>;
+}
+
+function totalDojoMilli(value: { dojoLevel: number; dojoXpMilli: number }): number {
+  let total = value.dojoXpMilli;
+  for (let level = 1; level < value.dojoLevel; level += 1) {
+    total += (100 + 25 * (level - 1)) * 1_000;
+  }
+  return total;
+}
+
+function totalAffinityMilli(value: { level: number; xpMilli: number }): number {
+  let total = value.xpMilli;
+  for (let level = 1; level < value.level; level += 1) {
+    total += (40 + 15 * (level - 1)) * 1_000;
+  }
+  return total;
+}
+
+function expectServiceError(
+  work: () => unknown,
+  code: ProgressionServiceError['code'],
+): void {
+  let thrown: unknown;
+  try {
+    work();
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(ProgressionServiceError);
+  expect((thrown as ProgressionServiceError).code).toBe(code);
+}
