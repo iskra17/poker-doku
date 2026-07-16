@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PublicProfile } from '@/lib/profile/types';
 import {
+  EconomyDomainError,
+  type EconomyService,
+} from './economy-service';
+import {
   HttpConcurrencyLimitError,
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -28,8 +32,14 @@ export type ProfileHttpManager = Pick<
   | 'deleteProfile'
 >;
 
+export type EconomyHttpService = Pick<
+  EconomyService,
+  'claimDaily' | 'claimRescue'
+>;
+
 export interface ProfileHttpOptions {
   manager: ProfileHttpManager;
+  economyService: EconomyHttpService;
   rateLimiter: TransientHttpRateLimiter;
   concurrencyGate?: TransientHttpConcurrencyGate;
   production: boolean;
@@ -57,6 +67,8 @@ const PROFILE_ROUTES = new Map<string, string>([
   ['/api/profile/recover', 'POST'],
   ['/api/profile/recovery/rotate', 'POST'],
   ['/api/profile', 'DELETE'],
+  ['/api/economy/daily', 'POST'],
+  ['/api/economy/rescue', 'POST'],
 ]);
 
 export function isProfileHttpPath(pathname: string | null): boolean {
@@ -247,11 +259,17 @@ function allowOperation(
   request: IncomingMessage,
   response: ServerResponse,
   options: ProfileHttpOptions,
-  operation: 'profileCreate' | 'profileRecover' | 'profileAuth',
+  operation:
+    | 'profileCreate'
+    | 'profileRecover'
+    | 'profileAuth'
+    | 'daily'
+    | 'rescue',
 ): boolean {
   if (options.rateLimiter.allow(operation, remoteAddress(request, options))) {
     return true;
   }
+  drainRequest(request);
   sendError(
     response,
     429,
@@ -259,6 +277,52 @@ function allowOperation(
     '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.',
   );
   return false;
+}
+
+function sendEconomyDomainError(
+  response: ServerResponse,
+  error: EconomyDomainError,
+  production: boolean,
+): void {
+  if (error.code === 'PROFILE_NOT_FOUND') {
+    invalidAuthentication(response, production);
+    return;
+  }
+
+  const messages: Partial<Record<typeof error.code, string>> = {
+    DAILY_ALREADY_CLAIMED: '오늘의 무료 칩을 이미 받았습니다.',
+    RESCUE_ACTIVE_ESCROW: '참가 중인 게임 칩을 먼저 정산해 주세요.',
+    RESCUE_NOT_ELIGIBLE: '현재 잔액은 구제 칩 지급 대상이 아닙니다.',
+    RESCUE_DAILY_LIMIT: '오늘의 구제 칩 지급 횟수를 모두 사용했습니다.',
+    RESCUE_COOLDOWN: '구제 칩을 다시 받으려면 조금 더 기다려 주세요.',
+  };
+  const message = messages[error.code];
+  if (!message) {
+    sendError(response, 500, 'INTERNAL_ERROR', '요청을 처리하지 못했습니다.');
+    return;
+  }
+
+  const timed = error.code === 'DAILY_ALREADY_CLAIMED'
+    || error.code === 'RESCUE_DAILY_LIMIT'
+    || error.code === 'RESCUE_COOLDOWN';
+  if (timed) {
+    if (
+      !Number.isSafeInteger(error.availableAt)
+      || (error.availableAt as number) < 0
+    ) {
+      sendError(response, 500, 'INTERNAL_ERROR', '요청을 처리하지 못했습니다.');
+      return;
+    }
+    sendJson(response, 409, {
+      error: {
+        code: error.code,
+        message,
+        availableAt: error.availableAt,
+      },
+    });
+    return;
+  }
+  sendError(response, 409, error.code, message);
 }
 
 function invalidAuthentication(
@@ -448,6 +512,34 @@ async function handleDelete(
   });
 }
 
+async function handleEconomyClaim(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: ProfileHttpOptions,
+  operation: 'daily' | 'rescue',
+): Promise<void> {
+  if (!allowOperation(request, response, options, operation)) return;
+  const body = await readJson(request, true);
+  if (!hasExactKeys(body, [])) {
+    sendError(response, 400, 'BAD_REQUEST', '요청 본문은 빈 객체여야 합니다.');
+    return;
+  }
+  await runKdfRequest(options, async () => {
+    const profile = await authenticate(request, response, options);
+    if (!profile) return;
+    const result = operation === 'daily'
+      ? options.economyService.claimDaily(profile.id)
+      : options.economyService.claimRescue(profile.id);
+    sendJson(response, 200, {
+      profile: result.profile,
+      transaction: {
+        reason: result.transaction.reason,
+        delta: result.transaction.delta,
+      },
+    });
+  });
+}
+
 export function createProfileHttpHandler(options: ProfileHttpOptions): (
   request: IncomingMessage,
   response: ServerResponse,
@@ -489,6 +581,12 @@ export function createProfileHttpHandler(options: ProfileHttpOptions): (
         case '/api/profile':
           await handleDelete(request, response, resolvedOptions);
           break;
+        case '/api/economy/daily':
+          await handleEconomyClaim(request, response, resolvedOptions, 'daily');
+          break;
+        case '/api/economy/rescue':
+          await handleEconomyClaim(request, response, resolvedOptions, 'rescue');
+          break;
       }
     } catch (error) {
       if (response.writableEnded) return true;
@@ -510,6 +608,8 @@ export function createProfileHttpHandler(options: ProfileHttpOptions): (
         );
       } else if (error instanceof ProfileDomainError) {
         sendDomainError(response, error, options.production);
+      } else if (error instanceof EconomyDomainError) {
+        sendEconomyDomainError(response, error, options.production);
       } else {
         sendError(response, 500, 'INTERNAL_ERROR', '요청을 처리하지 못했습니다.');
       }

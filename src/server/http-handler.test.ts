@@ -75,4 +75,29 @@ describe('커스텀 서버 HTTP 경계', () => {
 
     expect(createWithoutLimiter).toBeTypeOf('function');
   });
+
+  it('rejects a profile router without an injected economy service', () => {
+    const nextHandler = vi.fn<NextRequestHandler>();
+    const unsafeOptions = {
+      profileManager: {} as ProfileHttpManager,
+      profileRateLimiter: { allow: vi.fn() },
+    } as unknown as HttpHandlerOptions;
+
+    expect(() => createHttpRequestHandler(nextHandler, unsafeOptions))
+      .toThrowError('ECONOMY_SERVICE_REQUIRED');
+  });
+
+  it('requires an economy service at the TypeScript boundary', () => {
+    const nextHandler = vi.fn<NextRequestHandler>();
+    const profileManager = {} as ProfileHttpManager;
+    const profileRateLimiter = { allow: vi.fn() };
+
+    const createWithoutEconomy = (): unknown => createHttpRequestHandler(
+      nextHandler,
+      // @ts-expect-error profile router requires an economy service.
+      { profileManager, profileRateLimiter },
+    );
+
+    expect(createWithoutEconomy).toBeTypeOf('function');
+  });
 });

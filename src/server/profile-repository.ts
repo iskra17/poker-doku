@@ -1,4 +1,5 @@
 import type { PublicProfile } from '@/lib/profile/types';
+import { ECONOMY_RULES } from './economy-service';
 import type { PokerDatabase } from './persistence/database';
 
 export interface StoredProfileCreation {
@@ -29,8 +30,6 @@ export type ProfileDeletionResult =
   | 'deleted'
   | 'not-found'
   | 'active-escrow';
-
-const STARTING_CHIPS = 10_000;
 
 export class ProfileRepository {
   constructor(private readonly database: PokerDatabase) {}
@@ -90,7 +89,7 @@ export class ProfileRepository {
       this.database.db.prepare(`
         INSERT INTO wallets (profile_id, balance, updated_at)
         VALUES (?, ?, ?)
-      `).run(profile.id, STARTING_CHIPS, profile.now);
+      `).run(profile.id, ECONOMY_RULES.startingChips, profile.now);
       this.database.db.prepare(`
         INSERT INTO chip_ledger (
           id,
@@ -105,7 +104,7 @@ export class ProfileRepository {
       `).run(
         `ledger-profile-start:${profile.id}`,
         profile.id,
-        STARTING_CHIPS,
+        ECONOMY_RULES.startingChips,
         `profile-start:${profile.id}`,
         profile.now,
       );
@@ -114,7 +113,7 @@ export class ProfileRepository {
         id: profile.id,
         alias: profile.alias,
         avatarId: profile.avatarId,
-        wallet: { balance: STARTING_CHIPS, activeEscrow: 0 },
+        wallet: { balance: ECONOMY_RULES.startingChips, activeEscrow: 0 },
       };
     });
   }

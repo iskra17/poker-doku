@@ -5,6 +5,8 @@ import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
+import { EconomyRepository } from './economy-repository';
+import { EconomyService } from './economy-service';
 import {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -76,6 +78,8 @@ async function listen(): Promise<void> {
   database = openPokerDatabase(databasePath);
   const profileRepository = new ProfileRepository(database);
   const profileManager = new ProfileManager(profileRepository);
+  const economyRepository = new EconomyRepository(database);
+  const economyService = new EconomyService(economyRepository);
   profileRateLimiter = new TransientHttpRateLimiter();
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
 
@@ -83,6 +87,7 @@ async function listen(): Promise<void> {
   const server = createServer(createHttpRequestHandler(handle, {
     database,
     profileManager,
+    economyService,
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,

@@ -1,7 +1,16 @@
-import { createServer } from 'node:http';
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { PublicProfile } from '@/lib/profile/types';
+import {
+  EconomyDomainError,
+  EconomyService,
+} from './economy-service';
+import { EconomyRepository } from './economy-repository';
 import {
   createHttpRequestHandler,
   type NextRequestHandler,
@@ -17,6 +26,7 @@ import {
 } from './profile-manager';
 import {
   PROFILE_COOKIE_NAME,
+  createProfileHttpHandler,
   readProfileCredentialCookie,
   type ProfileHttpManager,
 } from './profile-http';
@@ -28,6 +38,8 @@ interface RunningServer {
   baseUrl: string;
   database: PokerDatabase;
   manager: ProfileManager;
+  economyRepository: EconomyRepository;
+  economyService: Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
   stop: () => Promise<void>;
 }
 
@@ -44,9 +56,14 @@ async function startServer(options: {
   gate?: TransientHttpConcurrencyGate;
   nextHandler?: Mock<NextRequestHandler>;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  economyClock?: () => number;
+  economyService?: Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
 } = {}): Promise<RunningServer & { nextHandler: Mock<NextRequestHandler> }> {
   const database = openPokerDatabase(':memory:');
   const manager = new ProfileManager(new ProfileRepository(database));
+  const economyRepository = new EconomyRepository(database);
+  const economyService = options.economyService
+    ?? new EconomyService(economyRepository, options.economyClock);
   const limiter = options.limiter ?? new TransientHttpRateLimiter();
   const nextHandler = options.nextHandler ?? vi.fn<NextRequestHandler>((_req, res) => {
     res.writeHead(200, { 'content-type': 'text/plain' });
@@ -55,6 +72,7 @@ async function startServer(options: {
   const server = createServer(createHttpRequestHandler(nextHandler, {
     database,
     profileManager: options.manager ?? manager,
+    economyService,
     profileRateLimiter: limiter,
     profileConcurrencyGate: options.gate,
     onProfileRevoked: options.onProfileRevoked,
@@ -66,6 +84,8 @@ async function startServer(options: {
     baseUrl: `http://127.0.0.1:${port}`,
     database,
     manager,
+    economyRepository,
+    economyService,
     nextHandler,
     stop: async () => {
       await new Promise<void>(resolve => server.close(() => resolve()));
@@ -545,5 +565,308 @@ describe('profile HTTP lifecycle', () => {
       headers: { cookie: `${PROFILE_COOKIE}=${'c'.repeat(43)}` },
     });
     expect(afterRelease.status).toBe(200);
+  });
+
+  it('claims the daily grant over authenticated HTTP with an exact safe response', async () => {
+    const now = Date.parse('2026-07-15T14:59:59.999Z');
+    const server = await startServer({ economyClock: () => now });
+    const created = await createProfile(server);
+
+    const granted = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: created.cookie },
+    });
+    const grantedBody = await granted.json() as Record<string, unknown>;
+    const repeated = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: {
+        cookie: created.cookie,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    });
+    const repeatedBody = await repeated.json() as {
+      error: Record<string, unknown>;
+    };
+
+    expect(granted.status).toBe(200);
+    expect(grantedBody).toEqual({
+      profile: {
+        ...(created.body.profile as PublicProfile),
+        wallet: { balance: 11_000, activeEscrow: 0 },
+      },
+      transaction: { reason: 'DAILY_GRANT', delta: 1_000 },
+    });
+    expect(Object.keys(grantedBody).sort()).toEqual(['profile', 'transaction']);
+    const safeText = JSON.stringify(grantedBody);
+    expect(safeText).not.toContain(cookieCredential(created.response));
+    expect(safeText).not.toContain('127.0.0.1');
+    expect(granted.headers.get('set-cookie')).toBeNull();
+    expectNoStore(granted);
+
+    expect(repeated.status).toBe(409);
+    expect(Object.keys(repeatedBody)).toEqual(['error']);
+    expect(Object.keys(repeatedBody.error).sort())
+      .toEqual(['availableAt', 'code', 'message']);
+    expect(repeatedBody.error).toMatchObject({
+      code: 'DAILY_ALREADY_CLAIMED',
+      availableAt: Date.parse('2026-07-15T15:00:00.000Z'),
+    });
+    expect(Number.isSafeInteger(repeatedBody.error.availableAt)).toBe(true);
+    expectNoStore(repeated);
+  });
+
+  it('claims rescue and exposes only a safe cooldown timestamp on conflict', async () => {
+    let now = Date.parse('2026-07-15T15:00:00.000Z');
+    const server = await startServer({ economyClock: () => now });
+    const created = await createProfile(server);
+    const profile = created.body.profile as PublicProfile;
+    server.economyRepository.applyWalletDelta(
+      profile.id, -9_201, 'TEST_DRAIN', 'http-rescue-drain-1', undefined, now - 1,
+    );
+
+    const granted = await fetch(`${server.baseUrl}/api/economy/rescue`, {
+      method: 'POST',
+      headers: {
+        cookie: created.cookie,
+        'content-type': 'application/json',
+      },
+      body: '{}',
+    });
+    const grantedBody = await granted.json() as Record<string, unknown>;
+    server.economyRepository.applyWalletDelta(
+      profile.id, -1_201, 'TEST_DRAIN', 'http-rescue-drain-2', undefined, now + 1,
+    );
+    now += 60 * 60 * 1_000;
+    const cooldown = await fetch(`${server.baseUrl}/api/economy/rescue`, {
+      method: 'POST',
+      headers: { cookie: created.cookie },
+    });
+    const cooldownBody = await cooldown.json() as {
+      error: Record<string, unknown>;
+    };
+
+    expect(granted.status).toBe(200);
+    expect(grantedBody).toEqual({
+      profile: {
+        ...profile,
+        wallet: { balance: 2_000, activeEscrow: 0 },
+      },
+      transaction: { reason: 'RESCUE_GRANT', delta: 1_201 },
+    });
+    expectNoStore(granted);
+    expect(cooldown.status).toBe(409);
+    expect(Object.keys(cooldownBody.error).sort())
+      .toEqual(['availableAt', 'code', 'message']);
+    expect(cooldownBody.error).toMatchObject({
+      code: 'RESCUE_COOLDOWN',
+      availableAt: Date.parse('2026-07-15T19:00:00.000Z'),
+    });
+    expect(JSON.stringify(cooldownBody)).not.toContain('127.0.0.1');
+    expectNoStore(cooldown);
+  });
+
+  it('maps rescue eligibility and active escrow failures to safe 409 responses', async () => {
+    const now = Date.parse('2026-07-15T15:00:00.000Z');
+    const server = await startServer({ economyClock: () => now });
+    const ineligible = await createProfile(server);
+    const ineligibleResponse = await fetch(`${server.baseUrl}/api/economy/rescue`, {
+      method: 'POST',
+      headers: { cookie: ineligible.cookie },
+    });
+    const active = await createProfile(server);
+    const activeProfile = active.body.profile as PublicProfile;
+    server.economyRepository.applyWalletDelta(
+      activeProfile.id, -9_201, 'TEST_DRAIN', 'http-active-drain', undefined, now - 1,
+    );
+    server.database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount,
+        checkpoint_amount, checkpoint_hand, status, updated_at
+      ) VALUES (?, ?, 'room-http-economy', 'cash', 0, 0, 0, 'active', ?)
+    `).run('escrow-http-economy', activeProfile.id, now);
+    const activeResponse = await fetch(`${server.baseUrl}/api/economy/rescue`, {
+      method: 'POST',
+      headers: { cookie: active.cookie },
+    });
+
+    expect(ineligibleResponse.status).toBe(409);
+    expect(await ineligibleResponse.json()).toMatchObject({
+      error: { code: 'RESCUE_NOT_ELIGIBLE' },
+    });
+    expect(activeResponse.status).toBe(409);
+    expect(await activeResponse.json()).toMatchObject({
+      error: { code: 'RESCUE_ACTIVE_ESCROW' },
+    });
+  });
+
+  it('requires authentication for both economy operations', async () => {
+    const server = await startServer();
+
+    for (const operation of ['daily', 'rescue']) {
+      const response = await fetch(`${server.baseUrl}/api/economy/${operation}`, {
+        method: 'POST',
+      });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({
+        error: { code: 'PROFILE_AUTH_INVALID' },
+      });
+      expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+      expectNoStore(response);
+    }
+  });
+
+  it('applies the operation limiter before the shared authentication KDF', async () => {
+    const authenticateCredential = vi.fn(async () => null);
+    const manager: ProfileHttpManager = {
+      create: vi.fn(),
+      authenticateCredential,
+      recover: vi.fn(),
+      rotateRecovery: vi.fn(),
+      deleteProfile: vi.fn(),
+    };
+    const economyService = {
+      claimDaily: vi.fn(),
+      claimRescue: vi.fn(),
+    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+    const limiter = new TransientHttpRateLimiter({
+      profileCreate: { limit: 20, windowMs: 60_000 },
+      profileRecover: { limit: 5, windowMs: 60_000 },
+      profileAuth: { limit: 10, windowMs: 60_000 },
+      daily: { limit: 1, windowMs: 60_000 },
+      rescue: { limit: 30, windowMs: 60_000 },
+    });
+    const server = await startServer({ manager, economyService, limiter });
+
+    const first = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: `${PROFILE_COOKIE}=invalid` },
+    });
+    const limited = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: `${PROFILE_COOKIE}=invalid` },
+    });
+
+    expect(first.status).toBe(401);
+    expect(limited.status).toBe(429);
+    expect(authenticateCredential).toHaveBeenCalledOnce();
+    expect(economyService.claimDaily).not.toHaveBeenCalled();
+    expect(JSON.stringify(await limited.json())).not.toContain('127.0.0.1');
+  });
+
+  it('drains a rate-limited economy request body before returning', async () => {
+    const resume = vi.fn();
+    const request = {
+      method: 'POST',
+      headers: {},
+      socket: { remoteAddress: '127.0.0.1' },
+      on: vi.fn(),
+      resume,
+    } as unknown as IncomingMessage;
+    const response = {
+      writableEnded: false,
+      writeHead: vi.fn(),
+      end: vi.fn(),
+    } as unknown as ServerResponse;
+    const manager: ProfileHttpManager = {
+      create: vi.fn(),
+      authenticateCredential: vi.fn(),
+      recover: vi.fn(),
+      rotateRecovery: vi.fn(),
+      deleteProfile: vi.fn(),
+    };
+    const economyService = {
+      claimDaily: vi.fn(),
+      claimRescue: vi.fn(),
+    } as unknown as Pick<EconomyService, 'claimDaily' | 'claimRescue'>;
+    const rateLimiter = {
+      allow: vi.fn(() => false),
+    } as unknown as TransientHttpRateLimiter;
+    const handler = createProfileHttpHandler({
+      manager,
+      economyService,
+      rateLimiter,
+      production: false,
+    });
+
+    expect(await handler(request, response, '/api/economy/daily')).toBe(true);
+    expect(resume).toHaveBeenCalledOnce();
+    expect(manager.authenticateCredential).not.toHaveBeenCalled();
+    expect(economyService.claimDaily).not.toHaveBeenCalled();
+  });
+
+  it('accepts only an empty object and never accepts client-controlled time', async () => {
+    const server = await startServer();
+    const created = await createProfile(server);
+    const requests = await Promise.all([
+      fetch(`${server.baseUrl}/api/economy/daily`, {
+        method: 'POST',
+        headers: {
+          cookie: created.cookie,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ at: 0 }),
+      }),
+      fetch(`${server.baseUrl}/api/economy/rescue`, {
+        method: 'POST',
+        headers: {
+          cookie: created.cookie,
+          'content-type': 'application/json',
+        },
+        body: '{',
+      }),
+      fetch(`${server.baseUrl}/api/economy/rescue`, {
+        method: 'POST',
+        headers: {
+          cookie: created.cookie,
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ payload: 'x'.repeat(8 * 1_024) }),
+      }),
+    ]);
+
+    expect(requests.map(response => response.status)).toEqual([400, 400, 413]);
+    for (const response of requests) expectNoStore(response);
+    expect((server.database.db.prepare(`
+      SELECT balance FROM wallets WHERE profile_id = ?
+    `).get((created.body.profile as PublicProfile).id) as { balance: number }).balance)
+      .toBe(10_000);
+  });
+
+  it('clears authentication safely when a profile disappears before the grant', async () => {
+    const profile: PublicProfile = {
+      id: 'deleted-profile',
+      alias: 'deleted-alias',
+      avatarId: 'sakura',
+      wallet: { balance: 799, activeEscrow: 0 },
+    };
+    const manager: ProfileHttpManager = {
+      create: vi.fn(),
+      authenticateCredential: vi.fn(async () => profile),
+      recover: vi.fn(),
+      rotateRecovery: vi.fn(),
+      deleteProfile: vi.fn(),
+    };
+    const economyService = {
+      claimDaily: vi.fn(() => {
+        throw new EconomyDomainError('PROFILE_NOT_FOUND');
+      }),
+      claimRescue: vi.fn(() => {
+        throw new EconomyDomainError('PROFILE_NOT_FOUND');
+      }),
+    };
+    const server = await startServer({ manager, economyService });
+
+    const response = await fetch(`${server.baseUrl}/api/economy/daily`, {
+      method: 'POST',
+      headers: { cookie: `${PROFILE_COOKIE}=${'a'.repeat(43)}` },
+    });
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'PROFILE_AUTH_INVALID' },
+    });
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+    expectNoStore(response);
   });
 });

@@ -9,6 +9,7 @@ import type {
 import type { PokerDatabase } from './persistence/database';
 import {
   createProfileHttpHandler,
+  type EconomyHttpService,
   type ProfileHttpManager,
 } from './profile-http';
 
@@ -27,12 +28,14 @@ interface HttpHandlerCommonOptions {
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
   profileManager?: undefined;
+  economyService?: undefined;
   profileRateLimiter?: undefined;
   profileConcurrencyGate?: undefined;
 }
 
 interface HttpHandlerWithProfileOptions extends HttpHandlerCommonOptions {
   profileManager: ProfileHttpManager;
+  economyService: EconomyHttpService;
   profileRateLimiter: TransientHttpRateLimiter;
   profileConcurrencyGate?: TransientHttpConcurrencyGate;
 }
@@ -73,9 +76,13 @@ export function createHttpRequestHandler(
   if (options.profileManager && !options.profileRateLimiter) {
     throw new Error('PROFILE_RATE_LIMITER_REQUIRED');
   }
+  if (options.profileManager && !options.economyService) {
+    throw new Error('ECONOMY_SERVICE_REQUIRED');
+  }
   const profileHandler = options.profileManager
     ? createProfileHttpHandler({
         manager: options.profileManager,
+        economyService: options.economyService,
         rateLimiter: options.profileRateLimiter,
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
