@@ -36,6 +36,10 @@ import type {
   SngAdmissionEconomy,
 } from './economy-runtime';
 import { ECONOMY_RULES } from './economy-service';
+import {
+  ProgressionRuntime,
+  type ProgressionRuntimeService,
+} from './progression-runtime';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -57,6 +61,7 @@ export interface SocketRuntimeOptions {
   graceMs?: number;
   sngRetentionMs?: number;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
+  progressionService?: ProgressionRuntimeService;
 }
 
 export interface SocketRuntime {
@@ -125,8 +130,22 @@ export function setupSocketHandlers(
     graceMs = GRACE_MS,
     sngRetentionMs,
     economy,
+    progressionService,
   } = options;
   const sessions = new SessionManager();
+  const progression = progressionService
+    ? new ProgressionRuntime(
+      progressionService,
+      (profileId, snapshot, summary) => {
+        const session = sessions.getByPlayerId(profileId);
+        if (!session?.socketId) return;
+        const target = io.sockets.sockets.get(session.socketId);
+        if (!target) return;
+        target.emit('progression-update', snapshot);
+        target.emit('reward-summary', summary);
+      },
+    )
+    : undefined;
 
   io.use((socket, next) => {
     const transportMetadata = consumeTransportMetadata(socket.handshake.auth);
@@ -235,6 +254,7 @@ export function setupSocketHandlers(
     {
       sngRetentionMs,
       economy,
+      progression,
       onRoomDisposed: (roomId, playerIds, reason) => {
         for (const playerId of playerIds) {
           const session = sessions.getByPlayerId(playerId);
@@ -437,6 +457,18 @@ export function setupSocketHandlers(
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
     socket.emit('session', { playerId: session.playerId });
+
+    if (progression) {
+      try {
+        socket.emit(
+          'progression-update',
+          progression.getSnapshot(session.playerId, profileAvatarId),
+        );
+      } catch {
+        socket.disconnect(true);
+        return;
+      }
+    }
 
     // Send room list — 보존 중인 내 좌석(mySeat) 포함 개인화
     socket.emit('room-list', roomManager.getRoomList(session.playerId));

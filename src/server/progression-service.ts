@@ -139,6 +139,39 @@ export class ProgressionService {
     });
   }
 
+  /**
+   * Trusted game-runtime lookup. The profile avatar is only an initialization
+   * fallback; an existing progression selection remains authoritative.
+   */
+  getRuntimeSnapshot(
+    profileId: string,
+    fallbackCharacterId: string,
+    at = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    const fallback = assertCharacter(fallbackCharacterId);
+    assertTimestamp(at);
+    return this.database.transaction(() => {
+      let snapshot: ProgressionSnapshot;
+      try {
+        snapshot = this.repository.getSnapshotInTransaction(profileId);
+      } catch (error) {
+        if (
+          !(error instanceof ProgressionPersistenceError)
+          || error.code !== 'PROGRESSION_PROFILE_NOT_FOUND'
+        ) {
+          throw error;
+        }
+        snapshot = this.repository.getOrCreateInTransaction(
+          profileId,
+          fallback,
+          at,
+        );
+      }
+      return this.reconcileWeeklyRestPass(snapshot, at);
+    });
+  }
+
   getView(
     profileId: string,
     selectedCharacterId: string,

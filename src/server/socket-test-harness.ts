@@ -4,6 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { Server } from 'socket.io';
 import { io as createClient } from 'socket.io-client';
 import type { PublicProfile } from '../lib/profile/types';
+import type { ProgressionSnapshot } from '../lib/progression/types';
 import type {
   ClientToServerEvents,
   PokerClientSocket,
@@ -21,6 +22,8 @@ import { openPokerDatabase } from './persistence/database';
 import { PROFILE_COOKIE_NAME } from './profile-http';
 import { ProfileManager, type ProfileKdf } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
+import { ProgressionRepository } from './progression-repository';
+import { ProgressionService } from './progression-service';
 import {
   setupSocketHandlers,
   type AuthenticatedSocketData,
@@ -30,6 +33,7 @@ import {
 export interface ConnectedTestClient {
   socket: PokerClientSocket;
   playerId: string;
+  initialProgression: ProgressionSnapshot;
 }
 
 export interface TestProfileCredential {
@@ -46,6 +50,7 @@ export interface TestConnectOptions {
 export interface SocketTestHarness {
   runtime: SocketRuntime;
   economyRuntime: EconomyRuntime;
+  progressionService: ProgressionService;
   profileManager: ProfileManager;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
@@ -99,6 +104,10 @@ export async function createSocketTestHarness(
   const economyRuntime = new EconomyRuntime(
     new EconomyService(new EconomyRepository(database)),
   );
+  const progressionService = new ProgressionService(
+    database,
+    new ProgressionRepository(database),
+  );
   economyRuntime.recoverActiveEscrows();
   const profileRateLimiter = new TransientHttpRateLimiter({
     profileAuth: {
@@ -129,6 +138,7 @@ export async function createSocketTestHarness(
     graceMs: options.graceMs ?? 50,
     sngRetentionMs: options.sngRetentionMs,
     economy: economyRuntime,
+    progressionService,
   });
   const clients = new Set<PokerClientSocket>();
   const legacyProfiles = new Map<string, TestProfileCredential>();
@@ -172,6 +182,7 @@ export async function createSocketTestHarness(
   return {
     runtime,
     economyRuntime,
+    progressionService,
     profileManager,
     createProfile,
     recoverProfile,
@@ -205,10 +216,21 @@ export async function createSocketTestHarness(
           clients.delete(socket);
           reject(error);
         };
-        socket.once('connect_error', onConnectError);
-        socket.once('session', ({ playerId }) => {
+        let playerId: string | undefined;
+        let initialProgression: ProgressionSnapshot | undefined;
+        const resolveWhenReady = (): void => {
+          if (!playerId || !initialProgression) return;
           socket.off('connect_error', onConnectError);
-          resolve({ socket, playerId });
+          resolve({ socket, playerId, initialProgression });
+        };
+        socket.once('connect_error', onConnectError);
+        socket.once('session', data => {
+          playerId = data.playerId;
+          resolveWhenReady();
+        });
+        socket.once('progression-update', snapshot => {
+          initialProgression = snapshot;
+          resolveWhenReady();
         });
       });
     },

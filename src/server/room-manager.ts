@@ -13,6 +13,7 @@ import type {
   CashHandPersistenceResult,
   RoomEconomyHooks,
 } from './economy-runtime';
+import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -22,6 +23,7 @@ const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
   economy?: RoomEconomyHooks;
+  progression?: RoomProgressionHooks;
   onRoomDisposed?: (
     roomId: string,
     playerIds: string[],
@@ -189,6 +191,7 @@ export class RoomManager {
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
+    this.options.progression?.disposeRoom(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
       this.options.onRoomDisposed?.(roomId, playerIds, reason);
@@ -515,6 +518,7 @@ export class RoomManager {
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
+    this.options.progression?.disposeRoom(roomId);
   }
 
   // --- [FIX 1] Hand start 중복 방지 ---
@@ -681,10 +685,24 @@ export class RoomManager {
     }
 
     const prevHandNumber = room.engine.state.handNumber;
+    const nextHandNumber = prevHandNumber + 1;
     const preStartState = JSON.stringify(room.engine.state);
     try {
+      this.options.progression?.captureHandStart({
+        roomId,
+        handNumber: nextHandNumber,
+        mode: this.progressionMode(room),
+        players: room.engine.state.players
+          .filter(player => player.type === 'human' && !player.pendingRemoval)
+          .map(player => ({
+            profileId: player.id,
+            fallbackCharacterId: player.avatar,
+            dealt: player.chips > 0 && player.status !== 'sitting-out',
+          })),
+      });
       room.engine.startHand();
     } catch {
+      this.options.progression?.cancelHand(roomId, nextHandNumber);
       const classification = this.classifyUnstartedHand(
         roomId,
         room.engine,
@@ -698,6 +716,7 @@ export class RoomManager {
     }
 
     if (room.engine.state.handNumber > prevHandNumber) {
+      this.options.progression?.confirmHandStart(roomId, nextHandNumber);
       const s = room.engine.state;
       eventLog.log('hand-start', {
         roomId,
@@ -718,6 +737,7 @@ export class RoomManager {
         // 딜은 됐지만 블라인드 전원 올인 런아웃으로 즉시 쇼다운까지 끝난 핸드 — 정상 종료 플로우
         this.handleCompletedHand(roomId);
       } else {
+        this.options.progression?.cancelHand(roomId, nextHandNumber);
         // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
         const classification = this.classifyUnstartedHand(
           roomId,
@@ -1387,6 +1407,14 @@ export class RoomManager {
     );
   }
 
+  private progressionMode(room: {
+    config: RoomConfig;
+    engine: PokerEngine;
+  }): RuntimeGameMode {
+    if (room.engine.state.tournament) return 'sng';
+    return room.config.economyMode === 'practice' ? 'practice' : 'cash';
+  }
+
   private canStartWalletSng(engine: PokerEngine, config: RoomConfig): boolean {
     return (
       Number.isSafeInteger(config.entryBuyIn)
@@ -1426,6 +1454,7 @@ export class RoomManager {
     if (this.settledTournamentRooms.has(roomId)) return true;
     try {
       this.requireEconomy().afterTournament(roomId, room.engine);
+      this.completeProgressionTournament(roomId);
       this.settledTournamentRooms.add(roomId);
       return true;
     } catch {
@@ -1435,6 +1464,18 @@ export class RoomManager {
       this.onUpdate(roomId, room.engine);
       return false;
     }
+  }
+
+  private completeProgressionTournament(roomId: string): void {
+    const tournament = this.rooms.get(roomId)?.engine.state.tournament;
+    if (!tournament?.finished) return;
+    this.options.progression?.completeSng({
+      roomId,
+      results: tournament.results.map(result => ({
+        profileId: result.playerId,
+        place: result.place,
+      })),
+    });
   }
 
   private canStartWalletHand(engine: PokerEngine): boolean {
@@ -1521,6 +1562,36 @@ export class RoomManager {
       && !this.settleFinishedWalletTournament(roomId)
     ) {
       settlementOk = false;
+    }
+
+    if (settlementOk && !state.tournament) {
+      try {
+        this.options.progression?.completeHand({
+          roomId,
+          handNumber: state.handNumber,
+          pendingRemovalProfileIds: state.players
+            .filter(player => player.type === 'human' && player.pendingRemoval)
+            .map(player => player.id),
+        });
+      } catch {
+        settlementOk = false;
+        this.economyBlockedRooms.add(roomId);
+        this.unresolvedSettlementRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+      }
+    } else if (
+      settlementOk
+      && state.tournament?.finished
+      && !this.isWalletSng(room)
+    ) {
+      try {
+        this.completeProgressionTournament(roomId);
+      } catch {
+        settlementOk = false;
+        this.economyBlockedRooms.add(roomId);
+        this.unresolvedSettlementRooms.add(roomId);
+        this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+      }
     }
 
     this.handSettlementStatus.set(roomId, {

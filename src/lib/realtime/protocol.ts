@@ -1,5 +1,9 @@
 import type { Socket } from 'socket.io-client';
 import type { ActionType, ChatMessage, GameState } from '../poker/types';
+import type {
+  ProgressionRewardSummary,
+  ProgressionSnapshot,
+} from '../progression/types';
 
 export type RealtimeErrorCode =
   | 'invalid-payload'
@@ -97,6 +101,8 @@ export interface ServerToClientEvents {
   'game-update': (data: GameUpdatePayload) => void;
   'game-update-public': (data: GameUpdatePayload) => void;
   'chat-message': (message: ChatMessage) => void;
+  'progression-update': (snapshot: ProgressionSnapshot) => void;
+  'reward-summary': (summary: ProgressionRewardSummary) => void;
 }
 
 export interface ClientToServerEvents {

@@ -38,6 +38,12 @@ const WALLET_CASH_ROOM: RoomConfig = {
   economyMode: 'wallet',
 };
 
+const PRACTICE_CASH_ROOM: RoomConfig = {
+  ...HUMAN_ROOM,
+  name: '성장 연습 방',
+  economyMode: 'practice',
+};
+
 const WALLET_SNG_ROOM: RoomConfig = {
   ...HUMAN_ROOM,
   name: '지갑 Sit & Go',
@@ -73,6 +79,101 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
   afterEach(async () => {
     await harness?.close();
     harness = null;
+  });
+
+  it('sends the durable current progression snapshot on a future connection', async () => {
+    harness = await createSocketTestHarness();
+    const created = await harness.createProfile({ avatarId: 'sakura' });
+    harness.progressionService.selectCharacter(
+      created.profile.id,
+      'hana',
+      Date.now(),
+    );
+
+    const client = await harness.connect('progression-bootstrap', {
+      profileCookie: created.cookie,
+    });
+
+    expect(client.initialProgression.profile).toMatchObject({
+      profileId: created.profile.id,
+      selectedCharacterId: 'hana',
+    });
+  });
+
+  it('sends each completed-hand progression reward only to that profile socket', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);
+    const aliceProfile = await harness.createProfile({ avatarId: 'sakura' });
+    const bobProfile = await harness.createProfile({ avatarId: 'hana' });
+    const alice = await harness.connect('progression-alice', {
+      profileCookie: aliceProfile.cookie,
+    });
+    const bob = await harness.connect('progression-bob', {
+      profileCookie: bobProfile.cookie,
+    });
+    const aliceRewards: string[] = [];
+    const bobRewards: string[] = [];
+    alice.socket.on('reward-summary', reward => aliceRewards.push(reward.eventId));
+    bob.socket.on('reward-summary', reward => bobRewards.push(reward.eventId));
+
+    await expect(joinRoom(alice, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(bob, roomId, 1)).resolves.toMatchObject({ ok: true });
+    await wait(2_100);
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    expect(room.engine.state.handNumber).toBe(1);
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.winners = [];
+    (harness.runtime.roomManager as unknown as {
+      handleCompletedHand(roomId: string): void;
+    }).handleCompletedHand(roomId);
+    await wait(10);
+
+    expect(aliceRewards).toHaveLength(1);
+    expect(aliceRewards[0]).toContain(alice.playerId);
+    expect(aliceRewards[0]).toContain(roomId);
+    expect(bobRewards).toHaveLength(1);
+    expect(bobRewards[0]).toContain(bob.playerId);
+    expect(bobRewards[0]).toContain(roomId);
+    expect(aliceRewards).not.toContain(bobRewards[0]);
+    expect(bobRewards).not.toContain(aliceRewards[0]);
+    expect(harness.progressionService.getRuntimeSnapshot(
+      alice.playerId, 'sakura', Date.now(),
+    ).profile.completedHands).toBe(1);
+    expect(harness.progressionService.getRuntimeSnapshot(
+      bob.playerId, 'hana', Date.now(),
+    ).profile.completedHands).toBe(1);
+  });
+
+  it('does not award progression when wallet hand settlement fails', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const firstProfile = await harness.createProfile({ avatarId: 'sakura' });
+    const secondProfile = await harness.createProfile({ avatarId: 'hana' });
+    const first = await harness.connect('progression-wallet-first', {
+      profileCookie: firstProfile.cookie,
+    });
+    const second = await harness.connect('progression-wallet-second', {
+      profileCookie: secondProfile.cookie,
+    });
+    await expect(joinRoom(first, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(joinRoom(second, roomId, 1)).resolves.toMatchObject({ ok: true });
+    await wait(2_100);
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    room.engine.state.isHandInProgress = false;
+    room.engine.state.winners = [];
+    vi.spyOn(harness.economyRuntime, 'afterHand')
+      .mockImplementationOnce(() => { throw new Error('storage unavailable'); });
+
+    (harness.runtime.roomManager as unknown as {
+      handleCompletedHand(roomId: string): void;
+    }).handleCompletedHand(roomId);
+
+    expect(harness.progressionService.getRuntimeSnapshot(
+      first.playerId, 'sakura', Date.now(),
+    ).profile.completedHands).toBe(0);
+    expect(harness.progressionService.getRuntimeSnapshot(
+      second.playerId, 'hana', Date.now(),
+    ).profile.completedHands).toBe(0);
   });
 
   it('rejects missing and invalid profile cookies with a safe handshake error', async () => {
@@ -578,6 +679,20 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .toEqual([12_850, 11_050, 10_150, 8_350, 8_350, 8_350]);
     expect(profiles.map(profile => harness!.walletState(profile.profile.id).activeEscrow))
       .toEqual(Array(6).fill(0));
+    expect(profiles.map(profile => harness!.progressionService.getRuntimeSnapshot(
+      profile.profile.id,
+      profile.profile.avatarId,
+      Date.now(),
+    ).profile.sngCompletions)).toEqual(Array(6).fill(1));
+
+    (harness.runtime.roomManager as unknown as {
+      handleCompletedHand(roomId: string): void;
+    }).handleCompletedHand(roomId);
+    expect(profiles.map(profile => harness!.progressionService.getRuntimeSnapshot(
+      profile.profile.id,
+      profile.profile.avatarId,
+      Date.now(),
+    ).profile.sngCompletions)).toEqual(Array(6).fill(1));
   });
 
   it('does not start a full paid SNG when the storage start commit fails', async () => {

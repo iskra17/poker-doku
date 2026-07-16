@@ -179,6 +179,7 @@ async function listen(): Promise<void> {
       concurrencyGate: profileConcurrencyGate,
     },
     economy: economyRuntime,
+    progressionService,
   });
 
   await new Promise<void>((resolve, reject) => {
