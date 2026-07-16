@@ -28,6 +28,11 @@ export interface EvaluatedHand {
 export type PlayerStatus = 'waiting' | 'active' | 'folded' | 'all-in' | 'sitting-out';
 export type PlayerType = 'human' | 'bot';
 
+export interface PlayerPublicCosmetics {
+  titleId: string | null;
+  frameId: string | null;
+}
+
 export interface Player {
   id: string;
   name: string;
@@ -51,6 +56,8 @@ export interface Player {
   sitOutSinceHand?: number; // 캐시 자리비움 시작 시점의 handNumber — 경과 핸드로 미납 블라인드(≈오르빗) 산정
   timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
+  /** 다른 좌석에 공개해도 되는 최소 꾸미기 정보. */
+  publicCosmetics?: PlayerPublicCosmetics;
 }
 
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';

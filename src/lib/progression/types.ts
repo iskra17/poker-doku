@@ -1,4 +1,5 @@
 import type { MissionId } from './missions';
+import type { DailyMissionDaySnapshot } from './missions';
 
 export const PROGRESSION_CHARACTER_IDS = [
   'sakura',
@@ -68,6 +69,11 @@ export interface ProgressionSnapshot {
   streak: ProgressionStreak;
   inventory: ProgressionInventoryItem[];
   equipment: Record<ProgressionEquipmentSlot, string | null>;
+}
+
+export interface ProgressionView {
+  progression: ProgressionSnapshot;
+  missions: DailyMissionDaySnapshot;
 }
 
 /** A completed mission's immutable reward receipt. */

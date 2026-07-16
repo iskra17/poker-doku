@@ -5,6 +5,8 @@ import { useGameStore } from '@/lib/store/game-store';
 import { getRescueStatusText } from '@/lib/economy/status-format';
 import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
+import { getBalance, milliToUiUnits } from '@/lib/progression/balance';
+import { useProgressionStore } from '@/lib/store/progression-store';
 
 interface EconomyBarProps {
   onOpenSettings: () => void;
@@ -19,11 +21,19 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
   const claimDaily = useProfileStore(state => state.claimDaily);
   const claimRescue = useProfileStore(state => state.claimRescue);
   const activeSeat = useGameStore(state => state.rooms.find(room => room.mySeat)?.mySeat ?? null);
+  const progression = useProgressionStore(state => state.snapshot);
+  const progressionError = useProgressionStore(state => state.error);
 
   if (!profile || !economy) return null;
   const busy = action === 'daily' || action === 'rescue';
   const activeSeatChips = activeSeat?.chips
     ?? (profile.wallet.activeEscrow > 0 ? profile.wallet.activeEscrow : null);
+  const selectedAffinity = progression?.affinities.find(
+    item => item.characterId === progression.profile.selectedCharacterId,
+  );
+  const balance = progression ? getBalance(progression.profile.balanceVersion) : null;
+  const dojoThreshold = progression && balance && progression.profile.dojoLevel < balance.dojoMaxLevel
+    ? balance.dojoXpForNextLevel(progression.profile.dojoLevel) : 0;
 
   return (
     <section className="mx-auto mb-4 w-full max-w-4xl px-4">
@@ -31,7 +41,12 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-3">
             <span className="block h-11 w-11 shrink-0 overflow-hidden rounded-full border border-mystic/40">
-              <CharacterImage characterId={profile.avatarId} round className="h-full w-full text-2xl" />
+              <CharacterImage
+                characterId={progression?.profile.selectedCharacterId ?? profile.avatarId}
+                skinId={progression?.equipment.skin}
+                round
+                className="h-full w-full text-2xl"
+              />
             </span>
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-mystic">{profile.alias}</p>
@@ -63,6 +78,7 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
                   ? '받는 중…'
                   : `일일 +${economy.daily.grantAmount.toLocaleString('ko-KR')}`}
             </Button>
+            <Button variant="secondary" size="sm" onClick={onOpenSettings}>프로필</Button>
           </div>
         </div>
 
@@ -84,7 +100,17 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
             </Button>
           </div>
         )}
+        {progression && balance && (
+          <div className="mt-3 grid gap-2 border-t border-mystic/20 pt-3 md:grid-cols-2">
+            <div>
+              <div className="flex justify-between text-[11px]"><span className="font-bold text-mystic">도장 Lv.{progression.profile.dojoLevel}</span><span className="text-ink-dim">{dojoThreshold ? `${milliToUiUnits(progression.profile.dojoXpMilli)}/${milliToUiUnits(dojoThreshold)} XP` : '최고 레벨'}</span></div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-abyss"><div className="h-full bg-mystic" style={{ width: dojoThreshold ? `${Math.floor(progression.profile.dojoXpMilli / dojoThreshold * 100)}%` : '100%' }} /></div>
+            </div>
+            <div className="text-[11px] text-ink-dim">선택 캐릭터 인연 <span className="font-bold text-blossom">Lv.{selectedAffinity?.level ?? 1}</span></div>
+          </div>
+        )}
         {error && <p className="mt-2 text-center text-xs text-blossom">{error}</p>}
+        {progressionError && <p className="mt-2 text-center text-xs text-blossom">{progressionError}</p>}
       </div>
     </section>
   );

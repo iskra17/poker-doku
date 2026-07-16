@@ -2,7 +2,7 @@
 
 import Modal from '@/components/ui/Modal';
 import CardComponent from '@/components/table/Card';
-import RecoveryPanel from '@/components/profile/RecoveryPanel';
+import ProfileHub from '@/components/profile/ProfileHub';
 import { useSettingsStore, BetStepUnit } from '@/lib/store/settings-store';
 import {
   DeckStyleId, DeckColorId, DECK_STYLE_LABELS, DECK_COLOR_LABELS,
@@ -116,7 +116,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           </div>
         </section>
 
-        <RecoveryPanel />
+        <ProfileHub />
 
         {/* 게임 */}
         <section>

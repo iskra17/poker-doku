@@ -7,6 +7,8 @@ import { getCharacterById } from '@/lib/characters';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
+import { useGameStore } from '@/lib/store/game-store';
+import { useProgressionStore } from '@/lib/store/progression-store';
 
 /**
  * 갸루게식 승리 컷인 — winners 이벤트 1.6초 후 슬라이드인, ~3.4초에 아웃.
@@ -19,6 +21,7 @@ interface CutInData {
   quote: string;
   color: string;
   amount: number;
+  cutinId: string | null;
 }
 
 interface WinnerCutInProps {
@@ -28,6 +31,8 @@ interface WinnerCutInProps {
 export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
   const [data, setData] = useState<CutInData | null>(null);
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const myPlayerId = useGameStore(state => state.myPlayerId);
+  const equippedCutin = useProgressionStore(state => state.snapshot?.equipment.cutin ?? null);
 
   useEffect(() => {
     const unsubscribe = onGameEvent(event => {
@@ -53,6 +58,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
           quote: character.winQuote,
           color: character.color,
           amount: top.amount,
+          cutinId: null,
         };
       } else {
         // 휴먼 승자 → 미야코가 축하
@@ -62,6 +68,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
           quote: `${player.name}님의 승리예요! 정말 대단해요♪`,
           color: '#FFD700',
           amount: top.amount,
+          cutinId: player.id === myPlayerId ? equippedCutin : null,
         };
       }
 
@@ -76,7 +83,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
       unsubscribe();
       timersRef.current.forEach(clearTimeout);
     };
-  }, []);
+  }, [equippedCutin, myPlayerId]);
 
   return (
     <AnimatePresence>
@@ -99,7 +106,7 @@ function DesktopCutIn({ data }: { data: CutInData }) {
       animate={{ x: 0, opacity: 1 }}
       exit={{ x: '110%', opacity: 0 }}
       transition={{ type: 'spring', stiffness: 240, damping: 26 }}
-      className="absolute right-0 top-1/2 -translate-y-1/2 z-40 w-[340px] overflow-hidden rounded-l-2xl border-l-4 shadow-2xl pointer-events-none"
+      className={`absolute right-0 top-1/2 z-40 w-[340px] overflow-hidden rounded-l-2xl border-l-4 shadow-2xl pointer-events-none ${data.cutinId ? 'ring-2 ring-gilded/60' : ''}`}
       style={{ borderColor: data.color, background: stripeBg(data.color), y: '-50%' }}
     >
       <div className="flex items-center gap-3 p-3">
@@ -130,7 +137,7 @@ function MobileCutIn({ data }: { data: CutInData }) {
       animate={{ y: 0, opacity: 1 }}
       exit={{ y: '120%', opacity: 0 }}
       transition={{ type: 'spring', stiffness: 260, damping: 28 }}
-      className="absolute left-2 right-2 bottom-2 z-40 overflow-hidden rounded-xl border-l-4 shadow-2xl pointer-events-none"
+      className={`absolute left-2 right-2 bottom-2 z-40 overflow-hidden rounded-xl border-l-4 shadow-2xl pointer-events-none ${data.cutinId ? 'ring-2 ring-gilded/60' : ''}`}
       style={{ borderColor: data.color, background: stripeBg(data.color) }}
     >
       <div className="flex items-center gap-2.5 p-2">

@@ -10,6 +10,7 @@ import CharacterAvatar from '../characters/CharacterAvatar';
 import CardComponent from './Card';
 import TurnTimer from './TurnTimer';
 import SeatEmote from './SeatEmote';
+import EquippedCosmetics from '@/components/collection/EquippedCosmetics';
 
 interface PlayerSeatProps {
   player: Player | null;
@@ -98,6 +99,10 @@ export default function PlayerSeat({
   const badgeAmount = !isAllIn && seatAction && seatAction.amount > 0
     ? ` ${formatChips(seatAction.amount)}`
     : '';
+  const frameId = player.publicCosmetics?.frameId ?? null;
+  const frameClass = frameId === 'dojo-frame-cherry-blossom' ? 'ring-2 ring-blossom/70'
+    : frameId === 'dojo-frame-golden' || frameId === 'dojo-frame-master' ? 'ring-2 ring-gilded/70'
+      : frameId ? 'ring-2 ring-mystic/70' : '';
 
   return (
     <motion.div
@@ -109,7 +114,7 @@ export default function PlayerSeat({
     >
       <div className="relative flex flex-col items-center">
         {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만 */}
-        <div className={`relative z-10 transition-opacity ${isDimmed ? 'opacity-40 grayscale' : ''}`}>
+        <div className={`relative z-10 rounded-full transition-opacity ${frameClass} ${isDimmed ? 'opacity-40 grayscale' : ''}`}>
           <SeatEmote playerId={player.id} />
           <CharacterAvatar
             characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
@@ -162,6 +167,11 @@ export default function PlayerSeat({
               {player.name}
               {isCurrentPlayer && <span className="text-blossom ml-0.5">(나)</span>}
             </div>
+            <EquippedCosmetics
+              slot="title"
+              itemId={player.publicCosmetics?.titleId ?? null}
+              className="block max-w-[88px] truncate text-[9px] font-bold text-gilded"
+            />
             {/* 칩 — 터치/클릭으로 칩↔BB 표기 전환 (소수 첫째 자리 반올림) */}
             <button
               type="button"

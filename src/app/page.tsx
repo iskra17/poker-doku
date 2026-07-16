@@ -9,10 +9,12 @@ import RoomList from '@/components/lobby/RoomList';
 import CreateRoomModal from '@/components/lobby/CreateRoomModal';
 import JoinRoomModal from '@/components/lobby/JoinRoomModal';
 import EconomyBar from '@/components/lobby/EconomyBar';
+import MissionPanel from '@/components/lobby/MissionPanel';
 import GameRoomView from '@/components/layout/GameRoomView';
 import SettingsModal from '@/components/layout/SettingsModal';
 import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
+import { useProgressionStore } from '@/lib/store/progression-store';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
   backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
@@ -25,6 +27,8 @@ export default function Home() {
   const bootstrap = useProfileStore(state => state.bootstrap);
   const refresh = useProfileStore(state => state.refresh);
   const { leaveRoom, currentRoomId, pendingRoomId, joinError, rooms } = useGameStore();
+  const socket = useGameStore(state => state.socket);
+  const profileId = useProfileStore(state => state.profile?.id ?? null);
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
@@ -34,6 +38,21 @@ export default function Home() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (phase !== 'ready' || !profileId) {
+      useProgressionStore.getState().reset();
+      return;
+    }
+    void useProgressionStore.getState().load().then(outcome => {
+      if (outcome === 'unauthorized') void useProfileStore.getState().bootstrap();
+    });
+  }, [phase, profileId]);
+
+  useEffect(() => {
+    if (!socket) return;
+    return useProgressionStore.getState().bindSocket(socket);
+  }, [socket]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -101,6 +120,7 @@ export default function Home() {
     <div className="h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
       <LobbyHeader onOpenSettings={() => setSettingsOpen(true)} />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
+      <MissionPanel />
       <div className="py-4">
         {joinError && <p className="mb-3 text-center text-xs text-blossom">{joinError}</p>}
         {pendingRoomId && <p className="mb-3 text-center text-xs text-gilded">입장 확인 중…</p>}

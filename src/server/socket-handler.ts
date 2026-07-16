@@ -40,6 +40,7 @@ import {
   ProgressionRuntime,
   type ProgressionRuntimeService,
 } from './progression-runtime';
+import { buildPublicCosmetics } from '../lib/collection/public-cosmetics';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -701,6 +702,11 @@ export function setupSocketHandlers(
           }
           // 자리비움으로 떠났던 좌석 복귀 — 좌석은 자리비움 그대로 두고(본인이 '게임 복귀'로 참여),
           // 방치 회수 유예만 취소한다. (자동 복귀 대신 명시 복귀 — UI 안내와 일치)
+          if (progression) {
+            seated.publicCosmetics = buildPublicCosmetics(
+              progression.getSnapshot(session.playerId, avatar),
+            );
+          }
           roomManager.handleSeatRejoin(roomId, session.playerId);
           eventLog.log('join-room:rejoin', {
             roomId,
@@ -839,6 +845,13 @@ export function setupSocketHandlers(
         status: 'waiting',
         hasActed: false,
         timeBankChips: 1, // 입장 시 기본 타임칩 1개
+        ...(progression
+          ? {
+              publicCosmetics: buildPublicCosmetics(
+                progression.getSnapshot(session.playerId, avatar),
+              ),
+            }
+          : {}),
       };
 
       let admissionOpened: 'cash' | 'sng' | null = null;

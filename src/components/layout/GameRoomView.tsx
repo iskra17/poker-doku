@@ -17,6 +17,7 @@ import ChatPanel from '@/components/chat/ChatPanel';
 import WinnerCutIn from '@/components/characters/WinnerCutIn';
 import LoserCutIn from '@/components/characters/LoserCutIn';
 import HandEconomySummary from '@/components/table/HandEconomySummary';
+import ProgressionSummary from '@/components/table/ProgressionSummary';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
@@ -80,6 +81,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <WinnerCutIn isMobile={isMobile} />
             <LoserCutIn isMobile={isMobile} />
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
+            <ProgressionSummary />
             <ActionLog />
             <ChatPanel />
             <SngWaitingOverlay />
