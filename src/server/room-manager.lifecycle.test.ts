@@ -39,6 +39,15 @@ function makeHuman(id: string, seatIndex = 0): Player {
   };
 }
 
+function makeBot(id: string, seatIndex = 1): Player {
+  return {
+    ...makeHuman(id, seatIndex),
+    name: `봇-${id}`,
+    type: 'bot',
+    avatar: 'bot',
+  };
+}
+
 describe('RoomManager 메모리 수명주기', () => {
   let manager: RoomManager;
 
@@ -311,5 +320,46 @@ describe('RoomManager wallet cash persistence hooks', () => {
     expect(manager.disposeRoom(roomId)).toBe(false);
     expect(manager.getRoom(roomId)).toBeDefined();
     expect(economy.voidRoom).not.toHaveBeenCalled();
+  });
+
+  it('preserves a persistent room when its last human exit completes an unresolved hand', () => {
+    vi.useFakeTimers();
+    const economy = hooks({
+      afterHand: vi.fn(() => { throw new Error('write failed'); }),
+    });
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig(), true);
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeBot('b1', 1));
+    vi.advanceTimersByTime(2_001);
+    const originalEngine = manager.getRoom(roomId)!.engine;
+
+    manager.leaveRoom(roomId, 'p1');
+    const completedSnapshot = originalEngine.getPublicState();
+    vi.advanceTimersByTime(20_000);
+
+    expect(economy.afterHand).toHaveBeenCalledOnce();
+    expect(economy.voidRoom).not.toHaveBeenCalled();
+    expect(manager.getRoom(roomId)?.engine).toBe(originalEngine);
+    expect(manager.getRoom(roomId)?.engine.getPublicState()).toEqual(completedSnapshot);
+    expect(originalEngine.state.handNumber).toBe(1);
+    expect(originalEngine.state.isHandInProgress).toBe(false);
+    expect(manager.disposeRoom(roomId)).toBe(false);
+  });
+
+  it('still voids and resets a persistent wallet room when no settlement is unresolved', () => {
+    vi.useFakeTimers();
+    const economy = hooks();
+    manager = new RoomManager(() => {}, () => {}, undefined, { economy });
+    const roomId = manager.createRoom(makeWalletConfig(), true);
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    const originalEngine = manager.getRoom(roomId)!.engine;
+
+    manager.leaveRoom(roomId, 'p1');
+
+    expect(economy.settleExit).toHaveBeenCalledOnce();
+    expect(economy.voidRoom).toHaveBeenCalledWith(roomId);
+    expect(manager.getRoom(roomId)?.engine).not.toBe(originalEngine);
+    expect(manager.getRoom(roomId)?.engine.state.players).toEqual([]);
   });
 });

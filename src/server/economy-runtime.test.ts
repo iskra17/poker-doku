@@ -350,16 +350,17 @@ describe('EconomyRuntime startup recovery', () => {
       name: 'Blocked',
       botCount: 0,
       tableType: 'humans',
-    });
+    }, true);
     runtime.openCashEscrow('human-1', roomId, 4_000);
     manager.joinRoom(roomId, makePlayer('human-1', 'human', 4_000, 0));
     manager.joinRoom(roomId, makePlayer('bot-1', 'bot', 4_000, 1));
     vi.advanceTimersByTime(2_001);
     const room = manager.getRoom(roomId)!;
-    const active = room.engine.state.players[room.engine.state.activePlayerIndex];
-    manager.leaveRoom(roomId, active.id);
+    const originalEngine = room.engine;
+    manager.leaveRoom(roomId, 'human-1');
 
     expect(room.engine.state.isHandInProgress).toBe(false);
+    expect(manager.getRoom(roomId)?.engine).toBe(originalEngine);
     expect(manager.disposeRoom(roomId)).toBe(false);
     manager.shutdown();
     expect(voidRoom).not.toHaveBeenCalled();

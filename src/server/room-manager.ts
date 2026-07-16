@@ -371,6 +371,12 @@ export class RoomManager {
   private cleanupEmptyRoom(roomId: string, roomsChanged: boolean): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (this.unresolvedSettlementRooms.has(roomId)) {
+      this.stopBotLoop(roomId);
+      this.clearPendingStart(roomId);
+      this.clearTurnTimer(roomId);
+      return;
+    }
     this.stopBotLoop(roomId);
     this.clearPendingStart(roomId);
     this.clearTurnTimer(roomId);
@@ -391,6 +397,7 @@ export class RoomManager {
   private resetRoomToIdle(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (this.unresolvedSettlementRooms.has(roomId)) return;
     if (this.isWalletCash(room)) {
       if (room.engine.state.isHandInProgress) return;
       try {
