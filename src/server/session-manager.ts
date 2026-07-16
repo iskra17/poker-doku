@@ -1,14 +1,12 @@
 /**
  * 세션 관리: 재접속 지원의 핵심.
  *
- * - token: localStorage transport binding. 프로필 인증에는 사용하지 않고 gameState로 노출하지 않는다.
  * - playerId: 인증된 공개 profileId. gameState.players[].id로 브로드캐스트된다.
  * - socketId: 현재 연결된 소켓. 재접속 시 교체된다 (중복 탭은 최신 소켓 승리).
  * - grace: disconnect 후 일정 시간 좌석/칩을 보존하는 유예 타이머.
  */
 
 export interface Session {
-  token: string;
   playerId: string;
   socketId: string | null;
   roomId: string | null;
@@ -26,7 +24,6 @@ export interface RevokedSession {
 }
 
 export const GRACE_MS = 60_000;
-const SESSION_TOKEN_RE = /^[A-Za-z0-9._~-]{8,128}$/;
 
 export class SessionManager {
   private byPlayerId = new Map<string, Session>();
@@ -35,20 +32,17 @@ export class SessionManager {
 
   /**
    * 접속 시 인증된 profileId의 단일 세션(좌석/방 정보)을 되찾는다.
-   * transport token이 없거나 잘못되면 socketId를 binding 표식으로만 사용한다.
+   * transport token 인자는 호환 경계에서 소비하되 세션에 보존하거나 권위로 사용하지 않는다.
    */
   resolve(
-    token: string | undefined,
+    transportToken: string | undefined,
     socketId: string,
     profileId: string,
   ): SessionResolution {
-    const stableToken = typeof token === 'string' && SESSION_TOKEN_RE.test(token)
-      ? token
-      : null;
-    const key = stableToken ?? socketId;
+    void transportToken;
     let session = this.byPlayerId.get(profileId);
     if (!session) {
-      session = this.createSession(key, profileId);
+      session = this.createSession(profileId);
     }
     this.clearGrace(session);
     const replacedSocketId = session.socketId && session.socketId !== socketId
@@ -139,9 +133,8 @@ export class SessionManager {
     this.byPlayerId.clear();
   }
 
-  private createSession(key: string, profileId: string): Session {
+  private createSession(profileId: string): Session {
     const session: Session = {
-      token: key,
       playerId: profileId,
       socketId: null,
       roomId: null,

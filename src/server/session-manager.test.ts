@@ -60,7 +60,7 @@ describe('SessionManager', () => {
     expect(onExpire).not.toHaveBeenCalled();
   });
 
-  it('같은 프로필과 토큰으로 재접속하면 같은 세션을 돌려준다', () => {
+  it('같은 프로필로 재접속하면 transport token과 무관하게 같은 세션을 돌려준다', () => {
     const sm = new SessionManager();
     const s1 = sm.resolve('token-aaaa', 'sock-1', 'p_same').session;
     const s2 = sm.resolve('token-aaaa', 'sock-2', 'p_same').session;
@@ -79,11 +79,22 @@ describe('SessionManager', () => {
     expect(s1.playerId).not.toBe(s2.playerId);
   });
 
-  it('토큰이 없으면 socketId를 토큰 대용으로 쓴다', () => {
+  it('transport token이 없어도 profileId 세션과 socketId 소유권을 만든다', () => {
     const sm = new SessionManager();
     const s = sm.resolve(undefined, 'sock-1', 'p_socket_fallback').session;
-    expect(s.token).toBe('sock-1');
+    expect(s).not.toHaveProperty('token');
     expect(sm.getBySocketId('sock-1')).toBe(s);
+  });
+
+  it('transport token 원문을 세션에 보존하지 않는다', () => {
+    const sm = new SessionManager();
+    const transportToken = 'credential-shaped-secret-with-suffix';
+
+    const session = sm.resolve(transportToken, 'sock-1', 'p_no_transport_secret').session;
+
+    expect(session).not.toHaveProperty('token');
+    expect(JSON.stringify(session)).not.toContain(transportToken);
+    expect(JSON.stringify(session)).not.toContain(transportToken.slice(0, 6));
   });
 
   it('detachSocket은 소켓 바인딩만 해제하고 세션은 유지한다', () => {
@@ -129,7 +140,7 @@ describe('SessionManager', () => {
     expect(onExpire).toHaveBeenCalledTimes(1);
   });
 
-  it('같은 토큰의 새 소켓은 교체된 socketId를 반환하고 최신 소켓만 소유자다', () => {
+  it('같은 프로필의 새 소켓은 교체된 socketId를 반환하고 최신 소켓만 소유자다', () => {
     const sm = new SessionManager();
     const first = sm.resolve('token-1234', 'sock-1', 'p_owner');
     const second = sm.resolve('token-1234', 'sock-2', 'p_owner');
@@ -141,7 +152,7 @@ describe('SessionManager', () => {
     expect(sm.isCurrentSocket(second.session.playerId, 'sock-2')).toBe(true);
   });
 
-  it('비정상 토큰은 안정 세션 키로 쓰지 않는다', () => {
+  it('transport token 형식과 무관하게 서로 다른 프로필을 격리한다', () => {
     const sm = new SessionManager();
     const a = sm.resolve('x', 'sock-1', 'p_invalid_one').session;
     const b = sm.resolve('x', 'sock-2', 'p_invalid_two').session;

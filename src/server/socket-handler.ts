@@ -62,6 +62,8 @@ export interface AuthenticatedSocketData {
   profileId?: string;
   profileAlias?: string;
   profileAvatarId?: string;
+  hadTransportToken?: boolean;
+  transportTokenHint?: string;
 }
 
 type PokerSocket = Socket<
@@ -78,6 +80,32 @@ type PokerServer = Server<
   AuthenticatedSocketData
 >;
 
+interface SafeTransportMetadata {
+  hadTransportToken: boolean;
+  transportTokenHint: string;
+}
+
+function consumeTransportMetadata(auth: unknown): SafeTransportMetadata | null {
+  if (!auth || typeof auth !== 'object') {
+    return { hadTransportToken: false, transportTokenHint: 'none' };
+  }
+  const record = auth as Record<string, unknown>;
+  try {
+    const value = record.sessionToken;
+    const rawToken = typeof value === 'string' && value.length > 0
+      ? value
+      : undefined;
+    delete record.sessionToken;
+    if ('sessionToken' in record) return null;
+    return {
+      hadTransportToken: rawToken !== undefined,
+      transportTokenHint: tokenHint(rawToken),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function setupSocketHandlers(
   io: PokerServer,
   options: SocketRuntimeOptions,
@@ -92,18 +120,15 @@ export function setupSocketHandlers(
   const sessions = new SessionManager();
 
   io.use((socket, next) => {
+    const transportMetadata = consumeTransportMetadata(socket.handshake.auth);
+    if (!transportMetadata) {
+      next(new Error('profile-required'));
+      return;
+    }
     const credential = readProfileCredentialCookie(socket.handshake.headers.cookie);
     if (!credential) {
       next(new Error('profile-required'));
       return;
-    }
-    const handshakeAuth = socket.handshake.auth;
-    if (
-      handshakeAuth
-      && typeof handshakeAuth === 'object'
-      && handshakeAuth.sessionToken === credential
-    ) {
-      delete handshakeAuth.sessionToken;
     }
     const address = socket.conn.remoteAddress ?? 'unknown';
     let allowed = false;
@@ -137,6 +162,8 @@ export function setupSocketHandlers(
       socket.data.profileId = profile.id;
       socket.data.profileAlias = profile.alias;
       socket.data.profileAvatarId = profile.avatarId;
+      socket.data.hadTransportToken = transportMetadata.hadTransportToken;
+      socket.data.transportTokenHint = transportMetadata.transportTokenHint;
       const rawHeaders = socket.request.rawHeaders;
       for (let index = rawHeaders.length - 2; index >= 0; index -= 2) {
         if (rawHeaders[index].toLowerCase() === 'cookie') {
@@ -329,10 +356,8 @@ export function setupSocketHandlers(
       socket.disconnect(true);
       return;
     }
-    const rawToken = socket.handshake.auth?.sessionToken;
-    const transportToken = typeof rawToken === 'string' ? rawToken : undefined;
     const { session, replacedSocketId } = sessions.resolve(
-      transportToken,
+      undefined,
       socket.id,
       profileId,
     );
@@ -344,14 +369,14 @@ export function setupSocketHandlers(
       previousSocket?.disconnect(true);
     }
     console.log(`Player connected: socket=${socket.id} player=${session.playerId}`);
-    // 인증 profileId가 세션 재사용의 기준이다. transport token은 grace 연결 힌트일 뿐
-    // 다른 profileId를 합치거나 새 공개 playerId를 만들 수 없다.
+    // 인증 profileId가 세션 재사용의 유일한 기준이다. transport 원문은 middleware에서 폐기되고
+    // 프로세스 한정 opaque 진단값만 여기까지 전달된다.
     eventLog.log('connect', {
       playerId: session.playerId,
       data: {
         socketId: socket.id,
-        tokenHint: tokenHint(typeof rawToken === 'string' ? rawToken : undefined),
-        hadToken: typeof rawToken === 'string' && rawToken.length > 0,
+        tokenHint: socket.data.transportTokenHint ?? 'none',
+        hadToken: socket.data.hadTransportToken ?? false,
         resumedRoomId: session.roomId ?? null,
       },
     });
@@ -981,6 +1006,8 @@ export function setupSocketHandlers(
       delete socket.data.profileId;
       delete socket.data.profileAlias;
       delete socket.data.profileAvatarId;
+      delete socket.data.hadTransportToken;
+      delete socket.data.transportTokenHint;
     });
   });
 

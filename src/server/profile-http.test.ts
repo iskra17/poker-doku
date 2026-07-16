@@ -171,6 +171,41 @@ describe('profile HTTP lifecycle', () => {
     expect(server.nextHandler).not.toHaveBeenCalled();
   });
 
+  it('treats malformed target cookies as invalid while ignoring unrelated cookies', async () => {
+    const server = await startServer();
+    const created = await createProfile(server);
+
+    const malformed = await Promise.all([
+      fetch(`${server.baseUrl}/api/profile/session`, {
+        headers: { cookie: `${PROFILE_COOKIE} =bogus` },
+      }),
+      fetch(`${server.baseUrl}/api/profile/session`, {
+        headers: { cookie: PROFILE_COOKIE },
+      }),
+    ]);
+    const unrelated = await fetch(`${server.baseUrl}/api/profile/session`, {
+      headers: { cookie: 'theme=dark; locale=ko' },
+    });
+    const validWithOthers = await fetch(`${server.baseUrl}/api/profile/session`, {
+      headers: { cookie: `theme=dark; ${created.cookie}; locale=ko` },
+    });
+
+    for (const response of malformed) {
+      expect(response.status).toBe(401);
+      expect(await response.json()).toMatchObject({
+        error: { code: 'PROFILE_AUTH_INVALID' },
+      });
+      expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+    }
+    expect(unrelated.status).toBe(200);
+    expect(await unrelated.json()).toEqual({ state: 'anonymous' });
+    expect(validWithOthers.status).toBe(200);
+    expect(await validWithOthers.json()).toMatchObject({
+      state: 'ready',
+      profile: created.body.profile,
+    });
+  });
+
   it('creates a profile and returns each secret through only its allowed channel', async () => {
     const server = await startServer();
 

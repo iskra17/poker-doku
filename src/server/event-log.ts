@@ -1,3 +1,5 @@
+import { createHmac, randomBytes } from 'node:crypto';
+
 /**
  * 플레이 이벤트 로그 — 버그 역추적용.
  *
@@ -8,7 +10,7 @@
  * - 동시에 stdout으로 JSON 한 줄씩 흘려 `fly logs`로 실시간 관찰도 가능하게 한다.
  *
  * 절대 로그에 넣지 말 것: 세션 토큰 원문, 방 비밀번호, 홀카드.
- * (토큰은 tokenHint로 앞 6자만 — 중복 세션 추적에 필요한 최소 단서)
+ * (transport token은 프로세스별 HMAC hint만 기록 — 원문/접두사 기록 금지)
  */
 
 export interface LogEvent {
@@ -68,8 +70,16 @@ class EventLog {
 const g = globalThis as typeof globalThis & { __pokerEventLog?: EventLog };
 export const eventLog: EventLog = g.__pokerEventLog ?? (g.__pokerEventLog = new EventLog());
 
-/** 세션 토큰 힌트 — 원문은 절대 남기지 않고 중복 세션 구분용 앞 6자만 */
-export function tokenHint(token: string | undefined): string {
+const TOKEN_HINT_KEY = randomBytes(32);
+
+/** transport token의 프로세스 한정 opaque 진단값. 원문/접두사를 복원할 수 없어야 한다. */
+export function tokenHint(
+  token: string | undefined,
+  key: Uint8Array = TOKEN_HINT_KEY,
+): string {
   if (!token) return 'none';
-  return `${token.slice(0, 6)}…`;
+  const digest = createHmac('sha256', key)
+    .update(token, 'utf8')
+    .digest('base64url');
+  return `t_${digest.slice(0, 12)}`;
 }

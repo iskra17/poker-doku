@@ -14,6 +14,11 @@ export const PROFILE_COOKIE_NAME = 'poker_doku_profile';
 const PROFILE_COOKIE_MAX_AGE_SECONDS = 365 * 24 * 60 * 60;
 const MAX_JSON_BODY_BYTES = 8 * 1_024;
 
+type ProfileCredentialCookie =
+  | { state: 'absent' }
+  | { state: 'invalid' }
+  | { state: 'present'; credential: string };
+
 export type ProfileHttpManager = Pick<
   ProfileManager,
   | 'create'
@@ -79,33 +84,40 @@ function clearedCookie(production: boolean): string {
   return `${PROFILE_COOKIE_NAME}=; ${cookieAttributes(production, 0)}`;
 }
 
-export function readProfileCredentialCookie(
+function inspectProfileCredentialCookie(
   header: string | undefined,
-): string | null {
-  if (!header) return null;
+): ProfileCredentialCookie {
+  if (!header) return { state: 'absent' };
   const matches: string[] = [];
+  let targetSeen = false;
   for (const rawPart of header.split(';')) {
     const part = rawPart.trim();
     const separator = part.indexOf('=');
     const rawName = separator < 0 ? part : part.slice(0, separator);
     if (rawName.trim() !== PROFILE_COOKIE_NAME) continue;
-    if (separator < 0 || rawName !== PROFILE_COOKIE_NAME) return null;
+    targetSeen = true;
+    if (separator < 0 || rawName !== PROFILE_COOKIE_NAME) {
+      return { state: 'invalid' };
+    }
     matches.push(part.slice(separator + 1));
   }
-  if (matches.length !== 1) return null;
+  if (!targetSeen) return { state: 'absent' };
+  if (matches.length !== 1) return { state: 'invalid' };
   const credential = matches[0];
-  return credential || null;
+  return credential
+    ? { state: 'present', credential }
+    : { state: 'invalid' };
+}
+
+export function readProfileCredentialCookie(
+  header: string | undefined,
+): string | null {
+  const inspected = inspectProfileCredentialCookie(header);
+  return inspected.state === 'present' ? inspected.credential : null;
 }
 
 function readCredentialCookie(request: IncomingMessage): string | null {
   return readProfileCredentialCookie(request.headers.cookie);
-}
-
-function hasProfileCookie(request: IncomingMessage): boolean {
-  const header = request.headers.cookie;
-  if (!header) return false;
-  const prefix = `${PROFILE_COOKIE_NAME}=`;
-  return header.split(';').some(part => part.trim().startsWith(prefix));
 }
 
 function sendJson(
@@ -317,7 +329,7 @@ async function handleSession(
   response: ServerResponse,
   options: ProfileHttpOptions,
 ): Promise<void> {
-  if (!hasProfileCookie(request)) {
+  if (inspectProfileCredentialCookie(request.headers.cookie).state === 'absent') {
     sendJson(response, 200, { state: 'anonymous' });
     return;
   }

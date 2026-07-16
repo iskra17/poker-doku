@@ -111,32 +111,41 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(afterRelease.playerId).toBe(created.profile.id);
   });
 
-  it('uses the authenticated profile id and stores no credential in socket data or logs', async () => {
+  it('never retains or prefix-logs arbitrary transport tokens', async () => {
     harness = await createSocketTestHarness();
     const created = await harness.createProfile({ avatarId: 'hana' });
     const credential = created.cookie.split('=', 2)[1];
+    const transportTokens = [
+      `${credential}x`,
+      '잘못된-복구문구-password-credential',
+    ];
 
-    const client = await harness.connect(credential, {
-      profileCookie: created.cookie,
-    });
+    for (const transportToken of transportTokens) {
+      const client = await harness.connect(transportToken, {
+        profileCookie: created.cookie,
+      });
 
-    expect(client.playerId).toBe(created.profile.id);
-    const serverData = harness.getServerSocketData(client.socket.id!);
-    expect(serverData).toEqual({
-      profileId: created.profile.id,
-      profileAlias: created.profile.alias,
-      profileAvatarId: created.profile.avatarId,
-    });
-    expect(harness.getServerSocketCookie(client.socket.id!)).toBeUndefined();
-    expect(JSON.stringify(
-      harness.getServerSocketRawHeaders(client.socket.id!),
-    )).not.toContain(credential);
-    expect(JSON.stringify(serverData)).not.toContain(credential);
-    expect(JSON.stringify(
-      harness.runtime.sessions.getByPlayerId(client.playerId),
-    )).not.toContain(credential.slice(0, 6));
-    expect(JSON.stringify(harness.recentEvents())).not.toContain(credential);
-    expect(JSON.stringify(harness.recentEvents())).not.toContain(credential.slice(0, 6));
+      expect(client.playerId).toBe(created.profile.id);
+      const serverData = harness.getServerSocketData(client.socket.id!);
+      expect(serverData).toMatchObject({
+        profileId: created.profile.id,
+        profileAlias: created.profile.alias,
+        profileAvatarId: created.profile.avatarId,
+        hadTransportToken: true,
+        transportTokenHint: expect.stringMatching(/^t_[A-Za-z0-9_-]{12}$/),
+      });
+      expect(harness.getServerSocketAuth(client.socket.id!)).not.toHaveProperty('sessionToken');
+      expect(harness.getServerSocketCookie(client.socket.id!)).toBeUndefined();
+      expect(JSON.stringify(
+        harness.getServerSocketRawHeaders(client.socket.id!),
+      )).not.toContain(credential);
+      expect(JSON.stringify(serverData)).not.toContain(transportToken);
+      expect(JSON.stringify(
+        harness.runtime.sessions.getByPlayerId(client.playerId),
+      )).not.toContain(transportToken.slice(0, 6));
+      expect(JSON.stringify(harness.recentEvents())).not.toContain(transportToken);
+      expect(JSON.stringify(harness.recentEvents())).not.toContain(transportToken.slice(0, 6));
+    }
   });
 
   it('replaces the old socket for the same profile even with a different transport token', async () => {

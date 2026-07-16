@@ -52,6 +52,7 @@ export interface SocketTestHarness {
   getServerSocketData: (socketId: string) => AuthenticatedSocketData | undefined;
   getServerSocketCookie: (socketId: string) => string | undefined;
   getServerSocketRawHeaders: (socketId: string) => string[] | undefined;
+  getServerSocketAuth: (socketId: string) => Record<string, unknown> | undefined;
   recentEvents: () => LogEvent[];
   close: () => Promise<void>;
 }
@@ -200,6 +201,8 @@ export async function createSocketTestHarness(
       .get(socketId)?.handshake.headers.cookie,
     getServerSocketRawHeaders: socketId => io.sockets.sockets
       .get(socketId)?.request.rawHeaders,
+    getServerSocketAuth: socketId => io.sockets.sockets
+      .get(socketId)?.handshake.auth as Record<string, unknown> | undefined,
     recentEvents: () => eventLog.recent(),
     close: async () => {
       if (closed) return;

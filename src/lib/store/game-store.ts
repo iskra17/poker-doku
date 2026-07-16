@@ -50,7 +50,7 @@ function samePendingAction(a: PendingAction | null, b: PendingAction): boolean {
   return a?.handNumber === b.handNumber && a.actionSeq === b.actionSeq;
 }
 
-// 재접속용 세션 토큰: localStorage에 보관하는 비밀값 (서버가 좌석/칩을 이 토큰으로 복원)
+// 연결 진단용 transport token. 서버 인증/좌석 복원 권위는 HttpOnly 프로필 쿠키의 profileId다.
 function getSessionToken(): string {
   if (typeof window === 'undefined') return '';
   const KEY = 'poker-doku-session';
