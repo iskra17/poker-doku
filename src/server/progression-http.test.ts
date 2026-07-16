@@ -207,6 +207,19 @@ describe('progression HTTP API', () => {
       throw new Error(`Not a permanent reward: ${itemId}`);
     }
     const source = definition.source;
+    if (source.kind === 'dojo-level') {
+      database.db.prepare(`
+        UPDATE progression_profiles SET dojo_level = ?, dojo_xp_milli = 0
+        WHERE profile_id = ? AND dojo_level < ?
+      `).run(source.level, profile.id, source.level);
+    } else {
+      database.db.prepare(`
+        INSERT INTO character_affinity (profile_id, character_id, level, xp_milli)
+        VALUES (?, ?, ?, 0)
+        ON CONFLICT(profile_id, character_id) DO UPDATE SET
+          level = MAX(level, excluded.level), xp_milli = 0
+      `).run(profile.id, source.characterId, source.level);
+    }
     const sourceEventId = `http-grant-${itemId}`;
     database.transaction(() => {
       repository.grantPermanentInventoryItemInTransaction({
@@ -224,10 +237,14 @@ describe('progression HTTP API', () => {
         summary: {
           eventId: sourceEventId,
           dojoXpMilli: 0,
-          dojoLevelsGained: [],
-          characterId: 'sakura',
+          dojoLevelsGained: source.kind === 'dojo-level' ? [source.level] : [],
+          characterId: source.kind === 'affinity-level'
+            ? source.characterId
+            : 'sakura',
           affinityMilli: 0,
-          affinityLevelsGained: [],
+          affinityLevelsGained: source.kind === 'affinity-level'
+            ? [source.level]
+            : [],
           missionCompletions: [],
           grantedItemIds: [itemId],
         },

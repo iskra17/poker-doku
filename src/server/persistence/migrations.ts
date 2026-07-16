@@ -2209,6 +2209,384 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'immutable permanent inventory item'); END;
     `,
   },
+  {
+    version: 12,
+    name: 'enforce_durable_collection_catalog_and_reward_proofs',
+    sql: `
+      CREATE TABLE collection_catalog (
+        item_id TEXT PRIMARY KEY CHECK (
+          length(item_id) BETWEEN 1 AND 128
+          AND item_id NOT GLOB '*[^A-Za-z0-9_-]*'
+        ),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'fragment', 'title', 'frame', 'emote', 'cutin',
+          'dialogue-pack', 'aura', 'skin'
+        )),
+        stackable INTEGER NOT NULL CHECK (stackable IN (0, 1)),
+        source_kind TEXT NOT NULL CHECK (
+          source_kind IN ('streak', 'dojo-level', 'affinity-level')
+        ),
+        required_level INTEGER,
+        character_id TEXT CHECK (character_id IS NULL OR character_id IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )),
+        equip_slot TEXT CHECK (
+          equip_slot IS NULL OR equip_slot IN ('title', 'frame', 'skin', 'cutin')
+        ),
+        CHECK (
+          (source_kind = 'streak' AND required_level IS NULL
+            AND character_id IS NULL AND stackable = 1)
+          OR (source_kind = 'dojo-level'
+            AND required_level BETWEEN 1 AND 50
+            AND character_id IS NULL AND stackable = 0)
+          OR (source_kind = 'affinity-level'
+            AND required_level BETWEEN 1 AND 20
+            AND character_id IS NOT NULL AND stackable = 0)
+        )
+      ) STRICT;
+
+      INSERT INTO collection_catalog (
+        item_id, kind, stackable, source_kind, required_level,
+        character_id, equip_slot
+      ) VALUES
+        ('streak-fragment','fragment',1,'streak',NULL,NULL,NULL),
+        ('dojo-title-sprout-challenger','title',0,'dojo-level',2,NULL,'title'),
+        ('dojo-frame-cherry-blossom','frame',0,'dojo-level',5,NULL,'frame'),
+        ('dojo-emote-miyako-cheer','emote',0,'dojo-level',10,NULL,NULL),
+        ('dojo-title-steady-trainee','title',0,'dojo-level',15,NULL,'title'),
+        ('dojo-frame-clear-sky','frame',0,'dojo-level',20,NULL,'frame'),
+        ('dojo-cutin-focus-lines','cutin',0,'dojo-level',25,NULL,'cutin'),
+        ('dojo-title-advanced-student','title',0,'dojo-level',30,NULL,'title'),
+        ('dojo-frame-golden','frame',0,'dojo-level',35,NULL,'frame'),
+        ('dojo-cutin-match-moment','cutin',0,'dojo-level',40,NULL,'cutin'),
+        ('dojo-title-battle-tested','title',0,'dojo-level',45,NULL,'title'),
+        ('dojo-frame-master','frame',0,'dojo-level',50,NULL,'frame'),
+        ('affinity-sakura-dialogue-pack','dialogue-pack',0,'affinity-level',5,'sakura',NULL),
+        ('affinity-sakura-aura','aura',0,'affinity-level',10,'sakura',NULL),
+        ('affinity-sakura-cutin','cutin',0,'affinity-level',15,'sakura','cutin'),
+        ('affinity-sakura-skin','skin',0,'affinity-level',20,'sakura','skin'),
+        ('affinity-ara-dialogue-pack','dialogue-pack',0,'affinity-level',5,'ara',NULL),
+        ('affinity-ara-aura','aura',0,'affinity-level',10,'ara',NULL),
+        ('affinity-ara-cutin','cutin',0,'affinity-level',15,'ara','cutin'),
+        ('affinity-ara-skin','skin',0,'affinity-level',20,'ara','skin'),
+        ('affinity-hana-dialogue-pack','dialogue-pack',0,'affinity-level',5,'hana',NULL),
+        ('affinity-hana-aura','aura',0,'affinity-level',10,'hana',NULL),
+        ('affinity-hana-cutin','cutin',0,'affinity-level',15,'hana','cutin'),
+        ('affinity-hana-skin','skin',0,'affinity-level',20,'hana','skin'),
+        ('affinity-chloe-dialogue-pack','dialogue-pack',0,'affinity-level',5,'chloe',NULL),
+        ('affinity-chloe-aura','aura',0,'affinity-level',10,'chloe',NULL),
+        ('affinity-chloe-cutin','cutin',0,'affinity-level',15,'chloe','cutin'),
+        ('affinity-chloe-skin','skin',0,'affinity-level',20,'chloe','skin'),
+        ('affinity-vivian-dialogue-pack','dialogue-pack',0,'affinity-level',5,'vivian',NULL),
+        ('affinity-vivian-aura','aura',0,'affinity-level',10,'vivian',NULL),
+        ('affinity-vivian-cutin','cutin',0,'affinity-level',15,'vivian','cutin'),
+        ('affinity-vivian-skin','skin',0,'affinity-level',20,'vivian','skin'),
+        ('affinity-elena-dialogue-pack','dialogue-pack',0,'affinity-level',5,'elena',NULL),
+        ('affinity-elena-aura','aura',0,'affinity-level',10,'elena',NULL),
+        ('affinity-elena-cutin','cutin',0,'affinity-level',15,'elena','cutin'),
+        ('affinity-elena-skin','skin',0,'affinity-level',20,'elena','skin');
+
+      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
+      SELECT profile.profile_id, slots.slot, NULL, profile.updated_at
+      FROM progression_profiles AS profile
+      CROSS JOIN (
+        SELECT 'title' AS slot UNION ALL SELECT 'frame'
+        UNION ALL SELECT 'skin' UNION ALL SELECT 'cutin'
+      ) AS slots
+      WHERE NOT EXISTS (
+        SELECT 1 FROM profile_equipment AS equipment
+        WHERE equipment.profile_id = profile.profile_id
+          AND equipment.slot = slots.slot
+      );
+
+      CREATE TABLE v12_collection_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v12_collection_validation(invalid)
+      SELECT 1
+      FROM inventory_items AS inventory
+      LEFT JOIN collection_catalog AS catalog ON catalog.item_id = inventory.item_id
+      WHERE catalog.item_id IS NULL
+        OR (catalog.stackable = 0 AND inventory.quantity != 1)
+        OR (catalog.stackable = 1 AND inventory.quantity < 1);
+
+      INSERT INTO v12_collection_validation(invalid)
+      SELECT 1
+      FROM profile_equipment AS equipment
+      LEFT JOIN progression_profiles AS profile ON profile.profile_id = equipment.profile_id
+      LEFT JOIN collection_catalog AS catalog ON catalog.item_id = equipment.item_id
+      LEFT JOIN inventory_items AS inventory
+        ON inventory.profile_id = equipment.profile_id
+        AND inventory.item_id = equipment.item_id
+      WHERE profile.profile_id IS NULL OR (equipment.item_id IS NOT NULL AND (
+        catalog.item_id IS NULL
+        OR catalog.equip_slot IS NULL
+        OR catalog.equip_slot != equipment.slot
+        OR inventory.quantity IS NULL
+        OR inventory.quantity < 1
+        OR (catalog.kind = 'skin'
+          AND catalog.character_id != profile.selected_character_id)
+      ));
+
+      INSERT INTO v12_collection_validation(invalid)
+      SELECT 1
+      FROM progression_profiles AS profile
+      LEFT JOIN profile_equipment AS equipment
+        ON equipment.profile_id = profile.profile_id
+      GROUP BY profile.profile_id
+      HAVING COUNT(equipment.slot) != 4
+        OR COUNT(DISTINCT equipment.slot) != 4;
+
+      INSERT INTO v12_collection_validation(invalid)
+      SELECT 1
+      FROM inventory_items AS inventory
+      WHERE inventory.item_id = 'streak-fragment'
+        AND (
+          inventory.quantity != (
+            SELECT COUNT(*) FROM progression_item_grants AS receipt
+            WHERE receipt.profile_id = inventory.profile_id
+              AND receipt.item_id = inventory.item_id
+          )
+          OR inventory.granted_at != (
+            SELECT MIN(granted_at) FROM progression_item_grants AS receipt
+            WHERE receipt.profile_id = inventory.profile_id
+              AND receipt.item_id = inventory.item_id
+          )
+          OR inventory.updated_at != (
+            SELECT MAX(granted_at) FROM progression_item_grants AS receipt
+            WHERE receipt.profile_id = inventory.profile_id
+              AND receipt.item_id = inventory.item_id
+          )
+        );
+
+      INSERT INTO v12_collection_validation(invalid)
+      SELECT 1
+      FROM permanent_progression_grants AS grant_row
+      JOIN progression_profiles AS profile ON profile.profile_id = grant_row.profile_id
+      LEFT JOIN progression_events AS source_event
+        ON source_event.idempotency_key = grant_row.source_event_id
+        AND source_event.profile_id = grant_row.profile_id
+      LEFT JOIN collection_catalog AS catalog ON catalog.item_id = grant_row.item_id
+      LEFT JOIN character_affinity AS affinity
+        ON affinity.profile_id = grant_row.profile_id
+        AND affinity.character_id = catalog.character_id
+      LEFT JOIN inventory_items AS inventory
+        ON inventory.profile_id = grant_row.profile_id
+        AND inventory.item_id = grant_row.item_id
+      WHERE source_event.idempotency_key IS NULL
+        OR catalog.item_id IS NULL
+        OR catalog.stackable != 0
+        OR catalog.source_kind != grant_row.source_kind
+        OR catalog.required_level != grant_row.source_level
+        OR catalog.character_id IS NOT grant_row.source_character_id
+        OR source_event.event_type NOT IN ('completed-hand', 'sng-finish')
+        OR source_event.balance_version != 1
+        OR source_event.created_at != grant_row.granted_at
+        OR inventory.item_id IS NULL
+        OR inventory.quantity != 1
+        OR inventory.granted_at != grant_row.granted_at
+        OR inventory.updated_at != grant_row.granted_at
+        OR NOT json_valid(source_event.summary_json)
+        OR NOT EXISTS (
+          SELECT 1 FROM json_each(source_event.summary_json, '$.grantedItemIds')
+          WHERE type = 'text' AND value = grant_row.item_id
+        )
+        OR (catalog.source_kind = 'dojo-level' AND (
+          profile.dojo_level < catalog.required_level
+          OR NOT EXISTS (
+            SELECT 1 FROM json_each(source_event.summary_json, '$.dojoLevelsGained')
+            WHERE type = 'integer' AND value = catalog.required_level
+          )
+        ))
+        OR (catalog.source_kind = 'affinity-level' AND (
+          affinity.level IS NULL
+          OR affinity.level < catalog.required_level
+          OR json_extract(source_event.summary_json, '$.characterId')
+            IS NOT catalog.character_id
+          OR NOT EXISTS (
+            SELECT 1 FROM json_each(source_event.summary_json, '$.affinityLevelsGained')
+            WHERE type = 'integer' AND value = catalog.required_level
+          )
+        ));
+
+      DROP TABLE v12_collection_validation;
+
+      CREATE TRIGGER reject_collection_catalog_insert
+      BEFORE INSERT ON collection_catalog
+      BEGIN SELECT RAISE(ABORT, 'immutable collection catalog'); END;
+      CREATE TRIGGER reject_collection_catalog_update
+      BEFORE UPDATE ON collection_catalog
+      BEGIN SELECT RAISE(ABORT, 'immutable collection catalog'); END;
+      CREATE TRIGGER reject_collection_catalog_delete
+      BEFORE DELETE ON collection_catalog
+      BEGIN SELECT RAISE(ABORT, 'immutable collection catalog'); END;
+
+      CREATE TRIGGER validate_catalog_inventory_insert
+      BEFORE INSERT ON inventory_items
+      WHEN NOT EXISTS (
+        SELECT 1 FROM collection_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id
+          AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+            OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      CREATE TRIGGER validate_catalog_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN NEW.item_id != 'streak-fragment'
+        AND OLD.item_id != 'streak-fragment'
+        AND NOT EXISTS (
+        SELECT 1 FROM collection_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id
+          AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+            OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      CREATE TRIGGER validate_catalog_equipment_insert
+      BEFORE INSERT ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM collection_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity >= 1
+        JOIN progression_profiles AS profile ON profile.profile_id = NEW.profile_id
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.equip_slot = NEW.slot
+          AND (catalog.kind != 'skin'
+            OR catalog.character_id = profile.selected_character_id)
+      ))
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+
+      CREATE TRIGGER validate_catalog_equipment_update
+      BEFORE UPDATE ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1
+        FROM collection_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity >= 1
+        JOIN progression_profiles AS profile ON profile.profile_id = NEW.profile_id
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.equip_slot = NEW.slot
+          AND (catalog.kind != 'skin'
+            OR catalog.character_id = profile.selected_character_id)
+      ))
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+
+      CREATE TRIGGER reject_catalog_equipment_delete
+      BEFORE DELETE ON profile_equipment
+      WHEN EXISTS (SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT, 'delete equipment through profile owner'); END;
+
+      CREATE TRIGGER validate_selected_character_skin_update
+      BEFORE UPDATE OF selected_character_id ON progression_profiles
+      WHEN EXISTS (
+        SELECT 1
+        FROM profile_equipment AS equipment
+        JOIN collection_catalog AS catalog ON catalog.item_id = equipment.item_id
+        WHERE equipment.profile_id = NEW.profile_id
+          AND equipment.slot = 'skin'
+          AND catalog.kind = 'skin'
+          AND catalog.character_id != NEW.selected_character_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'selected character conflicts with skin'); END;
+
+      CREATE TRIGGER validate_permanent_grant_catalog_insert
+      BEFORE INSERT ON permanent_progression_grants
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM collection_catalog AS catalog
+        JOIN progression_profiles AS profile ON profile.profile_id = NEW.profile_id
+        LEFT JOIN character_affinity AS affinity
+          ON affinity.profile_id = NEW.profile_id
+          AND affinity.character_id = catalog.character_id
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.stackable = 0
+          AND catalog.source_kind = NEW.source_kind
+          AND catalog.required_level = NEW.source_level
+          AND catalog.character_id IS NEW.source_character_id
+          AND ((catalog.source_kind = 'dojo-level'
+              AND profile.dojo_level >= catalog.required_level)
+            OR (catalog.source_kind = 'affinity-level'
+              AND affinity.level >= catalog.required_level))
+          AND (NOT EXISTS (
+              SELECT 1 FROM progression_events
+              WHERE idempotency_key = NEW.source_event_id
+            ) OR EXISTS (
+              SELECT 1 FROM progression_events AS source_event
+              WHERE source_event.idempotency_key = NEW.source_event_id
+                AND source_event.profile_id = NEW.profile_id
+                AND json_valid(source_event.summary_json)
+                AND EXISTS (
+                  SELECT 1 FROM json_each(source_event.summary_json, '$.grantedItemIds')
+                  WHERE type = 'text' AND value = NEW.item_id
+                )
+                AND ((catalog.source_kind = 'dojo-level' AND EXISTS (
+                    SELECT 1 FROM json_each(source_event.summary_json, '$.dojoLevelsGained')
+                    WHERE type = 'integer' AND value = catalog.required_level
+                  )) OR (catalog.source_kind = 'affinity-level'
+                    AND json_extract(source_event.summary_json, '$.characterId')
+                      IS catalog.character_id
+                    AND EXISTS (
+                      SELECT 1 FROM json_each(source_event.summary_json, '$.affinityLevelsGained')
+                      WHERE type = 'integer' AND value = catalog.required_level
+                    )))
+            ))
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid permanent grant catalog proof'); END;
+
+      CREATE TRIGGER validate_permanent_grant_source_proof_insert
+      BEFORE INSERT ON progression_events
+      WHEN EXISTS (
+        SELECT 1
+        FROM permanent_progression_grants AS grant_row
+        JOIN collection_catalog AS catalog ON catalog.item_id = grant_row.item_id
+        JOIN progression_profiles AS profile ON profile.profile_id = grant_row.profile_id
+        LEFT JOIN character_affinity AS affinity
+          ON affinity.profile_id = grant_row.profile_id
+          AND affinity.character_id = catalog.character_id
+        WHERE grant_row.source_event_id = NEW.idempotency_key
+          AND (
+            grant_row.profile_id != NEW.profile_id
+            OR catalog.source_kind != grant_row.source_kind
+            OR catalog.required_level != grant_row.source_level
+            OR catalog.character_id IS NOT grant_row.source_character_id
+            OR NOT json_valid(NEW.summary_json)
+            OR NOT EXISTS (
+              SELECT 1 FROM json_each(NEW.summary_json, '$.grantedItemIds')
+              WHERE type = 'text' AND value = grant_row.item_id
+            )
+            OR (catalog.source_kind = 'dojo-level' AND (
+              profile.dojo_level < catalog.required_level
+              OR NOT EXISTS (
+                SELECT 1 FROM json_each(NEW.summary_json, '$.dojoLevelsGained')
+                WHERE type = 'integer' AND value = catalog.required_level
+              )
+            ))
+            OR (catalog.source_kind = 'affinity-level' AND (
+              affinity.level IS NULL
+              OR affinity.level < catalog.required_level
+              OR json_extract(NEW.summary_json, '$.characterId')
+                IS NOT catalog.character_id
+              OR NOT EXISTS (
+                SELECT 1 FROM json_each(NEW.summary_json, '$.affinityLevelsGained')
+                WHERE type = 'integer' AND value = catalog.required_level
+              )
+            ))
+          )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid permanent grant source proof'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

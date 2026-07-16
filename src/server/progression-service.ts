@@ -788,16 +788,6 @@ export class ProgressionService {
         nextAffinity.level,
       ),
     ];
-    for (const reward of permanentRewards) {
-      const granted = this.repository.grantPermanentInventoryItemInTransaction({
-        profileId: input.profile.profileId,
-        itemId: reward.id,
-        sourceEventId: input.eventId,
-        source: reward.source,
-        grantedAt: input.completedAt,
-      });
-      if (granted) grantedItemIds.push(reward.id);
-    }
     const summary: ProgressionRewardSummary = {
       eventId: input.eventId,
       dojoXpMilli: input.dojoReward,
@@ -848,6 +838,16 @@ export class ProgressionService {
       },
       next: nextAffinity,
     });
+    for (const reward of permanentRewards) {
+      const granted = this.repository.grantPermanentInventoryItemInTransaction({
+        profileId: input.profile.profileId,
+        itemId: reward.id,
+        sourceEventId: input.eventId,
+        source: reward.source,
+        grantedAt: input.completedAt,
+      });
+      if (granted) grantedItemIds.push(reward.id);
+    }
     const inserted = this.repository.insertProgressionEvent({
       idempotencyKey: input.eventId,
       profileId: input.profile.profileId,

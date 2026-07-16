@@ -255,6 +255,87 @@ describe('ProgressionService', () => {
       .toEqual({ count: 0 });
   });
 
+  it('rejects a level-50 dojo grant when the source summary has no crossed level', () => {
+    insertProfile(database, 'no-level-proof');
+    repository.getOrCreate('no-level-proof', 'sakura', 1);
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = 50, dojo_xp_milli = 0
+      WHERE profile_id = 'no-level-proof'
+    `).run();
+
+    expect(() => insertPermanentGrantProofForTest({
+      database,
+      repository,
+      profileId: 'no-level-proof',
+      itemId: 'dojo-frame-master',
+      summary: validStoredSummary('no-level-proof-event', {
+        grantedItemIds: ['dojo-frame-master'],
+      }),
+      eventId: 'no-level-proof-event',
+    })).toThrow();
+  });
+
+  it('rejects a fake dojo crossed level when the profile never reached it', () => {
+    insertProfile(database, 'fake-level-proof');
+    repository.getOrCreate('fake-level-proof', 'sakura', 1);
+
+    expect(() => insertPermanentGrantProofForTest({
+      database,
+      repository,
+      profileId: 'fake-level-proof',
+      itemId: 'dojo-frame-master',
+      summary: validStoredSummary('fake-level-proof-event', {
+        dojoLevelsGained: [50],
+        grantedItemIds: ['dojo-frame-master'],
+      }),
+      eventId: 'fake-level-proof-event',
+    })).toThrow();
+  });
+
+  it('rejects an affinity grant sourced from the wrong event character', () => {
+    insertProfile(database, 'wrong-affinity-proof');
+    repository.getOrCreate('wrong-affinity-proof', 'ara', 1);
+    database.db.prepare(`
+      UPDATE character_affinity SET level = 20, xp_milli = 0
+      WHERE profile_id = 'wrong-affinity-proof' AND character_id = 'ara'
+    `).run();
+
+    expect(() => insertPermanentGrantProofForTest({
+      database,
+      repository,
+      profileId: 'wrong-affinity-proof',
+      itemId: 'affinity-ara-skin',
+      summary: validStoredSummary('wrong-affinity-proof-event', {
+        characterId: 'sakura',
+        affinityLevelsGained: [20],
+        grantedItemIds: ['affinity-ara-skin'],
+      }),
+      eventId: 'wrong-affinity-proof-event',
+    })).toThrow();
+  });
+
+  it('rejects an affinity grant whose source omits the required level', () => {
+    insertProfile(database, 'wrong-affinity-level');
+    repository.getOrCreate('wrong-affinity-level', 'ara', 1);
+    database.db.prepare(`
+      UPDATE character_affinity SET level = 20, xp_milli = 0
+      WHERE profile_id = 'wrong-affinity-level' AND character_id = 'ara'
+    `).run();
+
+    expect(() => insertPermanentGrantProofForTest({
+      database,
+      repository,
+      profileId: 'wrong-affinity-level',
+      itemId: 'affinity-ara-skin',
+      summary: validStoredSummary('wrong-affinity-level-event', {
+        characterId: 'ara',
+        affinityLevelsGained: [15],
+        grantedItemIds: ['affinity-ara-skin'],
+      }),
+      eventId: 'wrong-affinity-level-event',
+    })).toThrow();
+  });
+
   it('rolls permanent grants back when the source event cannot commit', () => {
     insertProfile(database, 'rollback-reward');
     repository.getOrCreate('rollback-reward', 'sakura', 1);
@@ -1842,6 +1923,19 @@ function grantPermanentForTest(
     throw new Error(`Not a permanent reward: ${itemId}`);
   }
   const source = definition.source;
+  if (source.kind === 'dojo-level') {
+    database.db.prepare(`
+      UPDATE progression_profiles SET dojo_level = ?, dojo_xp_milli = 0
+      WHERE profile_id = ? AND dojo_level < ?
+    `).run(source.level, profileId, source.level);
+  } else {
+    database.db.prepare(`
+      INSERT INTO character_affinity (profile_id, character_id, level, xp_milli)
+      VALUES (?, ?, ?, 0)
+      ON CONFLICT(profile_id, character_id) DO UPDATE SET
+        level = MAX(level, excluded.level), xp_milli = 0
+    `).run(profileId, source.characterId, source.level);
+  }
   const sourceEventId = `test-grant-${itemId}-${profileId}`;
   database.transaction(() => {
     repository.grantPermanentInventoryItemInTransaction({
@@ -1856,8 +1950,48 @@ function grantPermanentForTest(
       profileId,
       eventType: 'completed-hand',
       balanceVersion: 1,
-      summary: validStoredSummary(sourceEventId, { grantedItemIds: [itemId] }),
+      summary: validStoredSummary(sourceEventId, {
+        grantedItemIds: [itemId],
+        ...(source.kind === 'dojo-level'
+          ? { dojoLevelsGained: [source.level] }
+          : {
+              characterId: source.characterId,
+              affinityLevelsGained: [source.level],
+            }),
+      }),
       createdAt: grantedAt,
+    });
+  });
+}
+
+function insertPermanentGrantProofForTest(input: {
+  database: PokerDatabase;
+  repository: ProgressionRepository;
+  profileId: string;
+  itemId: string;
+  eventId: string;
+  summary: Record<string, unknown>;
+}): void {
+  const definition = getCollectionItemDefinition(input.itemId);
+  if (!definition || definition.source.kind === 'streak') {
+    throw new Error(`Not a permanent reward: ${input.itemId}`);
+  }
+  const source = definition.source;
+  input.database.transaction(() => {
+    input.repository.grantPermanentInventoryItemInTransaction({
+      profileId: input.profileId,
+      itemId: input.itemId,
+      sourceEventId: input.eventId,
+      source,
+      grantedAt: 1,
+    });
+    input.repository.insertProgressionEvent({
+      idempotencyKey: input.eventId,
+      profileId: input.profileId,
+      eventType: 'completed-hand',
+      balanceVersion: 1,
+      summary: input.summary,
+      createdAt: 1,
     });
   });
 }

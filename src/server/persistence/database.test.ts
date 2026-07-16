@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './database';
 import { ProfileRepository } from '../profile-repository';
+import { ProgressionRepository } from '../progression-repository';
+import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import {
   type Migration,
   migrations,
@@ -44,7 +46,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(11);
+    expect(migration.version).toBe(12);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -66,6 +68,7 @@ describe('PokerDatabase migrations', () => {
         'streak_daily_progress',
         'progression_item_grants',
         'permanent_progression_grants',
+        'collection_catalog',
       ]),
     );
     expect(profileColumns).toEqual(
@@ -76,6 +79,83 @@ describe('PokerDatabase migrations', () => {
     expect(sngColumns).toEqual(expect.arrayContaining([
       'id', 'tournament_id', 'room_id', 'profile_id', 'start_attempt',
     ]));
+  });
+
+  it('seeds durable collection metadata exactly from the TypeScript catalog', () => {
+    database = openPokerDatabase(':memory:');
+    const rows = database.db.prepare(`
+      SELECT item_id, kind, stackable, source_kind, required_level,
+             character_id, equip_slot
+      FROM collection_catalog ORDER BY item_id
+    `).all();
+    const expected = COLLECTION_CATALOG.map(item => ({
+      item_id: item.id,
+      kind: item.kind,
+      stackable: item.stackable ? 1 : 0,
+      source_kind: item.source.kind,
+      required_level: item.source.kind === 'streak' ? null : item.source.level,
+      character_id: item.source.kind === 'affinity-level'
+        ? item.source.characterId
+        : null,
+      equip_slot: item.equipSlot,
+    })).sort((left, right) => left.item_id.localeCompare(right.item_id));
+
+    expect(rows).toEqual(expected);
+  });
+
+  it('enforces catalog inventory, equipment slot, and selected skin invariants', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'catalog-guard');
+    insertProfile(database, 'equipment-without-progression');
+    expect(() => database?.db.prepare(`
+      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
+      VALUES ('equipment-without-progression', 'title', NULL, 1)
+    `).run()).toThrow();
+    const repository = new ProgressionRepository(database);
+    repository.getOrCreate('catalog-guard', 'sakura', 1);
+
+    expect(() => database?.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'catalog-guard', 'unknown-item', 1, 1, 1
+      )
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'catalog-guard', 'dojo-frame-cherry-blossom', 2, 1, 1
+      )
+    `).run()).toThrow();
+    database.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'catalog-guard', 'dojo-frame-cherry-blossom', 1, 1, 1
+      )
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE profile_equipment SET item_id = 'dojo-frame-cherry-blossom'
+      WHERE profile_id = 'catalog-guard' AND slot = 'title'
+    `).run()).toThrow();
+
+    database.db.prepare(`
+      INSERT INTO inventory_items VALUES (
+        'catalog-guard', 'affinity-sakura-skin', 1, 1, 1
+      )
+    `).run();
+    database.db.prepare(`
+      UPDATE profile_equipment SET item_id = 'affinity-sakura-skin'
+      WHERE profile_id = 'catalog-guard' AND slot = 'skin'
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE progression_profiles SET selected_character_id = 'ara'
+      WHERE profile_id = 'catalog-guard'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE inventory_items SET quantity = 2
+      WHERE profile_id = 'catalog-guard'
+        AND item_id = 'dojo-frame-cherry-blossom'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      DELETE FROM profile_equipment
+      WHERE profile_id = 'catalog-guard' AND slot = 'title'
+    `).run()).toThrow();
   });
 
   it('does not reapply migrations when reopening a file database', () => {
@@ -90,7 +170,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(11);
+    expect(result.count).toBe(12);
   });
 
   it('upgrades a V10 preowned cosmetic without inventing a grant receipt', () => {
@@ -131,6 +211,105 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ count: 0 });
   });
 
+  it.each([
+    ['unknown inventory', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'unknown-item', 1, 1, 1
+      );
+    `],
+    ['nonstackable quantity', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 2, 1, 1
+      );
+    `],
+    ['wrong equipment slot', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 1, 1, 1
+      );
+      UPDATE profile_equipment SET item_id = 'dojo-frame-cherry-blossom'
+      WHERE profile_id = 'v1-marker' AND slot = 'title';
+    `],
+    ['wrong character skin', `
+      INSERT INTO inventory_items VALUES (
+        'v1-marker', 'affinity-ara-skin', 1, 1, 1
+      );
+      UPDATE profile_equipment SET item_id = 'affinity-ara-skin'
+      WHERE profile_id = 'v1-marker' AND slot = 'skin';
+    `],
+    ['orphan permanent receipt', `
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'v1-marker';
+      INSERT INTO permanent_progression_grants (
+        profile_id, item_id, source_event_id, source_kind,
+        source_level, source_character_id, granted_at
+      ) VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 'missing-event',
+        'dojo-level', 5, NULL, 1
+      );
+    `],
+    ['fake source level proof', `
+      INSERT INTO progression_events VALUES (
+        'fake-level-event', 'v1-marker', 'completed-hand', 1,
+        '{"eventId":"fake-level-event","dojoXpMilli":0,"dojoLevelsGained":[50],"characterId":"sakura","affinityMilli":0,"affinityLevelsGained":[],"missionCompletions":[],"grantedItemIds":["dojo-frame-master"]}',
+        1
+      );
+      INSERT INTO permanent_progression_grants (
+        profile_id, item_id, source_event_id, source_kind,
+        source_level, source_character_id, granted_at
+      ) VALUES (
+        'v1-marker', 'dojo-frame-master', 'fake-level-event',
+        'dojo-level', 50, NULL, 1
+      );
+    `],
+    ['permanent receipt inventory mismatch', `
+      UPDATE progression_profiles SET dojo_level = 5, dojo_xp_milli = 0
+      WHERE profile_id = 'v1-marker';
+      INSERT INTO progression_events VALUES (
+        'valid-level-event', 'v1-marker', 'completed-hand', 1,
+        '{"eventId":"valid-level-event","dojoXpMilli":0,"dojoLevelsGained":[5],"characterId":"sakura","affinityMilli":0,"affinityLevelsGained":[],"missionCompletions":[],"grantedItemIds":["dojo-frame-cherry-blossom"]}',
+        1
+      );
+      INSERT INTO permanent_progression_grants (
+        profile_id, item_id, source_event_id, source_kind,
+        source_level, source_character_id, granted_at
+      ) VALUES (
+        'v1-marker', 'dojo-frame-cherry-blossom', 'valid-level-event',
+        'dojo-level', 5, NULL, 1
+      );
+      DROP TRIGGER protect_permanent_inventory_update;
+      UPDATE inventory_items SET updated_at = 2
+      WHERE profile_id = 'v1-marker'
+        AND item_id = 'dojo-frame-cherry-blossom';
+    `],
+  ])('atomically rejects corrupt V11 %s during V12 upgrade', (_label, mutation) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-v11-invalid-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV11Database(path);
+    const raw = new DatabaseSync(path);
+    try {
+      raw.exec('PRAGMA foreign_keys=OFF;');
+      raw.exec(mutation);
+    } finally {
+      raw.close();
+    }
+
+    expectOpenDatabaseToThrow(path);
+
+    const after = new DatabaseSync(path);
+    try {
+      expect(after.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 11 });
+      expect(after.prepare(`
+        SELECT COUNT(*) AS count FROM sqlite_schema
+        WHERE type = 'table' AND name = 'collection_catalog'
+      `).get()).toEqual({ count: 0 });
+    } finally {
+      after.close();
+    }
+  });
+
   it('upgrades an existing V1 database through the latest schema once while preserving data', () => {
     const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
     temporaryDirectories.push(directory);
@@ -156,7 +335,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -178,7 +357,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -219,7 +398,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
   });
 
@@ -258,7 +437,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -350,18 +529,13 @@ describe('PokerDatabase migrations', () => {
     const db = database.db;
     insertProfile(database, 'equipment-owner');
     insertProfile(database, 'equipment-other');
-    const insertEquipment = db.prepare(`
-      INSERT INTO profile_equipment (profile_id, slot, item_id, updated_at)
-      VALUES (?, ?, NULL, 1)
-    `);
-    for (const slot of ['title', 'frame', 'skin', 'cutin']) {
-      insertEquipment.run('equipment-owner', slot);
-    }
-    insertEquipment.run('equipment-other', 'title');
+    const progression = new ProgressionRepository(database);
+    progression.getOrCreate('equipment-owner', 'sakura', 1);
+    progression.getOrCreate('equipment-other', 'sakura', 1);
     db.prepare(`
       INSERT INTO inventory_items (
         profile_id, item_id, quantity, granted_at, updated_at
-      ) VALUES ('equipment-owner', 'owner-title', 1, 1, 1)
+      ) VALUES ('equipment-owner', 'dojo-title-sprout-challenger', 1, 1, 1)
     `).run();
 
     expect(db.prepare(`
@@ -378,29 +552,31 @@ describe('PokerDatabase migrations', () => {
       WHERE profile_id = 'equipment-owner' AND slot = 'frame'
     `).run()).toThrow();
     expect(() => db.prepare(`
-      UPDATE profile_equipment SET item_id = 'owner-title'
+      UPDATE profile_equipment SET item_id = 'dojo-title-sprout-challenger'
       WHERE profile_id = 'equipment-other' AND slot = 'title'
     `).run()).toThrow();
 
     db.prepare(`
-      UPDATE profile_equipment SET item_id = 'owner-title'
+      UPDATE profile_equipment SET item_id = 'dojo-title-sprout-challenger'
       WHERE profile_id = 'equipment-owner' AND slot = 'title'
     `).run();
     expect(db.prepare(`
       SELECT item_id FROM profile_equipment
       WHERE profile_id = 'equipment-owner' AND slot = 'title'
-    `).get()).toEqual({ item_id: 'owner-title' });
-    db.prepare(`
-      UPDATE inventory_items SET item_id = 'owner-title-renamed'
-      WHERE profile_id = 'equipment-owner' AND item_id = 'owner-title'
-    `).run();
+    `).get()).toEqual({ item_id: 'dojo-title-sprout-challenger' });
+    expect(() => db.prepare(`
+      UPDATE inventory_items SET item_id = 'dojo-frame-cherry-blossom'
+      WHERE profile_id = 'equipment-owner'
+        AND item_id = 'dojo-title-sprout-challenger'
+    `).run()).toThrow();
     expect(db.prepare(`
       SELECT item_id FROM profile_equipment
       WHERE profile_id = 'equipment-owner' AND slot = 'title'
-    `).get()).toEqual({ item_id: 'owner-title-renamed' });
+    `).get()).toEqual({ item_id: 'dojo-title-sprout-challenger' });
     expect(() => db.prepare(`
       DELETE FROM inventory_items
-      WHERE profile_id = 'equipment-owner' AND item_id = 'owner-title-renamed'
+      WHERE profile_id = 'equipment-owner'
+        AND item_id = 'dojo-title-sprout-challenger'
     `).run()).toThrow();
   });
 
@@ -566,7 +742,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -814,7 +990,7 @@ describe('PokerDatabase migrations', () => {
       { version: 1 }, { version: 2 }, { version: 3 }, { version: 4 },
       { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 },
       { version: 9 },
-      { version: 10 }, { version: 11 },
+      { version: 10 }, { version: 11 }, { version: 12 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1076,7 +1252,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 11 });
+    `).get()).toEqual({ version: 12 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -1419,7 +1595,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 11 });
+    `).get()).toEqual({ version: 12 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -2069,10 +2245,10 @@ describe('PokerDatabase migrations', () => {
         1, 0, 1, NULL, NULL
       );
       INSERT INTO inventory_items VALUES (
-        'progression-cascade', 'frame-a', 1, 1, 1
+        'progression-cascade', 'dojo-frame-cherry-blossom', 1, 1, 1
       );
       INSERT INTO profile_equipment VALUES (
-        'progression-cascade', 'frame', 'frame-a', 1
+        'progression-cascade', 'frame', 'dojo-frame-cherry-blossom', 1
       );
       INSERT INTO progression_events VALUES (
         'event-a', 'progression-cascade', 'test', 1, '{}', 1
@@ -2700,6 +2876,32 @@ function createV10Database(path: string): void {
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (10, 'prove_fragment_sources_and_protect_progression_root', 10);
       COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV11Database(path: string): void {
+  createV10Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[10].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (11, 'add_permanent_progression_reward_receipts', 11);
+      COMMIT;
+      INSERT INTO progression_profiles VALUES (
+        'v1-marker', 1, 1, 0, 'sakura', NULL,
+        0, 0, 0, 0, 0, 0, 1, 1
+      );
+      INSERT INTO character_affinity VALUES ('v1-marker', 'sakura', 1, 0);
+      INSERT INTO profile_equipment VALUES
+        ('v1-marker', 'title', NULL, 1),
+        ('v1-marker', 'frame', NULL, 1),
+        ('v1-marker', 'skin', NULL, 1),
+        ('v1-marker', 'cutin', NULL, 1);
     `);
   } finally {
     rawDatabase.close();
