@@ -29,6 +29,7 @@ describe('Arena season configuration and windows', () => {
     '2026-07-20T01:00:00+09:00',
     '2026-07-21T00:00:00+09:00',
     '2026-02-30T00:00:00+09:00',
+    '9999-12-06T00:00:00+09:00',
   ])('rejects an invalid explicit KST Monday epoch: %s', epoch => {
     expect(() => parseArenaRuntimeConfig({
       ARENA_ENABLED: 'true',

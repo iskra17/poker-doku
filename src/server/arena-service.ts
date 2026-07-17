@@ -94,8 +94,18 @@ export function calculateArenaSeasonWindow(
   assertSeasonConfig(config);
   if (at < config.epochMs) fail('ARENA_SEASON_NOT_STARTED');
   const ordinal = Math.floor((at - config.epochMs) / SEASON_MS);
-  const startsAt = config.epochMs + ordinal * SEASON_MS;
-  const endsAt = startsAt + SEASON_MS;
+  const seasonOffset = ordinal * SEASON_MS;
+  if (!Number.isSafeInteger(seasonOffset)) fail('ARENA_TIME_INVALID');
+  const startsAt = safeTimestampAdd(
+    config.epochMs,
+    seasonOffset,
+    'ARENA_TIME_INVALID',
+  );
+  const endsAt = safeTimestampAdd(
+    startsAt,
+    SEASON_MS,
+    'ARENA_TIME_INVALID',
+  );
   if (
     !Number.isSafeInteger(ordinal)
     || ordinal < 0
@@ -375,6 +385,16 @@ function parseSeasonEpoch(value: string): number {
   if (!match) fail('ARENA_SEASON_EPOCH_INVALID');
   const epochMs = Date.parse(value);
   if (!validTimestamp(epochMs)) fail('ARENA_SEASON_EPOCH_INVALID');
+  const firstSeasonEnd = safeTimestampAdd(
+    epochMs,
+    SEASON_MS,
+    'ARENA_SEASON_EPOCH_INVALID',
+  );
+  safeTimestampAdd(
+    firstSeasonEnd,
+    KST_OFFSET_MS,
+    'ARENA_SEASON_EPOCH_INVALID',
+  );
   const shifted = new Date(epochMs + KST_OFFSET_MS);
   if (
     shifted.getUTCFullYear() !== Number(match[1])
@@ -391,6 +411,16 @@ function assertSeasonConfig(config: ArenaSeasonConfig): void {
     || !Number.isSafeInteger(config.preseasonCount)
     || config.preseasonCount < 0
   ) fail('ARENA_SEASON_EPOCH_INVALID');
+  const firstSeasonEnd = safeTimestampAdd(
+    config.epochMs,
+    SEASON_MS,
+    'ARENA_SEASON_EPOCH_INVALID',
+  );
+  safeTimestampAdd(
+    firstSeasonEnd,
+    KST_OFFSET_MS,
+    'ARENA_SEASON_EPOCH_INVALID',
+  );
 }
 
 function assertMatchRequest(matchId: string, profileIds: readonly string[]): void {
@@ -423,6 +453,22 @@ function assertTimestamp(value: number): void {
 
 function validTimestamp(value: number): boolean {
   return Number.isSafeInteger(value) && value >= 0 && value <= MAX_TIMESTAMP;
+}
+
+function safeTimestampAdd(
+  value: number,
+  delta: number,
+  code: ArenaDomainErrorCode,
+): number {
+  if (
+    !validTimestamp(value)
+    || !Number.isSafeInteger(delta)
+    || delta < 0
+    || value > MAX_TIMESTAMP - delta
+  ) fail(code);
+  const result = value + delta;
+  if (!validTimestamp(result)) fail(code);
+  return result;
 }
 
 function fail(code: ArenaDomainErrorCode): never {

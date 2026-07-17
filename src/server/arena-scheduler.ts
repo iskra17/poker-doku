@@ -2,6 +2,9 @@ const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const WEEK_MS = 7 * DAY_MS;
 const SEASON_MS = 4 * WEEK_MS;
+const MAX_TIMESTAMP = 253_402_300_799_999;
+
+export const MAX_ARENA_TIMER_DELAY_MS = 2_147_483_647;
 
 type TimerHandle = ReturnType<typeof setTimeout> | unknown;
 
@@ -16,7 +19,7 @@ export interface ArenaSchedulerOptions {
 
 export function getNextKstMonday(at: number): number {
   assertTime(at);
-  const shifted = new Date(at + KST_OFFSET_MS);
+  const shifted = new Date(safeTimeAdd(at, KST_OFFSET_MS));
   const weekday = shifted.getUTCDay();
   const daysUntilMonday = (8 - weekday) % 7 || 7;
   const next = Date.UTC(
@@ -33,7 +36,11 @@ export function getNextArenaReconcileAt(at: number, epochMs: number): number {
   assertTime(epochMs);
   if (at < epochMs) return epochMs;
   const ordinal = Math.floor((at - epochMs) / SEASON_MS);
-  const seasonEnd = epochMs + (ordinal + 1) * SEASON_MS;
+  const seasonOffset = (ordinal + 1) * SEASON_MS;
+  if (!Number.isSafeInteger(seasonOffset)) {
+    throw new Error('ARENA_SCHEDULER_TIME_INVALID');
+  }
+  const seasonEnd = safeTimeAdd(epochMs, seasonOffset);
   const next = Math.min(getNextKstMonday(at), seasonEnd);
   assertTime(next);
   return next;
@@ -81,6 +88,10 @@ export class ArenaScheduler {
       this.#timer = undefined;
       if (this.#closed) return;
       const at = this.#now();
+      if (at < next) {
+        this.#scheduleNext();
+        return;
+      }
       try {
         this.#options.reconcile(at);
       } catch (error) {
@@ -92,12 +103,29 @@ export class ArenaScheduler {
       } finally {
         this.#scheduleNext();
       }
-    }, Math.max(0, next - now));
+    }, Math.min(MAX_ARENA_TIMER_DELAY_MS, Math.max(0, next - now)));
   }
 }
 
 function assertTime(value: number): void {
-  if (!Number.isSafeInteger(value) || value < 0) {
+  if (
+    !Number.isSafeInteger(value)
+    || value < 0
+    || value > MAX_TIMESTAMP
+  ) {
     throw new Error('ARENA_SCHEDULER_TIME_INVALID');
   }
+}
+
+function safeTimeAdd(value: number, delta: number): number {
+  if (
+    !Number.isSafeInteger(delta)
+    || delta < 0
+    || value > MAX_TIMESTAMP - delta
+  ) {
+    throw new Error('ARENA_SCHEDULER_TIME_INVALID');
+  }
+  const result = value + delta;
+  assertTime(result);
+  return result;
 }
