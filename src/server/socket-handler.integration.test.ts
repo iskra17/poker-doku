@@ -487,6 +487,60 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
   });
 
+  it('rejects a new wallet admission before changing the seat, wallet, or session when progression lookup fails', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('progression-new-admission-failure', {
+      profileCookie: created.cookie,
+    });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const walletBefore = harness.walletState(created.profile.id);
+    vi.spyOn(harness.progressionService, 'getRuntimeSnapshot')
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({
+      ok: false,
+      code: 'server-error',
+    });
+
+    expect(room.engine.state.players).not.toContainEqual(
+      expect.objectContaining({ id: created.profile.id }),
+    );
+    expect(harness.walletState(created.profile.id)).toEqual(walletBefore);
+    expect(harness.runtime.sessions.getByPlayerId(created.profile.id)?.roomId).toBeNull();
+  });
+
+  it('leaves an existing seat untouched when progression lookup fails during rejoin', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('progression-rejoin-failure', {
+      profileCookie: created.cookie,
+    });
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const seated = room.engine.state.players.find(player => player.id === created.profile.id)!;
+    seated.pendingRemoval = true;
+    seated.status = 'folded';
+    const before = { ...seated };
+    vi.spyOn(harness.progressionService, 'getRuntimeSnapshot')
+      .mockImplementationOnce(() => { throw new Error('progression unavailable'); });
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({
+      ok: false,
+      code: 'server-error',
+    });
+
+    expect(seated).toMatchObject({
+      pendingRemoval: before.pendingRemoval,
+      status: before.status,
+      chips: before.chips,
+      publicCosmetics: before.publicCosmetics,
+    });
+    expect(harness.runtime.sessions.getByPlayerId(created.profile.id)?.roomId).toBe(roomId);
+  });
+
   it('refunds wallet admission when seat insertion fails', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);

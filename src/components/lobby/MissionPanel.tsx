@@ -45,7 +45,7 @@ export default function MissionPanel() {
                     </button>
                   )}
                 </div>
-                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-valuenow={percentage} aria-valuemin={0} aria-valuemax={100}>
+                <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-label={`${definition?.label ?? '일일 과제'} 진행률`} aria-valuenow={percentage} aria-valuemin={0} aria-valuemax={100}>
                   <div className="h-full rounded-full bg-mystic" style={{ width: `${percentage}%` }} />
                 </div>
               </article>

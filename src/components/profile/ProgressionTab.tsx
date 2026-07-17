@@ -16,7 +16,7 @@ export default function ProgressionTab() {
       <div className="rounded-xl border border-mystic/20 bg-elevated/50 p-4">
         <p className="text-lg font-bold text-mystic">도장 레벨 {profile.dojoLevel}</p>
         <p className="text-xs text-ink-dim">{maximum ? '최고 레벨 달성' : `${milliToUiUnits(profile.dojoXpMilli)} / ${milliToUiUnits(threshold)} XP`}</p>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-label="도장 레벨 경험치" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
           <div className="h-full bg-mystic" style={{ width: `${percent}%` }} />
         </div>
       </div>

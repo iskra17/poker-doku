@@ -11,7 +11,7 @@ import type {
   ProgressionView,
 } from '@/lib/progression/types';
 
-type LoadOutcome = 'ready' | 'unauthorized' | 'error';
+type LoadOutcome = 'ready' | 'unauthorized' | 'error' | 'stale';
 type ProgressionAction = 'loading' | 'reroll' | 'character' | 'equipment' | null;
 
 interface Dependencies {
@@ -19,6 +19,7 @@ interface Dependencies {
 }
 
 export interface ProgressionStoreState {
+  profileId: string | null;
   snapshot: ProgressionSnapshot | null;
   missions: DailyMissionDaySnapshot | null;
   status: 'idle' | 'loading' | 'ready' | 'error';
@@ -36,6 +37,7 @@ export interface ProgressionStoreState {
   enqueueReward(summary: ProgressionRewardSummary): void;
   consumeReward(eventId: string): void;
   setEconomySummaryActive(active: boolean): void;
+  setProfileIdentity(profileId: string | null): void;
   bindSocket(socket: PokerClientSocket): () => void;
   reset(): void;
   clearError(): void;
@@ -96,45 +98,98 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
   let onSnapshot: ((snapshot: ProgressionSnapshot) => void) | null = null;
   let onReward: ((summary: ProgressionRewardSummary) => void) | null = null;
   const seenEventIds = new Set<string>();
+  let requestGeneration = 0;
+  let activeController: AbortController | null = null;
 
   return create<ProgressionStoreState>((set, get) => {
+    const invalidateRequests = (): void => {
+      requestGeneration += 1;
+      activeController?.abort();
+      activeController = null;
+    };
+
     const request = async (
       path: string,
       init: RequestInit,
       action: Exclude<ProgressionAction, null>,
-    ): Promise<{ outcome: LoadOutcome; payload: unknown }> => {
+    ): Promise<{
+      outcome: LoadOutcome;
+      payload: unknown;
+      profileId: string | null;
+      generation: number;
+    }> => {
+      invalidateRequests();
+      const controller = new AbortController();
+      activeController = controller;
+      const generation = requestGeneration;
+      const profileId = get().profileId;
+      const current = (): boolean => (
+        requestGeneration === generation
+        && activeController === controller
+        && get().profileId === profileId
+      );
       set({ action, error: null, authExpired: false, ...(action === 'loading' ? { status: 'loading' as const } : {}) });
       try {
-        const response = await dependencies.fetch(path, init);
+        const response = await dependencies.fetch(path, {
+          ...init,
+          signal: controller.signal,
+        });
         const payload = await readJson(response);
+        if (!current()) return { outcome: 'stale', payload, profileId, generation };
         if (response.status === 401) {
           set({ status: 'error', action: null, authExpired: true, error: '프로필 인증이 만료됐어요. 복구 코드를 확인해 주세요.' });
-          return { outcome: 'unauthorized', payload };
+          activeController = null;
+          return { outcome: 'unauthorized', payload, profileId, generation };
         }
         if (!response.ok) {
           const message = isRecord(payload) && isRecord(payload.error)
             && typeof payload.error.message === 'string'
             ? payload.error.message : DEFAULT_ERROR;
           set({ status: get().snapshot ? 'ready' : 'error', action: null, error: message });
-          return { outcome: 'error', payload };
+          activeController = null;
+          return { outcome: 'error', payload, profileId, generation };
         }
         set({ action: null, error: null, authExpired: false });
-        return { outcome: 'ready', payload };
+        activeController = null;
+        return { outcome: 'ready', payload, profileId, generation };
       } catch {
+        if (!current()) {
+          return { outcome: 'stale', payload: null, profileId, generation };
+        }
         set({ status: get().snapshot ? 'ready' : 'error', action: null, error: DEFAULT_ERROR });
-        return { outcome: 'error', payload: null };
+        activeController = null;
+        return { outcome: 'error', payload: null, profileId, generation };
       }
     };
 
-    const replaceProgressionPayload = (payload: unknown): boolean => {
+    const replaceProgressionPayload = (
+      payload: unknown,
+      expectedProfileId: string | null,
+    ): boolean => {
       if (!isRecord(payload) || !isRecord(payload.progression)) return false;
       const snapshot = payload.progression as unknown as ProgressionSnapshot;
       if (!isRecord(snapshot.profile) || typeof snapshot.profile.profileId !== 'string') return false;
-      set({ snapshot, status: 'ready' });
+      if (expectedProfileId !== null && snapshot.profile.profileId !== expectedProfileId) {
+        return false;
+      }
+      set({
+        profileId: expectedProfileId ?? snapshot.profile.profileId,
+        snapshot,
+        status: 'ready',
+      });
       return true;
     };
 
+    const isCurrentResult = (result: {
+      profileId: string | null;
+      generation: number;
+    }): boolean => (
+      result.generation === requestGeneration
+      && get().profileId === result.profileId
+    );
+
     return {
+      profileId: null,
       snapshot: null,
       missions: null,
       status: 'idle',
@@ -150,29 +205,49 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           credentials: 'same-origin', cache: 'no-store',
         }, 'loading');
         if (result.outcome !== 'ready') return result.outcome;
+        if (!isCurrentResult(result)) return 'stale';
         const view = parseView(result.payload);
         if (!view) {
           set({ status: 'error', error: DEFAULT_ERROR });
           return 'error';
         }
-        set({ snapshot: view.progression, missions: view.missions, status: 'ready' });
+        if (
+          result.profileId !== null
+          && view.progression.profile.profileId !== result.profileId
+        ) {
+          set({ status: 'error', error: DEFAULT_ERROR });
+          return 'error';
+        }
+        set({
+          profileId: result.profileId ?? view.progression.profile.profileId,
+          snapshot: view.progression,
+          missions: view.missions,
+          status: 'ready',
+        });
         return 'ready';
       },
 
       rerollMission: async slot => {
         const result = await request('/api/progression/missions/reroll', jsonPost({ slot }), 'reroll');
         if (result.outcome !== 'ready') return result.outcome;
+        if (!isCurrentResult(result)) return 'stale';
         if (!isRecord(result.payload) || !isRecord(result.payload.missions)) {
           set({ error: DEFAULT_ERROR });
           return 'error';
         }
-        set({ missions: result.payload.missions as unknown as DailyMissionDaySnapshot, status: 'ready' });
+        const missions = result.payload.missions as unknown as DailyMissionDaySnapshot;
+        if (result.profileId !== null && missions.profileId !== result.profileId) {
+          set({ error: DEFAULT_ERROR });
+          return 'error';
+        }
+        set({ missions, status: 'ready' });
         return 'ready';
       },
 
       selectCharacter: async characterId => {
         const result = await request('/api/progression/character', jsonPost({ characterId }), 'character');
-        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload)) {
+        if (result.outcome === 'ready' && !isCurrentResult(result)) return 'stale';
+        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload, result.profileId)) {
           set({ error: DEFAULT_ERROR });
           return 'error';
         }
@@ -181,14 +256,30 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
 
       setEquipment: async (slot, itemId) => {
         const result = await request('/api/progression/equipment', jsonPost({ slot, itemId }), 'equipment');
-        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload)) {
+        if (result.outcome === 'ready' && !isCurrentResult(result)) return 'stale';
+        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload, result.profileId)) {
           set({ error: DEFAULT_ERROR });
           return 'error';
         }
         return result.outcome;
       },
 
-      receiveSnapshot: snapshot => set({ snapshot, status: 'ready', authExpired: false }),
+      receiveSnapshot: snapshot => {
+        const currentProfileId = get().profileId;
+        if (
+          currentProfileId !== null
+          && currentProfileId !== snapshot.profile.profileId
+        ) return;
+        invalidateRequests();
+        set({
+          profileId: currentProfileId ?? snapshot.profile.profileId,
+          snapshot,
+          status: 'ready',
+          action: null,
+          error: null,
+          authExpired: false,
+        });
+      },
 
       enqueueReward: summary => {
         if (seenEventIds.has(summary.eventId)) return;
@@ -214,6 +305,23 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
         economySummaryState: active ? 'active' : 'idle',
       }),
 
+      setProfileIdentity: profileId => {
+        if (get().profileId === profileId) return;
+        invalidateRequests();
+        set({
+          profileId,
+          snapshot: null,
+          missions: null,
+          status: 'idle',
+          action: null,
+          error: null,
+          authExpired: false,
+          activeReward: null,
+          rewardQueue: [],
+          economySummaryState: 'idle',
+        });
+      },
+
       bindSocket: socket => {
         if (boundSocket === socket) {
           bindCount += 1;
@@ -225,10 +333,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           boundSocket = socket;
           bindCount = 1;
           onSnapshot = snapshot => get().receiveSnapshot(snapshot);
-          onReward = summary => {
-            get().enqueueReward(summary);
-            void get().load();
-          };
+          onReward = summary => get().enqueueReward(summary);
           socket.on('progression-update', onSnapshot);
           socket.on('reward-summary', onReward);
         }
@@ -247,8 +352,9 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       },
 
       reset: () => {
+        invalidateRequests();
         set({
-          snapshot: null, missions: null, status: 'idle', action: null,
+          profileId: null, snapshot: null, missions: null, status: 'idle', action: null,
           error: null, authExpired: false, activeReward: null, rewardQueue: [],
           economySummaryState: 'idle',
         });

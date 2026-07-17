@@ -583,6 +583,27 @@ export function setupSocketHandlers(
         && room.config.economyMode === 'wallet';
       const walletAdmission = walletCash || walletSng;
 
+      let publicCosmetics: Player['publicCosmetics'];
+      if (progression) {
+        try {
+          publicCosmetics = buildPublicCosmetics(
+            progression.getSnapshot(session.playerId, avatar),
+          );
+        } catch {
+          eventLog.log('join-room:reject', {
+            roomId,
+            playerId: session.playerId,
+            data: { reason: 'progression-unavailable' },
+          });
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+      }
+
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
       // 핸드 중 이탈은 splice 대신 pendingRemoval 마킹만 하므로, 그 좌석을 되살려
       // 동일 id의 Player가 둘 생기는 것(불변식 위반 + 새 스택 리바이 악용)을 막는다.
@@ -711,11 +732,7 @@ export function setupSocketHandlers(
           }
           // 자리비움으로 떠났던 좌석 복귀 — 좌석은 자리비움 그대로 두고(본인이 '게임 복귀'로 참여),
           // 방치 회수 유예만 취소한다. (자동 복귀 대신 명시 복귀 — UI 안내와 일치)
-          if (progression) {
-            seated.publicCosmetics = buildPublicCosmetics(
-              progression.getSnapshot(session.playerId, avatar),
-            );
-          }
+          if (publicCosmetics) seated.publicCosmetics = publicCosmetics;
           roomManager.handleSeatRejoin(roomId, session.playerId);
           eventLog.log('join-room:rejoin', {
             roomId,
@@ -854,13 +871,7 @@ export function setupSocketHandlers(
         status: 'waiting',
         hasActed: false,
         timeBankChips: 1, // 입장 시 기본 타임칩 1개
-        ...(progression
-          ? {
-              publicCosmetics: buildPublicCosmetics(
-                progression.getSnapshot(session.playerId, avatar),
-              ),
-            }
-          : {}),
+        ...(publicCosmetics ? { publicCosmetics } : {}),
       };
 
       let admissionOpened: 'cash' | 'sng' | null = null;
