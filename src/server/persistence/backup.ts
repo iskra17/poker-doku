@@ -277,6 +277,15 @@ function ensureEncryptionKey(key: Buffer): void {
   if (key.length !== 32) throw new Error(INVALID_ENCRYPTION_CONFIGURATION);
 }
 
+/**
+ * 현재 Node 런타임이 node:sqlite native backup(Node 23.8+)을 지원하는지 여부.
+ * 개발 환경은 미지원 시 백업을 건너뛰고 기동한다 — 프로덕션은 여전히 시작 실패가 맞다
+ * (백업 없는 운영을 조용히 허용하면 안 된다).
+ */
+export function isNativeSqliteBackupSupported(): boolean {
+  return typeof (sqlite as unknown as { backup?: unknown }).backup === 'function';
+}
+
 function defaultNativeBackup(database: DatabaseSync, path: string): Promise<number> {
   const nativeBackup = (sqlite as unknown as { backup?: NativeBackup }).backup;
   if (!nativeBackup) {

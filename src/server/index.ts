@@ -25,6 +25,7 @@ import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import {
   BackupManager,
   DailyBackupScheduler,
+  isNativeSqliteBackupSupported,
   resolveBackupEncryptionKey,
 } from './persistence/backup';
 import { ProfileManager } from './profile-manager';
@@ -172,6 +173,14 @@ function initializePersistenceAndRecover(): void {
       logger: console,
     });
   }
+  // 개발: Node 런타임이 native sqlite backup(23.8+)을 지원하지 않으면 백업을 비활성하고 기동한다.
+  // 프로덕션은 무조건 구성 — 미지원 런타임이면 시작 백업에서 실패하는 것이 맞다.
+  if (dev && !isNativeSqliteBackupSupported()) {
+    console.warn(
+      '> node:sqlite native backup을 지원하지 않는 Node 런타임 — dev 백업 비활성 (Node 23.8+ 필요)',
+    );
+    return;
+  }
   const backupDirectory = process.env.POKER_BACKUP_DIR
     ?? join(process.cwd(), 'data', 'backups');
   const encryptionKey = resolveBackupEncryptionKey(
@@ -282,10 +291,12 @@ async function listen(): Promise<void> {
 void startServerLifecycle({
   prepare: () => app.prepare(),
   recover: () => initializePersistenceAndRecover(),
-  backup: () => backupManager!.backup(),
+  backup: async () => {
+    await backupManager?.backup();
+  },
   listen,
   startScheduler: () => {
-    backupScheduler!.start();
+    backupScheduler?.start();
     arenaScheduler?.start();
     runtime?.startArena();
     lifecycleReady = true;
