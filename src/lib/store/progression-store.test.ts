@@ -112,7 +112,7 @@ describe('progression store', () => {
     expect(store.getState().activeReward).toBeNull();
   });
 
-  it('binds personal socket events once and removes only its listeners on cleanup', () => {
+  it('binds personal socket events once and coalesces a reward mission refresh', async () => {
     const listeners = new Map<string, (...args: never[]) => void>();
     const socket = {
       on: vi.fn((name: string, listener: (...args: never[]) => void) => {
@@ -122,7 +122,7 @@ describe('progression store', () => {
         if (listeners.get(name) === listener) listeners.delete(name);
       }),
     } as unknown as PokerClientSocket;
-    const fetcher = vi.fn();
+    const fetcher = vi.fn(async () => viewResponse(snapshot(1), ['practice']));
     const store = createProgressionStore({ fetch: fetcher });
     store.getState().setProfileIdentity('profile-1');
 
@@ -130,12 +130,14 @@ describe('progression store', () => {
     const secondCleanup = store.getState().bindSocket(socket);
     listeners.get('progression-update')?.(snapshot(4) as never);
     listeners.get('reward-summary')?.(reward('socket-event') as never);
+    listeners.get('reward-summary')?.(reward('socket-event-2') as never);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
 
     expect(socket.on).toHaveBeenCalledTimes(2);
     expect(store.getState().snapshot?.profile.dojoLevel).toBe(4);
     expect(store.getState().activeReward?.eventId).toBe('socket-event');
     expect(store.getState().action).toBeNull();
-    expect(fetcher).not.toHaveBeenCalled();
+    expect(store.getState().missions?.modes).toEqual(['practice']);
     firstCleanup();
     expect(socket.off).not.toHaveBeenCalled();
     secondCleanup();
@@ -169,7 +171,29 @@ describe('progression store', () => {
     expect(store.getState()).toMatchObject({ action: null, error: null });
   });
 
-  it('lets an authoritative socket snapshot invalidate an in-flight mutation', async () => {
+  it('keeps newer socket progression but applies missions from an older pending load', async () => {
+    let resolveRequest!: (response: Response) => void;
+    let requestSignal!: AbortSignal;
+    const store = createProgressionStore({
+      fetch: vi.fn((_input, init) => new Promise<Response>(resolve => {
+        requestSignal = init?.signal as AbortSignal;
+        resolveRequest = resolve;
+      })),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    const load = store.getState().load();
+
+    store.getState().receiveSnapshot(snapshot(9));
+    expect(requestSignal.aborted).toBe(false);
+    resolveRequest(viewResponse(snapshot(3), ['practice']));
+    await load;
+
+    expect(store.getState().snapshot?.profile.dojoLevel).toBe(9);
+    expect(store.getState().missions?.modes).toEqual(['practice']);
+    expect(store.getState()).toMatchObject({ action: null, error: null });
+  });
+
+  it('keeps a committed character while accepting newer gameplay progression', async () => {
     let resolveRequest!: (response: Response) => void;
     let requestSignal!: AbortSignal;
     const store = createProgressionStore({
@@ -180,15 +204,175 @@ describe('progression store', () => {
     });
     store.getState().setProfileIdentity('profile-1');
     store.getState().receiveSnapshot(snapshot(2));
-    const mutation = store.getState().setEquipment('frame', null);
+    const mutation = store.getState().selectCharacter('hana');
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
 
-    store.getState().receiveSnapshot(snapshot(9));
-    expect(requestSignal.aborted).toBe(true);
-    resolveRequest(new Response(JSON.stringify({ progression: snapshot(3) }), { status: 200 }));
+    const duringPost = snapshot(9);
+    duringPost.profile.dojoXpMilli = 90_000;
+    store.getState().receiveSnapshot(duringPost);
+    expect(requestSignal.aborted).toBe(false);
+    const committed = snapshot(3);
+    committed.profile.selectedCharacterId = 'hana';
+    resolveRequest(progressionResponse(committed));
     await mutation;
 
-    expect(store.getState().snapshot?.profile.dojoLevel).toBe(9);
-    expect(store.getState()).toMatchObject({ action: null, error: null });
+    const staleGameplay = snapshot(10);
+    staleGameplay.profile.dojoXpMilli = 100_000;
+    store.getState().receiveSnapshot(staleGameplay);
+    expect(store.getState().snapshot?.profile).toMatchObject({
+      dojoLevel: 10,
+      dojoXpMilli: 100_000,
+      selectedCharacterId: 'hana',
+    });
+  });
+
+  it('keeps committed equipment when a stale gameplay socket arrives during and after POST', async () => {
+    let resolveRequest!: (response: Response) => void;
+    let requestSignal!: AbortSignal;
+    const store = createProgressionStore({
+      fetch: vi.fn((_input, init) => new Promise<Response>(resolve => {
+        requestSignal = init?.signal as AbortSignal;
+        resolveRequest = resolve;
+      })),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    store.getState().receiveSnapshot(snapshot(2));
+    const mutation = store.getState().setEquipment('frame', 'frame-sakura-2');
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+
+    store.getState().receiveSnapshot(snapshot(8));
+    expect(requestSignal.aborted).toBe(false);
+    const committed = snapshot(3);
+    committed.equipment.frame = 'frame-sakura-2';
+    resolveRequest(progressionResponse(committed));
+    await mutation;
+
+    const staleGameplay = snapshot(11);
+    staleGameplay.profile.dojoXpMilli = 110_000;
+    store.getState().receiveSnapshot(staleGameplay);
+    expect(store.getState().snapshot?.profile.dojoLevel).toBe(11);
+    expect(store.getState().snapshot?.equipment.frame).toBe('frame-sakura-2');
+
+    const caughtUp = snapshot(12);
+    caughtUp.equipment.frame = 'frame-sakura-2';
+    store.getState().receiveSnapshot(caughtUp);
+    const newerAuthoritative = snapshot(13);
+    newerAuthoritative.equipment.frame = null;
+    store.getState().receiveSnapshot(newerAuthoritative);
+    expect(store.getState().snapshot?.equipment.frame).toBeNull();
+  });
+
+  it('applies a reroll response without aborting it for a socket snapshot', async () => {
+    let resolveRequest!: (response: Response) => void;
+    let requestSignal!: AbortSignal;
+    const store = createProgressionStore({
+      fetch: vi.fn((_input, init) => new Promise<Response>(resolve => {
+        requestSignal = init?.signal as AbortSignal;
+        resolveRequest = resolve;
+      })),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    store.getState().receiveSnapshot(snapshot(2));
+    const mutation = store.getState().rerollMission(0);
+    await vi.waitFor(() => expect(requestSignal).toBeDefined());
+
+    store.getState().receiveSnapshot(snapshot(7));
+    expect(requestSignal.aborted).toBe(false);
+    resolveRequest(new Response(JSON.stringify({
+      missions: missionDay('profile-1', ['cash']),
+    }), { status: 200 }));
+    await mutation;
+
+    expect(store.getState().snapshot?.profile.dojoLevel).toBe(7);
+    expect(store.getState().missions?.modes).toEqual(['cash']);
+  });
+
+  it('serializes mutations and retains each committed slice', async () => {
+    const requests: Array<{ path: string; resolve: (response: Response) => void }> = [];
+    const store = createProgressionStore({
+      fetch: vi.fn((input) => new Promise<Response>(resolve => {
+        requests.push({ path: String(input), resolve });
+      })),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    store.getState().receiveSnapshot(snapshot(2));
+    const character = store.getState().selectCharacter('hana');
+    const equipment = store.getState().setEquipment('frame', 'frame-sakura-2');
+
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+    const characterResponse = snapshot(2);
+    characterResponse.profile.selectedCharacterId = 'hana';
+    requests[0].resolve(progressionResponse(characterResponse));
+    await character;
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const equipmentResponse = snapshot(2);
+    equipmentResponse.equipment.frame = 'frame-sakura-2';
+    requests[1].resolve(progressionResponse(equipmentResponse));
+    await equipment;
+
+    expect(requests.map(request => request.path)).toEqual([
+      '/api/progression/character', '/api/progression/equipment',
+    ]);
+    expect(store.getState().snapshot?.profile.selectedCharacterId).toBe('hana');
+    expect(store.getState().snapshot?.equipment.frame).toBe('frame-sakura-2');
+  });
+
+  it('does not let a pre-mutation load overwrite a later committed mutation', async () => {
+    const requests: Array<(response: Response) => void> = [];
+    const store = createProgressionStore({
+      fetch: vi.fn(() => new Promise<Response>(resolve => requests.push(resolve))),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    store.getState().receiveSnapshot(snapshot(6));
+    const load = store.getState().load();
+    const mutation = store.getState().selectCharacter('hana');
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const committed = snapshot(6);
+    committed.profile.selectedCharacterId = 'hana';
+    requests[1](progressionResponse(committed));
+    await mutation;
+    requests[0](viewResponse(snapshot(1), ['practice']));
+    await load;
+
+    expect(store.getState().snapshot?.profile).toMatchObject({
+      dojoLevel: 6, selectedCharacterId: 'hana',
+    });
+    expect(store.getState().missions?.modes).toEqual(['practice']);
+  });
+
+  it('aborts an old-profile mutation and does not let it block or overwrite the new profile', async () => {
+    const requests: Array<{
+      signal: AbortSignal;
+      resolve: (response: Response) => void;
+    }> = [];
+    const store = createProgressionStore({
+      fetch: vi.fn((_input, init) => new Promise<Response>(resolve => {
+        requests.push({ signal: init?.signal as AbortSignal, resolve });
+      })),
+    });
+    store.getState().setProfileIdentity('old-profile');
+    store.getState().receiveSnapshot(snapshot(2, 'old-profile'));
+    const oldMutation = store.getState().selectCharacter('hana');
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
+
+    store.getState().setProfileIdentity('new-profile');
+    store.getState().receiveSnapshot(snapshot(8, 'new-profile'));
+    expect(requests[0].signal.aborted).toBe(true);
+    const newMutation = store.getState().setEquipment('frame', 'frame-sakura-2');
+    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    const newResponse = snapshot(8, 'new-profile');
+    newResponse.equipment.frame = 'frame-sakura-2';
+    requests[1].resolve(progressionResponse(newResponse));
+    await newMutation;
+    const oldResponse = snapshot(3, 'old-profile');
+    oldResponse.profile.selectedCharacterId = 'hana';
+    requests[0].resolve(progressionResponse(oldResponse));
+    await oldMutation;
+
+    expect(store.getState().snapshot?.profile).toMatchObject({
+      profileId: 'new-profile', dojoLevel: 8, selectedCharacterId: 'sakura',
+    });
+    expect(store.getState().snapshot?.equipment.frame).toBe('frame-sakura-2');
   });
 
   it('aborts pending work on reset without publishing a late error', async () => {
@@ -223,12 +407,29 @@ describe('progression store', () => {
   });
 });
 
-function viewResponse(progression: ProgressionSnapshot): Response {
+function missionDay(profileId: string, modes: Array<'cash' | 'practice' | 'sng'> = []) {
+  return {
+    profileId,
+    missionDate: '2026-07-17',
+    balanceVersion: 1,
+    missions: [],
+    modes,
+  };
+}
+
+function viewResponse(
+  progression: ProgressionSnapshot,
+  modes: Array<'cash' | 'practice' | 'sng'> = [],
+): Response {
   return new Response(JSON.stringify({
     progression,
-    missions: {
-      profileId: progression.profile.profileId,
-      missionDate: '2026-07-17', balanceVersion: 1, missions: [], modes: [],
-    },
+    missions: missionDay(progression.profile.profileId, modes),
   }), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+function progressionResponse(progression: ProgressionSnapshot): Response {
+  return new Response(JSON.stringify({ progression }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
 }

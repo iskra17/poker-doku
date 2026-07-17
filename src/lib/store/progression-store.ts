@@ -46,6 +46,8 @@ export interface ProgressionStoreState {
 export type ProgressionStore = UseBoundStore<StoreApi<ProgressionStoreState>>;
 
 const DEFAULT_ERROR = '성장 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.';
+const AUTH_ERROR = '프로필 인증이 만료됐어요. 복구 코드를 확인해 주세요.';
+
 export function selectDisplayReward(
   state: Pick<ProgressionStoreState, 'activeReward' | 'economySummaryState'>,
 ): ProgressionRewardSummary | null {
@@ -69,9 +71,25 @@ function parseView(value: unknown): ProgressionView | null {
     || !Array.isArray(progression.inventory)
     || !isRecord(progression.equipment)
     || !Array.isArray(missions.missions)
+    || typeof missions.profileId !== 'string'
     || typeof missions.missionDate !== 'string'
   ) return null;
   return { progression, missions };
+}
+
+function parseProgression(
+  value: unknown,
+  expectedProfileId: string | null,
+): ProgressionSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.progression)) return null;
+  const snapshot = value.progression as unknown as ProgressionSnapshot;
+  if (!isRecord(snapshot.profile) || typeof snapshot.profile.profileId !== 'string') {
+    return null;
+  }
+  if (expectedProfileId !== null && snapshot.profile.profileId !== expectedProfileId) {
+    return null;
+  }
+  return snapshot;
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -92,101 +110,258 @@ function jsonPost(body: unknown): RequestInit {
   };
 }
 
+interface RequestResult {
+  outcome: LoadOutcome;
+  payload: unknown;
+  profileId: string | null;
+}
+
 export function createProgressionStore(dependencies: Dependencies): ProgressionStore {
   let boundSocket: PokerClientSocket | null = null;
   let bindCount = 0;
   let onSnapshot: ((snapshot: ProgressionSnapshot) => void) | null = null;
   let onReward: ((summary: ProgressionRewardSummary) => void) | null = null;
   const seenEventIds = new Set<string>();
-  let requestGeneration = 0;
-  let activeController: AbortController | null = null;
+  const controllers = new Set<AbortController>();
+  let identityGeneration = 0;
+  let progressionEpoch = 0;
+  let readSequence = 0;
+  let latestReadSequence = 0;
+  let actionOwner = 0;
+  let mutationTail: Promise<void> = Promise.resolve();
+  let currentMutationCount = 0;
+  let protectedCharacter: {
+    profileId: string;
+    value: ProgressionCharacterId;
+  } | null = null;
+  const protectedEquipment = new Map<ProgressionEquipmentSlot, string | null>();
+  let missionRefreshScheduled = false;
+  let missionRefreshRequested = false;
+  let missionRefreshPromise: Promise<void> | null = null;
 
   return create<ProgressionStoreState>((set, get) => {
-    const invalidateRequests = (): void => {
-      requestGeneration += 1;
-      activeController?.abort();
-      activeController = null;
+    const invalidateIdentity = (): void => {
+      identityGeneration += 1;
+      progressionEpoch += 1;
+      latestReadSequence = ++readSequence;
+      actionOwner += 1;
+      for (const controller of controllers) controller.abort();
+      controllers.clear();
+      mutationTail = Promise.resolve();
+      currentMutationCount = 0;
+      protectedCharacter = null;
+      protectedEquipment.clear();
+      missionRefreshScheduled = false;
+      missionRefreshRequested = false;
+      missionRefreshPromise = null;
     };
 
-    const request = async (
+    const finishAction = (
+      owner: number | null,
+      patch: Partial<ProgressionStoreState> = {},
+    ): void => {
+      if (owner === null || owner !== actionOwner) return;
+      set({ ...patch, action: null });
+    };
+
+    const requestJson = async (
       path: string,
       init: RequestInit,
-      action: Exclude<ProgressionAction, null>,
-    ): Promise<{
-      outcome: LoadOutcome;
-      payload: unknown;
-      profileId: string | null;
-      generation: number;
-    }> => {
-      invalidateRequests();
+      action: Exclude<ProgressionAction, null> | null,
+      isLatest: () => boolean = () => true,
+      silent = false,
+    ): Promise<RequestResult> => {
       const controller = new AbortController();
-      activeController = controller;
-      const generation = requestGeneration;
+      controllers.add(controller);
+      const requestIdentityGeneration = identityGeneration;
       const profileId = get().profileId;
-      const current = (): boolean => (
-        requestGeneration === generation
-        && activeController === controller
+      const owner = action === null ? null : ++actionOwner;
+      const sameIdentity = (): boolean => (
+        identityGeneration === requestIdentityGeneration
         && get().profileId === profileId
       );
-      set({ action, error: null, authExpired: false, ...(action === 'loading' ? { status: 'loading' as const } : {}) });
-      try {
-        const response = await dependencies.fetch(path, {
-          ...init,
-          signal: controller.signal,
+      const current = (): boolean => sameIdentity() && isLatest();
+      if (action !== null) {
+        set({
+          action,
+          error: null,
+          authExpired: false,
+          ...(action === 'loading' ? { status: 'loading' as const } : {}),
         });
+      }
+      try {
+        const response = await dependencies.fetch(path, { ...init, signal: controller.signal });
         const payload = await readJson(response);
-        if (!current()) return { outcome: 'stale', payload, profileId, generation };
+        if (!current()) {
+          finishAction(owner);
+          return {
+            outcome: 'stale', payload, profileId,
+          };
+        }
         if (response.status === 401) {
-          set({ status: 'error', action: null, authExpired: true, error: '프로필 인증이 만료됐어요. 복구 코드를 확인해 주세요.' });
-          activeController = null;
-          return { outcome: 'unauthorized', payload, profileId, generation };
+          const patch = {
+            status: 'error' as const,
+            authExpired: true,
+            error: AUTH_ERROR,
+          };
+          if (silent) set(patch);
+          else finishAction(owner, patch);
+          return {
+            outcome: 'unauthorized', payload, profileId,
+          };
         }
         if (!response.ok) {
           const message = isRecord(payload) && isRecord(payload.error)
             && typeof payload.error.message === 'string'
             ? payload.error.message : DEFAULT_ERROR;
-          set({ status: get().snapshot ? 'ready' : 'error', action: null, error: message });
-          activeController = null;
-          return { outcome: 'error', payload, profileId, generation };
+          if (!silent) {
+            finishAction(owner, {
+              status: get().snapshot ? 'ready' : 'error',
+              error: message,
+            });
+          }
+          return {
+            outcome: 'error', payload, profileId,
+          };
         }
-        set({ action: null, error: null, authExpired: false });
-        activeController = null;
-        return { outcome: 'ready', payload, profileId, generation };
+        if (!silent) finishAction(owner, { error: null, authExpired: false });
+        return {
+          outcome: 'ready', payload, profileId,
+        };
       } catch {
         if (!current()) {
-          return { outcome: 'stale', payload: null, profileId, generation };
+          finishAction(owner);
+          return {
+            outcome: 'stale', payload: null, profileId,
+          };
         }
-        set({ status: get().snapshot ? 'ready' : 'error', action: null, error: DEFAULT_ERROR });
-        activeController = null;
-        return { outcome: 'error', payload: null, profileId, generation };
+        if (!silent) {
+          finishAction(owner, {
+            status: get().snapshot ? 'ready' : 'error',
+            error: DEFAULT_ERROR,
+          });
+        }
+        return {
+          outcome: 'error', payload: null, profileId,
+        };
+      } finally {
+        controllers.delete(controller);
       }
     };
 
-    const replaceProgressionPayload = (
-      payload: unknown,
-      expectedProfileId: string | null,
-    ): boolean => {
-      if (!isRecord(payload) || !isRecord(payload.progression)) return false;
-      const snapshot = payload.progression as unknown as ProgressionSnapshot;
-      if (!isRecord(snapshot.profile) || typeof snapshot.profile.profileId !== 'string') return false;
-      if (expectedProfileId !== null && snapshot.profile.profileId !== expectedProfileId) {
-        return false;
+    const mergeProtectedFields = (incoming: ProgressionSnapshot): ProgressionSnapshot => {
+      let selectedCharacterId = incoming.profile.selectedCharacterId;
+      if (protectedCharacter?.profileId === incoming.profile.profileId) {
+        if (selectedCharacterId === protectedCharacter.value) protectedCharacter = null;
+        else selectedCharacterId = protectedCharacter.value;
       }
+      const equipment = { ...incoming.equipment };
+      for (const [slot, value] of protectedEquipment) {
+        if (equipment[slot] === value) protectedEquipment.delete(slot);
+        else equipment[slot] = value;
+      }
+      return {
+        ...incoming,
+        profile: { ...incoming.profile, selectedCharacterId },
+        equipment,
+      };
+    };
+
+    const nextRead = (): number => {
+      const sequence = ++readSequence;
+      latestReadSequence = sequence;
+      return sequence;
+    };
+
+    const readView = async (
+      includeProgression: boolean,
+      showLoading: boolean,
+    ): Promise<LoadOutcome> => {
+      const sequence = nextRead();
+      const capturedProgressionEpoch = progressionEpoch;
+      const capturedIdentityGeneration = identityGeneration;
+      const result = await requestJson(
+        '/api/progression',
+        { credentials: 'same-origin', cache: 'no-store' },
+        showLoading ? 'loading' : null,
+        () => latestReadSequence === sequence,
+        !showLoading,
+      );
+      if (result.outcome !== 'ready') return result.outcome;
+      const view = parseView(result.payload);
+      if (
+        !view
+        || (result.profileId !== null
+          && (view.progression.profile.profileId !== result.profileId
+            || view.missions.profileId !== result.profileId))
+        || view.missions.profileId !== view.progression.profile.profileId
+      ) {
+        if (showLoading) set({ status: 'error', error: DEFAULT_ERROR });
+        return 'error';
+      }
+      if (
+        identityGeneration !== capturedIdentityGeneration
+        || get().profileId !== result.profileId
+      ) return 'stale';
+      const applyProgression = includeProgression
+        && progressionEpoch === capturedProgressionEpoch
+        && currentMutationCount === 0;
       set({
-        profileId: expectedProfileId ?? snapshot.profile.profileId,
-        snapshot,
-        status: 'ready',
+        ...(applyProgression
+          ? { snapshot: mergeProtectedFields(view.progression) }
+          : {}),
+        missions: view.missions,
+        status: get().snapshot || applyProgression ? 'ready' : get().status,
       });
-      return true;
+      return 'ready';
     };
 
-    const isCurrentResult = (result: {
-      profileId: string | null;
-      generation: number;
-    }): boolean => (
-      result.generation === requestGeneration
-      && get().profileId === result.profileId
-    );
+    const scheduleMissionRefresh = (): void => {
+      if (!get().profileId) return;
+      missionRefreshRequested = true;
+      if (missionRefreshScheduled || missionRefreshPromise) return;
+      missionRefreshScheduled = true;
+      queueMicrotask(() => {
+        missionRefreshScheduled = false;
+        if (!missionRefreshRequested || missionRefreshPromise || !get().profileId) return;
+        missionRefreshRequested = false;
+        const refreshIdentity = identityGeneration;
+        const pending = readView(false, false)
+          .then(() => undefined)
+          .finally(() => {
+            if (missionRefreshPromise === pending) missionRefreshPromise = null;
+            if (identityGeneration === refreshIdentity && missionRefreshRequested) {
+              scheduleMissionRefresh();
+            }
+          });
+        missionRefreshPromise = pending;
+      });
+    };
+
+    const serializeMutation = (
+      operation: () => Promise<LoadOutcome>,
+    ): Promise<LoadOutcome> => {
+      const queuedIdentityGeneration = identityGeneration;
+      const queuedProfileId = get().profileId;
+      const pending = mutationTail.then(async () => {
+        if (
+          identityGeneration !== queuedIdentityGeneration
+          || get().profileId !== queuedProfileId
+        ) return 'stale' as const;
+        currentMutationCount += 1;
+        progressionEpoch += 1;
+        try {
+          return await operation();
+        } finally {
+          if (identityGeneration === queuedIdentityGeneration) {
+            currentMutationCount -= 1;
+            progressionEpoch += 1;
+          }
+        }
+      });
+      mutationTail = pending.then(() => undefined, () => undefined);
+      return pending;
+    };
 
     return {
       profileId: null,
@@ -200,37 +375,15 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       rewardQueue: [],
       economySummaryState: 'idle',
 
-      load: async () => {
-        const result = await request('/api/progression', {
-          credentials: 'same-origin', cache: 'no-store',
-        }, 'loading');
-        if (result.outcome !== 'ready') return result.outcome;
-        if (!isCurrentResult(result)) return 'stale';
-        const view = parseView(result.payload);
-        if (!view) {
-          set({ status: 'error', error: DEFAULT_ERROR });
-          return 'error';
-        }
-        if (
-          result.profileId !== null
-          && view.progression.profile.profileId !== result.profileId
-        ) {
-          set({ status: 'error', error: DEFAULT_ERROR });
-          return 'error';
-        }
-        set({
-          profileId: result.profileId ?? view.progression.profile.profileId,
-          snapshot: view.progression,
-          missions: view.missions,
-          status: 'ready',
-        });
-        return 'ready';
-      },
+      load: () => readView(true, true),
 
-      rerollMission: async slot => {
-        const result = await request('/api/progression/missions/reroll', jsonPost({ slot }), 'reroll');
+      rerollMission: slot => serializeMutation(async () => {
+        const result = await requestJson(
+          '/api/progression/missions/reroll',
+          jsonPost({ slot }),
+          'reroll',
+        );
         if (result.outcome !== 'ready') return result.outcome;
-        if (!isCurrentResult(result)) return 'stale';
         if (!isRecord(result.payload) || !isRecord(result.payload.missions)) {
           set({ error: DEFAULT_ERROR });
           return 'error';
@@ -242,40 +395,70 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
         }
         set({ missions, status: 'ready' });
         return 'ready';
-      },
+      }),
 
-      selectCharacter: async characterId => {
-        const result = await request('/api/progression/character', jsonPost({ characterId }), 'character');
-        if (result.outcome === 'ready' && !isCurrentResult(result)) return 'stale';
-        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload, result.profileId)) {
+      selectCharacter: characterId => serializeMutation(async () => {
+        const result = await requestJson(
+          '/api/progression/character',
+          jsonPost({ characterId }),
+          'character',
+        );
+        if (result.outcome !== 'ready') return result.outcome;
+        const responseSnapshot = parseProgression(result.payload, result.profileId);
+        if (!responseSnapshot) {
           set({ error: DEFAULT_ERROR });
           return 'error';
         }
-        return result.outcome;
-      },
+        const committed = responseSnapshot.profile.selectedCharacterId;
+        protectedCharacter = {
+          profileId: responseSnapshot.profile.profileId,
+          value: committed,
+        };
+        set(state => ({
+          snapshot: state.snapshot
+            ? {
+                ...state.snapshot,
+                profile: { ...state.snapshot.profile, selectedCharacterId: committed },
+              }
+            : responseSnapshot,
+          status: 'ready',
+        }));
+        return 'ready';
+      }),
 
-      setEquipment: async (slot, itemId) => {
-        const result = await request('/api/progression/equipment', jsonPost({ slot, itemId }), 'equipment');
-        if (result.outcome === 'ready' && !isCurrentResult(result)) return 'stale';
-        if (result.outcome === 'ready' && !replaceProgressionPayload(result.payload, result.profileId)) {
+      setEquipment: (slot, itemId) => serializeMutation(async () => {
+        const result = await requestJson(
+          '/api/progression/equipment',
+          jsonPost({ slot, itemId }),
+          'equipment',
+        );
+        if (result.outcome !== 'ready') return result.outcome;
+        const responseSnapshot = parseProgression(result.payload, result.profileId);
+        if (!responseSnapshot) {
           set({ error: DEFAULT_ERROR });
           return 'error';
         }
-        return result.outcome;
-      },
+        const committed = responseSnapshot.equipment[slot];
+        protectedEquipment.set(slot, committed);
+        set(state => ({
+          snapshot: state.snapshot
+            ? {
+                ...state.snapshot,
+                equipment: { ...state.snapshot.equipment, [slot]: committed },
+              }
+            : responseSnapshot,
+          status: 'ready',
+        }));
+        return 'ready';
+      }),
 
       receiveSnapshot: snapshot => {
         const currentProfileId = get().profileId;
-        if (
-          currentProfileId !== null
-          && currentProfileId !== snapshot.profile.profileId
-        ) return;
-        invalidateRequests();
+        if (!currentProfileId || currentProfileId !== snapshot.profile.profileId) return;
+        progressionEpoch += 1;
         set({
-          profileId: currentProfileId ?? snapshot.profile.profileId,
-          snapshot,
+          snapshot: mergeProtectedFields(snapshot),
           status: 'ready',
-          action: null,
           error: null,
           authExpired: false,
         });
@@ -284,13 +467,12 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       enqueueReward: summary => {
         if (seenEventIds.has(summary.eventId)) return;
         seenEventIds.add(summary.eventId);
+        scheduleMissionRefresh();
         if (!get().activeReward) {
           set({ activeReward: summary });
           return;
         }
-        set(state => ({
-          rewardQueue: [...state.rewardQueue, summary],
-        }));
+        set(state => ({ rewardQueue: [...state.rewardQueue, summary] }));
       },
 
       consumeReward: eventId => {
@@ -307,7 +489,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
 
       setProfileIdentity: profileId => {
         if (get().profileId === profileId) return;
-        invalidateRequests();
+        invalidateIdentity();
         set({
           profileId,
           snapshot: null,
@@ -352,13 +534,21 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       },
 
       reset: () => {
-        invalidateRequests();
+        invalidateIdentity();
         set({
-          profileId: null, snapshot: null, missions: null, status: 'idle', action: null,
-          error: null, authExpired: false, activeReward: null, rewardQueue: [],
+          profileId: null,
+          snapshot: null,
+          missions: null,
+          status: 'idle',
+          action: null,
+          error: null,
+          authExpired: false,
+          activeReward: null,
+          rewardQueue: [],
           economySummaryState: 'idle',
         });
       },
+
       clearError: () => set({ error: null }),
     };
   });
