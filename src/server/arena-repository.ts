@@ -184,6 +184,14 @@ export interface PublicArenaSnapshot {
   };
 }
 
+export interface ArenaPublicIdentity {
+  profileId: string;
+  alias: string;
+  avatarId: string;
+  titleId: string | null;
+  frameId: string | null;
+}
+
 export interface ArenaTransaction {
   insertSeason(value: ArenaSeasonRecord): void;
   insertSeasonIfAbsent(value: ArenaSeasonRecord): void;
@@ -1216,6 +1224,42 @@ export class ArenaRepository {
       if (!complete) fail('ARENA_PERSISTENCE_INVALID');
       return complete;
     });
+  }
+
+  listPublicIdentities(
+    profileIds: readonly string[],
+  ): ArenaPublicIdentity[] {
+    const identifiers = [...new Set(profileIds)].sort(compareCodeUnits);
+    if (identifiers.length === 0) return [];
+    const placeholders = identifiers.map(() => '?').join(', ');
+    const rows = this.#database.db.prepare(`
+      SELECT
+        profiles.id AS profile_id,
+        profiles.alias,
+        profiles.avatar_id,
+        title.item_id AS title_id,
+        frame.item_id AS frame_id
+      FROM profiles
+      LEFT JOIN profile_equipment AS title
+        ON title.profile_id = profiles.id AND title.slot = 'title'
+      LEFT JOIN profile_equipment AS frame
+        ON frame.profile_id = profiles.id AND frame.slot = 'frame'
+      WHERE profiles.id IN (${placeholders})
+      ORDER BY profiles.id
+    `).all(...identifiers) as unknown as Array<{
+      profile_id: unknown;
+      alias: unknown;
+      avatar_id: unknown;
+      title_id: unknown;
+      frame_id: unknown;
+    }>;
+    return rows.map(row => ({
+      profileId: asString(row.profile_id),
+      alias: asString(row.alias),
+      avatarId: asString(row.avatar_id),
+      titleId: asNullableString(row.title_id),
+      frameId: asNullableString(row.frame_id),
+    }));
   }
 
   listSeasonResults(seasonId: string): ArenaSeasonResultRecord[] {

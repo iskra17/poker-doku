@@ -4,6 +4,7 @@ import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
 } from '../progression/types';
+import type { ArenaTier } from '../arena/types';
 
 export type RealtimeErrorCode =
   | 'invalid-payload'
@@ -19,6 +20,7 @@ export type RealtimeErrorCode =
   | 'not-your-turn'
   | 'action-rejected'
   | 'join-timeout'
+  | 'arena-disabled'
   | 'arena-unavailable'
   | 'arena-ineligible'
   | 'arena-busy'
@@ -100,6 +102,19 @@ export interface ArenaQueueState {
   joinedAt?: number;
 }
 
+export interface ArenaResultPayload {
+  resultId: string;
+  matchId: string;
+  training: boolean;
+  place: number;
+  points: number;
+  weeklyRankBefore: number | null;
+  weeklyRankAfter: number | null;
+  placementGames: number;
+  placementMatches: number;
+  tier: ArenaTier | null;
+}
+
 export interface ServerToClientEvents {
   session: (data: { playerId: string }) => void;
   'session-replaced': (data: { message: string }) => void;
@@ -116,7 +131,10 @@ export interface ServerToClientEvents {
   'arena-training-offered': (
     data: { offerId: string; expiresAt: number },
   ) => void;
-  'arena-match-found': (data: { matchId: string }) => void;
+  'arena-match-found': (
+    data: { matchId: string; training: boolean },
+  ) => void;
+  'arena-result': (data: ArenaResultPayload) => void;
 }
 
 export interface ClientToServerEvents {
@@ -138,6 +156,10 @@ export interface ClientToServerEvents {
   'arena-training-accept': (
     data: { offerId: string },
     ack?: AckCallback<{ matchId: string }>,
+  ) => void;
+  'arena-training-reject': (
+    data: { offerId: string },
+    ack?: AckCallback,
   ) => void;
 }
 

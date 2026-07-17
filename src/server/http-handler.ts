@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'http';
+import { randomBytes } from 'node:crypto';
 import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
 import { eventLog } from './event-log';
@@ -17,6 +18,10 @@ import {
   type ProgressionHttpService,
 } from './progression-http';
 import type { ProgressionSnapshot } from '@/lib/progression/types';
+import {
+  createArenaHttpHandler,
+  type ArenaHttpService,
+} from './arena-http';
 
 export type NextRequestHandler = (
   req: IncomingMessage,
@@ -34,6 +39,9 @@ interface HttpHandlerCommonOptions {
     profileId: string,
     snapshot: ProgressionSnapshot,
   ) => void;
+  arenaHttpService?: ArenaHttpService;
+  arenaEnabled?: () => boolean;
+  arenaCursorSecret?: string;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -112,6 +120,18 @@ export function createHttpRequestHandler(
         onPublicCosmeticsChanged: options.onProgressionPublicCosmeticsChanged,
       })
     : undefined;
+  const arenaHandler = options.profileManager
+    ? createArenaHttpHandler({
+        enabled: options.arenaEnabled ?? (() => false),
+        manager: options.profileManager,
+        service: options.arenaHttpService,
+        production: options.production ?? process.env.NODE_ENV === 'production',
+        cursorSecret: options.arenaCursorSecret
+          ?? process.env.ARENA_CURSOR_SECRET
+          ?? randomBytes(32).toString('base64url'),
+        now: options.now,
+      })
+    : undefined;
   return (req, res) => {
     const dispatch = async (): Promise<void> => {
       const parsedUrl = parse(req.url ?? '/', true);
@@ -135,6 +155,16 @@ export function createHttpRequestHandler(
       if (
         progressionHandler
         && await progressionHandler(req, res, parsedUrl.pathname)
+      ) {
+        return;
+      }
+      if (
+        arenaHandler
+        && await arenaHandler(
+          req,
+          res,
+          new URL(req.url ?? '/', 'http://localhost'),
+        )
       ) {
         return;
       }

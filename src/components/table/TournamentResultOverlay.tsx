@@ -3,17 +3,66 @@
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import Button from '../ui/Button';
+import ArenaResultSummary from '@/components/arena/ArenaResultSummary';
+import { useArenaStore } from '@/lib/store/arena-store';
 
 const MEDALS: Record<number, string> = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
 /** 시트앤고 종료 후 최종 순위표 오버레이 */
 export default function TournamentResultOverlay({ onLeave }: { onLeave: () => void }) {
   const { gameState, myPlayerId } = useGameStore();
+  const arenaResult = useArenaStore(state => state.result);
   const tournament = gameState?.tournament;
   if (!tournament?.finished) return null;
 
   const results = [...tournament.results].sort((a, b) => a.place - b.place);
   const champion = results[0];
+
+  if (gameState?.economyMode === 'arena' && !arenaResult) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="arena-result-pending-title"
+        className="absolute inset-0 z-40 flex items-center justify-center bg-abyss/80 p-4 backdrop-blur-sm"
+      >
+        <div className="w-[min(92%,360px)] rounded-2xl border border-mystic/40 bg-elevated p-5 text-center">
+          <h2 id="arena-result-pending-title" className="text-lg font-bold text-ink">
+            포커 아레나 결과 정산 중
+          </h2>
+          <p aria-live="polite" className="mt-2 text-sm text-ink-dim">
+            순위와 시즌 점수를 안전하게 확인하고 있어요…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (arenaResult) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="arena-result-title"
+        className="absolute inset-0 z-40 flex items-center justify-center bg-abyss/80 p-4 backdrop-blur-sm"
+      >
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="w-[min(92%,360px)] rounded-2xl border border-gilded/40 bg-elevated p-4 shadow-2xl"
+        >
+          <ArenaResultSummary result={arenaResult} />
+          <button
+            type="button"
+            onClick={onLeave}
+            className="mt-4 w-full rounded-xl border border-blossom/50 bg-blossom/15 px-4 py-3 text-sm font-bold text-blossom"
+          >
+            로비로 돌아가기
+          </button>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 backdrop-blur-sm">

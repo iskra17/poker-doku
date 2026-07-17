@@ -301,6 +301,25 @@ export class ArenaMatchmaker {
     return true;
   }
 
+  rejectTraining(
+    profileId: string,
+    socketId: string,
+    offerId: string,
+  ): boolean {
+    const offer = this.#offers.get(profileId);
+    if (
+      !offer
+      || offer.socketId !== socketId
+      || offer.offerId !== offerId
+      || offer.phase !== 'offered'
+    ) return false;
+    this.#offers.delete(profileId);
+    this.#safeNotify('queue-state', () =>
+      this.#events.onQueueState?.(socketId, { status: 'idle' }));
+    this.#schedule();
+    return true;
+  }
+
   disconnect(socketId: string): void {
     for (const [profileId, entry] of this.#queue) {
       if (entry.socketId === socketId) this.#queue.delete(profileId);

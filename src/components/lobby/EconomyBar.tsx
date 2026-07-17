@@ -7,6 +7,7 @@ import CharacterImage from '@/components/characters/CharacterImage';
 import Button from '@/components/ui/Button';
 import { getBalance, milliToUiUnits } from '@/lib/progression/balance';
 import { useProgressionStore } from '@/lib/store/progression-store';
+import { useArenaStore } from '@/lib/store/arena-store';
 
 interface EconomyBarProps {
   onOpenSettings: () => void;
@@ -23,6 +24,7 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
   const activeSeat = useGameStore(state => state.rooms.find(room => room.mySeat)?.mySeat ?? null);
   const progression = useProgressionStore(state => state.snapshot);
   const progressionError = useProgressionStore(state => state.error);
+  const arenaSnapshot = useArenaStore(state => state.snapshot);
 
   if (!profile || !economy) return null;
   const busy = action === 'daily' || action === 'rescue';
@@ -54,6 +56,14 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
                 지갑 <span className="font-bold text-gilded">{profile.wallet.balance.toLocaleString('ko-KR')}칩</span>
                 {activeSeatChips !== null && <> · 좌석 {activeSeatChips.toLocaleString('ko-KR')}칩</>}
               </p>
+              {arenaSnapshot?.enabled && (
+                <p className="mt-0.5 text-[11px] text-ink-dim">
+                  아레나 경기권{' '}
+                  <span className="font-bold text-mystic">
+                    {arenaSnapshot.profile.availableTickets}장
+                  </span>
+                </p>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-2">

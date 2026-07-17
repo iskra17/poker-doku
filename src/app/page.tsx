@@ -14,6 +14,8 @@ import GameRoomView from '@/components/layout/GameRoomView';
 import SettingsModal from '@/components/layout/SettingsModal';
 import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
+import ArenaLobby from '@/components/arena/ArenaLobby';
+import { useArenaStore } from '@/lib/store/arena-store';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
   backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
@@ -28,6 +30,7 @@ export default function Home() {
   const { leaveRoom, currentRoomId, pendingRoomId, joinError, rooms } = useGameStore();
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [lobbyView, setLobbyView] = useState<'games' | 'arena' | 'missions'>('games');
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
   );
@@ -81,7 +84,10 @@ export default function Home() {
 
   const handleLeave = (mode?: 'exit' | 'sitout') => {
     void leaveRoom(mode).then(left => {
-      if (left) void refresh();
+      if (left) {
+        useArenaStore.getState().resetAfterResult();
+        void refresh();
+      }
     });
   };
 
@@ -102,8 +108,31 @@ export default function Home() {
     <div className="h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
       <LobbyHeader onOpenSettings={() => setSettingsOpen(true)} />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
-      <MissionPanel />
-      <div className="py-4">
+      <nav aria-label="로비 메뉴" className="mx-auto mb-4 grid w-full max-w-4xl grid-cols-3 gap-2 px-4">
+        {([
+          ['games', '일반 게임', '친구·봇과 자유롭게'],
+          ['arena', '포커 아레나', '시즌 공식 경쟁'],
+          ['missions', '수련 과제', '오늘의 성장 목표'],
+        ] as const).map(([value, title, description]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setLobbyView(value)}
+            aria-pressed={lobbyView === value}
+            className={`rounded-2xl border p-3 text-left ${
+              lobbyView === value
+                ? 'border-blossom/50 bg-blossom/15'
+                : 'border-mystic/25 bg-panel/85'
+            }`}
+          >
+            <span className="block text-sm font-bold text-ink">{title}</span>
+            <span className="mt-1 block text-[10px] text-ink-dim">{description}</span>
+          </button>
+        ))}
+      </nav>
+      {lobbyView === 'missions' && <MissionPanel />}
+      {lobbyView === 'arena' && <ArenaLobby />}
+      {lobbyView === 'games' && <div className="py-4">
         {joinError && <p className="mb-3 text-center text-xs text-blossom">{joinError}</p>}
         {pendingRoomId && <p className="mb-3 text-center text-xs text-gilded">입장 확인 중…</p>}
         {inviteNotFound && (
@@ -117,7 +146,7 @@ export default function Home() {
           </p>
         )}
         <RoomList onJoin={handleJoinRoom} />
-      </div>
+      </div>}
       <CreateRoomModal />
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       {activeJoinTarget && (

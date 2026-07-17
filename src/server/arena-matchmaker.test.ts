@@ -157,6 +157,36 @@ describe('ArenaMatchmaker rules', () => {
       .resolves.toBeNull();
   });
 
+  it('rejects only the exact active training offer and returns to idle', async () => {
+    const offered: ArenaTrainingOffer[] = [];
+    const states: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 0,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => ({ matchId: 'unused' }),
+      rollbackTrainingRoom: async () => undefined,
+      onTrainingOffered: (_socketId, offer) => offered.push(offer),
+      onQueueState: (_socketId, state) => states.push(state.status),
+    });
+    matchmaker.join({
+      profileId: 'a',
+      socketId: 'sa',
+      mmr: 1_000,
+      joinedAt: 0,
+    });
+    await matchmaker.tick(60_000);
+
+    expect(matchmaker.rejectTraining('a', 'sa', 'wrong-offer')).toBe(false);
+    expect(matchmaker.rejectTraining('a', 'wrong-socket', offered[0].offerId))
+      .toBe(false);
+    expect(matchmaker.rejectTraining('a', 'sa', offered[0].offerId)).toBe(true);
+    expect(matchmaker.getPublicState('a')).toEqual({ status: 'idle' });
+    expect(states.at(-1)).toBe('idle');
+  });
+
   it('keeps training blocking and suppresses stale success after disconnect', async () => {
     let resolveTraining!: (result: { matchId: string } | null) => void;
     let trainingStarted!: () => void;

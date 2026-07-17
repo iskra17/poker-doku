@@ -2,6 +2,7 @@ import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
 import { createBot } from '@/lib/bot/bot-manager';
 import { SNG_BLIND_SCHEDULE } from '@/lib/poker/blind-schedule';
 import type { Player, RoomConfig } from '@/lib/poker/types';
+import type { ArenaResultPayload } from '@/lib/realtime/protocol';
 import type {
   ArenaOfficialCandidate,
   ArenaReservation,
@@ -26,6 +27,10 @@ export interface ArenaRuntimeOptions {
       candidate: ArenaOfficialCandidate;
     },
   ) => void;
+  readonly onResult?: (
+    profileId: string,
+    result: ArenaResultPayload,
+  ) => void;
   readonly clock?: () => number;
   readonly rng?: () => number;
 }
@@ -44,6 +49,7 @@ export class ArenaRuntime {
   readonly #resolveHuman: ArenaRuntimeOptions['resolveHuman'];
   readonly #onOfficialRoomCreated:
     ArenaRuntimeOptions['onOfficialRoomCreated'];
+  readonly #onResult: ArenaRuntimeOptions['onResult'];
   readonly #clock: () => number;
   readonly #rng: () => number;
   readonly #roomsByMatch = new Map<string, string>();
@@ -58,6 +64,7 @@ export class ArenaRuntime {
     this.#service = service;
     this.#resolveHuman = options.resolveHuman;
     this.#onOfficialRoomCreated = options.onOfficialRoomCreated;
+    this.#onResult = options.onResult;
     this.#clock = options.clock ?? Date.now;
     this.#rng = options.rng ?? Math.random;
   }
@@ -188,11 +195,76 @@ export class ArenaRuntime {
       type: Player['type'];
     }[];
   }) {
-    return this.#service.settleOfficialMatch(
+    const at = this.#clock();
+    const humanIds = input.results
+      .filter(result => result.type === 'human')
+      .map(result => result.playerId);
+    const before = new Map(humanIds.map(profileId => [
+      profileId,
+      this.#service.getPublicResultView(profileId, at),
+    ] as const));
+    const summary = this.#service.settleOfficialMatch(
       input.matchId,
       input.results,
-      this.#clock(),
+      at,
     );
+    for (const result of summary.results) {
+      const previous = before.get(result.profileId);
+      const current = this.#service.getPublicResultView(
+        result.profileId,
+        summary.finishedAt,
+      );
+      this.#emitResult(result.profileId, {
+        resultId: `${summary.matchId}:${result.profileId}`,
+        matchId: summary.matchId,
+        training: false,
+        place: result.place,
+        points: result.points,
+        weeklyRankBefore: previous?.weeklyRank ?? null,
+        weeklyRankAfter: current.weeklyRank,
+        placementGames: current.placementGames,
+        placementMatches: current.placementMatches,
+        tier: current.tier,
+      });
+    }
+    return summary;
+  }
+
+  completeTraining(input: {
+    matchId: string;
+    results: readonly {
+      playerId: string;
+      place: number;
+      type: Player['type'];
+    }[];
+  }): void {
+    for (const result of input.results) {
+      if (result.type !== 'human') continue;
+      const current = this.#service.getPublicResultView(
+        result.playerId,
+        this.#clock(),
+      );
+      this.#emitResult(result.playerId, {
+        resultId: `${input.matchId}:${result.playerId}`,
+        matchId: input.matchId,
+        training: true,
+        place: result.place,
+        points: 0,
+        weeklyRankBefore: current.weeklyRank,
+        weeklyRankAfter: current.weeklyRank,
+        placementGames: current.placementGames,
+        placementMatches: current.placementMatches,
+        tier: current.tier,
+      });
+    }
+  }
+
+  #emitResult(profileId: string, result: ArenaResultPayload): void {
+    try {
+      this.#onResult?.(profileId, result);
+    } catch {
+      // Settlement is durable; clients recover their public snapshot later.
+    }
   }
 
   #createRoom(

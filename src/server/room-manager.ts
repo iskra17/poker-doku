@@ -57,6 +57,14 @@ export interface RoomArenaHooks {
       type: Player['type'];
     }[];
   }): ArenaOfficialSummary;
+  completeTraining?(input: {
+    matchId: string;
+    results: readonly {
+      playerId: string;
+      place: number;
+      type: Player['type'];
+    }[];
+  }): void;
 }
 
 export type RoomDisposeReason =
@@ -1689,26 +1697,26 @@ export class RoomManager {
     if (room.config.competitionMode) {
       if (this.settledTournamentRooms.has(roomId)) return true;
       try {
+        const matchId = room.config.arenaMatchId;
+        if (!matchId || !this.options.arena) {
+          throw new Error('Arena settlement is unavailable');
+        }
+        const playerTypes = new Map(
+          room.engine.state.players.map(player => [player.id, player.type]),
+        );
+        const results = room.engine.state.tournament.results.map(result => {
+          const type = playerTypes.get(result.playerId);
+          if (!type) throw new Error('Arena result player is unavailable');
+          return {
+            playerId: result.playerId,
+            place: result.place,
+            type,
+          };
+        });
         if (room.config.competitionMode === 'arena-official') {
-          const matchId = room.config.arenaMatchId;
-          if (!matchId || !this.options.arena) {
-            throw new Error('Arena settlement is unavailable');
-          }
-          const playerTypes = new Map(
-            room.engine.state.players.map(player => [player.id, player.type]),
-          );
-          this.options.arena.completeOfficial({
-            matchId,
-            results: room.engine.state.tournament.results.map(result => {
-              const type = playerTypes.get(result.playerId);
-              if (!type) throw new Error('Arena result player is unavailable');
-              return {
-                playerId: result.playerId,
-                place: result.place,
-                type,
-              };
-            }),
-          });
+          this.options.arena.completeOfficial({ matchId, results });
+        } else {
+          this.options.arena.completeTraining?.({ matchId, results });
         }
         this.settledTournamentRooms.add(roomId);
         this.recoverFinishedTournament(roomId);

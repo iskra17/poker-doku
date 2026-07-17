@@ -5,6 +5,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
+import { ArenaHttpDataService } from './arena-http';
 import { ArenaRepository } from './arena-repository';
 import { ArenaScheduler } from './arena-scheduler';
 import { ArenaService, parseArenaRuntimeConfig } from './arena-service';
@@ -55,6 +56,7 @@ let progressionService: ProgressionService | undefined;
 let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
 let arenaService: ArenaService | undefined;
+let arenaHttpService: ArenaHttpDataService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
 
 const shutdown = createServerShutdown({
@@ -125,7 +127,8 @@ function initializePersistenceAndRecover(): void {
   progressionService = new ProgressionService(database, progressionRepository);
   const arenaConfig = parseArenaRuntimeConfig(process.env);
   if (arenaConfig.enabled) {
-    arenaService = new ArenaService(new ArenaRepository(database), {
+    const arenaRepository = new ArenaRepository(database);
+    arenaService = new ArenaService(arenaRepository, {
       ...arenaConfig,
       isProfileInNonArenaSeat: profileId => {
         if (!economyService || !runtime) {
@@ -139,6 +142,7 @@ function initializePersistenceAndRecover(): void {
           .some(room => room.mySeat !== undefined);
       },
     });
+    arenaHttpService = new ArenaHttpDataService(arenaService, arenaRepository);
     arenaService.recoverUnfinishedMatches();
     arenaScheduler = new ArenaScheduler({
       epochMs: arenaConfig.epochMs,
@@ -185,6 +189,8 @@ async function listen(): Promise<void> {
     profileManager,
     economyService,
     progressionService,
+    arenaHttpService,
+    arenaEnabled: () => arenaService !== undefined,
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,

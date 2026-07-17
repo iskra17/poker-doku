@@ -2,6 +2,7 @@ import { ARENA_CONFIG_V1, ARENA_TIERS } from '@/lib/arena/config';
 import { calculateMmrDelta } from '@/lib/arena/mmr';
 import {
   pointsForPlace,
+  rankWeeklyStandings,
   selectWeeklyMoves,
   softResetMmr,
   softResetTier,
@@ -90,6 +91,13 @@ export interface ArenaOfficialSummary {
     readonly place: number;
     readonly points: number;
   }[];
+}
+
+export interface ArenaPublicResultView {
+  readonly placementGames: number;
+  readonly placementMatches: number;
+  readonly tier: ArenaTier | null;
+  readonly weeklyRank: number | null;
 }
 
 export type ArenaRuntimeConfig =
@@ -226,6 +234,29 @@ export class ArenaService {
       if (!snapshot) fail('ARENA_PERSISTENCE_INVALID');
       return snapshot;
     });
+  }
+
+  getPublicResultView(
+    profileId: string,
+    at = this.#clock(),
+  ): ArenaPublicResultView {
+    const snapshot = this.getSnapshot(profileId, at);
+    const window = calculateArenaSeasonWindow(at, this.#config);
+    const member = this.#repository.findGroupMember(
+      window.id,
+      getArenaKstWeekKey(at),
+      profileId,
+    );
+    const ranked = member
+      ? rankWeeklyStandings(this.#repository.listGroupMembers(member.groupId))
+      : [];
+    const index = ranked.findIndex(row => row.profileId === profileId);
+    return {
+      placementGames: snapshot.profile.placementGames,
+      placementMatches: ARENA_CONFIG_V1.placementMatches,
+      tier: snapshot.profile.tier,
+      weeklyRank: index < 0 ? null : index + 1,
+    };
   }
 
   getMatchmakingProfile(profileId: string, at = this.#clock()): {

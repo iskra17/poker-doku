@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_KR, Jua } from "next/font/google";
 import ProgressionLifecycle from '@/components/progression/ProgressionLifecycle';
+import ArenaLifecycle from '@/components/arena/ArenaLifecycle';
 import "./globals.css";
 
 const notoSansKr = Noto_Sans_KR({
@@ -44,6 +45,7 @@ export default function RootLayout({
     <html lang="ko" className={`${notoSansKr.variable} ${jua.variable} h-full antialiased`}>
       <body className="h-dvh bg-grid overflow-hidden touch-manipulation">
         <ProgressionLifecycle />
+        <ArenaLifecycle />
         {children}
       </body>
     </html>

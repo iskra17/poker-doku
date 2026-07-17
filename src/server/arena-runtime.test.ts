@@ -10,6 +10,7 @@ import {
 import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
 import { SNG_BLIND_SCHEDULE } from '@/lib/poker/blind-schedule';
 import type { Player, RoomConfig } from '@/lib/poker/types';
+import type { ArenaResultPayload } from '@/lib/realtime/protocol';
 import {
   ArenaMatchmaker,
   type ArenaOfficialCandidate,
@@ -176,6 +177,56 @@ describe('ArenaRuntime', () => {
       reservation,
     );
     expect(roomManager.getRoom(roomId!)).toBeUndefined();
+  });
+
+  it('publishes public official and training result summaries without hidden fields', () => {
+    const onResult = vi.fn();
+    const runtime = createRuntime({ onResult });
+    service.reserveMatchTickets('result-match', ['profile-a', 'profile-b']);
+    service.markMatchPlaying('result-match');
+    const results = [
+      { playerId: 'profile-a', place: 1, type: 'human' as const },
+      { playerId: 'profile-b', place: 2, type: 'human' as const },
+      ...[3, 4, 5, 6].map(place => ({
+        playerId: `bot-${place}`,
+        place,
+        type: 'bot' as const,
+      })),
+    ];
+
+    runtime.completeOfficial({ matchId: 'result-match', results });
+    runtime.completeTraining({
+      matchId: 'training-match',
+      results: [
+        { playerId: 'profile-a', place: 3, type: 'human' },
+        ...results.filter(result => result.type === 'bot'),
+      ],
+    });
+
+    expect(onResult).toHaveBeenCalledWith(
+      'profile-a',
+      expect.objectContaining({
+        resultId: 'result-match:profile-a',
+        matchId: 'result-match',
+        training: false,
+        place: 1,
+        points: 100,
+        placementGames: 1,
+        placementMatches: 5,
+      }),
+    );
+    expect(onResult).toHaveBeenCalledWith(
+      'profile-a',
+      expect.objectContaining({
+        resultId: 'training-match:profile-a',
+        training: true,
+        place: 3,
+        points: 0,
+      }),
+    );
+    expect(JSON.stringify(onResult.mock.calls)).not.toMatch(
+      /mmr|credential|wallet|recovery/iu,
+    );
   });
 
   it('cleans an official match mapping on normal disposal and tolerates late rollback', async () => {
@@ -505,11 +556,13 @@ describe('ArenaRuntime', () => {
         candidate: ArenaOfficialCandidate;
       },
     ) => void;
+    onResult?: (profileId: string, result: ArenaResultPayload) => void;
   } = {}): ArenaRuntime {
     return new ArenaRuntime(roomManager, service, {
       clock: () => EPOCH + 10,
       rng: overrides.rng ?? (() => 0.5),
       onOfficialRoomCreated: overrides.onOfficialRoomCreated,
+      onResult: overrides.onResult,
       resolveHuman: overrides.resolveHuman
         ?? (profileId => ({
           name: `alias-${profileId}`,

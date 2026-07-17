@@ -118,6 +118,17 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     harness = null;
   });
 
+  it('returns the explicit disabled contract when Arena is off', async () => {
+    harness = await createSocketTestHarness({ arenaEnabled: false });
+    const client = await harness.connect('arena-disabled-client');
+
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toMatchObject({
+        ok: false,
+        code: 'arena-disabled',
+      });
+  });
+
   it('keeps arena queue state private and blocks room entry until an explicit leave ack', async () => {
     harness = await createSocketTestHarness({ arenaEnabled: true });
     const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);

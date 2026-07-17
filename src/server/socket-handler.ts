@@ -294,6 +294,10 @@ export function setupSocketHandlers(
               if (!arenaRuntime) throw new Error('Arena runtime is unavailable');
               return arenaRuntime.completeOfficial(input);
             },
+            completeTraining: input => {
+              if (!arenaRuntime) throw new Error('Arena runtime is unavailable');
+              arenaRuntime.completeTraining(input);
+            },
           },
         }
         : {}),
@@ -354,6 +358,11 @@ export function setupSocketHandlers(
           socket.join(roomId);
         }
       },
+      onResult: (profileId, result) => {
+        const session = sessions.getByPlayerId(profileId);
+        if (!session?.socketId) return;
+        io.sockets.sockets.get(session.socketId)?.emit('arena-result', result);
+      },
     });
     arenaMatchmaker = new ArenaMatchmaker({
       reserveOfficial: async (candidate, isCandidateValid) => {
@@ -413,7 +422,10 @@ export function setupSocketHandlers(
       if (!socket || !session || !roomId || !room || !seat) return;
       session.roomId = roomId;
       socket.join(roomId);
-      socket.emit('arena-match-found', { matchId });
+      socket.emit('arena-match-found', {
+        matchId,
+        training: room.config.competitionMode === 'arena-training',
+      });
       socket.emit('room-joined', {
         roomId,
         gameState: {
@@ -634,6 +646,41 @@ export function setupSocketHandlers(
       if (room && seated) {
         socket.join(session.roomId);
         roomManager.handleReconnect(session.roomId, session.playerId);
+        if (room.config.competitionMode && room.config.arenaMatchId) {
+          socket.emit('arena-match-found', {
+            matchId: room.config.arenaMatchId,
+            training: room.config.competitionMode === 'arena-training',
+          });
+          if (room.engine.state.tournament?.finished && arenaRuntime) {
+            try {
+              const playerTypes = new Map(
+                room.engine.state.players.map(player => [player.id, player.type]),
+              );
+              const results = room.engine.state.tournament.results.map(result => {
+                const type = playerTypes.get(result.playerId);
+                if (!type) throw new Error('Arena result player is unavailable');
+                return {
+                  playerId: result.playerId,
+                  place: result.place,
+                  type,
+                };
+              });
+              if (room.config.competitionMode === 'arena-official') {
+                arenaRuntime.completeOfficial({
+                  matchId: room.config.arenaMatchId,
+                  results,
+                });
+              } else {
+                arenaRuntime.completeTraining({
+                  matchId: room.config.arenaMatchId,
+                  results,
+                });
+              }
+            } catch {
+              // The room snapshot still restores; a later lobby load heals public data.
+            }
+          }
+        }
         socket.emit('room-joined', {
           roomId: session.roomId,
           gameState: {
@@ -648,6 +695,10 @@ export function setupSocketHandlers(
       }
     };
     restoreOrEvict();
+    socket.emit(
+      'arena-queue-update',
+      arenaMatchmaker?.getPublicState(session.playerId) ?? { status: 'idle' },
+    );
 
     socket.on('arena-queue-join', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs(rawArgs);
@@ -665,7 +716,7 @@ export function setupSocketHandlers(
       if (!arenaMatchmaker || !arena) {
         ack?.({
           ok: false,
-          code: 'arena-unavailable',
+          code: 'arena-disabled',
           message: '현재 포커 아레나를 이용할 수 없습니다.',
         });
         return;
@@ -737,7 +788,7 @@ export function setupSocketHandlers(
       if (!arenaMatchmaker) {
         ack?.({
           ok: false,
-          code: 'arena-unavailable',
+          code: 'arena-disabled',
           message: '현재 포커 아레나를 이용할 수 없습니다.',
         });
         return;
@@ -771,7 +822,7 @@ export function setupSocketHandlers(
       if (!arenaMatchmaker) {
         ack?.({
           ok: false,
-          code: 'arena-unavailable',
+          code: 'arena-disabled',
           message: '현재 포커 아레나를 이용할 수 없습니다.',
         });
         return;
@@ -797,6 +848,46 @@ export function setupSocketHandlers(
           message: '훈련 경기를 만들지 못했습니다.',
         });
       });
+    });
+
+    socket.on('arena-training-reject', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (
+        !isRecord(payload)
+        || Object.keys(payload).length !== 1
+        || typeof payload.offerId !== 'string'
+        || payload.offerId.length === 0
+      ) {
+        invalidPayload(ack);
+        return;
+      }
+      if (!arenaMatchmaker) {
+        ack?.({
+          ok: false,
+          code: 'arena-disabled',
+          message: '현재 포커 아레나를 이용할 수 없습니다.',
+        });
+        return;
+      }
+      if (!arenaMatchmaker.rejectTraining(
+        session.playerId,
+        socket.id,
+        payload.offerId,
+      )) {
+        ack?.({
+          ok: false,
+          code: 'arena-ineligible',
+          message: '수련 매치 제안이 만료되었거나 유효하지 않습니다.',
+        });
+        return;
+      }
+      ack?.({ ok: true });
     });
 
     // 클라이언트 주도 재동기화 — 소켓 재연결 직후 방 상태 확인.
