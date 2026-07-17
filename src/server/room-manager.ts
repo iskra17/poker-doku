@@ -49,7 +49,11 @@ export interface RoomManagerOptions {
 export interface RoomArenaHooks {
   completeOfficial(input: {
     matchId: string;
-    results: readonly { playerId: string; place: number }[];
+    results: readonly {
+      playerId: string;
+      place: number;
+      type: Player['type'];
+    }[];
   }): unknown;
 }
 
@@ -153,6 +157,9 @@ export class RoomManager {
           entryFee: undefined,
           difficulty: 'hard',
           tableType: 'mixed',
+          arenaParticipantIds: normalizeArenaParticipantIds(
+            config.arenaParticipantIds,
+          ),
         }
       : config;
     const id = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -361,6 +368,13 @@ export class RoomManager {
   joinRoom(roomId: string, player: Player): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    if (
+      room.config.competitionMode
+      && player.type === 'human'
+      && !this.isArenaParticipant(roomId, player.id)
+    ) {
+      return false;
+    }
     // 봇 전용 연습 테이블은 휴먼 1명만 — 다른 휴먼이 이미 앉아 있으면 거절
     if (
       player.type === 'human' && room.config.tableType === 'bots'
@@ -374,6 +388,12 @@ export class RoomManager {
       this.tryStartGame(roomId);
     }
     return success;
+  }
+
+  isArenaParticipant(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    return !!room?.config.competitionMode
+      && !!room.config.arenaParticipantIds?.includes(playerId);
   }
 
   /**
@@ -1666,12 +1686,20 @@ export class RoomManager {
           if (!matchId || !this.options.arena) {
             throw new Error('Arena settlement is unavailable');
           }
+          const playerTypes = new Map(
+            room.engine.state.players.map(player => [player.id, player.type]),
+          );
           this.options.arena.completeOfficial({
             matchId,
-            results: room.engine.state.tournament.results.map(result => ({
-              playerId: result.playerId,
-              place: result.place,
-            })),
+            results: room.engine.state.tournament.results.map(result => {
+              const type = playerTypes.get(result.playerId);
+              if (!type) throw new Error('Arena result player is unavailable');
+              return {
+                playerId: result.playerId,
+                place: result.place,
+                type,
+              };
+            }),
           });
         }
         this.settledTournamentRooms.add(roomId);
@@ -1992,4 +2020,15 @@ export class RoomManager {
   getChatHistory(roomId: string): ChatMessage[] {
     return [...(this.chatHistory.get(roomId) || [])];
   }
+}
+
+function normalizeArenaParticipantIds(
+  participantIds: readonly string[] | undefined,
+): string[] {
+  if (!Array.isArray(participantIds)) return [];
+  return [...new Set(participantIds.filter(
+    participantId => (
+      typeof participantId === 'string' && participantId.length > 0
+    ),
+  ))];
 }

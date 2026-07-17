@@ -166,6 +166,8 @@ export interface RoomConfig {
   competitionMode?: CompetitionMode;
   arenaMatchId?: string;
   arenaBotVersion?: string;
+  /** 서버 전용 Arena 입장 allowlist — GameState/RoomList/로그에 투영하지 말 것 */
+  arenaParticipantIds?: readonly string[];
 }
 
 export interface Room {

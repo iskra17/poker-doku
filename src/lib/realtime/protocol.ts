@@ -22,6 +22,7 @@ export type RealtimeErrorCode =
   | 'arena-unavailable'
   | 'arena-ineligible'
   | 'arena-busy'
+  | 'arena-reserved'
   | 'server-error';
 
 export type RealtimeAck<T = undefined> =

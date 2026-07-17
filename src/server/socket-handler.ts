@@ -285,7 +285,11 @@ export function setupSocketHandlers(
           arena: {
             completeOfficial: (input: {
               matchId: string;
-              results: readonly { playerId: string; place: number }[];
+              results: readonly {
+                playerId: string;
+                place: number;
+                type: Player['type'];
+              }[];
             }) => {
               if (!arenaRuntime) throw new Error('Arena runtime is unavailable');
               return arenaRuntime.completeOfficial(input);
@@ -846,6 +850,22 @@ export function setupSocketHandlers(
           roomId, playerId: session.playerId, data: { reason: 'room-not-found' },
         });
         ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
+        return;
+      }
+      if (
+        room.config.competitionMode
+        && !roomManager.isArenaParticipant(roomId, session.playerId)
+      ) {
+        eventLog.log('join-room:reject', {
+          roomId,
+          playerId: session.playerId,
+          data: { reason: 'arena-reserved' },
+        });
+        ack?.({
+          ok: false,
+          code: 'arena-reserved',
+          message: '예약된 아레나 참가자만 입장할 수 있어요.',
+        });
         return;
       }
 

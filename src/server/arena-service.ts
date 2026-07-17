@@ -66,6 +66,7 @@ export interface ArenaSeasonWindow {
 export interface ArenaOfficialResult {
   readonly playerId: string;
   readonly place: number;
+  readonly type: 'human' | 'bot';
 }
 
 export interface ArenaOfficialSummary {
@@ -303,7 +304,11 @@ export class ArenaService {
         || entries.length !== match.humanCount
         || match.startedAt === null
       ) fail('ARENA_RESULT_INVALID');
-      const places = validateOfficialResults(results, entries);
+      const places = validateOfficialResults(
+        results,
+        entries,
+        match.botCount,
+      );
       const botMmrs = Array.from(
         { length: match.botCount },
         () => match.botMmr,
@@ -698,6 +703,7 @@ function snapshotBotMmr(profiles: readonly ArenaProfileRecord[]): number {
 function validateOfficialResults(
   results: readonly ArenaOfficialResult[],
   entries: readonly ArenaEntryRecord[],
+  expectedBotCount: number,
 ): Map<string, number> {
   if (!Array.isArray(results) || results.length !== ARENA_CONFIG_V1.seats) {
     fail('ARENA_RESULT_INVALID');
@@ -705,6 +711,8 @@ function validateOfficialResults(
   const playerIds = new Set<string>();
   const places = new Set<number>();
   const byPlayer = new Map<string, number>();
+  const humanIds = new Set<string>();
+  let botCount = 0;
   for (const result of results) {
     if (
       !result
@@ -713,16 +721,21 @@ function validateOfficialResults(
       || !Number.isInteger(result.place)
       || result.place < 1
       || result.place > ARENA_CONFIG_V1.seats
+      || (result.type !== 'human' && result.type !== 'bot')
       || playerIds.has(result.playerId)
       || places.has(result.place)
     ) fail('ARENA_RESULT_INVALID');
     playerIds.add(result.playerId);
     places.add(result.place);
     byPlayer.set(result.playerId, result.place);
+    if (result.type === 'human') humanIds.add(result.playerId);
+    else botCount += 1;
   }
-  for (const entry of entries) {
-    if (!byPlayer.has(entry.profileId)) fail('ARENA_RESULT_INVALID');
-  }
+  if (
+    humanIds.size !== entries.length
+    || botCount !== expectedBotCount
+    || entries.some(entry => !humanIds.has(entry.profileId))
+  ) fail('ARENA_RESULT_INVALID');
   return byPlayer;
 }
 

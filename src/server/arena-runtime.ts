@@ -176,7 +176,11 @@ export class ArenaRuntime {
 
   completeOfficial(input: {
     matchId: string;
-    results: readonly { playerId: string; place: number }[];
+    results: readonly {
+      playerId: string;
+      place: number;
+      type: Player['type'];
+    }[];
   }) {
     return this.#service.settleOfficialMatch(
       input.matchId,
@@ -213,6 +217,11 @@ export class ArenaRuntime {
         competitionMode,
         arenaMatchId: matchId,
         arenaBotVersion: ARENA_CONFIG_V1.botVersion,
+        arenaParticipantIds: seats
+          .filter((seat): seat is Extract<ArenaSeat, { type: 'human' }> => (
+            seat.type === 'human'
+          ))
+          .map(seat => seat.profileId),
       });
       const usedCharacters = seats
         .filter((seat): seat is Extract<ArenaSeat, { type: 'human' }> => (

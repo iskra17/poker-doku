@@ -6,6 +6,7 @@ import type {
   RealtimeAck,
 } from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
+import { createBot } from '../lib/bot/bot-manager';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
 import type { ProfileKdf } from './profile-manager';
@@ -236,6 +237,72 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .toBe(1);
     expect(harness.runtime.roomManager.disposeRoom(roomId)).toBe(false);
     expect(harness.runtime.roomManager.sweepIdleRooms(-1)).toBe(0);
+  });
+
+  it('rejects direct arena entry by a non-reserved profile without changing seats', async () => {
+    harness = await createSocketTestHarness();
+    const reservedProfile = await harness.createProfile({ avatarId: 'sakura' });
+    const intruderProfile = await harness.createProfile({ avatarId: 'ara' });
+    const reserved = await harness.connect('arena-reserved', {
+      profileCookie: reservedProfile.cookie,
+    });
+    const intruder = await harness.connect('arena-intruder', {
+      profileCookie: intruderProfile.cookie,
+    });
+    const config: RoomConfig & {
+      arenaParticipantIds: readonly string[];
+    } = {
+      ...HUMAN_ROOM,
+      name: 'Arena private room',
+      competitionMode: 'arena-official',
+      arenaMatchId: 'match-private',
+      arenaBotVersion: 'arena-v1-hard',
+      arenaParticipantIds: [reserved.playerId],
+    };
+    const roomId = harness.runtime.roomManager.createRoom(config);
+
+    await expect(joinRoom(reserved, roomId, 0)).resolves.toMatchObject({
+      ok: true,
+    });
+    const usedCharacters = ['sakura'];
+    for (let seatIndex = 1; seatIndex < 6; seatIndex += 1) {
+      const bot = createBot(seatIndex, 1_500, usedCharacters, 'hard');
+      expect(harness.runtime.roomManager.joinRoom(roomId, bot)).toBe(true);
+      if (bot.personalityId) usedCharacters.push(bot.personalityId);
+    }
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const before = room.engine.state.players.map(player => ({
+      id: player.id,
+      type: player.type,
+      seatIndex: player.seatIndex,
+    }));
+
+    await expect(joinRoom(intruder, roomId, 1)).resolves.toEqual({
+      ok: false,
+      code: 'arena-reserved',
+      message: '예약된 아레나 참가자만 입장할 수 있어요.',
+    });
+
+    expect(harness.runtime.sessions.getByPlayerId(intruder.playerId)?.roomId)
+      .toBeNull();
+    expect(room.engine.state.players.map(player => ({
+      id: player.id,
+      type: player.type,
+      seatIndex: player.seatIndex,
+    }))).toEqual(before);
+    expect(room.engine.state.players.filter(player => player.type === 'bot'))
+      .toHaveLength(5);
+    await expect(joinRoom(reserved, roomId, 0)).resolves.toMatchObject({
+      ok: true,
+      data: { roomId },
+    });
+    expect(harness.runtime.sessions.getByPlayerId(reserved.playerId)?.roomId)
+      .toBe(roomId);
+    expect(harness.runtime.roomManager.getRoomList()).toEqual([]);
+    expect(JSON.stringify(room.engine.getPublicState(reserved.playerId)))
+      .not.toContain('arenaParticipantIds');
+    expect(JSON.stringify(harness.recentEvents()))
+      .not.toContain('arenaParticipantIds');
   });
 
   it('sends the durable current progression snapshot on a future connection', async () => {

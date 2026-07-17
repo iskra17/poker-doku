@@ -487,8 +487,8 @@ describe('ArenaService free ticket lifecycle', () => {
 
     expectDomain(
       () => service.settleOfficialMatch('match-a', [
-        { playerId: 'profile-a', place: 1 },
-        { playerId: 'profile-b', place: 1 },
+        { playerId: 'profile-a', place: 1, type: 'human' },
+        { playerId: 'profile-b', place: 1, type: 'human' },
       ], EPOCH + 2),
       'ARENA_RESULT_INVALID',
     );
@@ -500,6 +500,68 @@ describe('ArenaService free ticket lifecycle', () => {
     expect(repository.listMatchEntries('match-a').every(
       entry => entry.resultKey === null,
     )).toBe(true);
+  });
+
+  it('rejects every mismatched official human set without mutation and remains voidable', () => {
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+    const beforeA = repository.requireProfile('arena-v1-0', 'profile-a');
+    const invalidResults = [
+      [
+        { playerId: 'profile-a', place: 1, type: 'human' as const },
+        { playerId: 'intruder', place: 2, type: 'human' as const },
+        { playerId: 'profile-b', place: 3, type: 'bot' as const },
+        { playerId: 'bot-1', place: 4, type: 'bot' as const },
+        { playerId: 'bot-2', place: 5, type: 'bot' as const },
+        { playerId: 'bot-3', place: 6, type: 'bot' as const },
+      ],
+      [
+        { playerId: 'profile-a', place: 1, type: 'human' as const },
+        { playerId: 'intruder', place: 2, type: 'human' as const },
+        { playerId: 'bot-1', place: 3, type: 'bot' as const },
+        { playerId: 'bot-2', place: 4, type: 'bot' as const },
+        { playerId: 'bot-3', place: 5, type: 'bot' as const },
+        { playerId: 'bot-4', place: 6, type: 'bot' as const },
+      ],
+      [
+        { playerId: 'profile-a', place: 1, type: 'human' as const },
+        { playerId: 'profile-a', place: 2, type: 'human' as const },
+        { playerId: 'profile-b', place: 3, type: 'human' as const },
+        { playerId: 'bot-1', place: 4, type: 'bot' as const },
+        { playerId: 'bot-2', place: 5, type: 'bot' as const },
+        { playerId: 'bot-3', place: 6, type: 'bot' as const },
+      ],
+      [
+        { playerId: 'profile-a', place: 1, type: 'human' as const },
+        { playerId: 'profile-b', place: 1, type: 'human' as const },
+        { playerId: 'bot-1', place: 3, type: 'bot' as const },
+        { playerId: 'bot-2', place: 4, type: 'bot' as const },
+        { playerId: 'bot-3', place: 5, type: 'bot' as const },
+        { playerId: 'bot-4', place: 6, type: 'bot' as const },
+      ],
+    ];
+
+    for (const results of invalidResults) {
+      expectDomain(
+        () => service.settleOfficialMatch('match-a', results, EPOCH + 2),
+        'ARENA_RESULT_INVALID',
+      );
+    }
+
+    expect(repository.requireMatch('match-a').status).toBe('playing');
+    expect(repository.requireProfile('arena-v1-0', 'profile-a')).toEqual(beforeA);
+    expect(repository.listMatchEntries('match-a').every(
+      entry => entry.resultKey === null,
+    )).toBe(true);
+    expect(repository.requireTicketEscrow('match-a', 'profile-a').status)
+      .toBe('escrow');
+
+    service.voidMatch('match-a', EPOCH + 3);
+    expect(repository.requireMatch('match-a').status).toBe('void');
+    expect(repository.requireTicketEscrow('match-a', 'profile-a').status)
+      .toBe('refunded');
+    expect(repository.requireProfile('arena-v1-0', 'profile-a').availableTickets)
+      .toBe(2);
   });
 });
 
@@ -565,13 +627,21 @@ function expectDomain(work: () => unknown, code: ArenaDomainError['code']): void
 
 function sixSeatResult(
   humans: readonly (readonly [profileId: string, place: number])[],
-): Array<{ playerId: string; place: number }> {
+): Array<{ playerId: string; place: number; type: 'human' | 'bot' }> {
   const occupiedPlaces = new Set(humans.map(([, place]) => place));
   const bots = [1, 2, 3, 4, 5, 6]
     .filter(place => !occupiedPlaces.has(place))
-    .map((place, index) => ({ playerId: `bot-${index}`, place }));
+    .map((place, index) => ({
+      playerId: `bot-${index}`,
+      place,
+      type: 'bot' as const,
+    }));
   return [
-    ...humans.map(([playerId, place]) => ({ playerId, place })),
+    ...humans.map(([playerId, place]) => ({
+      playerId,
+      place,
+      type: 'human' as const,
+    })),
     ...bots,
   ];
 }

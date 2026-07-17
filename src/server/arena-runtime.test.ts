@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
 import { SNG_BLIND_SCHEDULE } from '@/lib/poker/blind-schedule';
+import type { Player, RoomConfig } from '@/lib/poker/types';
 import {
   ArenaMatchmaker,
   type ArenaOfficialCandidate,
@@ -99,6 +100,10 @@ describe('ArenaRuntime', () => {
       botCount: 4,
     });
     expect(roomManager.getRoomList()).toEqual([]);
+    expect([...room.config.arenaParticipantIds!].sort())
+      .toEqual(['profile-a', 'profile-b']);
+    expect(JSON.stringify(room.engine.getPublicState('profile-a')))
+      .not.toContain('arenaParticipantIds');
   });
 
   it('publishes the official room binding synchronously with room creation', async () => {
@@ -156,6 +161,40 @@ describe('ArenaRuntime', () => {
     );
     expect(roomManager.getRoom(roomId!)).toBeUndefined();
   });
+
+  it.each(['arena-official', 'arena-training'] as const)(
+    'rejects a non-reserved human at the RoomManager boundary for %s',
+    competitionMode => {
+      const config: RoomConfig & {
+        arenaParticipantIds: readonly string[];
+      } = {
+        name: 'Arena allowlist',
+        smallBlind: 10,
+        bigBlind: 20,
+        minBuyIn: 1_500,
+        maxBuyIn: 1_500,
+        maxPlayers: 6,
+        turnTime: 8,
+        competitionMode,
+        arenaMatchId: 'match-guard',
+        arenaBotVersion: ARENA_CONFIG_V1.botVersion,
+        arenaParticipantIds: ['reserved'],
+      };
+      const roomId = roomManager.createRoom(config);
+      const reserved = testHuman('reserved', 0);
+      const intruder = testHuman('intruder', 1);
+
+      expect(roomManager.joinRoom(roomId, reserved)).toBe(true);
+      const before = roomManager.getRoom(roomId)!.engine.state.players.map(
+        player => ({ id: player.id, type: player.type, seatIndex: player.seatIndex }),
+      );
+
+      expect(roomManager.joinRoom(roomId, intruder)).toBe(false);
+      expect(roomManager.getRoom(roomId)!.engine.state.players.map(
+        player => ({ id: player.id, type: player.type, seatIndex: player.seatIndex }),
+      )).toEqual(before);
+    },
+  );
 
   it('fails closed on a missing reserved identity without leaving a room behind', async () => {
     const match = service.reserveMatchTickets(
@@ -293,7 +332,16 @@ describe('ArenaRuntime', () => {
       competitionMode: 'arena-official',
       arenaMatchId: 'match-retry',
       arenaBotVersion: ARENA_CONFIG_V1.botVersion,
+      arenaParticipantIds: ['profile-1', 'profile-2'],
     });
+    for (let place = 1; place <= 6; place += 1) {
+      const player = testHuman(
+        place <= 2 ? `profile-${place}` : `bot-${place}`,
+        place - 1,
+      );
+      if (place > 2) player.type = 'bot';
+      expect(manager.joinRoom(roomId, player)).toBe(true);
+    }
     const tournament = manager.getRoom(roomId)!.engine.state.tournament!;
     tournament.entrants = 6;
     tournament.finished = true;
@@ -316,6 +364,7 @@ describe('ArenaRuntime', () => {
       results: tournament.results.map(({ playerId, place }) => ({
         playerId,
         place,
+        type: playerId.startsWith('profile-') ? 'human' : 'bot',
       })),
     });
     await vi.advanceTimersByTimeAsync(10_000);
@@ -391,4 +440,21 @@ function setMmr(
     ...profile,
     mmr,
   }));
+}
+
+function testHuman(id: string, seatIndex: number): Player {
+  return {
+    id,
+    name: id,
+    type: 'human',
+    avatar: 'sakura',
+    chips: ARENA_CONFIG_V1.startingStack,
+    seatIndex,
+    holeCards: [],
+    currentBet: 0,
+    totalContributed: 0,
+    status: 'waiting',
+    hasActed: false,
+    timeBankChips: 1,
+  };
 }
