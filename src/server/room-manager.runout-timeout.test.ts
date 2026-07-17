@@ -151,18 +151,16 @@ describe('완전 타임아웃 → 자동 폴드 + 자리비움', () => {
     expect(stillMyTurn).toBe(false);
   });
 
-  it('타임뱅크가 있으면 먼저 자동 사용해 연장하고, 다 쓴 뒤에야 자리비움 처리된다', () => {
+  it('타임칩이 있어도 자동 소모하지 않는다 — 시간 초과 즉시 자동 폴드 + 자리비움', () => {
+    // 자동 연장은 부재중 좌석이 타임칩 수만큼 매 턴 테이블을 수십 초씩 붙잡던 문제로 제거됨.
+    // 연장은 본인이 턴 중 타임칩 버튼을 눌렀을 때만(useTimeBank) 일어난다.
     const roomId = startedRoom(manager);
     const st = manager.getRoom(roomId)!.engine.state;
     const actor = st.players[st.activePlayerIndex];
-    actor.timeBankChips = 1;
+    actor.timeBankChips = 2;
 
-    vi.advanceTimersByTime(8_100); // 기본 시간 초과 → 타임칩 자동 사용 (+30초)
-    expect(actor.timeBankChips).toBe(0);
-    expect(actor.sitOutNext).toBeFalsy();
-    expect(st.players[st.activePlayerIndex]?.id).toBe(actor.id); // 아직 본인 턴
-
-    vi.advanceTimersByTime(30_100); // 연장분도 소진 → 폴드 + 자리비움
+    vi.advanceTimersByTime(8_100); // 기본 시간 초과 → 연장 없이 즉시 처리
+    expect(actor.timeBankChips).toBe(2); // 타임칩은 그대로
     expect(actor.sitOutNext).toBe(true);
     const stillMyTurn = st.isHandInProgress && st.players[st.activePlayerIndex]?.id === actor.id;
     expect(stillMyTurn).toBe(false);

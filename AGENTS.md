@@ -91,9 +91,11 @@ npx tsc --noEmit
   자동 정리(미납 BB/방치 회수)도 `onRoomsChanged` 콜백으로 로비에 즉시 반영. 다른 방에 앉으면
   기존 보존 좌석은 회수되므로(JoinRoomModal이 경고) 주의. 회귀: `room-manager.myseat.test.ts`.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
-  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
-  남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드 + `sitOutNext` 자리비움 마킹
-  (응답 없는 좌석이 매 턴 테이블을 멈추지 않게 — 복귀는 ActionBar [게임 복귀]).
+  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 즉시 자동
+  체크/폴드 + `sitOutNext` 자리비움 마킹 (응답 없는 좌석이 매 턴 테이블을 멈추지 않게 —
+  복귀는 ActionBar [게임 복귀]). 타임칩(+30초)은 **자동 소모하지 않는다** — 본인이 턴 중에
+  ActionBar 타임칩 버튼을 눌러야만 연장(`useTimeBank`). 부재중 좌석이 타임칩 수만큼 매 턴
+  테이블을 붙잡는 문제로 2026-07-18에 자동 연장을 제거했으니 되살리지 말 것.
 - **액션 규칙**: `computeValidActions(state, player)` (engine.ts export)가 **단일 소스** —
   서버 `PokerEngine.getValidActions`와 클라 `ActionBar` 버튼 노출이 **같은 함수**를 쓴다.
   규칙을 양쪽에 각각 구현하지 말 것: 어긋나면 "버튼은 보이는데 서버가 거부하는" 먹통 버튼이 된다

@@ -215,7 +215,7 @@ export default function CreateRoomModal() {
             ))}
           </div>
           <p className="text-[11px] text-gray-500 mt-1">
-            시간이 다 되면 타임칩이 자동 사용되고, 다 쓰면 자동 체크/폴드돼요.
+            시간이 다 되면 자동 체크/폴드돼요. 타임칩(+30초)은 내 턴에 직접 눌러 사용해요.
           </p>
         </div>
 

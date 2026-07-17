@@ -24,7 +24,7 @@ import type {
 import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
 import type { ArenaOfficialSummary } from './arena-service';
 
-const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
+const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 연장은 수동 타임칩 사용만
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 const RUNOUT_STREET_DELAY_MS = 1_600; // 올인 런아웃 스트리트 간 시간차 (핸드 공개 → 플랍 → 턴 → 리버 → 쇼다운)
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
@@ -1110,27 +1110,12 @@ export class RoomManager {
       this.turnTimers.delete(roomId);
       this.turnDeadlines.delete(roomId);
 
-      // 기본 시간 초과 → 타임뱅크가 남아 있으면 자동 사용해 연장, 다 쓰면 자동 체크/폴드
+      // 시간 초과 → 즉시 자동 체크/폴드 + 자리비움 마킹. 타임칩은 자동 소모하지 않는다 —
+      // 연장은 본인이 ActionBar 타임칩 버튼을 눌렀을 때만(useTimeBank). 자동 연장은
+      // 부재중 좌석이 타임칩 수만큼 매 턴 테이블을 수십 초씩 붙잡는 문제가 있었다.
+      // (캐시: 다음 핸드 딜아웃, SnG: away 자동 폴드) 복귀는 ActionBar [게임 복귀].
       const current = this.rooms.get(roomId);
       const stillActive = current?.engine.state.players[current.engine.state.activePlayerIndex];
-      if (
-        current && stillActive && stillActive.id === activePlayer.id
-        && current.engine.state.isHandInProgress
-        && (stillActive.timeBankChips ?? 0) > 0
-      ) {
-        stillActive.timeBankChips = (stillActive.timeBankChips ?? 0) - 1;
-        this.sendSystemChat(
-          roomId,
-          `${stillActive.name}님 시간 초과 — 타임뱅크 자동 사용 (+${TIME_BANK_EXTEND_MS / 1000}초, 남은 타임칩 ${stillActive.timeBankChips}개)`,
-        );
-        this.startTurnTimer(roomId, TIME_BANK_EXTEND_MS);
-        this.onUpdate(roomId, current.engine);
-        return;
-      }
-
-      // 타임뱅크까지 소진한 완전 타임아웃 → 자동 체크/폴드 + 자리비움 마킹.
-      // 응답 없는 좌석이 매 턴 테이블을 수십 초씩 멈추지 않게 한다 (캐시: 다음 핸드 딜아웃,
-      // SnG: away 자동 폴드). 복귀는 본인이 ActionBar [게임 복귀]를 눌러야 한다.
       if (
         current && stillActive && stillActive.id === activePlayer.id
         && current.engine.state.isHandInProgress

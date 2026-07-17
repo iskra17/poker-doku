@@ -22,6 +22,30 @@ import HandStrengthBadge from './HandStrengthBadge';
  */
 export const ACTION_DOCK_HEIGHT = 176;
 
+/**
+ * 타임칩 아이콘 — 'TIME' 문구가 든 포커칩 모양 (규칙대로 에셋 없이 SVG, 색은 텍스트 색 상속).
+ * "+30초 ×1"만으로는 타임칩인지 알 수 없다는 피드백으로 추가.
+ */
+function TimeChipIcon({ size = 20 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className="shrink-0">
+      <circle cx="12" cy="12" r="11" fill="currentColor" opacity="0.15" />
+      {/* 칩 테두리의 6분할 에지 마크 */}
+      <circle
+        cx="12" cy="12" r="10.4" fill="none" stroke="currentColor" strokeWidth="2.4"
+        strokeDasharray="4.35 6.54" strokeDashoffset="2.2"
+      />
+      <circle cx="12" cy="12" r="7.8" fill="none" stroke="currentColor" strokeWidth="0.8" opacity="0.6" />
+      <text
+        x="12" y="14.1" textAnchor="middle" fontSize="5.8" fontWeight="800"
+        fill="currentColor" style={{ letterSpacing: '0.1px' }}
+      >
+        TIME
+      </text>
+    </svg>
+  );
+}
+
 export default function ActionBar() {
   const {
     gameState,
@@ -35,6 +59,8 @@ export default function ActionBar() {
   const betStepUnit = useSettingsStore(s => s.betStepUnit);
   const preflopPresets = useSettingsStore(s => s.preflopPresets);
   const postflopPresets = useSettingsStore(s => s.postflopPresets);
+  // 좌석 칩 플레이트의 칩↔BB 토글과 같은 설정 — 금액 입력창의 주/보조 단위도 함께 뒤집는다
+  const bbInputMode = useSettingsStore(s => s.chipDisplayMode) === 'bb';
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [amountDraft, setAmountDraft] = useState<string | null>(null); // 금액 직접 입력 중 임시값
   const [confirmAllIn, setConfirmAllIn] = useState(false); // 올인 오조작 방지 — 한 번 더 눌러야 확정
@@ -138,11 +164,16 @@ export default function ActionBar() {
     setConfirmAllIn(false);
   };
 
-  // 금액 직접 입력: 입력 중엔 draft 그대로, 확정(blur/Enter) 시 파싱해 범위로 클램프
+  // 금액 직접 입력: 입력 중엔 draft 그대로, 확정(blur/Enter) 시 파싱해 범위로 클램프.
+  // 칩↔BB 표기 토글에 따라 입력 단위도 바뀐다 — BB 모드에선 소수 입력을 칩으로 환산.
+  const draftUnitValue = (amount: number): string =>
+    bbInputMode ? String(Math.round((amount / bb) * 10) / 10) : String(amount);
   const commitAmountDraft = () => {
     if (amountDraft === null) return;
-    const n = Math.floor(Number(amountDraft));
-    if (Number.isFinite(n) && n > 0) updateRaise(n);
+    const n = Number(amountDraft);
+    if (Number.isFinite(n) && n > 0) {
+      updateRaise(bbInputMode ? Math.round(n * bb) : Math.floor(n));
+    }
     setAmountDraft(null);
   };
 
@@ -195,38 +226,48 @@ export default function ActionBar() {
               <button
                 onClick={useTimeBank}
                 disabled={controlsDisabled}
-                className="text-[10px] px-2 py-0.5 rounded-full border border-cyber/50 text-cyber hover:bg-cyber/10 transition-colors whitespace-nowrap"
-                title="타임칩 사용 — 생각할 시간 +30초"
+                className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border border-cyber/50 text-cyber hover:bg-cyber/10 transition-colors whitespace-nowrap"
+                title="타임칩 사용 — 생각할 시간 +30초 (자동으로 쓰이지 않아요)"
               >
-                +30초 ×{myPlayer.timeBankChips}
+                <TimeChipIcon />
+                <span>+30초</span>
+                <span className="font-bold">×{myPlayer.timeBankChips}</span>
               </button>
             )}
             {canRaise && (
               <div className="ml-auto text-right leading-tight">
-                {/* 금액 직접 입력 — 탭/클릭 후 타이핑 (모바일 숫자 키패드) */}
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  value={amountDraft ?? String(effectiveRaise)}
-                  onFocus={e => {
-                    setAmountDraft(String(effectiveRaise));
-                    e.target.select();
-                  }}
-                  onChange={e => setAmountDraft(e.target.value.replace(/[^0-9]/g, ''))}
-                  onBlur={commitAmountDraft}
-                  onKeyDown={e => {
-                    if (e.key === 'Enter') {
-                      commitAmountDraft();
-                      (e.target as HTMLInputElement).blur();
-                    }
-                  }}
-                  aria-label={`${aggroLabel} 금액 직접 입력`}
-                  disabled={controlsDisabled}
-                  className="w-[96px] text-right bg-black/40 border border-white/15 rounded-lg px-2 py-0.5 font-bold text-blossom tabular text-base focus:outline-none focus:border-blossom/70 focus:bg-black/60"
-                />
+                {/* 금액 직접 입력 — 탭/클릭 후 타이핑. 칩↔BB 토글에 따라 주 단위가 바뀌고
+                    (BB 모드: BB 소수 입력, 아래 보조줄이 칩), 반대면 기존처럼 칩 입력 + BB 보조 */}
+                <div className="flex items-center justify-end gap-1">
+                  <input
+                    type="text"
+                    inputMode={bbInputMode ? 'decimal' : 'numeric'}
+                    pattern={bbInputMode ? '[0-9.]*' : '[0-9]*'}
+                    value={amountDraft ?? draftUnitValue(effectiveRaise)}
+                    onFocus={e => {
+                      setAmountDraft(draftUnitValue(effectiveRaise));
+                      e.target.select();
+                    }}
+                    onChange={e => setAmountDraft(
+                      e.target.value.replace(bbInputMode ? /[^0-9.]/g : /[^0-9]/g, ''),
+                    )}
+                    onBlur={commitAmountDraft}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        commitAmountDraft();
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    aria-label={`${aggroLabel} 금액 직접 입력 (${bbInputMode ? 'BB' : '칩'})`}
+                    disabled={controlsDisabled}
+                    className="w-[96px] text-right bg-black/40 border border-white/15 rounded-lg px-2 py-0.5 font-bold text-blossom tabular text-base focus:outline-none focus:border-blossom/70 focus:bg-black/60"
+                  />
+                  {bbInputMode && <span className="text-[11px] font-bold text-blossom/80">BB</span>}
+                </div>
                 <span className="block text-[10px] text-ink-dim tabular pr-1">
-                  {(effectiveRaise / bb).toFixed(1)} BB
+                  {bbInputMode
+                    ? `${effectiveRaise.toLocaleString()} 칩`
+                    : `${(effectiveRaise / bb).toFixed(1)} BB`}
                 </span>
               </div>
             )}
