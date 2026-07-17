@@ -104,7 +104,10 @@ describe('ArenaService free ticket lifecycle', () => {
     });
   });
 
-  afterEach(() => database.close());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    database.close();
+  });
 
   it('lazily creates one season/profile and gives only two creation-day tickets', () => {
     expect(service.getSnapshot('profile-a', EPOCH).profile.availableTickets).toBe(2);
@@ -428,6 +431,279 @@ describe('ArenaService free ticket lifecycle', () => {
       tier: 'gold',
       status: 'open',
     });
+  });
+
+  it('settles a Sunday match into the current Monday group after the old group closes', () => {
+    const sunday = EPOCH + 6 * DAY + DAY / 2;
+    const monday = EPOCH + 7 * DAY;
+    const sundayWeek = getArenaKstWeekKey(sunday);
+    const mondayWeek = getArenaKstWeekKey(monday);
+    service.getSnapshot('profile-a', sunday);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacedWeeklyMember(
+      repository,
+      'sunday-group',
+      sundayWeek,
+      'profile-a',
+      'silver',
+      sunday - 1,
+    );
+    const oldMembers = repository.listGroupMembers('sunday-group');
+    service.reserveMatchTickets(
+      'cross-week',
+      ['profile-a', 'profile-b'],
+      sunday,
+    );
+    service.markMatchPlaying('cross-week', sunday + 1);
+
+    service.reconcile(monday);
+    expect(repository.requireGroup('sunday-group')).toMatchObject({
+      status: 'settled',
+      settledAt: monday,
+    });
+    expect(repository.listGroupMembers('sunday-group')).toEqual(oldMembers);
+
+    const requireTicketEscrow =
+      repository.requireTicketEscrow.bind(repository);
+    let failOnce = true;
+    const transient = vi.spyOn(repository, 'requireTicketEscrow')
+      .mockImplementation((matchId, profileId) => {
+        if (failOnce && profileId === 'profile-b') {
+          failOnce = false;
+          throw new Error('transient-settlement-failure');
+        }
+        return requireTicketEscrow(matchId, profileId);
+      });
+    const results = sixSeatResult([
+      ['profile-a', 1],
+      ['profile-b', 6],
+    ]);
+
+    expect(() => service.settleOfficialMatch(
+      'cross-week',
+      results,
+      monday + 1,
+    )).toThrow('transient-settlement-failure');
+    transient.mockRestore();
+    expect(repository.requireMatch('cross-week').status).toBe('playing');
+    expect(repository.requireTicketEscrow(
+      'cross-week',
+      'profile-a',
+    ).status).toBe('escrow');
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toBeNull();
+    expect(repository.listGroupMembers('sunday-group')).toEqual(oldMembers);
+
+    const first = service.settleOfficialMatch(
+      'cross-week',
+      results,
+      monday + 2,
+    );
+    const member = repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    );
+    expect(member).toMatchObject({
+      points: 100,
+      wins: 1,
+      top3: 1,
+      placeSum: 1,
+      matches: 1,
+      scoreReachedAt: monday + 2,
+      joinedAt: monday + 2,
+      updatedAt: monday + 2,
+    });
+    expect(repository.requireGroup(member!.groupId)).toMatchObject({
+      seasonId: 'arena-v1-0',
+      weekKey: mondayWeek,
+      tier: 'silver',
+      status: 'open',
+    });
+    expect(repository.requireMatch('cross-week')).toMatchObject({
+      status: 'finished',
+      finishedAt: monday + 2,
+    });
+    expect(repository.requireTicketEscrow(
+      'cross-week',
+      'profile-a',
+    )).toMatchObject({
+      status: 'consumed',
+      settledAt: monday + 2,
+    });
+    expect(repository.listGroupMembers('sunday-group')).toEqual(oldMembers);
+
+    const beforeDuplicate = repository.listGroupMembers(member!.groupId);
+    const duplicate = service.settleOfficialMatch(
+      'cross-week',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 1],
+      ]),
+      monday + 3,
+    );
+    expect(duplicate).toEqual(first);
+    expect(repository.listGroupMembers(member!.groupId))
+      .toEqual(beforeDuplicate);
+    expect(countWeeklyMemberships(
+      database,
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toBe(1);
+    expect(repository.listGroupMembers('sunday-group')).toEqual(oldMembers);
+  });
+
+  it('keeps a cross-week fifth placement ungrouped until the next official result', () => {
+    const sunday = EPOCH + 6 * DAY + DAY / 2;
+    const monday = EPOCH + 7 * DAY;
+    const mondayWeek = getArenaKstWeekKey(monday);
+    service.getSnapshot('profile-a', sunday);
+    seedPlacement(repository, 'profile-a', [60, 60, 60, 60]);
+    service.reserveMatchTickets(
+      'fifth-cross-week',
+      ['profile-a', 'profile-b'],
+      sunday,
+    );
+    service.markMatchPlaying('fifth-cross-week', sunday + 1);
+    service.reconcile(monday);
+
+    service.settleOfficialMatch(
+      'fifth-cross-week',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 6],
+      ]),
+      monday + 1,
+    );
+
+    expect(repository.requireProfile('arena-v1-0', 'profile-a'))
+      .toMatchObject({
+        placementGames: 5,
+        placementPoints: 340,
+        tier: 'gold',
+      });
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toBeNull();
+    expect(countRows(database, 'arena_groups')).toBe(0);
+
+    service.reserveMatchTickets(
+      'placed-cross-week',
+      ['profile-a', 'profile-b'],
+      monday + 2,
+    );
+    service.markMatchPlaying('placed-cross-week', monday + 2);
+    service.settleOfficialMatch(
+      'placed-cross-week',
+      sixSeatResult([
+        ['profile-a', 2],
+        ['profile-b', 6],
+      ]),
+      monday + 3,
+    );
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toMatchObject({
+      points: 60,
+      top3: 1,
+      placeSum: 2,
+      matches: 1,
+    });
+  });
+
+  it('finishes a cross-season match without creating a weekly group in either season', () => {
+    const seasonSunday = EPOCH + 27 * DAY + DAY / 2;
+    const seasonBoundary = EPOCH + 28 * DAY;
+    const oldWeek = getArenaKstWeekKey(seasonSunday);
+    const newWeek = getArenaKstWeekKey(seasonBoundary);
+    service.getSnapshot('profile-a', seasonSunday);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacedWeeklyMember(
+      repository,
+      'season-end-group',
+      oldWeek,
+      'profile-a',
+      'silver',
+      seasonSunday - 1,
+    );
+    const oldMembers = repository.listGroupMembers('season-end-group');
+    service.reserveMatchTickets(
+      'cross-season',
+      ['profile-a', 'profile-b'],
+      seasonSunday,
+    );
+    service.markMatchPlaying('cross-season', seasonSunday + 1);
+    service.reconcile(seasonBoundary);
+
+    const first = service.settleOfficialMatch(
+      'cross-season',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 6],
+      ]),
+      seasonBoundary + 1,
+    );
+    const entries = repository.listMatchEntries('cross-season');
+
+    expect(first).toMatchObject({
+      matchId: 'cross-season',
+      finishedAt: seasonBoundary + 1,
+    });
+    expect(repository.requireMatch('cross-season').status).toBe('finished');
+    expect(repository.requireTicketEscrow(
+      'cross-season',
+      'profile-a',
+    )).toMatchObject({
+      status: 'consumed',
+      settledAt: seasonBoundary + 1,
+    });
+    expect(entries.find(entry => entry.profileId === 'profile-a'))
+      .toMatchObject({
+        place: 1,
+        points: 100,
+        resultKey: 'cross-season:profile-a',
+      });
+    expect(repository.listGroupMembers('season-end-group'))
+      .toEqual(oldMembers);
+    expect(countWeeklyMemberships(
+      database,
+      'arena-v1-0',
+      newWeek,
+      'profile-a',
+    )).toBe(0);
+    expect(countWeeklyMemberships(
+      database,
+      'arena-v1-1',
+      newWeek,
+      'profile-a',
+    )).toBe(0);
+    const profileAfter = repository.requireProfile(
+      'arena-v1-0',
+      'profile-a',
+    );
+
+    const duplicate = service.settleOfficialMatch(
+      'cross-season',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 1],
+      ]),
+      seasonBoundary + 2,
+    );
+    expect(duplicate).toEqual(first);
+    expect(repository.listMatchEntries('cross-season')).toEqual(entries);
+    expect(repository.requireProfile('arena-v1-0', 'profile-a'))
+      .toEqual(profileAfter);
+    expect(repository.listGroupMembers('season-end-group'))
+      .toEqual(oldMembers);
   });
 
   it('updates the current weekly group stats only for an already placed profile', () => {
@@ -901,6 +1177,19 @@ function countRows(database: PokerDatabase, table: string): number {
   return row.count;
 }
 
+function countWeeklyMemberships(
+  database: PokerDatabase,
+  seasonId: string,
+  weekKey: string,
+  profileId: string,
+): number {
+  const row = database.db.prepare(`
+    SELECT COUNT(*) AS count FROM arena_group_members
+    WHERE season_id = ? AND week_key = ? AND profile_id = ?
+  `).get(seasonId, weekKey, profileId) as unknown as { count: number };
+  return row.count;
+}
+
 function updateAvailable(
   repository: ArenaRepository,
   profileId: string,
@@ -972,6 +1261,41 @@ function seedPlacement(
       tier: index === 4 ? 'silver' : null,
       updatedAt: profile.updatedAt,
     }));
+  });
+}
+
+function seedPlacedWeeklyMember(
+  repository: ArenaRepository,
+  groupId: string,
+  weekKey: string,
+  profileId: string,
+  tier: ArenaTier,
+  at: number,
+): void {
+  repository.transaction(tx => {
+    tx.insertGroup({
+      id: groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier,
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    });
+    tx.insertGroupMember({
+      groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      profileId,
+      points: 35,
+      wins: 0,
+      top3: 1,
+      placeSum: 3,
+      matches: 1,
+      scoreReachedAt: at,
+      joinedAt: at,
+      updatedAt: at,
+    });
   });
 }
 

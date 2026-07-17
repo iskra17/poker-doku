@@ -323,7 +323,11 @@ export class ArenaService {
         { length: match.botCount },
         () => match.botMmr,
       );
-      const weekKey = getArenaKstWeekKey(match.startedAt);
+      const completionWeekKey = weeklyCompletionKey(
+        match.seasonId,
+        at,
+        this.#config,
+      );
 
       for (const entry of entries) {
         const place = places.get(entry.profileId);
@@ -381,11 +385,11 @@ export class ArenaService {
           mmr: mmrAfter,
           updatedAt: Math.max(profile.updatedAt, at),
         });
-        if (wasPlaced) {
+        if (wasPlaced && completionWeekKey !== null) {
           const member = this.#assignWeeklyGroup(
             tx,
             profile,
-            weekKey,
+            completionWeekKey,
             at,
           );
           tx.updateGroupMember({
@@ -870,6 +874,20 @@ function adjacentTier(tier: ArenaTier, direction: -1 | 1): ArenaTier {
   const next = ARENA_TIERS[index + direction];
   if (!next) fail('ARENA_PERSISTENCE_INVALID');
   return next;
+}
+
+function weeklyCompletionKey(
+  reservedSeasonId: string,
+  completedAt: number,
+  config: ArenaSeasonConfig,
+): string | null {
+  const completionSeason = calculateArenaSeasonWindow(completedAt, config);
+  // The reserved season still owns the result/MMR/ticket settlement. Season
+  // transition owns the next-season reset, so a cross-season match cannot
+  // create a group under the closed season or an uninitialized new profile.
+  return completionSeason.id === reservedSeasonId
+    ? getArenaKstWeekKey(completedAt)
+    : null;
 }
 
 function assertMatchRequest(matchId: string, profileIds: readonly string[]): void {
