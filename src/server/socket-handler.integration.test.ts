@@ -77,6 +77,19 @@ function wait(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 2_000,
+): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt >= timeoutMs) {
+      throw new Error('condition timeout');
+    }
+    await wait(10);
+  }
+}
+
 function waitForGameUpdate(
   client: ConnectedTestClient,
   predicate: (payload: GameUpdatePayload) => boolean,
@@ -136,6 +149,93 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
         ok: false,
         code: 'arena-ineligible',
       });
+  });
+
+  it('seats a full official arena match privately and never refunds a started disconnect', async () => {
+    harness = await createSocketTestHarness({
+      arenaEnabled: true,
+      graceMs: 40,
+    });
+    const avatars = ['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'];
+    const profiles = await Promise.all(
+      avatars.map(avatarId => harness!.createProfile({ avatarId })),
+    );
+    const clients = await Promise.all(profiles.map((profile, index) =>
+      harness!.connect(`arena-official-${index}`, {
+        profileCookie: profile.cookie,
+      }),
+    ));
+    const found = clients.map(client => new Promise<{ matchId: string }>(
+      (resolve, reject) => {
+        const timer = setTimeout(
+          () => reject(new Error('arena match timeout')),
+          2_000,
+        );
+        client.socket.once('arena-match-found', payload => {
+          clearTimeout(timer);
+          resolve(payload);
+        });
+      },
+    ));
+
+    const queueAcks = await Promise.all(clients.map(client =>
+      withAck(done => client.socket.emit('arena-queue-join', done)),
+    ));
+    expect(queueAcks.every(ack => ack.ok)).toBe(true);
+    const matches = await Promise.all(found);
+    expect(new Set(matches.map(match => match.matchId)).size).toBe(1);
+    await waitUntil(() => clients.every(client => (
+      harness!.runtime.sessions.getByPlayerId(client.playerId)?.roomId != null
+    )));
+    const roomIds = clients.map(client =>
+      harness!.runtime.sessions.getByPlayerId(client.playerId)!.roomId!,
+    );
+    expect(new Set(roomIds).size).toBe(1);
+    const roomId = roomIds[0];
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    expect(room.config).toMatchObject({
+      competitionMode: 'arena-official',
+      economyMode: 'arena',
+      gameMode: 'sng',
+      tableType: 'mixed',
+      startingStack: 1_500,
+    });
+    expect(room.engine.state.players).toHaveLength(6);
+    expect(harness.runtime.roomManager.getRoomList()).toEqual([]);
+    await waitUntil(() => room.engine.state.tournament!.entrants === 6, 4_000);
+
+    clients[0].socket.disconnect();
+    await wait(80);
+
+    expect(room.engine.state.players.find(
+      player => player.id === clients[0].playerId,
+    )).toMatchObject({
+      id: clients[0].playerId,
+      isDisconnected: true,
+    });
+    expect(harness.arenaSnapshot(clients[0].playerId)?.profile.availableTickets)
+      .toBe(1);
+    expect(harness.walletState(clients[0].playerId)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+
+    await expect(withAck(done => clients[1].socket.emit(
+      'leave-room',
+      { mode: 'exit' },
+      done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(room.engine.state.players.find(
+      player => player.id === clients[1].playerId,
+    )).toMatchObject({
+      id: clients[1].playerId,
+      isDisconnected: true,
+    });
+    expect(harness.arenaSnapshot(clients[1].playerId)?.profile.availableTickets)
+      .toBe(1);
+    expect(harness.runtime.roomManager.disposeRoom(roomId)).toBe(false);
+    expect(harness.runtime.roomManager.sweepIdleRooms(-1)).toBe(0);
   });
 
   it('sends the durable current progression snapshot on a future connection', async () => {

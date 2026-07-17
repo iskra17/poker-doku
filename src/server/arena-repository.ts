@@ -150,7 +150,9 @@ export interface ArenaTransaction {
   insertGroupMember(value: ArenaGroupMemberRecord): void;
   updateProfile(value: ArenaProfileRecord): void;
   updateMatch(value: ArenaMatchRecord): void;
+  updateEntry(value: ArenaEntryRecord): void;
   updateTicketEscrow(value: ArenaTicketEscrowRecord): void;
+  updateGroupMember(value: ArenaGroupMemberRecord): void;
   insertWeeklySettlement(value: ArenaWeeklySettlementRecord): void;
   insertSeasonReward(value: ArenaSeasonRewardRecord): void;
 }
@@ -514,6 +516,40 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     requireOneChange(result.changes);
   }
 
+  updateEntry(value: ArenaEntryRecord): void {
+    assertEntry(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    const currentRow = this.#database.db.prepare(`
+      SELECT match_id, profile_id, place, points, mmr_before, mmr_after,
+             result_key, created_at, settled_at
+      FROM arena_entries WHERE match_id = ? AND profile_id = ?
+    `).get(value.matchId, value.profileId) as unknown as EntryRow | undefined;
+    if (!currentRow) fail('ARENA_NOT_FOUND');
+    const current = mapEntry(currentRow);
+    if (
+      current.createdAt !== value.createdAt
+      || current.mmrBefore !== value.mmrBefore
+      || current.resultKey !== null
+    ) fail('ARENA_INPUT_INVALID');
+    const result = this.#database.db.prepare(`
+      UPDATE arena_entries
+      SET place = ?, points = ?, mmr_after = ?, result_key = ?, settled_at = ?
+      WHERE match_id = ? AND profile_id = ? AND result_key IS NULL
+        AND created_at = ? AND mmr_before = ?
+    `).run(
+      value.place,
+      value.points,
+      value.mmrAfter,
+      value.resultKey,
+      value.settledAt,
+      value.matchId,
+      value.profileId,
+      value.createdAt,
+      value.mmrBefore,
+    );
+    requireOneChange(result.changes);
+  }
+
   updateTicketEscrow(value: ArenaTicketEscrowRecord): void {
     assertEscrow(value, 'ARENA_INPUT_INVALID');
     this.#database.assertTransactionActive();
@@ -539,6 +575,41 @@ class ArenaTransactionImplementation implements ArenaTransaction {
       value.matchId,
       value.profileId,
       value.createdAt,
+    );
+    requireOneChange(result.changes);
+  }
+
+  updateGroupMember(value: ArenaGroupMemberRecord): void {
+    assertGroupMember(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    const currentRow = this.#database.db.prepare(`
+      SELECT group_id, season_id, week_key, profile_id, points, wins, top3,
+             place_sum, matches, score_reached_at, joined_at, updated_at
+      FROM arena_group_members WHERE group_id = ? AND profile_id = ?
+    `).get(value.groupId, value.profileId) as unknown as
+      GroupMemberRow | undefined;
+    if (!currentRow) fail('ARENA_NOT_FOUND');
+    const current = mapGroupMember(currentRow);
+    assertGroupMemberTransition(current, value);
+    const result = this.#database.db.prepare(`
+      UPDATE arena_group_members
+      SET points = ?, wins = ?, top3 = ?, place_sum = ?, matches = ?,
+          score_reached_at = ?, updated_at = ?
+      WHERE group_id = ? AND season_id = ? AND week_key = ?
+        AND profile_id = ? AND joined_at = ?
+    `).run(
+      value.points,
+      value.wins,
+      value.top3,
+      value.placeSum,
+      value.matches,
+      value.scoreReachedAt,
+      value.updatedAt,
+      value.groupId,
+      value.seasonId,
+      value.weekKey,
+      value.profileId,
+      value.joinedAt,
     );
     requireOneChange(result.changes);
   }
@@ -753,6 +824,27 @@ export class ArenaRepository {
       FROM arena_group_members WHERE group_id = ? ORDER BY profile_id
     `).all(groupId) as unknown as GroupMemberRow[];
     return rows.map(mapGroupMember);
+  }
+
+  findGroupMember(
+    seasonId: string,
+    weekKeyValue: string,
+    profileId: string,
+  ): ArenaGroupMemberRecord | null {
+    const row = this.#database.db.prepare(`
+      SELECT members.group_id, members.season_id, members.week_key,
+             members.profile_id, members.points, members.wins, members.top3,
+             members.place_sum, members.matches, members.score_reached_at,
+             members.joined_at, members.updated_at
+      FROM arena_group_members AS members
+      JOIN arena_groups AS groups ON groups.id = members.group_id
+      WHERE members.season_id = ? AND members.week_key = ?
+        AND members.profile_id = ? AND groups.status = 'open'
+      ORDER BY groups.created_at, groups.id
+      LIMIT 1
+    `).get(seasonId, weekKeyValue, profileId) as unknown as
+      GroupMemberRow | undefined;
+    return row ? mapGroupMember(row) : null;
   }
 
   findWeeklySettlement(
@@ -1137,6 +1229,34 @@ function assertProfileTransition(
       && ![0, 5, 15, 35, 60, 100].includes(pointsDelta))
     || (current.placementGames === 5
       && (gamesDelta !== 0 || pointsDelta !== 0))
+  ) fail('ARENA_INPUT_INVALID');
+}
+
+function assertGroupMemberTransition(
+  current: ArenaGroupMemberRecord,
+  next: ArenaGroupMemberRecord,
+): void {
+  const pointsDelta = next.points - current.points;
+  const matchDelta = next.matches - current.matches;
+  const place = next.placeSum - current.placeSum;
+  const winsDelta = next.wins - current.wins;
+  const top3Delta = next.top3 - current.top3;
+  if (
+    next.groupId !== current.groupId
+    || next.seasonId !== current.seasonId
+    || next.weekKey !== current.weekKey
+    || next.profileId !== current.profileId
+    || next.joinedAt !== current.joinedAt
+    || next.updatedAt < current.updatedAt
+    || matchDelta !== 1
+    || pointsDelta !== pointsForArenaPlace(place)
+    || winsDelta !== (place === 1 ? 1 : 0)
+    || top3Delta !== (place <= 3 ? 1 : 0)
+    || (
+      pointsDelta === 0
+        ? next.scoreReachedAt !== current.scoreReachedAt
+        : next.scoreReachedAt !== next.updatedAt
+    )
   ) fail('ARENA_INPUT_INVALID');
 }
 

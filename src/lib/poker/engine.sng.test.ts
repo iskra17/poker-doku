@@ -27,6 +27,17 @@ function sngConfig(): RoomConfig {
   };
 }
 
+function arenaConfig(): RoomConfig {
+  return {
+    ...sngConfig(),
+    name: 'Arena Test',
+    economyMode: 'arena',
+    competitionMode: 'arena-official',
+    arenaMatchId: 'match-a',
+    arenaBotVersion: 'arena-v1-hard',
+  };
+}
+
 function setupSng(chipCounts: number[], riggedCodes?: string) {
   const deck = riggedCodes ? new RiggedDeck(riggedCodes) : new Deck();
   const engine = new PokerEngine(sngConfig(), 'sng-room', deck);
@@ -38,6 +49,17 @@ function setupSng(chipCounts: number[], riggedCodes?: string) {
   return { engine, initialTotal: chipCounts.reduce((a, b) => a + b, 0) };
 }
 
+function setupArena(chipCounts: number[], riggedCodes?: string) {
+  const deck = riggedCodes ? new RiggedDeck(riggedCodes) : new Deck();
+  const engine = new PokerEngine(arenaConfig(), 'arena-room', deck);
+  chipCounts.forEach((chips, i) => {
+    engine.addPlayer(makePlayer(`p${i + 1}`, chips, i));
+  });
+  engine.state.dealerIndex = chipCounts.length - 1;
+  engine.startTournament(0, 15, 30);
+  return engine;
+}
+
 describe('시트앤고: 토너먼트 초기화', () => {
   it('startTournament가 참가 인원과 상금 풀(50/30/20)을 확정한다', () => {
     const { engine } = setupSng([1500, 1500, 1500]);
@@ -45,6 +67,26 @@ describe('시트앤고: 토너먼트 초기화', () => {
     expect(t.entrants).toBe(3);
     expect(t.prizes).toEqual([2250, 1350, 900]); // 4500 × 50/30/20%
     expect(t.finished).toBe(false);
+  });
+
+  it('아레나는 칩 상금 풀을 만들지 않고 모든 순위 상금을 0으로 기록한다', () => {
+    const engine = setupArena(
+      [2000, 500, 300],
+      'As Ah Ks Kh Qs Qh 2c 3d 7h 8s Jc',
+    );
+
+    expect(engine.state.tournament!.entrants).toBe(3);
+    expect(engine.state.tournament!.prizes).toEqual([]);
+    engine.startHand();
+    act(engine, 'all-in');
+    act(engine, 'call');
+    act(engine, 'call');
+
+    expect(engine.state.tournament!.finished).toBe(true);
+    expect(engine.state.tournament!.results).toHaveLength(3);
+    expect(engine.state.tournament!.results.every(result => result.prize === 0))
+      .toBe(true);
+    expect(engine.state.handRake).toBe(0);
   });
 
   it('캐시 게임 엔진에는 tournament 상태가 없다', () => {

@@ -1,5 +1,8 @@
 import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
+import { calculateMmrDelta } from '@/lib/arena/mmr';
+import { pointsForPlace, tierForPlacementTotal } from '@/lib/arena/rules';
 import type {
+  ArenaEntryRecord,
   ArenaMatchRecord,
   ArenaProfileRecord,
   ArenaSeasonRecord,
@@ -31,6 +34,7 @@ export type ArenaDomainErrorCode =
   | 'ARENA_TICKET_ALREADY_ESCROWED'
   | 'ARENA_NON_ARENA_SEAT_ACTIVE'
   | 'ARENA_TICKET_TERMINAL'
+  | 'ARENA_RESULT_INVALID'
   | 'ARENA_PERSISTENCE_INVALID';
 
 export class ArenaDomainError extends Error {
@@ -57,6 +61,21 @@ export interface ArenaSeasonWindow {
   readonly startsAt: number;
   readonly endsAt: number;
   readonly week: 1 | 2 | 3 | 4;
+}
+
+export interface ArenaOfficialResult {
+  readonly playerId: string;
+  readonly place: number;
+}
+
+export interface ArenaOfficialSummary {
+  readonly matchId: string;
+  readonly finishedAt: number;
+  readonly results: readonly {
+    readonly profileId: string;
+    readonly place: number;
+    readonly points: number;
+  }[];
 }
 
 export type ArenaRuntimeConfig =
@@ -140,6 +159,33 @@ export function getArenaKstDate(at: number): string {
     .join('-');
 }
 
+export function getArenaKstWeekKey(at: number): string {
+  assertTimestamp(at);
+  const shiftedAt = at + KST_OFFSET_MS;
+  if (!validTimestamp(shiftedAt)) fail('ARENA_TIME_INVALID');
+  const local = new Date(shiftedAt);
+  const date = new Date(Date.UTC(
+    local.getUTCFullYear(),
+    local.getUTCMonth(),
+    local.getUTCDate(),
+  ));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const weekYear = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const week = Math.ceil(
+    (((date.getTime() - yearStart.getTime()) / DAY_MS) + 1) / 7,
+  );
+  if (
+    weekYear < 1
+    || weekYear > 9_999
+    || !Number.isInteger(week)
+    || week < 1
+    || week > 53
+  ) fail('ARENA_TIME_INVALID');
+  return `${String(weekYear).padStart(4, '0')}-W${String(week).padStart(2, '0')}`;
+}
+
 export class ArenaService {
   readonly #repository: ArenaRepository;
   readonly #config: ArenaSeasonConfig;
@@ -192,6 +238,175 @@ export class ArenaService {
     const window = calculateArenaSeasonWindow(at, this.#config);
     this.#repository.transaction(tx => this.#ensureSeason(tx, window, at));
     return window;
+  }
+
+  getReservedMatch(matchId: string): {
+    match: ArenaMatchRecord;
+    entries: ArenaEntryRecord[];
+  } {
+    assertIdentifier(matchId, 'ARENA_MATCH_EXISTS');
+    const match = this.#repository.findMatch(matchId);
+    if (!match) fail('ARENA_MATCH_EXISTS');
+    const entries = this.#repository.listMatchEntries(matchId);
+    if (
+      entries.length !== match.humanCount
+      || entries.some(entry => entry.matchId !== match.id)
+    ) fail('ARENA_PERSISTENCE_INVALID');
+    return { match, entries };
+  }
+
+  markMatchPlaying(
+    matchId: string,
+    at = this.#clock(),
+  ): ArenaMatchRecord {
+    assertIdentifier(matchId, 'ARENA_MATCH_EXISTS');
+    assertTimestamp(at);
+    return this.#repository.transaction(tx => {
+      const match = this.#repository.findMatch(matchId);
+      if (!match) fail('ARENA_MATCH_EXISTS');
+      if (match.status === 'playing') return match;
+      if (match.status !== 'forming') fail('ARENA_TICKET_TERMINAL');
+      const playing: ArenaMatchRecord = {
+        ...match,
+        status: 'playing',
+        startedAt: at,
+      };
+      tx.updateMatch(playing);
+      return playing;
+    });
+  }
+
+  recoverUnfinishedMatches(at = this.#clock()): string[] {
+    assertTimestamp(at);
+    const matchIds = this.#repository.listUnfinishedMatches()
+      .map(match => match.id);
+    for (const matchId of matchIds) this.voidMatch(matchId, at);
+    return matchIds;
+  }
+
+  settleOfficialMatch(
+    matchId: string,
+    results: readonly ArenaOfficialResult[],
+    at = this.#clock(),
+  ): ArenaOfficialSummary {
+    assertIdentifier(matchId, 'ARENA_RESULT_INVALID');
+    assertTimestamp(at);
+    return this.#repository.transaction(tx => {
+      const match = this.#repository.findMatch(matchId);
+      if (!match) fail('ARENA_MATCH_EXISTS');
+      const entries = this.#repository.listMatchEntries(matchId);
+      if (match.status === 'finished') {
+        return this.#settledSummary(match, entries);
+      }
+      if (
+        match.status !== 'playing'
+        || entries.length !== match.humanCount
+        || match.startedAt === null
+      ) fail('ARENA_RESULT_INVALID');
+      const places = validateOfficialResults(results, entries);
+      const botMmrs = Array.from(
+        { length: match.botCount },
+        () => match.botMmr,
+      );
+      const weekKey = getArenaKstWeekKey(match.startedAt);
+
+      for (const entry of entries) {
+        const place = places.get(entry.profileId);
+        if (place === undefined) fail('ARENA_RESULT_INVALID');
+        const profile = this.#repository.requireProfile(
+          match.seasonId,
+          entry.profileId,
+        );
+        if (profile.mmr !== entry.mmrBefore) {
+          fail('ARENA_PERSISTENCE_INVALID');
+        }
+        const opponentMmrs = [
+          ...entries
+            .filter(other => other.profileId !== entry.profileId)
+            .map(other => other.mmrBefore),
+          ...botMmrs,
+        ];
+        const mmrAfter = safeIntegerAdd(
+          profile.mmr,
+          calculateMmrDelta({
+            playerMmr: profile.mmr,
+            opponentMmrs,
+            place,
+            k: profile.placementGames < ARENA_CONFIG_V1.placementMatches
+              ? ARENA_CONFIG_V1.placementMmrK
+              : ARENA_CONFIG_V1.normalMmrK,
+          }),
+        );
+        const points = pointsForPlace(place);
+        const wasPlaced =
+          profile.placementGames === ARENA_CONFIG_V1.placementMatches;
+        const placementGames = wasPlaced
+          ? profile.placementGames
+          : profile.placementGames + 1;
+        const placementPoints = wasPlaced
+          ? profile.placementPoints
+          : safeIntegerAdd(profile.placementPoints, points);
+        const tier = placementGames === ARENA_CONFIG_V1.placementMatches
+          ? (profile.tier ?? tierForPlacementTotal(placementPoints))
+          : null;
+
+        tx.updateEntry({
+          ...entry,
+          place,
+          points,
+          mmrAfter,
+          resultKey: `${match.id}:${entry.profileId}`,
+          settledAt: at,
+        });
+        tx.updateProfile({
+          ...profile,
+          placementGames,
+          placementPoints,
+          tier,
+          mmr: mmrAfter,
+          updatedAt: Math.max(profile.updatedAt, at),
+        });
+        if (wasPlaced) {
+          const member = this.#repository.findGroupMember(
+            match.seasonId,
+            weekKey,
+            entry.profileId,
+          );
+          if (member) {
+            tx.updateGroupMember({
+              ...member,
+              points: safeIntegerAdd(member.points, points),
+              wins: safeIntegerAdd(member.wins, place === 1 ? 1 : 0),
+              top3: safeIntegerAdd(member.top3, place <= 3 ? 1 : 0),
+              placeSum: safeIntegerAdd(member.placeSum, place),
+              matches: safeIntegerAdd(member.matches, 1),
+              scoreReachedAt: points === 0 ? member.scoreReachedAt : at,
+              updatedAt: at,
+            });
+          }
+        }
+        const escrow = this.#repository.requireTicketEscrow(
+          match.id,
+          entry.profileId,
+        );
+        if (escrow.status !== 'escrow') fail('ARENA_TICKET_TERMINAL');
+        tx.updateTicketEscrow({
+          ...escrow,
+          status: 'consumed',
+          settledAt: at,
+        });
+      }
+      const finished: ArenaMatchRecord = {
+        ...match,
+        status: 'finished',
+        finishedAt: at,
+      };
+      tx.updateMatch(finished);
+      return this.#settledSummary(
+        finished,
+        this.#repository.listMatchEntries(match.id),
+      );
+    });
   }
 
   reserveMatchTickets(
@@ -398,6 +613,23 @@ export class ArenaService {
       this.#repository.requireTicketEscrow(matchId, entry.profileId),
     );
   }
+
+  #settledSummary(
+    match: ArenaMatchRecord,
+    entries: readonly ArenaEntryRecord[],
+  ): ArenaOfficialSummary {
+    for (const entry of entries) {
+      const escrow = this.#repository.requireTicketEscrow(
+        match.id,
+        entry.profileId,
+      );
+      if (
+        escrow.status !== 'consumed'
+        || escrow.settledAt !== match.finishedAt
+      ) fail('ARENA_PERSISTENCE_INVALID');
+    }
+    return settledSummary(match, entries);
+  }
 }
 
 function parseSeasonEpoch(value: string): number {
@@ -461,6 +693,70 @@ function snapshotBotMmr(profiles: readonly ArenaProfileRecord[]): number {
   const average = profiles.reduce((total, profile) => total + profile.mmr, 0)
     / profiles.length;
   return Math.max(800, Math.min(1_400, Math.round(average / 50) * 50));
+}
+
+function validateOfficialResults(
+  results: readonly ArenaOfficialResult[],
+  entries: readonly ArenaEntryRecord[],
+): Map<string, number> {
+  if (!Array.isArray(results) || results.length !== ARENA_CONFIG_V1.seats) {
+    fail('ARENA_RESULT_INVALID');
+  }
+  const playerIds = new Set<string>();
+  const places = new Set<number>();
+  const byPlayer = new Map<string, number>();
+  for (const result of results) {
+    if (
+      !result
+      || typeof result.playerId !== 'string'
+      || result.playerId.length === 0
+      || !Number.isInteger(result.place)
+      || result.place < 1
+      || result.place > ARENA_CONFIG_V1.seats
+      || playerIds.has(result.playerId)
+      || places.has(result.place)
+    ) fail('ARENA_RESULT_INVALID');
+    playerIds.add(result.playerId);
+    places.add(result.place);
+    byPlayer.set(result.playerId, result.place);
+  }
+  for (const entry of entries) {
+    if (!byPlayer.has(entry.profileId)) fail('ARENA_RESULT_INVALID');
+  }
+  return byPlayer;
+}
+
+function settledSummary(
+  match: ArenaMatchRecord,
+  entries: readonly ArenaEntryRecord[],
+): ArenaOfficialSummary {
+  if (
+    match.status !== 'finished'
+    || match.finishedAt === null
+    || entries.length !== match.humanCount
+    || entries.some(entry => (
+      entry.place === null
+      || entry.points === null
+      || entry.resultKey === null
+      || entry.mmrAfter === null
+      || entry.settledAt !== match.finishedAt
+    ))
+  ) fail('ARENA_PERSISTENCE_INVALID');
+  return {
+    matchId: match.id,
+    finishedAt: match.finishedAt,
+    results: entries.map(entry => ({
+      profileId: entry.profileId,
+      place: entry.place as number,
+      points: entry.points as number,
+    })),
+  };
+}
+
+function safeIntegerAdd(left: number, right: number): number {
+  const result = left + right;
+  if (!Number.isSafeInteger(result)) fail('ARENA_PERSISTENCE_INVALID');
+  return result;
 }
 
 function assertIdentifier(value: string, code: ArenaDomainErrorCode): void {

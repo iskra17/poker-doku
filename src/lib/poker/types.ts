@@ -136,6 +136,7 @@ export type RoomDifficulty = 'easy' | 'normal' | 'hard';
  * - humans: 사람만 — 봇 충원 없음
  */
 export type TableType = 'bots' | 'mixed' | 'humans';
+export type CompetitionMode = 'arena-official' | 'arena-training';
 
 export interface WinResult {
   playerId: string;
@@ -162,6 +163,9 @@ export interface RoomConfig {
   difficulty?: RoomDifficulty; // 봇 난이도 (기본 'normal')
   botCount?: number; // 캐시 게임 봇 충원 수 0~5 (기본 2) — 친구 방은 0으로 좌석 확보
   tableType?: TableType; // 인원 구성 (기본 'mixed') — 'bots'는 휴먼 1명 제한
+  competitionMode?: CompetitionMode;
+  arenaMatchId?: string;
+  arenaBotVersion?: string;
 }
 
 export interface Room {

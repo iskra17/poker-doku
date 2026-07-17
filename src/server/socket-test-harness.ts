@@ -11,7 +11,6 @@ import type {
   ServerToClientEvents,
 } from '../lib/realtime/protocol';
 import { eventLog, type LogEvent } from './event-log';
-import { ArenaMatchmaker } from './arena-matchmaker';
 import { ArenaRepository } from './arena-repository';
 import { ArenaService } from './arena-service';
 import { EconomyRepository } from './economy-repository';
@@ -74,6 +73,9 @@ export interface SocketTestHarness {
     activeEscrow: number;
     activeRoomId: string | null;
   };
+  arenaSnapshot: (
+    profileId: string,
+  ) => ReturnType<ArenaService['getSnapshot']> | null;
   close: () => Promise<void>;
 }
 
@@ -194,33 +196,6 @@ export async function createSocketTestHarness(
       },
     })
     : undefined;
-  const arenaMatchmaker = arenaService
-    ? new ArenaMatchmaker({
-      reserveOfficial: async (candidate, isCandidateValid) => {
-        if (!isCandidateValid()) return null;
-        const at = Date.now();
-        const seasonId = arenaService.getMatchmakingProfile(
-          candidate.entries[0].profileId,
-          at,
-        ).seasonId;
-        if (!isCandidateValid()) return null;
-        const match = arenaService.reserveMatchTickets(
-          `harness-${candidate.candidateId}`,
-          candidate.entries.map(entry => entry.profileId),
-          at,
-          seasonId,
-        );
-        return { matchId: match.id };
-      },
-      createOfficialRoom: async () => false,
-      rollbackOfficialRoom: async () => undefined,
-      voidOfficial: async matchId => {
-        arenaService.voidMatch(matchId);
-      },
-      createTrainingRoom: async () => null,
-      rollbackTrainingRoom: async () => undefined,
-    })
-    : undefined;
   const runtime = setupSocketHandlers(io, {
     profileAuth: {
       manager: profileManager,
@@ -233,18 +208,20 @@ export async function createSocketTestHarness(
     sngRetentionMs: options.sngRetentionMs,
     economy: economyRuntime,
     progressionService,
-    ...(arenaMatchmaker && arenaService
+    ...(arenaService
       ? {
         arena: {
-          matchmaker: arenaMatchmaker,
-          getEligibility: (profileId: string) =>
-            arenaService.getMatchmakingProfile(profileId),
+          service: arenaService,
+          matchIdFactory: (() => {
+            let sequence = 0;
+            return () => `harness-match-${++sequence}`;
+          })(),
         },
       }
       : {}),
   });
   runtimeRef.current = runtime;
-  arenaMatchmaker?.start();
+  runtime.startArena();
   const clients = new Set<PokerClientSocket>();
   const legacyProfiles = new Map<string, TestProfileCredential>();
   let closed = false;
@@ -373,6 +350,7 @@ export async function createSocketTestHarness(
         activeRoomId: row.active_room_id,
       };
     },
+    arenaSnapshot: profileId => arenaService?.getSnapshot(profileId) ?? null,
     close: async () => {
       if (closed) return;
       closed = true;

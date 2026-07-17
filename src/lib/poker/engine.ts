@@ -110,8 +110,12 @@ export class PokerEngine {
     const t = this.state.tournament;
     if (!t || t.entrants > 0) return;
     t.entrants = this.state.players.length;
-    const pool = this.state.players.reduce((sum, p) => sum + p.chips, 0);
-    t.prizes = SNG_PRIZE_SPLIT.map(ratio => Math.round(pool * ratio));
+    if (this.config.competitionMode) {
+      t.prizes = [];
+    } else {
+      const pool = this.state.players.reduce((sum, p) => sum + p.chips, 0);
+      t.prizes = SNG_PRIZE_SPLIT.map(ratio => Math.round(pool * ratio));
+    }
     t.levelEndsAt = levelEndsAt;
     t.nextSmallBlind = nextSmallBlind;
     t.nextBigBlind = nextBigBlind;

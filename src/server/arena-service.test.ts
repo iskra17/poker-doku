@@ -6,6 +6,7 @@ import {
   ArenaDomainError,
   ArenaService,
   calculateArenaSeasonWindow,
+  getArenaKstWeekKey,
   parseArenaRuntimeConfig,
 } from './arena-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
@@ -160,6 +161,27 @@ describe('ArenaService free ticket lifecycle', () => {
     expect(repository.findActiveTicketEscrow('profile-a')?.status).toBe('escrow');
   });
 
+  it('rounds the human MMR average to 50 and clamps the bot snapshot', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    updateMmr(repository, 'profile-a', 100);
+    updateMmr(repository, 'profile-b', 200);
+    expect(service.reserveMatchTickets(
+      'match-low',
+      ['profile-a', 'profile-b'],
+      EPOCH,
+    ).botMmr).toBe(800);
+    service.voidMatch('match-low', EPOCH + 1);
+
+    updateMmr(repository, 'profile-a', 1_900);
+    updateMmr(repository, 'profile-b', 2_000);
+    expect(service.reserveMatchTickets(
+      'match-high',
+      ['profile-a', 'profile-b'],
+      EPOCH + 2,
+    ).botMmr).toBe(1_400);
+  });
+
   it('rolls back every reservation write on insufficient tickets', () => {
     service.getSnapshot('profile-b', EPOCH);
     updateAvailable(repository, 'profile-b', 0, EPOCH);
@@ -295,6 +317,190 @@ describe('ArenaService free ticket lifecycle', () => {
     service.reconcile(EPOCH);
     expect(countRows(database, 'arena_seasons')).toBe(1);
   });
+
+  it('settles an official result exactly once and returns the stable public summary', () => {
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+    const result = sixSeatResult([
+      ['profile-a', 1],
+      ['profile-b', 4],
+    ]);
+
+    const first = service.settleOfficialMatch('match-a', result, EPOCH + 2);
+    const duplicate = service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 5],
+      ]),
+      EPOCH + 3,
+    );
+
+    expect(duplicate).toEqual(first);
+    expect(first).toEqual({
+      matchId: 'match-a',
+      finishedAt: EPOCH + 2,
+      results: [
+        { profileId: 'profile-a', place: 1, points: 100 },
+        { profileId: 'profile-b', place: 4, points: 15 },
+      ],
+    });
+    expect(JSON.stringify(first)).not.toMatch(/mmr|bot|ticket/iu);
+    expect(repository.requireMatch('match-a')).toMatchObject({
+      status: 'finished',
+      finishedAt: EPOCH + 2,
+    });
+    expect(repository.requireTicketEscrow('match-a', 'profile-a')).toMatchObject({
+      status: 'consumed',
+      settledAt: EPOCH + 2,
+    });
+    expect(repository.requireProfile('arena-v1-0', 'profile-a')).toMatchObject({
+      availableTickets: 1,
+      placementGames: 1,
+      placementPoints: 100,
+      tier: null,
+      mmr: 1_024,
+    });
+    expect(repository.requireProfile('arena-v1-0', 'profile-b')).toMatchObject({
+      availableTickets: 1,
+      placementGames: 1,
+      placementPoints: 15,
+      tier: null,
+      mmr: 995,
+    });
+    expect(repository.listMatchEntries('match-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a', place: 1, points: 100, mmrAfter: 1_024,
+        resultKey: 'match-a:profile-a', settledAt: EPOCH + 2,
+      }),
+      expect.objectContaining({
+        profileId: 'profile-b', place: 4, points: 15, mmrAfter: 995,
+        resultKey: 'match-a:profile-b', settledAt: EPOCH + 2,
+      }),
+    ]);
+  });
+
+  it('assigns the initial tier on the fifth placement result', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    seedPlacement(repository, 'profile-a', [60, 60, 60, 60]);
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+
+    service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 6],
+      ]),
+      EPOCH + 2,
+    );
+
+    expect(repository.requireProfile('arena-v1-0', 'profile-a')).toMatchObject({
+      placementGames: 5,
+      placementPoints: 340,
+      tier: 'gold',
+    });
+  });
+
+  it('updates the current weekly group stats only for an already placed profile', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    repository.transaction(tx => {
+      tx.insertGroup({
+        id: 'group-a',
+        seasonId: 'arena-v1-0',
+        weekKey,
+        tier: 'silver',
+        status: 'open',
+        createdAt: EPOCH,
+        settledAt: null,
+      });
+      tx.insertGroupMember({
+        groupId: 'group-a',
+        seasonId: 'arena-v1-0',
+        weekKey,
+        profileId: 'profile-a',
+        points: 60,
+        wins: 0,
+        top3: 1,
+        placeSum: 3,
+        matches: 1,
+        scoreReachedAt: EPOCH,
+        joinedAt: EPOCH,
+        updatedAt: EPOCH,
+      });
+    });
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+
+    service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 2],
+      ]),
+      EPOCH + 2,
+    );
+
+    expect(repository.listGroupMembers('group-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a',
+        points: 160,
+        wins: 1,
+        top3: 2,
+        placeSum: 4,
+        matches: 2,
+        scoreReachedAt: EPOCH + 2,
+        updatedAt: EPOCH + 2,
+      }),
+    ]);
+
+    service.reserveMatchTickets('match-b', ['profile-a', 'profile-c'], EPOCH + 3);
+    service.markMatchPlaying('match-b', EPOCH + 3);
+    service.settleOfficialMatch(
+      'match-b',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-c', 1],
+      ]),
+      EPOCH + 4,
+    );
+    expect(repository.listGroupMembers('group-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a',
+        points: 160,
+        wins: 1,
+        top3: 2,
+        placeSum: 10,
+        matches: 3,
+        scoreReachedAt: EPOCH + 2,
+        updatedAt: EPOCH + 4,
+      }),
+    ]);
+  });
+
+  it('rolls the whole result transaction back on an invalid six-seat result', () => {
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+    const beforeA = repository.requireProfile('arena-v1-0', 'profile-a');
+
+    expectDomain(
+      () => service.settleOfficialMatch('match-a', [
+        { playerId: 'profile-a', place: 1 },
+        { playerId: 'profile-b', place: 1 },
+      ], EPOCH + 2),
+      'ARENA_RESULT_INVALID',
+    );
+
+    expect(repository.requireMatch('match-a').status).toBe('playing');
+    expect(repository.requireProfile('arena-v1-0', 'profile-a')).toEqual(beforeA);
+    expect(repository.requireTicketEscrow('match-a', 'profile-a').status)
+      .toBe('escrow');
+    expect(repository.listMatchEntries('match-a').every(
+      entry => entry.resultKey === null,
+    )).toBe(true);
+  });
 });
 
 function insertBaseProfile(database: PokerDatabase, id: string): void {
@@ -335,6 +541,18 @@ function updateAvailable(
   }));
 }
 
+function updateMmr(
+  repository: ArenaRepository,
+  profileId: string,
+  mmr: number,
+): void {
+  const profile = repository.requireProfile('arena-v1-0', profileId);
+  repository.transaction(tx => tx.updateProfile({
+    ...profile,
+    mmr,
+  }));
+}
+
 function expectDomain(work: () => unknown, code: ArenaDomainError['code']): void {
   try {
     work();
@@ -343,4 +561,34 @@ function expectDomain(work: () => unknown, code: ArenaDomainError['code']): void
     expect(error).toBeInstanceOf(ArenaDomainError);
     expect((error as ArenaDomainError).code).toBe(code);
   }
+}
+
+function sixSeatResult(
+  humans: readonly (readonly [profileId: string, place: number])[],
+): Array<{ playerId: string; place: number }> {
+  const occupiedPlaces = new Set(humans.map(([, place]) => place));
+  const bots = [1, 2, 3, 4, 5, 6]
+    .filter(place => !occupiedPlaces.has(place))
+    .map((place, index) => ({ playerId: `bot-${index}`, place }));
+  return [
+    ...humans.map(([playerId, place]) => ({ playerId, place })),
+    ...bots,
+  ];
+}
+
+function seedPlacement(
+  repository: ArenaRepository,
+  profileId: string,
+  points: readonly number[],
+): void {
+  points.forEach((point, index) => {
+    const profile = repository.requireProfile('arena-v1-0', profileId);
+    repository.transaction(tx => tx.updateProfile({
+      ...profile,
+      placementGames: index + 1,
+      placementPoints: profile.placementPoints + point,
+      tier: index === 4 ? 'silver' : null,
+      updatedAt: profile.updatedAt,
+    }));
+  });
 }

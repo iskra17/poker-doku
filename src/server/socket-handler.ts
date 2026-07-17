@@ -1,4 +1,5 @@
 import { Server, Socket } from 'socket.io';
+import { randomUUID } from 'node:crypto';
 import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
@@ -41,10 +42,12 @@ import {
   type ProgressionRuntimeService,
 } from './progression-runtime';
 import { buildPublicCosmetics } from '../lib/collection/public-cosmetics';
-import type {
+import {
   ArenaMatchmaker,
-  ArenaMatchmakerCloseReport,
+  type ArenaMatchmakerCloseReport,
 } from './arena-matchmaker';
+import { ArenaRuntime } from './arena-runtime';
+import type { ArenaService } from './arena-service';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -68,12 +71,8 @@ export interface SocketRuntimeOptions {
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
   progressionService?: ProgressionRuntimeService;
   arena?: {
-    matchmaker: ArenaMatchmaker;
-    getEligibility: (profileId: string) => {
-      availableTickets: number;
-      mmr: number;
-      activeArenaEscrow: boolean;
-    };
+    service: ArenaService;
+    matchIdFactory?: () => string;
   };
 }
 
@@ -85,6 +84,7 @@ export interface SocketRuntime {
     profileId: string,
     snapshot: import('../lib/progression/types').ProgressionSnapshot,
   ) => boolean;
+  startArena: () => void;
   close: () => Promise<ArenaMatchmakerCloseReport>;
 }
 
@@ -151,6 +151,8 @@ export function setupSocketHandlers(
     arena,
   } = options;
   const sessions = new SessionManager();
+  let arenaRuntime: ArenaRuntime | undefined;
+  let arenaMatchmaker: ArenaMatchmaker | undefined;
   const progression = progressionService
     ? new ProgressionRuntime(
       progressionService,
@@ -278,6 +280,19 @@ export function setupSocketHandlers(
       sngRetentionMs,
       economy,
       progression,
+      ...(arena
+        ? {
+          arena: {
+            completeOfficial: (input: {
+              matchId: string;
+              results: readonly { playerId: string; place: number }[];
+            }) => {
+              if (!arenaRuntime) throw new Error('Arena runtime is unavailable');
+              return arenaRuntime.completeOfficial(input);
+            },
+          },
+        }
+        : {}),
       onRoomDisposed: (roomId, playerIds, reason) => {
         for (const playerId of playerIds) {
           const session = sessions.getByPlayerId(playerId);
@@ -298,7 +313,82 @@ export function setupSocketHandlers(
     },
   );
 
-  arena?.matchmaker.setEventHandlers({
+  if (arena) {
+    arenaRuntime = new ArenaRuntime(roomManager, arena.service, {
+      resolveHuman: (profileId, socketId) => {
+        const socket = io.sockets.sockets.get(socketId);
+        const session = sessions.getBySocketId(socketId);
+        if (
+          !socket
+          || !session
+          || session.playerId !== profileId
+          || socket.data.profileId !== profileId
+          || !socket.data.profileAlias
+          || !socket.data.profileAvatarId
+        ) return null;
+        return {
+          name: socket.data.profileAlias,
+          avatar: socket.data.profileAvatarId,
+        };
+      },
+      onOfficialRoomCreated: ({ roomId, candidate }) => {
+        for (const entry of candidate.entries) {
+          const session = sessions.getByPlayerId(entry.profileId);
+          const socket = io.sockets.sockets.get(entry.socketId);
+          if (
+            !session
+            || session.socketId !== entry.socketId
+            || !socket
+            || (session.roomId !== null && session.roomId !== roomId)
+          ) {
+            throw new Error('Arena session binding is unavailable');
+          }
+          session.roomId = roomId;
+          socket.join(roomId);
+        }
+      },
+    });
+    arenaMatchmaker = new ArenaMatchmaker({
+      reserveOfficial: async (candidate, isCandidateValid) => {
+        if (!isCandidateValid()) return null;
+        const at = Date.now();
+        const seasonId = arena.service.getMatchmakingProfile(
+          candidate.entries[0].profileId,
+          at,
+        ).seasonId;
+        if (!isCandidateValid()) return null;
+        const match = arena.service.reserveMatchTickets(
+          arena.matchIdFactory?.() ?? `arena-${randomUUID()}`,
+          candidate.entries.map(entry => entry.profileId),
+          at,
+          seasonId,
+        );
+        return { matchId: match.id };
+      },
+      createOfficialRoom: (reservation, candidate) =>
+        arenaRuntime!.createOfficialRoom(reservation, candidate),
+      rollbackOfficialRoom: (reservation, candidate) =>
+        arenaRuntime!.rollbackOfficialRoom(reservation, candidate),
+      voidOfficial: async matchId => {
+        arena.service.voidMatch(matchId);
+      },
+      createTrainingRoom: (profileId, socketId) =>
+        arenaRuntime!.createTrainingRoom(profileId, socketId),
+      rollbackTrainingRoom: (
+        profileId,
+        socketId,
+        offerId,
+        result,
+      ) => arenaRuntime!.rollbackTrainingRoom(
+        profileId,
+        socketId,
+        offerId,
+        result,
+      ),
+    });
+  }
+
+  arenaMatchmaker?.setEventHandlers({
     onQueueState: (socketId, state) => {
       io.sockets.sockets.get(socketId)?.emit('arena-queue-update', state);
     },
@@ -306,7 +396,25 @@ export function setupSocketHandlers(
       io.sockets.sockets.get(socketId)?.emit('arena-training-offered', offer);
     },
     onMatchFound: (socketId, matchId) => {
-      io.sockets.sockets.get(socketId)?.emit('arena-match-found', { matchId });
+      const socket = io.sockets.sockets.get(socketId);
+      const session = sessions.getBySocketId(socketId);
+      const roomId = arenaRuntime?.getRoomId(matchId);
+      const room = roomId ? roomManager.getRoom(roomId) : undefined;
+      const seat = room?.engine.state.players.find(player => (
+        player.id === session?.playerId && player.type === 'human'
+      ));
+      if (!socket || !session || !roomId || !room || !seat) return;
+      session.roomId = roomId;
+      socket.join(roomId);
+      socket.emit('arena-match-found', { matchId });
+      socket.emit('room-joined', {
+        roomId,
+        gameState: {
+          ...room.engine.getPublicState(session.playerId),
+          turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+        },
+        chatHistory: roomManager.getChatHistory(roomId),
+      });
     },
   });
 
@@ -547,7 +655,7 @@ export function setupSocketHandlers(
         '아레나 참가 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
         ack,
       )) return;
-      if (!arena) {
+      if (!arenaMatchmaker || !arena) {
         ack?.({
           ok: false,
           code: 'arena-unavailable',
@@ -568,9 +676,9 @@ export function setupSocketHandlers(
         return;
       }
 
-      let eligibility: ReturnType<typeof arena.getEligibility>;
+      let eligibility: ReturnType<typeof arena.service.getMatchmakingProfile>;
       try {
-        eligibility = arena.getEligibility(session.playerId);
+        eligibility = arena.service.getMatchmakingProfile(session.playerId);
       } catch {
         ack?.({
           ok: false,
@@ -590,7 +698,7 @@ export function setupSocketHandlers(
         return;
       }
       try {
-        arena.matchmaker.join({
+        arenaMatchmaker.join({
           profileId: session.playerId,
           socketId: socket.id,
           mmr: eligibility.mmr,
@@ -619,7 +727,7 @@ export function setupSocketHandlers(
         '아레나 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
         ack,
       )) return;
-      if (!arena) {
+      if (!arenaMatchmaker) {
         ack?.({
           ok: false,
           code: 'arena-unavailable',
@@ -627,7 +735,7 @@ export function setupSocketHandlers(
         });
         return;
       }
-      arena.matchmaker.leave(session.playerId, socket.id);
+      arenaMatchmaker.leave(session.playerId, socket.id);
       ack?.({ ok: true });
     });
 
@@ -653,7 +761,7 @@ export function setupSocketHandlers(
         '아레나 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
         ack,
       )) return;
-      if (!arena) {
+      if (!arenaMatchmaker) {
         ack?.({
           ok: false,
           code: 'arena-unavailable',
@@ -661,7 +769,7 @@ export function setupSocketHandlers(
         });
         return;
       }
-      void arena.matchmaker.acceptTraining(
+      void arenaMatchmaker.acceptTraining(
         session.playerId,
         socket.id,
         payload.offerId,
@@ -719,7 +827,7 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
-      if (arena?.matchmaker.hasBlockingParticipation(session.playerId)) {
+      if (arenaMatchmaker?.hasBlockingParticipation(session.playerId)) {
         ack?.({
           ok: false,
           code: 'arena-busy',
@@ -1570,7 +1678,7 @@ export function setupSocketHandlers(
 
     // Disconnect: 즉시 제거하지 않고 grace period 동안 좌석/칩 보존
     socket.on('disconnect', () => {
-      arena?.matchmaker.disconnect(socket.id);
+      arenaMatchmaker?.disconnect(socket.id);
       const detached = sessions.detachSocket(socket.id);
       console.log(`Player disconnected: socket=${socket.id}`);
       eventLog.log('disconnect', {
@@ -1613,9 +1721,10 @@ export function setupSocketHandlers(
       });
       socket?.disconnect(true);
     },
+    startArena: () => arenaMatchmaker?.start(),
     close: async () => {
       if (sweepTimer) clearInterval(sweepTimer);
-      const report = await arena?.matchmaker.close() ?? {
+      const report = await arenaMatchmaker?.close() ?? {
         pendingOfficialMatchIds: [],
         pendingTrainingOfferIds: [],
       };

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ARENA_CONFIG_V1 } from '../lib/arena/config';
 import { PokerEngine } from '../lib/poker/engine';
 import { HAND_RANK_KO } from '../lib/poker/evaluator';
 import {
@@ -36,6 +37,7 @@ export interface RoomManagerOptions {
   sngRetentionMs?: number;
   economy?: RoomEconomyHooks;
   progression?: RoomProgressionHooks;
+  arena?: RoomArenaHooks;
   roomRunIdFactory?: () => string;
   onRoomDisposed?: (
     roomId: string,
@@ -44,7 +46,20 @@ export interface RoomManagerOptions {
   ) => void;
 }
 
-export type RoomDisposeReason = 'manual' | 'idle' | 'empty' | 'sng-expired' | 'shutdown';
+export interface RoomArenaHooks {
+  completeOfficial(input: {
+    matchId: string;
+    results: readonly { playerId: string; place: number }[];
+  }): unknown;
+}
+
+export type RoomDisposeReason =
+  | 'manual'
+  | 'idle'
+  | 'empty'
+  | 'sng-expired'
+  | 'arena-rollback'
+  | 'shutdown';
 
 export interface RoomManagerRuntimeStats {
   rooms: number;
@@ -123,12 +138,29 @@ export class RoomManager {
   }
 
   createRoom(config: RoomConfig, persistent = false): string {
+    const normalizedConfig: RoomConfig = config.competitionMode
+      ? {
+          ...config,
+          smallBlind: SNG_BLIND_SCHEDULE[0].smallBlind,
+          bigBlind: SNG_BLIND_SCHEDULE[0].bigBlind,
+          minBuyIn: ARENA_CONFIG_V1.startingStack,
+          maxBuyIn: ARENA_CONFIG_V1.startingStack,
+          maxPlayers: 6,
+          economyMode: 'arena',
+          gameMode: 'sng',
+          startingStack: ARENA_CONFIG_V1.startingStack,
+          entryBuyIn: undefined,
+          entryFee: undefined,
+          difficulty: 'hard',
+          tableType: 'mixed',
+        }
+      : config;
     const id = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const runId = this.reserveRoomRunId();
-    const engine = new PokerEngine(config, id);
+    const engine = new PokerEngine(normalizedConfig, id);
     this.rooms.set(id, {
       engine,
-      config,
+      config: normalizedConfig,
       createdAt: Date.now(),
       runId,
       persistent,
@@ -168,6 +200,15 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return false;
     const tournament = room.engine.state.tournament;
+    if (
+      room.config.competitionMode === 'arena-official'
+      && tournament
+      && !tournament.finished
+      && reason !== 'arena-rollback'
+      && reason !== 'shutdown'
+    ) {
+      return false;
+    }
     if (this.unresolvedSettlementRooms.has(roomId) && !tournament?.finished) return false;
     if (
       this.isWalletCash(room)
@@ -268,6 +309,7 @@ export class RoomManager {
   getRoomList(forPlayerId?: string): RoomListItem[] {
     const list: RoomListItem[] = [];
     this.rooms.forEach((room, id) => {
+      if (room.config.competitionMode) return;
       const tournament = room.engine.state.tournament;
       const seat = forPlayerId
         ? room.engine.state.players.find(p => p.id === forPlayerId && !p.pendingRemoval)
@@ -364,6 +406,17 @@ export class RoomManager {
   leaveRoom(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return true;
+    const officialArenaPlayer = room.config.competitionMode === 'arena-official'
+      && !room.engine.state.tournament?.finished
+      && room.engine.state.players.some(player => (
+        player.id === playerId
+        && player.type === 'human'
+        && !player.pendingRemoval
+      ));
+    if (officialArenaPlayer) {
+      this.handleDisconnect(roomId, playerId);
+      return true;
+    }
 
     const wasInProgress = room.engine.state.isHandInProgress;
     const leavingPlayer = room.engine.state.players.find(p => p.id === playerId);
@@ -683,7 +736,9 @@ export class RoomManager {
 
     const prevHandNumber = room.engine.state.handNumber;
     const nextHandNumber = prevHandNumber + 1;
+    const tracksProgression = room.config.competitionMode === undefined;
     const captureProgressionHand = (): void => {
+      if (!tracksProgression) return;
       this.options.progression?.captureHandStart({
         roomId,
         roomRunId: room.runId,
@@ -726,7 +781,9 @@ export class RoomManager {
           captureProgressionHand();
           progressionCaptured = true;
         } catch {
-          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          if (tracksProgression) {
+            this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          }
           this.schedulePreHandRetry(roomId, false);
           this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
           this.onUpdate(roomId, room.engine);
@@ -739,7 +796,9 @@ export class RoomManager {
             this.requireEconomy().beforeTournament(roomId, room.engine);
             tournamentStartCommitted = true;
           } catch {
-            this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+            if (tracksProgression) {
+              this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+            }
             this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
             this.onUpdate(roomId, room.engine);
             return;
@@ -754,7 +813,9 @@ export class RoomManager {
             next?.bigBlind ?? null,
           );
         } catch {
-          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          if (tracksProgression) {
+            this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          }
           if (!this.revertUnmutatedTournamentStart(
             roomId,
             room.engine,
@@ -769,7 +830,9 @@ export class RoomManager {
           return;
         }
         if (walletSng && room.engine.state.tournament?.entrants !== 6) {
-          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          if (tracksProgression) {
+            this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+          }
           if (!this.revertUnmutatedTournamentStart(
             roomId,
             room.engine,
@@ -819,7 +882,9 @@ export class RoomManager {
       if (!progressionCaptured) captureProgressionHand();
       room.engine.startHand();
     } catch {
-      this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+      if (tracksProgression) {
+        this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+      }
       const classification = this.classifyUnstartedHand(
         roomId,
         room.engine,
@@ -838,7 +903,9 @@ export class RoomManager {
 
     if (room.engine.state.handNumber > prevHandNumber) {
       this.preHandStartRetryAttempts.delete(roomId);
-      this.options.progression?.confirmHandStart(roomId, room.runId, nextHandNumber);
+      if (tracksProgression) {
+        this.options.progression?.confirmHandStart(roomId, room.runId, nextHandNumber);
+      }
       const s = room.engine.state;
       eventLog.log('hand-start', {
         roomId,
@@ -859,7 +926,9 @@ export class RoomManager {
         // 딜은 됐지만 블라인드 전원 올인 런아웃으로 즉시 쇼다운까지 끝난 핸드 — 정상 종료 플로우
         this.handleCompletedHand(roomId);
       } else {
-        this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+        if (tracksProgression) {
+          this.options.progression?.cancelHand(roomId, room.runId, nextHandNumber);
+        }
         // 이탈자 제거 후 인원 부족 등으로 핸드가 시작되지 못함 — 봇 충원 경로로 재시도
         const classification = this.classifyUnstartedHand(
           roomId,
@@ -1589,6 +1658,30 @@ export class RoomManager {
   private finalizeFinishedTournament(roomId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room?.engine.state.tournament?.finished) return true;
+    if (room.config.competitionMode) {
+      if (this.settledTournamentRooms.has(roomId)) return true;
+      try {
+        if (room.config.competitionMode === 'arena-official') {
+          const matchId = room.config.arenaMatchId;
+          if (!matchId || !this.options.arena) {
+            throw new Error('Arena settlement is unavailable');
+          }
+          this.options.arena.completeOfficial({
+            matchId,
+            results: room.engine.state.tournament.results.map(result => ({
+              playerId: result.playerId,
+              place: result.place,
+            })),
+          });
+        }
+        this.settledTournamentRooms.add(roomId);
+        this.recoverFinishedTournament(roomId);
+        return true;
+      } catch {
+        this.blockFinishedTournament(roomId, room.engine);
+        return false;
+      }
+    }
     if (this.isWalletSng(room)) return this.settleFinishedWalletTournament(roomId);
     if (this.settledTournamentRooms.has(roomId)) return true;
     try {
@@ -1621,6 +1714,7 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     const tournament = room?.engine.state.tournament;
     if (!room || !tournament?.finished) return;
+    if (room.config.competitionMode) return;
     this.options.progression?.completeSng({
       roomId,
       roomRunId: room.runId,
