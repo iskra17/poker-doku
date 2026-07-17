@@ -8,7 +8,7 @@ const MAX_SEATS = 6;
 const CLEANUP_RETRY_BASE_MS = 100;
 const CLEANUP_RETRY_MAX_MS = 5_000;
 const CLOSE_CLEANUP_ATTEMPTS = 3;
-const CLOSE_DRAIN_TIMEOUT_MS = 25;
+const DEFAULT_CLOSE_DEADLINE_MS = 1_000;
 
 export interface ArenaQueueEntry {
   readonly profileId: string;
@@ -67,6 +67,7 @@ interface CandidateState {
 
 export interface ArenaMatchmakerOptions {
   readonly now?: () => number;
+  readonly closeDeadlineMs?: number;
   readonly reserveOfficial: (
     candidate: ArenaOfficialCandidate,
     isCandidateValid: () => boolean,
@@ -154,6 +155,7 @@ export function areArenaEntriesCompatible(
 export class ArenaMatchmaker {
   readonly #options: ArenaMatchmakerOptions;
   readonly #now: () => number;
+  readonly #closeDeadlineMs: number;
   readonly #queue = new Map<string, ArenaQueueEntry>();
   readonly #offers = new Map<string, StoredOffer>();
   readonly #candidates = new Map<string, CandidateState>();
@@ -168,8 +170,15 @@ export class ArenaMatchmaker {
   readonly #onError?: ArenaMatchmakerOptions['onError'];
 
   constructor(options: ArenaMatchmakerOptions) {
+    const closeDeadlineMs = options.closeDeadlineMs
+      ?? DEFAULT_CLOSE_DEADLINE_MS;
+    if (
+      !Number.isSafeInteger(closeDeadlineMs)
+      || closeDeadlineMs <= 0
+    ) throw new Error('ARENA_CLOSE_DEADLINE_INVALID');
     this.#options = options;
     this.#now = options.now ?? Date.now;
+    this.#closeDeadlineMs = closeDeadlineMs;
     this.#events = options;
     this.#onError = options.onError;
   }
@@ -361,8 +370,10 @@ export class ArenaMatchmaker {
       for (const offer of this.#offers.values()) {
         if (offer.phase === 'cleanup' && (offer.retryAt ?? 0) <= at) {
           cleanupAttempted = true;
+          offer.operationInFlight = true;
           await this.#attemptTrainingCleanup(offer, generation);
           if (!this.#isOpenGeneration(generation)) return;
+          offer.operationInFlight = false;
         }
       }
       if (cleanupAttempted) return;
@@ -650,7 +661,7 @@ export class ArenaMatchmaker {
     officialOperationInFlight: boolean,
     trainingOperationsInFlight: ReadonlySet<StoredOffer>,
   ): Promise<ArenaMatchmakerCloseReport> {
-    const deadline = Date.now() + CLOSE_DRAIN_TIMEOUT_MS;
+    const deadline = Date.now() + this.#closeDeadlineMs;
     for (let attempt = 0; attempt < CLOSE_CLEANUP_ATTEMPTS; attempt += 1) {
       const officialCleanup = officialOperationInFlight
         ? []

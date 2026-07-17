@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   ArenaMatchmaker,
   areArenaEntriesCompatible,
@@ -20,6 +20,63 @@ describe('ArenaMatchmaker rules', () => {
     expect(areArenaEntriesCompatible(a, b, 20 * SECOND)).toBe(true);
     expect(areArenaEntriesCompatible(a, { ...b, mmr: 9_000 }, 60 * SECOND))
       .toBe(true);
+  });
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects invalid close deadline %s',
+    closeDeadlineMs => {
+      expect(() => new ArenaMatchmaker({
+        closeDeadlineMs,
+        now: () => 0,
+        reserveOfficial: async () => null,
+        createOfficialRoom: async () => false,
+        rollbackOfficialRoom: async () => undefined,
+        voidOfficial: async () => undefined,
+        createTrainingRoom: async () => null,
+        rollbackTrainingRoom: async () => undefined,
+      })).toThrow('ARENA_CLOSE_DEADLINE_INVALID');
+    },
+  );
+
+  it('uses the configured finite close deadline', async () => {
+    let rollbackCalls = 0;
+    const matchmaker = new ArenaMatchmaker({
+      closeDeadlineMs: 10,
+      now: () => 70_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => {
+        rollbackCalls += 1;
+        if (rollbackCalls === 1) throw new Error('initial cleanup failure');
+        await new Promise<void>(() => undefined);
+      },
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      const closing = matchmaker.close().then(report => {
+        settled = true;
+        return report;
+      });
+      await vi.advanceTimersByTimeAsync(9);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+      await expect(closing).resolves.toEqual({
+        pendingOfficialMatchIds: ['reserved'],
+        pendingTrainingOfferIds: [],
+      });
+      expect(rollbackCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('forms oldest-first official candidates with two or six humans', async () => {
@@ -284,6 +341,67 @@ describe('ArenaMatchmaker rules', () => {
     rollbackResolvers[0]();
     await flushMicrotasks();
     expect(rollbackCalls).toBe(1);
+    expect(callbacks).toEqual(callbacksBeforeClose);
+  });
+
+  it('reports an offer without duplicating its in-flight cleanup retry on close', async () => {
+    let now = 70_000;
+    const offered: ArenaTrainingOffer[] = [];
+    let resolveRetry!: () => void;
+    let retryStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      retryStarted = resolve;
+    });
+    let rollbackCalls = 0;
+    const callbacks: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => now,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => {
+        rollbackCalls += 1;
+        if (rollbackCalls === 1) throw new Error('initial cleanup failure');
+        if (rollbackCalls === 2) {
+          retryStarted();
+          await new Promise<void>(resolve => {
+            resolveRetry = resolve;
+          });
+        }
+      },
+      onTrainingOffered: (_socketId, offer) => offered.push(offer),
+      onQueueState: (_socketId, state) => callbacks.push(state.status),
+      onMatchFound: socketId => callbacks.push(`matched:${socketId}`),
+      onError: (_error, context) => callbacks.push(`error:${context}`),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+    const accepting = matchmaker.acceptTraining(
+      'a', 'sa', offered[0].offerId, now,
+    );
+    await flushMicrotasks();
+    expect(rollbackCalls).toBe(1);
+
+    now += 100;
+    const retrying = matchmaker.tick(now);
+    await started;
+    const callbacksBeforeClose = [...callbacks];
+    expect(await settleWithin(matchmaker.close())).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: [],
+        pendingTrainingOfferIds: [offered[0].offerId],
+      },
+    });
+    await expect(accepting).resolves.toBeNull();
+    expect(rollbackCalls).toBe(2);
+
+    resolveRetry();
+    await retrying;
+    await flushMicrotasks();
+    expect(rollbackCalls).toBe(2);
     expect(callbacks).toEqual(callbacksBeforeClose);
   });
 
@@ -738,6 +856,7 @@ describe('ArenaMatchmaker rules', () => {
     const timers = new Map<ReturnType<typeof setTimeout>, number>();
     const callbacks: string[] = [];
     const matchmaker = new ArenaMatchmaker({
+      closeDeadlineMs: 25,
       now: () => 70_000,
       reserveOfficial: async () => ({ matchId: 'reserved' }),
       createOfficialRoom: async () => false,
