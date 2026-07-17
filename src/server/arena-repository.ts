@@ -140,7 +140,9 @@ export interface PublicArenaSnapshot {
 
 export interface ArenaTransaction {
   insertSeason(value: ArenaSeasonRecord): void;
+  insertSeasonIfAbsent(value: ArenaSeasonRecord): void;
   insertProfile(value: ArenaProfileRecord): void;
+  insertProfileIfAbsent(value: ArenaProfileRecord): void;
   insertMatch(value: ArenaMatchRecord): void;
   insertEntry(value: ArenaEntryRecord): void;
   insertTicketEscrow(value: ArenaTicketEscrowRecord): void;
@@ -276,11 +278,51 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     );
   }
 
+  insertSeasonIfAbsent(value: ArenaSeasonRecord): void {
+    assertSeason(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT OR IGNORE INTO arena_seasons (
+        id, ordinal, config_version, preseason, starts_at, ends_at, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.id,
+      value.ordinal,
+      value.configVersion,
+      value.preseason ? 1 : 0,
+      value.startsAt,
+      value.endsAt,
+      value.createdAt,
+    );
+  }
+
   insertProfile(value: ArenaProfileRecord): void {
     assertProfile(value, 'ARENA_INPUT_INVALID');
     this.#database.assertTransactionActive();
     this.#database.db.prepare(`
       INSERT INTO arena_profiles (
+        season_id, profile_id, available_tickets, last_daily_grant_date,
+        placement_games, placement_points, tier, mmr, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.seasonId,
+      value.profileId,
+      value.availableTickets,
+      value.lastDailyGrantDate,
+      value.placementGames,
+      value.placementPoints,
+      value.tier,
+      value.mmr,
+      value.createdAt,
+      value.updatedAt,
+    );
+  }
+
+  insertProfileIfAbsent(value: ArenaProfileRecord): void {
+    assertProfile(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT OR IGNORE INTO arena_profiles (
         season_id, profile_id, available_tickets, last_daily_grant_date,
         placement_games, placement_points, tier, mmr, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)

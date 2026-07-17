@@ -5,6 +5,9 @@ import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
+import { ArenaRepository } from './arena-repository';
+import { ArenaScheduler } from './arena-scheduler';
+import { ArenaService, parseArenaRuntimeConfig } from './arena-service';
 import { EconomyRepository } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
@@ -51,6 +54,8 @@ let economyRuntime: EconomyRuntime | undefined;
 let progressionService: ProgressionService | undefined;
 let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
+let arenaService: ArenaService | undefined;
+let arenaScheduler: ArenaScheduler | undefined;
 
 const shutdown = createServerShutdown({
   backup: {
@@ -60,7 +65,10 @@ const shutdown = createServerShutdown({
     },
   },
   runtime: {
-    close: () => runtime?.close(),
+    close: () => {
+      arenaScheduler?.close();
+      runtime?.close();
+    },
   },
   rateLimiter: {
     close: () => profileRateLimiter?.close(),
@@ -102,6 +110,15 @@ function initializePersistenceAndRecover(): void {
   economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   progressionService = new ProgressionService(database, progressionRepository);
+  const arenaConfig = parseArenaRuntimeConfig(process.env);
+  if (arenaConfig.enabled) {
+    arenaService = new ArenaService(new ArenaRepository(database), arenaConfig);
+    arenaScheduler = new ArenaScheduler({
+      epochMs: arenaConfig.epochMs,
+      reconcile: at => arenaService!.reconcile(at),
+      logger: console,
+    });
+  }
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
   // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
   economyRuntime.recoverActiveEscrows();
@@ -206,7 +223,10 @@ void startServerLifecycle({
   recover: () => initializePersistenceAndRecover(),
   backup: () => backupManager!.backup(),
   listen,
-  startScheduler: () => backupScheduler!.start(),
+  startScheduler: () => {
+    backupScheduler!.start();
+    arenaScheduler?.start();
+  },
   shutdown,
   process,
   production: !dev,
