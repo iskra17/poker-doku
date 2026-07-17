@@ -9,6 +9,7 @@ export const PROFILE_HTTP_RATE_POLICIES = {
   profileAuth: { limit: 30, windowMs: 60_000 },
   daily: { limit: 30, windowMs: 60_000 },
   rescue: { limit: 30, windowMs: 60_000 },
+  feedback: { limit: 5, windowMs: 10 * 60_000 },
 } as const satisfies Record<string, HttpRateLimitPolicy>;
 
 interface RateWindow {

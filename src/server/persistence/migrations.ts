@@ -4384,6 +4384,33 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'invalid arena entry weekly rank update'); END;
     `,
   },
+  {
+    version: 20,
+    name: 'collect_player_feedback',
+    sql: `
+      CREATE TABLE feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+        alias TEXT NOT NULL CHECK (length(alias) BETWEEN 1 AND 64),
+        category TEXT NOT NULL CHECK (category IN ('bug','idea','other')),
+        message TEXT NOT NULL CHECK (length(message) BETWEEN 1 AND 500),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+
+      CREATE INDEX idx_feedback_profile_created
+        ON feedback(profile_id, created_at);
+
+      CREATE TRIGGER freeze_feedback_update
+      BEFORE UPDATE ON feedback
+      WHEN NEW.alias != OLD.alias
+        OR NEW.category != OLD.category
+        OR NEW.message != OLD.message
+        OR NEW.created_at != OLD.created_at
+      BEGIN SELECT RAISE(ABORT, 'feedback content is immutable'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

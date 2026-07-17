@@ -3,6 +3,10 @@ import { randomBytes } from 'node:crypto';
 import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
 import { eventLog } from './event-log';
+import {
+  createFeedbackHttpHandler,
+  FeedbackRepository,
+} from './feedback-http';
 import type {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -122,6 +126,16 @@ export function createHttpRequestHandler(
         onPublicCosmeticsChanged: options.onProgressionPublicCosmeticsChanged,
       })
     : undefined;
+  const feedbackHandler = options.profileManager && options.database
+    ? createFeedbackHttpHandler({
+        manager: options.profileManager,
+        repository: new FeedbackRepository(options.database),
+        rateLimiter: options.profileRateLimiter!,
+        production: options.production ?? process.env.NODE_ENV === 'production',
+        debugToken,
+        now: options.now,
+      })
+    : undefined;
   const arenaHandler = options.profileManager
     ? createArenaHttpHandler({
         enabled: options.arenaEnabled ?? (() => false),
@@ -162,6 +176,12 @@ export function createHttpRequestHandler(
       if (
         progressionHandler
         && await progressionHandler(req, res, parsedUrl.pathname)
+      ) {
+        return;
+      }
+      if (
+        feedbackHandler
+        && await feedbackHandler(req, res, parsedUrl.pathname, parsedUrl.query)
       ) {
         return;
       }

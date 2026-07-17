@@ -182,6 +182,12 @@ fly logs
 fly ssh console -C "ls -lah /data/backups"
 ```
 
+이용자 문의/건의는 다음으로 확인한다 (`DEBUG_LOG_TOKEN`은 secrets에 등록된 값).
+
+```powershell
+curl.exe -fsS "https://poker-doku.fly.dev/api/debug/feedback?token=<DEBUG_LOG_TOKEN>&limit=50"
+```
+
 메모리나 CPU가 부족하면 `fly scale memory 2048` 또는 `fly scale vm shared-cpu-2x`처럼 수직
 확장한다. `fly scale count 2`는 인메모리 방 상태와 단일 SQLite writer 전제를 깨므로 사용하지 않는다.
 

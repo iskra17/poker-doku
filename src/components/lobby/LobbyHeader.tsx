@@ -5,7 +5,10 @@
 import { useState } from 'react';
 import NeonText from '../ui/NeonText';
 
-export default function LobbyHeader({ onOpenSettings }: { onOpenSettings?: () => void }) {
+export default function LobbyHeader({ onOpenSettings, onOpenFeedback }: {
+  onOpenSettings?: () => void;
+  onOpenFeedback?: () => void;
+}) {
   const [logoError, setLogoError] = useState(false);
 
   return (
@@ -30,6 +33,18 @@ export default function LobbyHeader({ onOpenSettings }: { onOpenSettings?: () =>
           />
         )}
       </div>
+      {onOpenFeedback && (
+        <button
+          type="button"
+          onClick={onOpenFeedback}
+          aria-label="문의 및 건의"
+          className="absolute right-14 top-4 z-20 rounded-full border border-mystic/20 bg-panel/80 p-2 text-ink-dim transition-colors hover:text-ink"
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+          </svg>
+        </button>
+      )}
       {onOpenSettings && (
         <button
           type="button"

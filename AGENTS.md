@@ -126,6 +126,12 @@ npx tsc --noEmit
 - **캐시 바이인**: 40~200BB 범위를 서버가 강제(create-room에서 min/maxBuyIn 재계산, join-room에서
   클램프). 입장 시 JoinRoomModal 슬라이더로 선택.
 
+- **문의/건의(피드백)**: 로비 헤더 💬 → FeedbackModal → `POST /api/feedback` (프로필 쿠키 인증,
+  분류 bug/idea/other + 내용 5~500자 — 검증 단일 소스는 `src/lib/feedback/rules.ts`, 클라·서버 공용).
+  SQLite `feedback` 테이블(내용 불변 트리거, 프로필 삭제 시 profile_id만 NULL)에 영속.
+  스팸 가드: IP당 5건/10분 + 프로필당 10건/일. 운영자 열람은
+  `GET /api/debug/feedback?token=$DEBUG_LOG_TOKEN` (`&limit=&before=` 커서) — 별도 어드민 UI 없음.
+  회귀: `feedback-http.test.ts`.
 - **운영 HTTP/플레이 이벤트 로그 (버그 역추적)**: 커스텀 HTTP 서버가 `GET|HEAD /healthz`를
   Next 핸들러 없이 직접 처리한다. `src/server/event-log.ts`의 인메모리 링 버퍼(5000개)
   + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`

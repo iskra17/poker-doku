@@ -33,7 +33,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_season_catalog',
       'arena_season_results',
@@ -98,7 +98,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(new ArenaRepository(database)
       .requireProfile('v14-season', 'v1-marker').mmr).toBe(1_000);
     expect(database.db.prepare(`
@@ -259,6 +259,46 @@ describe('PokerDatabase migrations', () => {
     `).run()).toThrow();
   });
 
+  it('adds the V20 immutable anonymous feedback table', () => {
+    database = openPokerDatabase(':memory:');
+    insertProfile(database, 'feedback-owner');
+
+    expect(database.tableNames()).toEqual(
+      expect.arrayContaining(['feedback']),
+    );
+    expect(() => database?.db.prepare(`
+      INSERT INTO feedback (profile_id, alias, category, message, created_at)
+      VALUES ('feedback-owner', '단골손님', 'spam', '내용입니다', 10)
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO feedback (profile_id, alias, category, message, created_at)
+      VALUES ('feedback-owner', '단골손님', 'bug', ?, 10)
+    `).run('a'.repeat(501))).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO feedback (profile_id, alias, category, message, created_at)
+      VALUES ('missing-profile', '단골손님', 'bug', '내용입니다', 10)
+    `).run()).toThrow();
+
+    database.db.prepare(`
+      INSERT INTO feedback (profile_id, alias, category, message, created_at)
+      VALUES ('feedback-owner', '단골손님', 'idea', '봇 난이도 선택 원해요', 10)
+    `).run();
+    expect(() => database?.db.prepare(`
+      UPDATE feedback SET message = '수정된 내용' WHERE profile_id = 'feedback-owner'
+    `).run()).toThrow();
+
+    database.db.prepare(`
+      DELETE FROM profiles WHERE id = 'feedback-owner'
+    `).run();
+    expect(database.db.prepare(`
+      SELECT profile_id, alias, message FROM feedback
+    `).get()).toEqual({
+      profile_id: null,
+      alias: '단골손님',
+      message: '봇 난이도 선택 원해요',
+    });
+  });
+
   it('applies the initial schema migration', () => {
     database = openPokerDatabase(':memory:');
 
@@ -279,7 +319,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(19);
+    expect(migration.version).toBe(20);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -412,7 +452,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(19);
+    expect(result.count).toBe(20);
   });
 
   it('preserves V13 data while atomically adding the Arena schema', () => {
@@ -428,7 +468,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -460,7 +500,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -703,7 +743,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(arena.requireSeason('v14-season').id).toBe('v14-season');
     expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
     expect(arena.requireMatch('v14-match').status).toBe('forming');
@@ -758,7 +798,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(arena.requireGroup('v15-open-group').status).toBe('open');
     expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
     expect(database.db.prepare(`
@@ -1739,7 +1779,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -1765,7 +1805,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -1810,7 +1850,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
   });
 
@@ -1853,7 +1893,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -2162,7 +2202,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2419,7 +2459,7 @@ describe('PokerDatabase migrations', () => {
       { version: 14 },
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
-      { version: 19 },
+      { version: 19 }, { version: 20 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2686,7 +2726,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -3029,7 +3069,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 19 });
+    `).get()).toEqual({ version: 20 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants

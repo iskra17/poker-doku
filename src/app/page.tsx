@@ -12,6 +12,7 @@ import EconomyBar from '@/components/lobby/EconomyBar';
 import MissionPanel from '@/components/lobby/MissionPanel';
 import GameRoomView from '@/components/layout/GameRoomView';
 import SettingsModal from '@/components/layout/SettingsModal';
+import FeedbackModal from '@/components/lobby/FeedbackModal';
 import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
 import ArenaLobby from '@/components/arena/ArenaLobby';
@@ -30,6 +31,7 @@ export default function Home() {
   const { leaveRoom, currentRoomId, pendingRoomId, joinError, rooms } = useGameStore();
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [lobbyView, setLobbyView] = useState<'games' | 'arena' | 'missions'>('games');
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
@@ -106,7 +108,10 @@ export default function Home() {
 
   return (
     <div className="h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
-      <LobbyHeader onOpenSettings={() => setSettingsOpen(true)} />
+      <LobbyHeader
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenFeedback={() => setFeedbackOpen(true)}
+      />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
       <nav aria-label="로비 메뉴" className="mx-auto mb-4 grid w-full max-w-4xl grid-cols-3 gap-2 px-4">
         {([
@@ -149,6 +154,7 @@ export default function Home() {
       </div>}
       <CreateRoomModal />
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       {activeJoinTarget && (
         <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
       )}
