@@ -39,9 +39,12 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const visibleNotice = connectionNotice ?? tableNotice;
 
   // 나가기 확인 다이얼로그는 '지킬 좌석'이 있을 때만 — 그 외엔 바로 퇴장.
-  // 올인(chips===0이지만 status='all-in')은 팟 지분이 살아 있으므로 파산이 아니다 — 좌석 유지 대상.
+  // 진행 중 핸드의 올인(chips===0, status='all-in')은 팟 지분이 살아 있으므로 파산이 아니다 —
+  // 좌석 유지 대상. 핸드가 끝난 뒤에도 남는 all-in status는 올인 패배 확정이라 파산으로 본다
+  // (엔진은 파산 좌석 status를 리셋하지 않는다 — BustNotice와 같은 계약).
   const myPlayer = gameState?.players.find(p => p.id === myPlayerId);
-  const busted = !!myPlayer && myPlayer.chips <= 0 && myPlayer.status !== 'all-in';
+  const busted = !!myPlayer && myPlayer.chips <= 0
+    && !(gameState?.isHandInProgress && (myPlayer.status === 'active' || myPlayer.status === 'all-in'));
   const canSitOut = !!myPlayer && !busted && !myPlayer.finishPlace && !tournamentFinished;
   const handleLeaveClick = () => {
     if (canSitOut) setLeaveOpen(true);

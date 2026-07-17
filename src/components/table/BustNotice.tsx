@@ -20,8 +20,11 @@ export default function BustNotice({ onLeave }: { onLeave: () => void }) {
 
   if (!gameState || !isCash || !me) return null;
   if (me.chips > 0) return null; // 아직 칩이 있으면 파산 아님
-  if (me.status === 'active' || me.status === 'all-in') return null; // 아직 이 핸드에 살아있음
-  if (gameState.isHandInProgress) return null; // 핸드가 끝난 뒤에 안내 (승리 연출과 겹치지 않게)
+  // 진행 중 핸드의 올인(chips 0, status 'active'/'all-in')은 팟 지분이 살아 있으므로 파산이 아니다.
+  // 단, 핸드가 끝난 뒤에도 all-in status는 그대로 남는다(엔진은 파산 좌석을 리셋하지 않음) —
+  // 이것이 올인 패배 확정 = 파산이므로 status만으로 걸러내면 안내가 영영 뜨지 않는다
+  // (헤즈업에서 다음 핸드가 시작될 수 없으면 status가 갱신될 기회 자체가 없다).
+  if (gameState.isHandInProgress && (me.status === 'active' || me.status === 'all-in')) return null;
   if (dismissed) return null;
 
   return (

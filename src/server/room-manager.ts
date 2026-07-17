@@ -128,6 +128,8 @@ export class RoomManager {
   }>();
   /** wallet Sit & Go 결과가 DB에 확정된 방 — retained snapshot 재처리 시 중복 호출 방지 */
   private settledTournamentRooms = new Set<string>();
+  /** 칩 보유 좌석 부족(파산 정지) 안내를 정지 상태(handNumber)당 1회만 보내기 위한 커서 */
+  private stallNoticeHands = new Map<string, number>();
   private readonly usedRoomRunIds = new Set<string>();
   private readonly roomRunInstanceId = randomUUID().replaceAll('-', '_');
   private roomRunGeneration = 0;
@@ -280,6 +282,7 @@ export class RoomManager {
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
+    this.stallNoticeHands.delete(roomId);
     this.options.progression?.disposeRoom(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
@@ -674,6 +677,7 @@ export class RoomManager {
     this.unresolvedSettlementRooms.delete(roomId);
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
+    this.stallNoticeHands.delete(roomId);
     this.options.progression?.disposeRoom(roomId);
   }
 
@@ -721,6 +725,56 @@ export class RoomManager {
     this.pendingStartTimers.set(roomId, timer);
   }
 
+  /**
+   * 캐시 방 봇 정비 — 핸드 사이에만 호출.
+   * 봇은 리바이하지 않으므로 파산한 봇 좌석을 회수하고, 설정 수(botCount, 기본 2)까지 새 봇으로
+   * 다시 충원한다 — 나머지 좌석은 휴먼 몫. 솔로용 영속 방은 botCount=5.
+   * 이 회수가 없으면 봇/혼합 방이 파산 봇 좌석에 잠식돼 "칩 보유 2인 미만" 정지에 빠진다.
+   */
+  private refreshCashBots(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.engine.state.isHandInProgress) return;
+    if (room.engine.state.tournament) return; // SnG 탈락 봇 좌석은 순위 표시용으로 보존
+
+    const bustedBots = room.engine.state.players.filter(
+      p => p.type === 'bot' && p.chips <= 0 && !p.pendingRemoval,
+    );
+    for (const bot of bustedBots) {
+      room.engine.processLeave(bot.id);
+      this.sendSystemChat(roomId, `${bot.name}님이 칩을 모두 잃어 자리에서 일어납니다.`);
+    }
+
+    const humans = room.engine.state.players.filter(p => p.type === 'human').length;
+    const bots = room.engine.state.players.length - humans;
+    const targetBots = Math.min(room.config.botCount ?? 2, room.config.maxPlayers - humans);
+    if (bots < targetBots) {
+      fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
+    }
+  }
+
+  /**
+   * 칩 보유 좌석이 2명 미만이라 다음 핸드를 열 수 없는 정지 상태 안내.
+   * 오류가 아니라 대기 상태다 — 파산자가 재바이인하거나 새 플레이어가 앉으면
+   * join 경로(tryStartGame)가 다시 깨운다. 정지 중엔 handNumber가 멈춰 있으므로
+   * 같은 handNumber에는 1회만 보낸다.
+   */
+  private notifyStalledHand(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room) return;
+    const handNumber = room.engine.state.handNumber;
+    if (this.stallNoticeHands.get(roomId) === handNumber) return;
+    this.stallNoticeHands.set(roomId, handNumber);
+    const hasBustedHuman = room.engine.state.players.some(
+      p => p.type === 'human' && !p.pendingRemoval && p.chips <= 0,
+    );
+    this.sendSystemChat(
+      roomId,
+      hasBustedHuman
+        ? '칩을 가진 플레이어가 2명 이상 있어야 다음 핸드를 시작할 수 있어요. 칩을 모두 잃은 분은 나갔다가 다시 앉으면 새 바이인으로 계속할 수 있어요.'
+        : '칩을 가진 플레이어가 2명 이상 모이면 다음 핸드가 시작돼요.',
+    );
+  }
+
   private tryStartGame(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
@@ -737,14 +791,7 @@ export class RoomManager {
         return;
       }
     } else {
-      // 캐시 게임: 봇은 설정 수(botCount, 기본 2)까지만 충원 — 나머지 좌석은 휴먼 몫.
-      // 솔로용 영속 방은 botCount=5 (캐릭터 6명 중 히어로 프로필을 제외한 5명이 등장).
-      const humans = room.engine.state.players.filter(p => p.type === 'human').length;
-      const bots = room.engine.state.players.length - humans;
-      const targetBots = Math.min(room.config.botCount ?? 2, room.config.maxPlayers - humans);
-      if (bots < targetBots) {
-        fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
-      }
+      this.refreshCashBots(roomId);
     }
     this.onUpdate(roomId, room.engine);
 
@@ -765,11 +812,16 @@ export class RoomManager {
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
 
+    // 파산한 봇 좌석 회수 + 재충원 — 누적되면 칩 보유 2인 미만으로 방이 정지한다
+    this.refreshCashBots(roomId);
+
     const walletCash = this.isWalletCash(room);
     // 2초 예약 뒤 최종 인원을 다시 본다. 아래 checkpoint→startHand 구간에는 await가 없어
     // 다른 leave/join 이벤트가 끼어 prepared identity만 남길 수 없다.
     if (walletCash && !this.canStartWalletHand(room.engine)) {
       this.tryStartGame(roomId);
+      // 재충원으로도 칩 보유 좌석이 2명 미만이면(휴먼 파산 등) 정지 사유를 안내한다
+      if (!room.engine.canStartHand()) this.notifyStalledHand(roomId);
       return;
     }
 
@@ -978,6 +1030,15 @@ export class RoomManager {
         if (classification === 'blocked') {
           this.economyBlockedRooms.add(roomId);
           this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
+          this.onUpdate(roomId, room.engine);
+          return;
+        }
+        // 칩 보유 좌석 부족(휴먼 파산 등)은 오류가 아니라 대기 상태 — 재시도로 해결되지
+        // 않으므로 차단 없이 유휴 대기한다 (입장/리바이가 tryStartGame으로 다시 깨운다).
+        // 여기서 schedulePreHandRetry를 태우면 재시도 소진 시 방이 영구 차단된다.
+        if (!room.engine.canStartHand()) {
+          this.preHandStartRetryAttempts.delete(roomId);
+          this.notifyStalledHand(roomId);
           this.onUpdate(roomId, room.engine);
           return;
         }
