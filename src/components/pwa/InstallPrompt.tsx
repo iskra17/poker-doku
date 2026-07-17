@@ -107,7 +107,7 @@ export default function InstallPrompt() {
             {/* eslint-disable-next-line @next/next/no-img-element -- 정적 아이콘, next/image 불필요 */}
             <img src="/icons/icon-192.png" alt="" className="w-11 h-11 rounded-xl border border-white/10 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-white font-bold text-sm">포커 도장 설치</div>
+              <div className="text-white font-bold text-sm">포커 도쿠 설치</div>
               {mode === 'install' ? (
                 <div className="text-gray-400 text-[11px] leading-tight">홈 화면에 추가하고 앱처럼 바로 실행하세요</div>
               ) : (

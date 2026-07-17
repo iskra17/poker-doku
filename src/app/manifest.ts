@@ -4,8 +4,8 @@ import type { MetadataRoute } from 'next';
 // 아이콘은 public/icons (logo.webp에서 ffmpeg로 패딩 생성, 배경 #0d0818).
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: '포커 도장 (Poker Doku)',
-    short_name: '포커 도장',
+    name: '포커 도쿠 (Poker Doku)',
+    short_name: '포커 도쿠',
     description: '미소녀 캐릭터와 함께하는 6-max 노리밋 홀덤 — 봇 연습부터 친구 대전까지',
     start_url: '/',
     display: 'standalone',
