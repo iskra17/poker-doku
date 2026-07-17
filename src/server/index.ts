@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'http';
 import { dirname, join, resolve } from 'node:path';
 import next from 'next';
@@ -6,6 +7,7 @@ import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
 import { ArenaRepository } from './arena-repository';
+import { ArenaMatchmaker } from './arena-matchmaker';
 import { ArenaScheduler } from './arena-scheduler';
 import { ArenaService, parseArenaRuntimeConfig } from './arena-service';
 import { EconomyRepository } from './economy-repository';
@@ -56,6 +58,7 @@ let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
 let arenaService: ArenaService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
+let arenaMatchmaker: ArenaMatchmaker | undefined;
 
 const shutdown = createServerShutdown({
   backup: {
@@ -130,6 +133,31 @@ function initializePersistenceAndRecover(): void {
       epochMs: arenaConfig.epochMs,
       reconcile: at => arenaService!.reconcile(at),
       logger: console,
+    });
+    arenaMatchmaker = new ArenaMatchmaker({
+      reserveOfficial: async (candidate, isCandidateValid) => {
+        if (!isCandidateValid()) return null;
+        const at = Date.now();
+        const seasonId = arenaService!.getMatchmakingProfile(
+          candidate.entries[0].profileId,
+          at,
+        ).seasonId;
+        if (!isCandidateValid()) return null;
+        const match = arenaService!.reserveMatchTickets(
+          `arena-${randomUUID()}`,
+          candidate.entries.map(entry => entry.profileId),
+          at,
+          seasonId,
+        );
+        return { matchId: match.id };
+      },
+      // Arena room construction is introduced by the next phase. Until then a
+      // successful ticket reservation is immediately voided and refunded.
+      createOfficialRoom: async () => false,
+      voidOfficial: async matchId => {
+        arenaService!.voidMatch(matchId);
+      },
+      createTrainingRoom: async () => null,
     });
   }
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
@@ -213,6 +241,15 @@ async function listen(): Promise<void> {
     },
     economy: economyRuntime,
     progressionService,
+    ...(arenaMatchmaker && arenaService
+      ? {
+        arena: {
+          matchmaker: arenaMatchmaker,
+          getEligibility: (profileId: string) =>
+            arenaService!.getMatchmakingProfile(profileId),
+        },
+      }
+      : {}),
   });
 
   await new Promise<void>((resolve, reject) => {
@@ -239,6 +276,7 @@ void startServerLifecycle({
   startScheduler: () => {
     backupScheduler!.start();
     arenaScheduler?.start();
+    arenaMatchmaker?.start();
   },
   shutdown,
   process,

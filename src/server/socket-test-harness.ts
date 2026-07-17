@@ -11,6 +11,9 @@ import type {
   ServerToClientEvents,
 } from '../lib/realtime/protocol';
 import { eventLog, type LogEvent } from './event-log';
+import { ArenaMatchmaker } from './arena-matchmaker';
+import { ArenaRepository } from './arena-repository';
+import { ArenaService } from './arena-service';
 import { EconomyRepository } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
@@ -80,6 +83,7 @@ export interface SocketTestHarnessOptions {
   profileKdf?: ProfileKdf;
   profileConcurrency?: number;
   profileAuthLimit?: number;
+  arenaEnabled?: boolean;
 }
 
 const fastTestKdf: ProfileKdf = {
@@ -103,9 +107,8 @@ export async function createSocketTestHarness(
     undefined,
     options.profileKdf ?? fastTestKdf,
   );
-  const economyRuntime = new EconomyRuntime(
-    new EconomyService(new EconomyRepository(database)),
-  );
+  const economyService = new EconomyService(new EconomyRepository(database));
+  const economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   const progressionService = new ProgressionService(database, progressionRepository);
   const grantProgressionItem = (profileId: string, itemId: string): void => {
@@ -175,6 +178,47 @@ export async function createSocketTestHarness(
   >(httpServer, {
     transports: ['websocket'],
   });
+  const runtimeRef: { current?: SocketRuntime } = {};
+  const arenaService = options.arenaEnabled
+    ? new ArenaService(new ArenaRepository(database), {
+      epochMs: Date.parse('2026-06-01T00:00:00+09:00'),
+      preseasonCount: 1,
+      isProfileInNonArenaSeat: profileId => {
+        if (economyService.getStatus(profileId).economy.hasActiveSeat) {
+          return true;
+        }
+        if (!runtimeRef.current) return false;
+        return runtimeRef.current.sessions.getByPlayerId(profileId)?.roomId != null
+          || runtimeRef.current.roomManager.getRoomList(profileId)
+            .some(room => room.mySeat !== undefined);
+      },
+    })
+    : undefined;
+  const arenaMatchmaker = arenaService
+    ? new ArenaMatchmaker({
+      reserveOfficial: async (candidate, isCandidateValid) => {
+        if (!isCandidateValid()) return null;
+        const at = Date.now();
+        const seasonId = arenaService.getMatchmakingProfile(
+          candidate.entries[0].profileId,
+          at,
+        ).seasonId;
+        if (!isCandidateValid()) return null;
+        const match = arenaService.reserveMatchTickets(
+          `harness-${candidate.candidateId}`,
+          candidate.entries.map(entry => entry.profileId),
+          at,
+          seasonId,
+        );
+        return { matchId: match.id };
+      },
+      createOfficialRoom: async () => false,
+      voidOfficial: async matchId => {
+        arenaService.voidMatch(matchId);
+      },
+      createTrainingRoom: async () => null,
+    })
+    : undefined;
   const runtime = setupSocketHandlers(io, {
     profileAuth: {
       manager: profileManager,
@@ -187,7 +231,18 @@ export async function createSocketTestHarness(
     sngRetentionMs: options.sngRetentionMs,
     economy: economyRuntime,
     progressionService,
+    ...(arenaMatchmaker && arenaService
+      ? {
+        arena: {
+          matchmaker: arenaMatchmaker,
+          getEligibility: (profileId: string) =>
+            arenaService.getMatchmakingProfile(profileId),
+        },
+      }
+      : {}),
   });
+  runtimeRef.current = runtime;
+  arenaMatchmaker?.start();
   const clients = new Set<PokerClientSocket>();
   const legacyProfiles = new Map<string, TestProfileCredential>();
   let closed = false;

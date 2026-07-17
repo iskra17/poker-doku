@@ -19,6 +19,9 @@ export type RealtimeErrorCode =
   | 'not-your-turn'
   | 'action-rejected'
   | 'join-timeout'
+  | 'arena-unavailable'
+  | 'arena-ineligible'
+  | 'arena-busy'
   | 'server-error';
 
 export type RealtimeAck<T = undefined> =
@@ -91,6 +94,11 @@ export interface RoomJoinedPayload {
   chatHistory: ChatMessage[];
 }
 
+export interface ArenaQueueState {
+  status: 'idle' | 'queued' | 'forming' | 'training-offered';
+  joinedAt?: number;
+}
+
 export interface ServerToClientEvents {
   session: (data: { playerId: string }) => void;
   'session-replaced': (data: { message: string }) => void;
@@ -103,6 +111,11 @@ export interface ServerToClientEvents {
   'chat-message': (message: ChatMessage) => void;
   'progression-update': (snapshot: ProgressionSnapshot) => void;
   'reward-summary': (summary: ProgressionRewardSummary) => void;
+  'arena-queue-update': (data: ArenaQueueState) => void;
+  'arena-training-offered': (
+    data: { offerId: string; expiresAt: number },
+  ) => void;
+  'arena-match-found': (data: { matchId: string }) => void;
 }
 
 export interface ClientToServerEvents {
@@ -119,6 +132,12 @@ export interface ClientToServerEvents {
   'send-chat': (data: unknown, ack?: AckCallback) => void;
   'create-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
   'sng-fill-bots': (ack?: AckCallback) => void;
+  'arena-queue-join': (ack?: AckCallback) => void;
+  'arena-queue-leave': (ack?: AckCallback) => void;
+  'arena-training-accept': (
+    data: { offerId: string },
+    ack?: AckCallback<{ matchId: string }>,
+  ) => void;
 }
 
 export type PokerClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { GameUpdatePayload, RealtimeAck } from '../lib/realtime/protocol';
+import type {
+  ArenaQueueState,
+  GameUpdatePayload,
+  RealtimeAck,
+} from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
@@ -98,6 +102,40 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
   afterEach(async () => {
     await harness?.close();
     harness = null;
+  });
+
+  it('keeps arena queue state private and blocks room entry until an explicit leave ack', async () => {
+    harness = await createSocketTestHarness({ arenaEnabled: true });
+    const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);
+    const client = await harness.connect('arena-queue-client');
+    const queuedUpdate = new Promise<ArenaQueueState>(resolve => {
+      client.socket.once('arena-queue-update', resolve);
+    });
+
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toEqual({ ok: true });
+    const queued = await queuedUpdate;
+    expect(queued).toMatchObject({ status: 'queued' });
+    expect(JSON.stringify(queued)).not.toMatch(/mmr|profile|socket|ticket/iu);
+    expect(JSON.stringify(harness.recentEvents())).not.toMatch(/mmr/iu);
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toMatchObject({
+        ok: false,
+        code: 'arena-busy',
+      });
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({
+      ok: false,
+      code: 'arena-busy',
+    });
+    await expect(withAck(done => client.socket.emit('arena-queue-leave', done)))
+      .resolves.toEqual({ ok: true });
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toMatchObject({
+        ok: false,
+        code: 'arena-ineligible',
+      });
   });
 
   it('sends the durable current progression snapshot on a future connection', async () => {

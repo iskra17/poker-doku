@@ -168,6 +168,26 @@ export class ArenaService {
     });
   }
 
+  getMatchmakingProfile(profileId: string, at = this.#clock()): {
+    seasonId: string;
+    availableTickets: number;
+    mmr: number;
+    activeArenaEscrow: boolean;
+  } {
+    const window = calculateArenaSeasonWindow(at, this.#config);
+    return this.#repository.transaction(tx => {
+      this.#ensureSeason(tx, window, at);
+      const profile = this.#ensureProfile(tx, window, profileId, at);
+      return {
+        seasonId: window.id,
+        availableTickets: profile.availableTickets,
+        mmr: profile.mmr,
+        activeArenaEscrow:
+          this.#repository.findActiveTicketEscrow(profileId) !== null,
+      };
+    });
+  }
+
   reconcile(at = this.#clock()): ArenaSeasonWindow {
     const window = calculateArenaSeasonWindow(at, this.#config);
     this.#repository.transaction(tx => this.#ensureSeason(tx, window, at));

@@ -41,6 +41,7 @@ import {
   type ProgressionRuntimeService,
 } from './progression-runtime';
 import { buildPublicCosmetics } from '../lib/collection/public-cosmetics';
+import type { ArenaMatchmaker } from './arena-matchmaker';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -63,6 +64,14 @@ export interface SocketRuntimeOptions {
   sngRetentionMs?: number;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
   progressionService?: ProgressionRuntimeService;
+  arena?: {
+    matchmaker: ArenaMatchmaker;
+    getEligibility: (profileId: string) => {
+      availableTickets: number;
+      mmr: number;
+      activeArenaEscrow: boolean;
+    };
+  };
 }
 
 export interface SocketRuntime {
@@ -136,6 +145,7 @@ export function setupSocketHandlers(
     sngRetentionMs,
     economy,
     progressionService,
+    arena,
   } = options;
   const sessions = new SessionManager();
   const progression = progressionService
@@ -284,6 +294,18 @@ export function setupSocketHandlers(
       },
     },
   );
+
+  arena?.matchmaker.setEventHandlers({
+    onQueueState: (socketId, state) => {
+      io.sockets.sockets.get(socketId)?.emit('arena-queue-update', state);
+    },
+    onTrainingOffered: (socketId, offer) => {
+      io.sockets.sockets.get(socketId)?.emit('arena-training-offered', offer);
+    },
+    onMatchFound: (socketId, matchId) => {
+      io.sockets.sockets.get(socketId)?.emit('arena-match-found', { matchId });
+    },
+  });
 
   // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
   // 봇 전용 연습 방: 휴먼 1명 제한 — 다른 사람 방해 없이 봇들과 연습 (도장의 입구)
@@ -509,6 +531,156 @@ export function setupSocketHandlers(
     };
     restoreOrEvict();
 
+    socket.on('arena-queue-join', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit(
+        'joinRoom',
+        '아레나 참가 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
+        ack,
+      )) return;
+      if (!arena) {
+        ack?.({
+          ok: false,
+          code: 'arena-unavailable',
+          message: '현재 포커 아레나를 이용할 수 없습니다.',
+        });
+        return;
+      }
+      if (
+        session.roomId
+        || roomManager.getRoomList(session.playerId)
+          .some(room => room.mySeat !== undefined)
+      ) {
+        ack?.({
+          ok: false,
+          code: 'arena-ineligible',
+          message: '다른 게임 좌석을 먼저 정리해 주세요.',
+        });
+        return;
+      }
+
+      let eligibility: ReturnType<typeof arena.getEligibility>;
+      try {
+        eligibility = arena.getEligibility(session.playerId);
+      } catch {
+        ack?.({
+          ok: false,
+          code: 'server-error',
+          message: '아레나 참가 자격을 확인하지 못했습니다.',
+        });
+        return;
+      }
+      if (eligibility.availableTickets < 1 || eligibility.activeArenaEscrow) {
+        ack?.({
+          ok: false,
+          code: 'arena-ineligible',
+          message: eligibility.activeArenaEscrow
+            ? '이미 진행 중인 아레나 경기가 있습니다.'
+            : '공식 경기 티켓이 부족합니다.',
+        });
+        return;
+      }
+      try {
+        arena.matchmaker.join({
+          profileId: session.playerId,
+          socketId: socket.id,
+          mmr: eligibility.mmr,
+          joinedAt: Date.now(),
+        });
+        ack?.({ ok: true });
+      } catch {
+        ack?.({
+          ok: false,
+          code: 'arena-busy',
+          message: '이미 아레나 대기열 또는 경기 구성에 참여 중입니다.',
+        });
+      }
+    });
+
+    socket.on('arena-queue-leave', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit(
+        'roomSync',
+        '아레나 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
+        ack,
+      )) return;
+      if (!arena) {
+        ack?.({
+          ok: false,
+          code: 'arena-unavailable',
+          message: '현재 포커 아레나를 이용할 수 없습니다.',
+        });
+        return;
+      }
+      arena.matchmaker.leave(session.playerId, socket.id);
+      ack?.({ ok: true });
+    });
+
+    socket.on('arena-training-accept', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ matchId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (
+        !isRecord(payload)
+        || Object.keys(payload).length !== 1
+        || typeof payload.offerId !== 'string'
+        || payload.offerId.length === 0
+      ) {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit(
+        'roomSync',
+        '아레나 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
+        ack,
+      )) return;
+      if (!arena) {
+        ack?.({
+          ok: false,
+          code: 'arena-unavailable',
+          message: '현재 포커 아레나를 이용할 수 없습니다.',
+        });
+        return;
+      }
+      void arena.matchmaker.acceptTraining(
+        session.playerId,
+        socket.id,
+        payload.offerId,
+      ).then(result => {
+        if (!result) {
+          ack?.({
+            ok: false,
+            code: 'arena-ineligible',
+            message: '훈련 경기 제안이 만료되었거나 유효하지 않습니다.',
+          });
+          return;
+        }
+        ack?.({ ok: true, data: { matchId: result.matchId } });
+      }).catch(() => {
+        ack?.({
+          ok: false,
+          code: 'server-error',
+          message: '훈련 경기를 만들지 못했습니다.',
+        });
+      });
+    });
+
     // 클라이언트 주도 재동기화 — 소켓 재연결 직후 방 상태 확인.
     // 서버가 재시작되면 세션이 초기화되어(roomId 없음) room-lost가 응답된다 —
     // 이게 없으면 클라이언트가 죽은 방의 마지막 스냅샷을 든 채 얼어붙는다 (와이프 화면 버그).
@@ -544,6 +716,14 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      if (arena?.matchmaker.hasBlockingParticipation(session.playerId)) {
+        ack?.({
+          ok: false,
+          code: 'arena-busy',
+          message: '아레나 대기열을 먼저 나간 뒤 입장해 주세요.',
+        });
+        return;
+      }
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
       const playerName = profileAlias;
@@ -1387,6 +1567,7 @@ export function setupSocketHandlers(
 
     // Disconnect: 즉시 제거하지 않고 grace period 동안 좌석/칩 보존
     socket.on('disconnect', () => {
+      arena?.matchmaker.disconnect(socket.id);
       const detached = sessions.detachSocket(socket.id);
       console.log(`Player disconnected: socket=${socket.id}`);
       eventLog.log('disconnect', {
@@ -1431,6 +1612,7 @@ export function setupSocketHandlers(
     },
     close: () => {
       if (sweepTimer) clearInterval(sweepTimer);
+      arena?.matchmaker.close();
       sessions.shutdown();
       roomManager.shutdown();
     },
