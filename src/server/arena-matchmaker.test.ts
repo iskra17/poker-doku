@@ -124,6 +124,40 @@ describe('ArenaMatchmaker rules', () => {
     expect(matchmaker.inspectQueue().map(entry => entry.profileId)).toEqual(['far']);
   });
 
+  it('records queue waits when officials form and training is offered', async () => {
+    const waits: number[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 0,
+      reserveOfficial: async () => ({ matchId: 'metric-match' }),
+      createOfficialRoom: async () => true,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => ({ matchId: 'training-room' }),
+      rollbackTrainingRoom: async () => undefined,
+      metrics: {
+        recordQueueWait: waitMs => {
+          waits.push(waitMs);
+        },
+      },
+    });
+    matchmaker.join({
+      profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 1_000,
+    });
+    matchmaker.join({
+      profileId: 'b', socketId: 'sb', mmr: 1_010, joinedAt: 5_000,
+    });
+    await matchmaker.tick(12_000);
+    expect([...waits].sort((left, right) => left - right))
+      .toEqual([7_000, 11_000]);
+
+    matchmaker.join({
+      profileId: 'solo', socketId: 'ss', mmr: 1_000, joinedAt: 20_000,
+    });
+    await matchmaker.tick(80_000);
+    expect(waits).toHaveLength(3);
+    expect(waits).toContain(60_000);
+  });
+
   it('offers one private thirty-second training match without reserving', async () => {
     const offered: Array<{ socketId: string; offerId: string; expiresAt: number }> = [];
     let reserveCalls = 0;

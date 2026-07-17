@@ -1014,6 +1014,18 @@ export class ArenaRepository {
     return rows.map(mapEntry);
   }
 
+  countTierDistribution(seasonId: string): Record<string, number> {
+    const rows = this.#database.db.prepare(`
+      SELECT tier, COUNT(*) AS count FROM arena_profiles
+      WHERE season_id = ? AND tier IS NOT NULL
+      GROUP BY tier ORDER BY tier
+    `).all(seasonId) as unknown as { tier: unknown; count: unknown }[];
+    return Object.fromEntries(rows.map(row => [
+      asString(row.tier),
+      asNumber(row.count),
+    ]));
+  }
+
   findActiveTicketEscrow(profileId: string): ArenaTicketEscrowRecord | null {
     const row = this.#database.db.prepare(`
       SELECT match_id, profile_id, status, created_at, settled_at

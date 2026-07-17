@@ -13,6 +13,7 @@ import {
   getArenaSeasonRewardItems,
   type ArenaSeasonRewardKey,
 } from '@/lib/collection/catalog';
+import type { ArenaServiceMetrics } from './arena-metrics';
 import type {
   ArenaEntryRecord,
   ArenaGroupMemberRecord,
@@ -66,6 +67,8 @@ export interface ArenaSeasonConfig {
 export interface ArenaServiceOptions extends ArenaSeasonConfig {
   readonly clock?: () => number;
   readonly isProfileInNonArenaSeat: (profileId: string) => boolean;
+  /** 근사 운영 지표 — 정확한 감사는 Arena 테이블이 담당한다. */
+  readonly metrics?: ArenaServiceMetrics;
 }
 
 export interface ArenaSeasonWindow {
@@ -218,6 +221,7 @@ export class ArenaService {
   readonly #config: ArenaSeasonConfig;
   readonly #clock: () => number;
   readonly #isProfileInNonArenaSeat: (profileId: string) => boolean;
+  readonly #metrics?: ArenaServiceMetrics;
 
   constructor(repository: ArenaRepository, options: ArenaServiceOptions) {
     assertSeasonConfig(options);
@@ -228,6 +232,7 @@ export class ArenaService {
     };
     this.#clock = options.clock ?? Date.now;
     this.#isProfileInNonArenaSeat = options.isProfileInNonArenaSeat;
+    this.#metrics = options.metrics;
   }
 
   getSnapshot(profileId: string, at = this.#clock()): PublicArenaSnapshot {
@@ -520,6 +525,18 @@ export class ArenaService {
           weeklyRankAfter: weeklyRankFor(settled.profileId),
         });
       }
+      this.#metrics?.recordTicketConsume(settledEntries.length, at);
+      this.#metrics?.recordOfficialCompleted({
+        humanCount: match.humanCount,
+        botCount: match.botCount,
+        botPlaceSum: settledEntries.reduce(
+          (sum, settled) => sum - (settled.place ?? 0),
+          (ARENA_CONFIG_V1.seats * (ARENA_CONFIG_V1.seats + 1)) / 2,
+        ),
+        configVersion: match.configVersion,
+        botVersion: match.botVersion,
+        at,
+      });
       const finished: ArenaMatchRecord = {
         ...match,
         status: 'finished',
@@ -608,6 +625,7 @@ export class ArenaService {
           settledAt: null,
         });
       }
+      this.#metrics?.recordTicketEscrow(profiles.length, at);
       return match;
     });
   }
@@ -649,6 +667,8 @@ export class ArenaService {
         });
         tx.updateTicketEscrow({ ...escrow, status: 'refunded', settledAt: at });
       }
+      this.#metrics?.recordTicketRefund(escrows.length, at);
+      this.#metrics?.recordOfficialVoided(at);
       return voided;
     });
   }
@@ -1060,6 +1080,7 @@ export class ArenaService {
   ): ArenaProfileRecord {
     assertIdentifier(profileId, 'ARENA_PROFILE_LIST_INVALID');
     const today = getArenaKstDate(at);
+    const existing = this.#repository.findProfile(window.id, profileId);
     tx.insertProfileIfAbsent({
       seasonId: window.id,
       profileId,
@@ -1073,6 +1094,9 @@ export class ArenaService {
       updatedAt: at,
     });
     const profile = this.#repository.requireProfile(window.id, profileId);
+    if (!existing) {
+      this.#metrics?.recordTicketGrant(ARENA_CONFIG_V1.startingTickets, at);
+    }
     if (profile.lastDailyGrantDate >= today) return profile;
 
     const activeEscrow = this.#repository.findActiveTicketEscrow(profileId);
@@ -1088,6 +1112,7 @@ export class ArenaService {
       updatedAt: Math.max(profile.updatedAt, at),
     };
     tx.updateProfile(updated);
+    if (grant > 0) this.#metrics?.recordTicketGrant(grant, at);
     return updated;
   }
 

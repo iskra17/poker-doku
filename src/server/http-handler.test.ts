@@ -39,6 +39,31 @@ describe('커스텀 서버 HTTP 경계', () => {
     expect(nextHandler).not.toHaveBeenCalled();
   });
 
+  it('/healthz는 시작 복구가 끝나기 전까지 503을 반환한다', async () => {
+    const nextHandler = vi.fn((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('next');
+    });
+    let ready = false;
+    const server = createServer(createHttpRequestHandler(nextHandler, {
+      ready: () => ready,
+    }));
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const { port } = server.address() as AddressInfo;
+    const baseUrl = `http://127.0.0.1:${port}`;
+
+    const notReady = await fetch(`${baseUrl}/healthz`);
+    expect(notReady.status).toBe(503);
+    expect(await notReady.json()).toEqual({ ok: false });
+
+    ready = true;
+    const healthy = await fetch(`${baseUrl}/healthz`);
+    expect(healthy.status).toBe(200);
+    expect(await healthy.json()).toEqual({ ok: true });
+    expect(nextHandler).not.toHaveBeenCalled();
+  });
+
   it('debug 로그는 토큰이 없으면 403이고 일반 경로만 Next로 넘긴다', async () => {
     const { nextHandler, baseUrl } = await start();
 

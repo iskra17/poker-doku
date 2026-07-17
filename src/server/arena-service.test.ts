@@ -149,6 +149,75 @@ describe('ArenaService free ticket lifecycle', () => {
       .toBe('2026-07-22');
   });
 
+  it('records anonymous aggregate metrics across the ticket lifecycle', () => {
+    const record = {
+      grants: 0,
+      escrow: 0,
+      consume: 0,
+      refund: 0,
+      voided: 0,
+      completed: [] as unknown[],
+    };
+    const metered = new ArenaService(repository, {
+      epochMs: EPOCH,
+      preseasonCount: 1,
+      clock: () => EPOCH,
+      isProfileInNonArenaSeat: () => false,
+      metrics: {
+        recordTicketGrant: count => { record.grants += count; },
+        recordTicketEscrow: count => { record.escrow += count; },
+        recordTicketConsume: count => { record.consume += count; },
+        recordTicketRefund: count => { record.refund += count; },
+        recordOfficialCompleted: input => { record.completed.push(input); },
+        recordOfficialVoided: () => { record.voided += 1; },
+      },
+    });
+
+    metered.getSnapshot('profile-a', EPOCH);
+    metered.getSnapshot('profile-b', EPOCH);
+    metered.getSnapshot('profile-a', EPOCH + DAY);
+    metered.reserveMatchTickets(
+      'metric-match', ['profile-a', 'profile-b'], EPOCH + DAY,
+    );
+    metered.markMatchPlaying('metric-match', EPOCH + DAY + 1);
+    metered.settleOfficialMatch(
+      'metric-match',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 2],
+      ]),
+      EPOCH + DAY + 2,
+    );
+    metered.reserveMatchTickets(
+      'void-metric-match', ['profile-a', 'profile-b'], EPOCH + DAY + 3,
+    );
+    metered.voidMatch('void-metric-match', EPOCH + DAY + 4);
+    metered.settleOfficialMatch(
+      'metric-match',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 2],
+      ]),
+      EPOCH + DAY + 5,
+    );
+
+    expect(record).toMatchObject({
+      grants: 8,
+      escrow: 4,
+      consume: 2,
+      refund: 2,
+      voided: 1,
+    });
+    expect(record.completed).toEqual([{
+      humanCount: 2,
+      botCount: 4,
+      botPlaceSum: 18,
+      configVersion: 1,
+      botVersion: 'arena-v1-hard',
+      at: EPOCH + DAY + 2,
+    }]);
+  });
+
   it('reserves every participant atomically and creates forming entries', () => {
     const match = service.reserveMatchTickets(
       'match-a', ['profile-a', 'profile-b'], EPOCH,

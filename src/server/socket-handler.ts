@@ -7,6 +7,10 @@ import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
 import type {
+  ArenaQueueMetrics,
+  ArenaRoomMetrics,
+} from './arena-metrics';
+import type {
   AckCallback,
   ClientToServerEvents,
   ServerToClientEvents,
@@ -73,6 +77,7 @@ export interface SocketRuntimeOptions {
   arena?: {
     service: ArenaService;
     matchIdFactory?: () => string;
+    metrics?: ArenaQueueMetrics & ArenaRoomMetrics;
   };
 }
 
@@ -363,8 +368,10 @@ export function setupSocketHandlers(
         if (!session?.socketId) return;
         io.sockets.sockets.get(session.socketId)?.emit('arena-result', result);
       },
+      metrics: arena.metrics,
     });
     arenaMatchmaker = new ArenaMatchmaker({
+      metrics: arena.metrics,
       reserveOfficial: async (candidate, isCandidateValid) => {
         if (!isCandidateValid()) return null;
         const at = Date.now();

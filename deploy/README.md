@@ -192,6 +192,18 @@ fly ssh console -C "ls -lah /data/backups"
 
 공식 확인 전에는 공개 획득 캠페인, 현금·현물·상품 보상, 결제 기능을 시작하지 않는다.
 
+## Arena 출시 게이트 (`ARENA_ENABLED=true` 전환 전)
+
+`fly.toml`의 `ARENA_ENABLED`는 아래 체크박스가 전부 완료되기 전에는 `"false"`를 유지한다.
+운영 지표는 개인 식별자 없는 stdout `[arena-metric]` 일별 집계 한 줄로 확인한다
+(`fly logs | grep arena-metric`).
+
+- [ ] 대한민국 `청소년이용불가` 등급분류와 표시(문구·위치) 완료
+- [ ] 웹보드게임 본인확인 의무가 현재 서비스에 적용되는지 공식 확인
+- [ ] 현금·현물·환전·양도·구매 기능 없음 재검증
+- [ ] 프리시즌 부하/봇 성적/queue p95 검증 (`[arena-metric]`의 queueWaitSeconds·botPerformance)
+- [ ] SQLite volume과 암호화 백업 복원 rehearsal 완료
+
 ## Vultr 대안
 
 Vultr를 사용할 경우에도 단일 인스턴스와 영속 볼륨, 동일한 `POKER_DB_PATH`,

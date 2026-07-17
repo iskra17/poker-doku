@@ -6,9 +6,14 @@ import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
 import { ArenaHttpDataService } from './arena-http';
+import { ArenaMetrics } from './arena-metrics';
 import { ArenaRepository } from './arena-repository';
 import { ArenaScheduler } from './arena-scheduler';
-import { ArenaService, parseArenaRuntimeConfig } from './arena-service';
+import {
+  ArenaService,
+  calculateArenaSeasonWindow,
+  parseArenaRuntimeConfig,
+} from './arena-service';
 import { EconomyRepository } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
@@ -58,6 +63,8 @@ let backupScheduler: DailyBackupScheduler | undefined;
 let arenaService: ArenaService | undefined;
 let arenaHttpService: ArenaHttpDataService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
+let arenaMetrics: ArenaMetrics | undefined;
+let lifecycleReady = false;
 
 const shutdown = createServerShutdown({
   backup: {
@@ -68,7 +75,9 @@ const shutdown = createServerShutdown({
   },
   runtime: {
     close: async () => {
+      lifecycleReady = false;
       arenaScheduler?.close();
+      arenaMetrics?.close(Date.now());
       const arenaClose = await runtime?.close();
       if (
         arenaClose
@@ -125,11 +134,23 @@ function initializePersistenceAndRecover(): void {
   economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   progressionService = new ProgressionService(database, progressionRepository);
+  // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
+  // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
+  // Arena 복구보다 먼저 실행 — 시작 순서 계약:
+  // migration → cash/SnG 회수 → Arena refund → 주간/시즌 reconcile → socket accept.
+  economyRuntime.recoverActiveEscrows();
   const arenaConfig = parseArenaRuntimeConfig(process.env);
   if (arenaConfig.enabled) {
     const arenaRepository = new ArenaRepository(database);
+    arenaMetrics = new ArenaMetrics({
+      logger: console,
+      collectTierDistribution: () => arenaRepository.countTierDistribution(
+        calculateArenaSeasonWindow(Date.now(), arenaConfig).id,
+      ),
+    });
     arenaService = new ArenaService(arenaRepository, {
       ...arenaConfig,
+      metrics: arenaMetrics,
       isProfileInNonArenaSeat: profileId => {
         if (!economyService || !runtime) {
           throw new Error('Arena participation authority is not ready');
@@ -144,15 +165,13 @@ function initializePersistenceAndRecover(): void {
     });
     arenaHttpService = new ArenaHttpDataService(arenaService, arenaRepository);
     arenaService.recoverUnfinishedMatches();
+    arenaService.reconcile(Date.now());
     arenaScheduler = new ArenaScheduler({
       epochMs: arenaConfig.epochMs,
       reconcile: at => arenaService!.reconcile(at),
       logger: console,
     });
   }
-  // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
-  // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
-  economyRuntime.recoverActiveEscrows();
   const backupDirectory = process.env.POKER_BACKUP_DIR
     ?? join(process.cwd(), 'data', 'backups');
   const encryptionKey = resolveBackupEncryptionKey(
@@ -191,6 +210,7 @@ async function listen(): Promise<void> {
     progressionService,
     arenaHttpService,
     arenaEnabled: () => arenaService !== undefined,
+    ready: () => lifecycleReady,
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,
@@ -237,6 +257,7 @@ async function listen(): Promise<void> {
       ? {
         arena: {
           service: arenaService,
+          metrics: arenaMetrics,
         },
       }
       : {}),
@@ -267,6 +288,7 @@ void startServerLifecycle({
     backupScheduler!.start();
     arenaScheduler?.start();
     runtime?.startArena();
+    lifecycleReady = true;
   },
   shutdown,
   process,

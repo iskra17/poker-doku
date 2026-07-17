@@ -42,6 +42,8 @@ interface HttpHandlerCommonOptions {
   arenaHttpService?: ArenaHttpService;
   arenaEnabled?: () => boolean;
   arenaCursorSecret?: string;
+  /** 시작 복구가 끝나기 전까지 /healthz를 503으로 유지한다. */
+  ready?: () => boolean;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -141,8 +143,13 @@ export function createHttpRequestHandler(
           res.end();
           return;
         }
-        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-        res.end(req.method === 'HEAD' ? undefined : JSON.stringify({ ok: true }));
+        const ready = options.ready ? options.ready() : true;
+        res.writeHead(ready ? 200 : 503, {
+          'content-type': 'application/json; charset=utf-8',
+        });
+        res.end(req.method === 'HEAD'
+          ? undefined
+          : JSON.stringify({ ok: ready }));
         return;
       }
       if (parsedUrl.pathname === '/api/debug/log') {

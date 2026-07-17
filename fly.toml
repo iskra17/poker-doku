@@ -12,6 +12,7 @@ primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
   PORT = "3000"
   POKER_DB_PATH = "/data/poker-doku.sqlite"
   POKER_BACKUP_DIR = "/data/backups"
+  # Arena 출시 게이트(deploy/README.md) 체크박스 전부 완료 전까지 false 유지
   ARENA_ENABLED = "false"
   ARENA_SEASON_EPOCH_KST = "2026-07-20T00:00:00+09:00"
   ARENA_PRESEASON_COUNT = "1"

@@ -1,3 +1,4 @@
+import type { ArenaQueueMetrics } from './arena-metrics';
 import { MAX_ARENA_TIMER_DELAY_MS } from './arena-scheduler';
 import type { ArenaQueueState } from '../lib/realtime/protocol';
 
@@ -104,6 +105,7 @@ export interface ArenaMatchmakerOptions {
     socketId: string,
     matchId: string,
   ) => NotificationResult;
+  readonly metrics?: ArenaQueueMetrics;
   readonly onError?: (
     error: unknown,
     context: string,
@@ -413,12 +415,16 @@ export class ArenaMatchmaker {
         ))
         .slice(0, MAX_SEATS);
       if (selected.length >= 2) {
-        await this.#formOfficial(selected, generation);
+        await this.#formOfficial(selected, generation, at);
         return;
       }
       if (at - anchor.joinedAt < FALLBACK_MS) return;
       if (selected.length === 1) {
         this.#queue.delete(anchor.profileId);
+        this.#options.metrics?.recordQueueWait(
+          Math.max(0, at - anchor.joinedAt),
+          at,
+        );
         let resolveCompletion!: (result: ArenaReservation | null) => void;
         const completion = new Promise<ArenaReservation | null>(resolve => {
           resolveCompletion = resolve;
@@ -519,9 +525,16 @@ export class ArenaMatchmaker {
   async #formOfficial(
     entries: readonly ArenaQueueEntry[],
     generation: number,
+    at: number,
   ): Promise<void> {
     if (!this.#isOpenGeneration(generation)) return;
     for (const entry of entries) this.#queue.delete(entry.profileId);
+    for (const entry of entries) {
+      this.#options.metrics?.recordQueueWait(
+        Math.max(0, at - entry.joinedAt),
+        at,
+      );
+    }
     const candidate: ArenaOfficialCandidate = {
       candidateId: `candidate-${++this.#counter}`,
       entries: entries.map(entry => Object.freeze({ ...entry })),

@@ -3,6 +3,7 @@ import { createBot } from '@/lib/bot/bot-manager';
 import { SNG_BLIND_SCHEDULE } from '@/lib/poker/blind-schedule';
 import type { Player, RoomConfig } from '@/lib/poker/types';
 import type { ArenaResultPayload } from '@/lib/realtime/protocol';
+import type { ArenaRoomMetrics } from './arena-metrics';
 import type {
   ArenaOfficialCandidate,
   ArenaReservation,
@@ -33,6 +34,7 @@ export interface ArenaRuntimeOptions {
   ) => void;
   readonly clock?: () => number;
   readonly rng?: () => number;
+  readonly metrics?: ArenaRoomMetrics;
 }
 
 type ArenaSeat =
@@ -52,6 +54,7 @@ export class ArenaRuntime {
   readonly #onResult: ArenaRuntimeOptions['onResult'];
   readonly #clock: () => number;
   readonly #rng: () => number;
+  readonly #metrics?: ArenaRoomMetrics;
   readonly #roomsByMatch = new Map<string, string>();
   readonly #resultsByMatch = new Map<
     string,
@@ -71,6 +74,7 @@ export class ArenaRuntime {
     this.#onResult = options.onResult;
     this.#clock = options.clock ?? Date.now;
     this.#rng = options.rng ?? Math.random;
+    this.#metrics = options.metrics;
   }
 
   getRoomId(matchId: string): string | null {
@@ -145,6 +149,10 @@ export class ArenaRuntime {
         roomId,
         candidate,
       });
+      this.#metrics?.recordOfficialFormed(
+        candidate.entries.length,
+        this.#clock(),
+      );
       return true;
     } catch {
       this.#disposeTrackedRoom(reservation.matchId);
@@ -184,6 +192,7 @@ export class ArenaRuntime {
       seats,
       () => undefined,
     );
+    if (created) this.#metrics?.recordTrainingFormed(this.#clock());
     return created ? { matchId } : null;
   }
 
@@ -247,6 +256,7 @@ export class ArenaRuntime {
       type: Player['type'];
     }[];
   }): void {
+    this.#metrics?.recordTrainingCompleted(this.#clock());
     for (const result of input.results) {
       if (result.type !== 'human') continue;
       const current = this.#service.getPublicResultView(
