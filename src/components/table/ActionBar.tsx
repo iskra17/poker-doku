@@ -5,6 +5,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { ActionType } from '@/lib/poker/types';
 import { computeValidActions } from '@/lib/poker/engine';
+import { computeBetPresets } from '@/lib/poker/bet-presets';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import { playEffect } from '@/lib/sound/effects';
@@ -32,6 +33,8 @@ export default function ActionBar() {
     useTimeBank,
   } = useGameStore();
   const betStepUnit = useSettingsStore(s => s.betStepUnit);
+  const preflopPresets = useSettingsStore(s => s.preflopPresets);
+  const postflopPresets = useSettingsStore(s => s.postflopPresets);
   const [raiseAmount, setRaiseAmount] = useState(0);
   const [amountDraft, setAmountDraft] = useState<string | null>(null); // 금액 직접 입력 중 임시값
   const [confirmAllIn, setConfirmAllIn] = useState(false); // 올인 오조작 방지 — 한 번 더 눌러야 확정
@@ -125,12 +128,21 @@ export default function ActionBar() {
   }
 
   const effectiveRaise = Math.min(maxRaise, Math.max(raiseAmount, minRaise));
+  // 사이징이 내 전 스택에 도달하면 이 레이즈는 곧 올인 — 버튼 라벨/확인 절차가 올인으로 전환
+  const isShove = canRaise && effectiveRaise >= maxRaise;
+
+  // 금액 변경 공통 경로 — 올인 확인 대기 중 금액을 바꾸면 확인 상태를 해제한다
+  // (안 그러면 올인 확정 대기 → 슬라이더 하향 → 다시 최대로 올릴 때 첫 탭에 올인이 나간다)
+  const updateRaise = (amount: number) => {
+    setRaiseAmount(amount);
+    setConfirmAllIn(false);
+  };
 
   // 금액 직접 입력: 입력 중엔 draft 그대로, 확정(blur/Enter) 시 파싱해 범위로 클램프
   const commitAmountDraft = () => {
     if (amountDraft === null) return;
     const n = Math.floor(Number(amountDraft));
-    if (Number.isFinite(n) && n > 0) setRaiseAmount(n);
+    if (Number.isFinite(n) && n > 0) updateRaise(n);
     setAmountDraft(null);
   };
 
@@ -145,20 +157,23 @@ export default function ActionBar() {
   const sb = gameState.smallBlind || Math.max(1, Math.floor(bb / 2));
   const step = betStepUnit === 'sb' ? sb : bb;
 
-  // 프리셋 — 프리플랍: 직전 베팅의 배수(오픈이면 BB 기준) / 포스트플랍: 팟 비율
-  const presets = gameState.street === 'preflop'
-    ? [
-        { label: '2x', amount: Math.max(minRaise, gameState.currentBet * 2) },
-        { label: '2.2x', amount: Math.max(minRaise, Math.round(gameState.currentBet * 2.2)) },
-        { label: '2.5x', amount: Math.max(minRaise, Math.round(gameState.currentBet * 2.5)) },
-        { label: '올인', amount: maxRaise },
-      ]
-    : [
-        { label: '33%', amount: Math.max(minRaise, Math.floor(gameState.currentBet + potSize * 0.33)) },
-        { label: '50%', amount: Math.max(minRaise, Math.floor(gameState.currentBet + potSize * 0.5)) },
-        { label: '75%', amount: Math.max(minRaise, Math.floor(gameState.currentBet + potSize * 0.75)) },
-        { label: '100%', amount: Math.max(minRaise, gameState.currentBet + potSize) },
-      ];
+  // 프리셋 — 설정에서 편집 (프리플랍: 직전 베팅의 배수 / 포스트플랍: 팟 %).
+  // 포커룸 표준(GG/스타즈)대로 '최대'(올인)는 액션 줄의 독립 버튼이 아니라 사이징 영역에 둔다 —
+  // 금액이 스택 최대에 도달하면 아래 레이즈 버튼이 올인 확인(2탭)으로 전환된다.
+  const presets = [
+    ...computeBetPresets(
+      {
+        street: gameState.street,
+        currentBet: gameState.currentBet,
+        potSize,
+        minRaiseTo: minRaise,
+        maxRaiseTo: maxRaise,
+      },
+      preflopPresets,
+      postflopPresets,
+    ),
+    { label: '최대', amount: maxRaise },
+  ];
 
   return (
     <div className={dockClass}>
@@ -221,10 +236,10 @@ export default function ActionBar() {
           {canRaise && (
             <div className="flex items-center gap-1.5">
               <div className="flex gap-1 flex-1 min-w-0">
-                {presets.map(p => (
+                {presets.map((p, i) => (
                   <button
-                    key={p.label}
-                    onClick={() => setRaiseAmount(Math.min(p.amount, maxRaise))}
+                    key={`${p.label}-${i}`}
+                    onClick={() => updateRaise(Math.min(p.amount, maxRaise))}
                     disabled={controlsDisabled}
                     className="flex-1 min-w-0 rounded-lg bg-elevated/80 hover:bg-blossom-hot/30 active:bg-blossom-hot/40 text-ink-dim hover:text-white border border-white/10 transition-colors whitespace-nowrap px-1 py-1.5 text-[11px] font-bold"
                   >
@@ -234,7 +249,7 @@ export default function ActionBar() {
               </div>
               <div className="flex gap-1 shrink-0">
                 <button
-                  onClick={() => setRaiseAmount(Math.max(minRaise, effectiveRaise - step))}
+                  onClick={() => updateRaise(Math.max(minRaise, effectiveRaise - step))}
                   disabled={controlsDisabled}
                   className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 감소`}
@@ -242,7 +257,7 @@ export default function ActionBar() {
                   −
                 </button>
                 <button
-                  onClick={() => setRaiseAmount(Math.min(maxRaise, effectiveRaise + step))}
+                  onClick={() => updateRaise(Math.min(maxRaise, effectiveRaise + step))}
                   disabled={controlsDisabled}
                   className="w-10 h-10 rounded-lg bg-elevated border border-white/10 text-ink font-bold text-lg active:scale-95 transition-transform"
                   aria-label={`${aggroLabel} 증가`}
@@ -253,39 +268,43 @@ export default function ActionBar() {
             </div>
           )}
 
-          {/* 3행: 액션 버튼 — 동일 색상(primary)으로 통일, 좁은 화면에서 세로로 깨지지 않게 flex-1 + nowrap */}
+          {/* 3행: 액션 버튼 — 포커룸 표준 3버튼 문법 (GG/스타즈/코인포커):
+              [폴드] [체크|콜] [벳|레이즈]. 올인은 독립 버튼이 아니라 사이징이 스택 최대에
+              도달했을 때(또는 최소 레이즈를 못 채우는 숏스택 푸시일 때) 우측 버튼이 올인으로
+              전환되는 방식 — 색상도 관행대로 구분(폴드 무채색/콜 녹색/공격 액션 강조색). */}
           <div className="flex items-center w-full gap-1.5">
-            <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
+            <Button variant="secondary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
               폴드
             </Button>
 
             {canCheck && (
-              <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
+              <Button variant="success" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('check')}>
                 체크
               </Button>
             )}
 
             {canCall && (
-              <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
+              <Button variant="success" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('call')}>
                 콜 {formatChips(callAmount)}
-                {/* 스택이 콜 금액 이하면 이 콜이 곧 올인 — 별도 올인 버튼은 뜨지 않으므로 여기에 명시 */}
+                {/* 스택이 콜 금액 이하면 이 콜이 곧 올인 — 별도 올인 버튼은 없으므로 여기에 명시 */}
                 {callAmount >= myPlayer.chips && <span className="text-[10px] opacity-80"> (올인)</span>}
               </Button>
             )}
 
-            {canRaise && (
+            {canRaise && !isShove && (
               <Button variant="primary" size="md" disabled={controlsDisabled} className="flex-[1.3] min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('raise', effectiveRaise)}>
                 {aggroLabel} {formatChips(effectiveRaise)}
               </Button>
             )}
 
-            {canAllIn && (
+            {/* 올인 실행 — ①사이징을 최대까지 올린 레이즈, ②최소 레이즈를 못 채우는 숏스택 푸시.
+                오조작 방지: 첫 탭은 확인 상태로 전환, 두 번째 탭에서 실제 올인 */}
+            {(isShove || (!canRaise && canAllIn)) && (
               <Button
                 variant={confirmAllIn ? 'danger' : 'primary'}
                 size="md"
                 disabled={controlsDisabled}
                 onClick={() => {
-                  // 오조작 방지: 첫 클릭은 확인 상태로 전환, 두 번째 클릭에서 실제 올인
                   if (confirmAllIn) {
                     act('all-in');
                   } else {
@@ -293,9 +312,9 @@ export default function ActionBar() {
                     setConfirmAllIn(true);
                   }
                 }}
-                className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm"
+                className="flex-[1.3] min-w-0 !px-2 whitespace-nowrap text-sm"
               >
-                {confirmAllIn ? '올인 확정?' : '올인'}
+                {confirmAllIn ? '올인 확정?' : `올인 ${formatChips(maxRaise)}`}
               </Button>
             )}
           </div>
@@ -309,7 +328,7 @@ export default function ActionBar() {
               max={maxRaise}
               step={step}
               value={effectiveRaise}
-              onChange={setRaiseAmount}
+              onChange={updateRaise}
               height={ACTION_DOCK_HEIGHT - 32}
               disabled={controlsDisabled}
             />

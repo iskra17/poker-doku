@@ -3,6 +3,12 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { DeckStyleId, DeckColorId } from '@/components/table/card-theme';
+import {
+  PREFLOP_PRESET_DEFAULT,
+  POSTFLOP_PRESET_DEFAULT,
+  sanitizePreflopPresets,
+  sanitizePostflopPresets,
+} from '@/lib/poker/bet-presets';
 
 /** 베팅 슬라이더/스테퍼 증감 단위 기준 */
 export type BetStepUnit = 'sb' | 'bb';
@@ -35,6 +41,12 @@ interface SettingsStore {
   /** 베팅 슬라이더/스테퍼 증감 단위 (SB/BB) */
   betStepUnit: BetStepUnit;
   setBetStepUnit: (unit: BetStepUnit) => void;
+  /** 프리플랍 베팅 프리셋 — 직전 베팅의 배수 (최대 4슬롯, 포커룸 표준 커스텀 버튼) */
+  preflopPresets: number[];
+  setPreflopPresets: (values: number[]) => void;
+  /** 포스트플랍 베팅 프리셋 — 팟 대비 % (최대 4슬롯) */
+  postflopPresets: number[];
+  setPostflopPresets: (values: number[]) => void;
   /** 팟 칩을 권종별로 쌓아 올리는 연출 */
   stackedPot: boolean;
   toggleStackedPot: () => void;
@@ -63,6 +75,10 @@ export const useSettingsStore = create<SettingsStore>()(
       setProfileCharacter: (profileCharacter) => set({ profileCharacter }),
       betStepUnit: 'bb',
       setBetStepUnit: (betStepUnit) => set({ betStepUnit }),
+      preflopPresets: [...PREFLOP_PRESET_DEFAULT],
+      setPreflopPresets: (values) => set({ preflopPresets: sanitizePreflopPresets(values) }),
+      postflopPresets: [...POSTFLOP_PRESET_DEFAULT],
+      setPostflopPresets: (values) => set({ postflopPresets: sanitizePostflopPresets(values) }),
       stackedPot: true,
       toggleStackedPot: () => set(s => ({ stackedPot: !s.stackedPot })),
       chipDisplayMode: 'chips',

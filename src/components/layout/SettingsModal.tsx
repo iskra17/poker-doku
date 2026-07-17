@@ -6,6 +6,9 @@ import CardComponent from '@/components/table/Card';
 import ProfileHub from '@/components/profile/ProfileHub';
 import { useSettingsStore, BetStepUnit } from '@/lib/store/settings-store';
 import {
+  PREFLOP_PRESET_DEFAULT, POSTFLOP_PRESET_DEFAULT,
+} from '@/lib/poker/bet-presets';
+import {
   DeckStyleId, DeckColorId, DECK_STYLE_LABELS, DECK_COLOR_LABELS,
   SUIT_SYMBOLS, getSuitColor,
 } from '@/components/table/card-theme';
@@ -39,6 +42,107 @@ type SettingsTab = typeof SETTINGS_TABS[number]['id'];
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <h3 className="text-xs font-bold text-blossom mb-2">{children}</h3>;
+}
+
+/**
+ * 베팅 프리셋 편집기 — 포커룸 표준 커스텀 버튼 (PokerStars 'Bet Slider Shortcuts' 대응).
+ * 프리플랍은 직전 베팅의 배수(x), 포스트플랍은 팟 %. 슬롯을 탭해 직접 수정하고
+ * blur/Enter로 확정하면 store가 범위를 정리(sanitize)한다.
+ * 입력 중 임시값은 단일 draft로 관리 — effect 없이 focus/blur 라이프사이클로만 동기화.
+ */
+function BetPresetEditor() {
+  const { preflopPresets, setPreflopPresets, postflopPresets, setPostflopPresets } = useSettingsStore();
+  const [draft, setDraft] = useState<{ kind: 'pre' | 'post'; index: number; text: string } | null>(null);
+
+  const rows = [
+    {
+      kind: 'pre' as const,
+      label: '프리플랍',
+      hint: '직전 베팅의 배수',
+      suffix: 'x',
+      values: preflopPresets,
+      commit: setPreflopPresets,
+    },
+    {
+      kind: 'post' as const,
+      label: '포스트플랍',
+      hint: '팟 대비 %',
+      suffix: '%',
+      values: postflopPresets,
+      commit: setPostflopPresets,
+    },
+  ];
+
+  const commitDraft = () => {
+    if (!draft) return;
+    const row = rows.find(r => r.kind === draft.kind)!;
+    const n = Number(draft.text);
+    if (Number.isFinite(n) && n > 0) {
+      const next = [...row.values];
+      next[draft.index] = n;
+      row.commit(next); // 범위 클램프/반올림은 store sanitize가 담당
+    }
+    setDraft(null);
+  };
+
+  return (
+    <div className="mt-2 space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-sm text-ink">베팅 프리셋 버튼</span>
+        <button
+          type="button"
+          onClick={() => {
+            setDraft(null);
+            setPreflopPresets([...PREFLOP_PRESET_DEFAULT]);
+            setPostflopPresets([...POSTFLOP_PRESET_DEFAULT]);
+          }}
+          className="text-[11px] px-2 py-1 rounded-lg border border-white/10 bg-white/5 text-ink-dim hover:bg-white/10 transition-colors"
+        >
+          기본값 복원
+        </button>
+      </div>
+      {rows.map(row => (
+        <div key={row.kind} className="flex items-center gap-2">
+          <div className="w-[86px] shrink-0 leading-tight">
+            <span className="block text-xs text-ink">{row.label}</span>
+            <span className="block text-[10px] text-ink-dim">{row.hint}</span>
+          </div>
+          <div className="flex gap-1 flex-1 min-w-0">
+            {row.values.map((value, index) => {
+              const editing = draft !== null && draft.kind === row.kind && draft.index === index;
+              return (
+                <div
+                  key={`${row.kind}-${index}`}
+                  className="flex-1 min-w-0 flex items-center rounded-lg border border-white/10 bg-white/5 focus-within:border-blossom/70 px-1.5 py-1"
+                >
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={editing && draft ? draft.text : String(value)}
+                    onFocus={e => {
+                      setDraft({ kind: row.kind, index, text: String(value) });
+                      e.target.select();
+                    }}
+                    onChange={e => setDraft({ kind: row.kind, index, text: e.target.value.replace(/[^0-9.]/g, '') })}
+                    onBlur={commitDraft}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        commitDraft();
+                        (e.target as HTMLInputElement).blur();
+                      }
+                    }}
+                    aria-label={`${row.label} 프리셋 ${index + 1}`}
+                    className="w-full min-w-0 bg-transparent text-right text-xs font-bold text-ink tabular focus:outline-none"
+                  />
+                  <span className="text-[10px] text-ink-dim pl-0.5 shrink-0">{row.suffix}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function Toggle({ checked, onToggle, label }: { checked: boolean; onToggle: () => void; label: string }) {
@@ -115,6 +219,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   ))}
                 </div>
               </div>
+              <BetPresetEditor />
             </section>
             <section>
               <SectionTitle>테이블</SectionTitle>
