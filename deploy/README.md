@@ -18,11 +18,16 @@ fly volumes create poker_doku_data --region nrt --size 1
 값을 콘솔이나 명령 기록에 직접 남기지 않는다.
 
 ```powershell
-$secretLine = "BACKUP_ENCRYPTION_KEY=$([Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)))"
+$keyBytes = New-Object byte[] 32
+[Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($keyBytes)
+$secretLine = "BACKUP_ENCRYPTION_KEY=" + [Convert]::ToBase64String($keyBytes)
 $secretLine | fly secrets import
-$secretLine = $null
-Remove-Variable secretLine -ErrorAction SilentlyContinue
+$secretLine = $null; $keyBytes = $null
+Remove-Variable secretLine, keyBytes -ErrorAction SilentlyContinue
 ```
+
+Windows PowerShell 5.1에는 `RandomNumberGenerator::GetBytes(count)` 정적 메서드가 없어
+`Create().GetBytes($bytes)` 인스턴스 방식을 사용한다 (2026-07-17 실배포에서 확인).
 
 Gemini 대사를 쓰는 경우에만 별도로 `fly secrets set GEMINI_API_KEY=...`를 실행한다. 배포 시 HA를
 만들지 않는다.
