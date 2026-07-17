@@ -8,6 +8,7 @@ const MAX_SEATS = 6;
 const CLEANUP_RETRY_BASE_MS = 100;
 const CLEANUP_RETRY_MAX_MS = 5_000;
 const CLOSE_CLEANUP_ATTEMPTS = 3;
+const CLOSE_DRAIN_TIMEOUT_MS = 25;
 
 export interface ArenaQueueEntry {
   readonly profileId: string;
@@ -47,7 +48,7 @@ interface StoredOffer extends ArenaTrainingOffer {
   cleanupAttempts: number;
   retryAt?: number;
   result?: ArenaReservation | null;
-  operation?: Promise<void>;
+  operationInFlight: boolean;
   completion: Promise<ArenaReservation | null>;
   resolveCompletion: (result: ArenaReservation | null) => void;
 }
@@ -161,7 +162,7 @@ export class ArenaMatchmaker {
   #started = false;
   #closed = false;
   #processing = false;
-  #processingOperation: Promise<void> | undefined;
+  #lifecycleGeneration = 0;
   #closePromise: Promise<ArenaMatchmakerCloseReport> | undefined;
   #events: ArenaMatchmakerEventHandlers;
   readonly #onError?: ArenaMatchmakerOptions['onError'];
@@ -181,21 +182,28 @@ export class ArenaMatchmaker {
     context: string,
     callback: (() => NotificationResult) | undefined,
   ): void {
-    if (!callback) return;
+    const generation = this.#lifecycleGeneration;
+    if (!callback || !this.#isOpenGeneration(generation)) return;
     try {
       const result = callback();
       if (isPromiseLike(result)) {
         void Promise.resolve(result).catch(error => {
-          this.#reportNotificationError(error, context);
+          if (this.#isOpenGeneration(generation)) {
+            this.#reportNotificationError(error, context, generation);
+          }
         });
       }
     } catch (error) {
-      this.#reportNotificationError(error, context);
+      this.#reportNotificationError(error, context, generation);
     }
   }
 
-  #reportNotificationError(error: unknown, context: string): void {
-    if (!this.#onError) return;
+  #reportNotificationError(
+    error: unknown,
+    context: string,
+    generation: number,
+  ): void {
+    if (!this.#onError || !this.#isOpenGeneration(generation)) return;
     try {
       const result = this.#onError(error, context);
       if (isPromiseLike(result)) {
@@ -215,16 +223,37 @@ export class ArenaMatchmaker {
   close(): Promise<ArenaMatchmakerCloseReport> {
     if (this.#closePromise) return this.#closePromise;
     this.#closed = true;
+    const closeGeneration = ++this.#lifecycleGeneration;
+    const officialOperationInFlight = this.#processing;
+    const trainingOperationsInFlight = new Set(
+      [...this.#offers.values()]
+        .filter(offer => offer.operationInFlight),
+    );
+    let resolveClose!: (report: ArenaMatchmakerCloseReport) => void;
+    let rejectClose!: (error: unknown) => void;
+    const closePromise = new Promise<ArenaMatchmakerCloseReport>(
+      (resolve, reject) => {
+        resolveClose = resolve;
+        rejectClose = reject;
+      },
+    );
+    this.#closePromise = closePromise;
     if (this.#timer) (this.#options.clearTimer ?? clearTimeout)(this.#timer);
     this.#timer = undefined;
+    this.#started = false;
+    this.#processing = false;
     this.#queue.clear();
     for (const [profileId, offer] of this.#offers) {
       offer.connected = false;
       if (offer.phase === 'offered') this.#offers.delete(profileId);
     }
     for (const state of this.#candidates.values()) state.connected.clear();
-    this.#closePromise = this.#drainClose();
-    return this.#closePromise;
+    void this.#drainClose(
+      closeGeneration,
+      officialOperationInFlight,
+      trainingOperationsInFlight,
+    ).then(resolveClose, rejectClose);
+    return closePromise;
   }
 
   join(entry: ArenaQueueEntry): ArenaQueueState {
@@ -304,37 +333,36 @@ export class ArenaMatchmaker {
 
   tick(at = this.#now()): Promise<void> {
     if (this.#closed || this.#processing) return Promise.resolve();
+    const generation = this.#lifecycleGeneration;
     this.#processing = true;
-    const operation = this.#runTick(at);
-    this.#processingOperation = operation;
+    const operation = this.#runTick(at, generation);
     void operation.then(
       () => {
-        if (this.#processingOperation === operation) {
-          this.#processingOperation = undefined;
-        }
+        if (this.#isOpenGeneration(generation)) this.#processing = false;
       },
       () => {
-        if (this.#processingOperation === operation) {
-          this.#processingOperation = undefined;
-        }
+        if (this.#isOpenGeneration(generation)) this.#processing = false;
       },
     );
     return operation;
   }
 
-  async #runTick(at: number): Promise<void> {
+  async #runTick(at: number, generation: number): Promise<void> {
+    if (!this.#isOpenGeneration(generation)) return;
     try {
       let cleanupAttempted = false;
       for (const state of this.#candidates.values()) {
         if (state.phase === 'cleanup' && (state.retryAt ?? 0) <= at) {
           cleanupAttempted = true;
-          await this.#attemptOfficialCleanup(state);
+          await this.#attemptOfficialCleanup(state, generation);
+          if (!this.#isOpenGeneration(generation)) return;
         }
       }
       for (const offer of this.#offers.values()) {
         if (offer.phase === 'cleanup' && (offer.retryAt ?? 0) <= at) {
           cleanupAttempted = true;
-          await this.#attemptTrainingCleanup(offer);
+          await this.#attemptTrainingCleanup(offer, generation);
+          if (!this.#isOpenGeneration(generation)) return;
         }
       }
       if (cleanupAttempted) return;
@@ -355,7 +383,7 @@ export class ArenaMatchmaker {
         ))
         .slice(0, MAX_SEATS);
       if (selected.length >= 2) {
-        await this.#formOfficial(selected);
+        await this.#formOfficial(selected, generation);
         return;
       }
       if (at - anchor.joinedAt < FALLBACK_MS) return;
@@ -374,6 +402,7 @@ export class ArenaMatchmaker {
           connected: true,
           rollbackDone: false,
           cleanupAttempts: 0,
+          operationInFlight: false,
           completion,
           resolveCompletion,
         } satisfies StoredOffer;
@@ -390,8 +419,10 @@ export class ArenaMatchmaker {
         return;
       }
     } finally {
-      this.#processing = false;
-      this.#schedule();
+      if (this.#isOpenGeneration(generation)) {
+        this.#processing = false;
+        this.#schedule();
+      }
     }
   }
 
@@ -410,13 +441,17 @@ export class ArenaMatchmaker {
       || at >= offer.expiresAt
     ) return Promise.resolve(null);
     offer.phase = 'creating';
-    const operation = this.#createTraining(offer);
-    offer.operation = operation;
+    offer.operationInFlight = true;
+    const generation = this.#lifecycleGeneration;
+    const operation = this.#createTraining(offer, generation);
     void operation.catch(() => undefined);
     return offer.completion;
   }
 
-  async #createTraining(offer: StoredOffer): Promise<void> {
+  async #createTraining(
+    offer: StoredOffer,
+    generation: number,
+  ): Promise<void> {
     let result: ArenaReservation | null = null;
     try {
       result = await this.#options.createTrainingRoom(
@@ -424,9 +459,10 @@ export class ArenaMatchmaker {
         offer.socketId,
       );
     } catch {
+      if (!this.#isOpenGeneration(generation)) return;
       result = null;
     }
-    offer.operation = undefined;
+    if (!this.#isOpenGeneration(generation)) return;
     offer.result = result;
     if (
       result
@@ -435,6 +471,7 @@ export class ArenaMatchmaker {
       && offer.connected
       && offer.phase === 'creating'
     ) {
+      offer.operationInFlight = false;
       this.#offers.delete(offer.profileId);
       offer.resolveCompletion(result);
       this.#safeNotify('match-found', () =>
@@ -443,10 +480,17 @@ export class ArenaMatchmaker {
       return;
     }
     offer.phase = 'cleanup';
-    await this.#attemptTrainingCleanup(offer);
+    await this.#attemptTrainingCleanup(offer, generation);
+    if (this.#isOpenGeneration(generation)) {
+      offer.operationInFlight = false;
+    }
   }
 
-  async #formOfficial(entries: readonly ArenaQueueEntry[]): Promise<void> {
+  async #formOfficial(
+    entries: readonly ArenaQueueEntry[],
+    generation: number,
+  ): Promise<void> {
+    if (!this.#isOpenGeneration(generation)) return;
     for (const entry of entries) this.#queue.delete(entry.profileId);
     const candidate: ArenaOfficialCandidate = {
       candidateId: `candidate-${++this.#counter}`,
@@ -466,9 +510,10 @@ export class ArenaMatchmaker {
     for (const entry of entries) {
       this.#safeNotify('queue-state', () =>
         this.#events.onQueueState?.(entry.socketId, { status: 'forming' }));
+      if (!this.#isOpenGeneration(generation)) return;
     }
     const isValid = (): boolean => (
-      !this.#closed
+      this.#isOpenGeneration(generation)
       && this.#candidates.get(candidate.candidateId) === state
       && state.connected.size === entries.length
     );
@@ -477,9 +522,11 @@ export class ArenaMatchmaker {
     try {
       reservation = await this.#options.reserveOfficial(candidate, isValid);
     } catch {
+      if (!this.#isOpenGeneration(generation)) return;
       this.#restoreCandidate(state, false);
       return;
     }
+    if (!this.#isOpenGeneration(generation)) return;
     if (!reservation) {
       this.#restoreCandidate(state, false);
       return;
@@ -487,7 +534,7 @@ export class ArenaMatchmaker {
     state.reservation = reservation;
     if (!isValid()) {
       state.phase = 'cleanup';
-      await this.#attemptOfficialCleanup(state);
+      await this.#attemptOfficialCleanup(state, generation);
       return;
     }
     state.phase = 'creating';
@@ -496,16 +543,18 @@ export class ArenaMatchmaker {
     try {
       created = await this.#options.createOfficialRoom(reservation, candidate);
     } catch {
+      if (!this.#isOpenGeneration(generation)) return;
       created = false;
     }
+    if (!this.#isOpenGeneration(generation)) return;
     if (!created) {
       state.phase = 'cleanup';
-      await this.#attemptOfficialCleanup(state);
+      await this.#attemptOfficialCleanup(state, generation);
       return;
     }
     if (!isValid()) {
       state.phase = 'cleanup';
-      await this.#attemptOfficialCleanup(state);
+      await this.#attemptOfficialCleanup(state, generation);
       return;
     }
     this.#candidates.delete(candidate.candidateId);
@@ -516,7 +565,11 @@ export class ArenaMatchmaker {
     }
   }
 
-  async #attemptOfficialCleanup(state: CandidateState): Promise<void> {
+  async #attemptOfficialCleanup(
+    state: CandidateState,
+    generation: number,
+  ): Promise<void> {
+    if (!this.#isOpenGeneration(generation)) return;
     const reservation = state.reservation;
     if (!reservation || state.phase !== 'cleanup') return;
     state.retryAt = undefined;
@@ -526,25 +579,33 @@ export class ArenaMatchmaker {
           reservation,
           state.candidate,
         );
-        state.rollbackDone = true;
       } catch {
+        if (!this.#isOpenGeneration(generation)) return;
         this.#deferCleanup(state);
         return;
       }
+      if (!this.#isOpenGeneration(generation)) return;
+      state.rollbackDone = true;
     }
     if (!state.voidDone) {
       try {
         await this.#options.voidOfficial(reservation.matchId);
-        state.voidDone = true;
       } catch {
+        if (!this.#isOpenGeneration(generation)) return;
         this.#deferCleanup(state);
         return;
       }
+      if (!this.#isOpenGeneration(generation)) return;
+      state.voidDone = true;
     }
     this.#restoreCandidate(state, true);
   }
 
-  async #attemptTrainingCleanup(offer: StoredOffer): Promise<void> {
+  async #attemptTrainingCleanup(
+    offer: StoredOffer,
+    generation: number,
+  ): Promise<void> {
+    if (!this.#isOpenGeneration(generation)) return;
     if (offer.phase !== 'cleanup') return;
     offer.retryAt = undefined;
     if (!offer.rollbackDone) {
@@ -555,11 +616,13 @@ export class ArenaMatchmaker {
           offer.offerId,
           offer.result ?? null,
         );
-        offer.rollbackDone = true;
       } catch {
+        if (!this.#isOpenGeneration(generation)) return;
         this.#deferCleanup(offer);
         return;
       }
+      if (!this.#isOpenGeneration(generation)) return;
+      offer.rollbackDone = true;
     }
     this.#offers.delete(offer.profileId);
     offer.resolveCompletion(null);
@@ -582,36 +645,47 @@ export class ArenaMatchmaker {
     this.#schedule();
   }
 
-  async #drainClose(): Promise<ArenaMatchmakerCloseReport> {
-    while (true) {
-      const processing = this.#processingOperation;
-      const training = [...this.#offers.values()]
-        .map(offer => offer.operation)
-        .filter((operation): operation is Promise<void> => !!operation);
-      if (processing || training.length > 0) {
-        await Promise.allSettled([
-          ...(processing ? [processing] : []),
-          ...training,
-        ]);
-        continue;
-      }
-      break;
-    }
-
+  async #drainClose(
+    closeGeneration: number,
+    officialOperationInFlight: boolean,
+    trainingOperationsInFlight: ReadonlySet<StoredOffer>,
+  ): Promise<ArenaMatchmakerCloseReport> {
+    const deadline = Date.now() + CLOSE_DRAIN_TIMEOUT_MS;
     for (let attempt = 0; attempt < CLOSE_CLEANUP_ATTEMPTS; attempt += 1) {
-      const officialCleanup = [...this.#candidates.values()]
-        .filter(state => state.phase === 'cleanup');
+      const officialCleanup = officialOperationInFlight
+        ? []
+        : [...this.#candidates.values()]
+            .filter(state => state.phase === 'cleanup');
       const trainingCleanup = [...this.#offers.values()]
-        .filter(offer => offer.phase === 'cleanup');
+        .filter(offer => (
+          offer.phase === 'cleanup'
+          && !trainingOperationsInFlight.has(offer)
+        ));
       if (officialCleanup.length === 0 && trainingCleanup.length === 0) {
         break;
       }
       for (const state of officialCleanup) {
-        await this.#attemptOfficialCleanup(state);
+        if (Date.now() >= deadline) break;
+        await this.#attemptOfficialCloseCleanup(
+          state,
+          closeGeneration,
+          deadline,
+        );
+        if (!this.#isCloseGeneration(closeGeneration)) break;
       }
       for (const offer of trainingCleanup) {
-        await this.#attemptTrainingCleanup(offer);
+        if (Date.now() >= deadline) break;
+        await this.#attemptTrainingCloseCleanup(
+          offer,
+          closeGeneration,
+          deadline,
+        );
+        if (!this.#isCloseGeneration(closeGeneration)) break;
       }
+      if (
+        Date.now() >= deadline
+        || !this.#isCloseGeneration(closeGeneration)
+      ) break;
     }
 
     const pendingOfficialMatchIds = [...this.#candidates.values()]
@@ -631,9 +705,122 @@ export class ArenaMatchmaker {
       (this.#options.clearTimer ?? clearTimeout)(this.#timer);
       this.#timer = undefined;
     }
+    if (this.#isCloseGeneration(closeGeneration)) {
+      this.#lifecycleGeneration += 1;
+    }
     return Object.freeze({
       pendingOfficialMatchIds: Object.freeze(pendingOfficialMatchIds),
       pendingTrainingOfferIds: Object.freeze(pendingTrainingOfferIds),
+    });
+  }
+
+  async #attemptOfficialCloseCleanup(
+    state: CandidateState,
+    closeGeneration: number,
+    deadline: number,
+  ): Promise<void> {
+    if (!this.#isCloseGeneration(closeGeneration)) return;
+    const reservation = state.reservation;
+    if (!reservation || state.phase !== 'cleanup') return;
+    if (state.rollbackRequired && !state.rollbackDone) {
+      const rollback = await this.#settleCloseDependency(
+        () => this.#options.rollbackOfficialRoom(
+          reservation,
+          state.candidate,
+        ),
+        closeGeneration,
+        deadline,
+      );
+      if (
+        rollback !== 'fulfilled'
+        || !this.#isCloseGeneration(closeGeneration)
+      ) return;
+      state.rollbackDone = true;
+    }
+    if (!state.voidDone) {
+      const voided = await this.#settleCloseDependency(
+        () => this.#options.voidOfficial(reservation.matchId),
+        closeGeneration,
+        deadline,
+      );
+      if (
+        voided !== 'fulfilled'
+        || !this.#isCloseGeneration(closeGeneration)
+      ) return;
+      state.voidDone = true;
+    }
+    this.#candidates.delete(state.candidate.candidateId);
+  }
+
+  async #attemptTrainingCloseCleanup(
+    offer: StoredOffer,
+    closeGeneration: number,
+    deadline: number,
+  ): Promise<void> {
+    if (
+      !this.#isCloseGeneration(closeGeneration)
+      || offer.phase !== 'cleanup'
+    ) return;
+    if (!offer.rollbackDone) {
+      const rollback = await this.#settleCloseDependency(
+        () => this.#options.rollbackTrainingRoom(
+          offer.profileId,
+          offer.socketId,
+          offer.offerId,
+          offer.result ?? null,
+        ),
+        closeGeneration,
+        deadline,
+      );
+      if (
+        rollback !== 'fulfilled'
+        || !this.#isCloseGeneration(closeGeneration)
+      ) return;
+      offer.rollbackDone = true;
+    }
+    this.#offers.delete(offer.profileId);
+    offer.resolveCompletion(null);
+  }
+
+  #settleCloseDependency(
+    operation: () => Promise<unknown>,
+    closeGeneration: number,
+    deadline: number,
+  ): Promise<'fulfilled' | 'rejected' | 'timed-out'> {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0 || !this.#isCloseGeneration(closeGeneration)) {
+      return Promise.resolve('timed-out');
+    }
+    return new Promise(resolve => {
+      let settled = false;
+      const timer = setTimeout(() => {
+        if (settled || !this.#isCloseGeneration(closeGeneration)) return;
+        settled = true;
+        resolve('timed-out');
+      }, remaining);
+      let dependency: Promise<unknown>;
+      try {
+        dependency = Promise.resolve(operation());
+      } catch {
+        clearTimeout(timer);
+        settled = true;
+        resolve('rejected');
+        return;
+      }
+      void dependency.then(
+        () => {
+          if (settled || !this.#isCloseGeneration(closeGeneration)) return;
+          clearTimeout(timer);
+          settled = true;
+          resolve('fulfilled');
+        },
+        () => {
+          if (settled || !this.#isCloseGeneration(closeGeneration)) return;
+          clearTimeout(timer);
+          settled = true;
+          resolve('rejected');
+        },
+      );
     });
   }
 
@@ -663,6 +850,14 @@ export class ArenaMatchmaker {
   #rankedQueue(): ArenaQueueEntry[] {
     return [...this.#queue.values()].sort((left, right) =>
       left.joinedAt - right.joinedAt || binaryCompare(left.profileId, right.profileId));
+  }
+
+  #isOpenGeneration(generation: number): boolean {
+    return !this.#closed && this.#lifecycleGeneration === generation;
+  }
+
+  #isCloseGeneration(generation: number): boolean {
+    return this.#closed && this.#lifecycleGeneration === generation;
   }
 
   #schedule(immediate = false): void {

@@ -174,7 +174,7 @@ describe('ArenaMatchmaker rules', () => {
     expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
   });
 
-  it('awaits in-flight training rollback on close without a stale notification', async () => {
+  it('closes while training creation is pending and ignores its late success', async () => {
     let resolveTraining!: (result: { matchId: string } | null) => void;
     let trainingStarted!: () => void;
     const started = new Promise<void>(resolve => {
@@ -216,19 +216,75 @@ describe('ArenaMatchmaker rules', () => {
       'a', 'sa', offered[0].offerId, 70_000,
     );
     await started;
-    let closeResolved = false;
-    const closing = matchmaker.close().then(() => {
-      closeResolved = true;
+    const closing = matchmaker.close();
+    expect(matchmaker.close()).toBe(closing);
+    const outcome = await settleWithin(closing);
+    expect(outcome).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: [],
+        pendingTrainingOfferIds: [offered[0].offerId],
+      },
     });
-    await Promise.resolve();
-    expect(closeResolved).toBe(false);
+    await expect(accepting).resolves.toBeNull();
 
     resolveTraining({ matchId: 'training-room' });
-    await expect(accepting).resolves.toBeNull();
-    await closing;
-    expect(rolledBack).toEqual(['training-room']);
+    await flushMicrotasks();
+    expect(rolledBack).toEqual([]);
     expect(matched).toEqual([]);
     expect(timers.size).toBe(0);
+  });
+
+  it('does not duplicate an in-flight training cleanup while closing', async () => {
+    const offered: ArenaTrainingOffer[] = [];
+    const rollbackResolvers: Array<() => void> = [];
+    let rollbackStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      rollbackStarted = resolve;
+    });
+    let rollbackCalls = 0;
+    const callbacks: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => {
+        rollbackCalls += 1;
+        if (rollbackCalls === 1) rollbackStarted();
+        await new Promise<void>(resolve => {
+          rollbackResolvers.push(resolve);
+        });
+      },
+      onTrainingOffered: (_socketId, offer) => offered.push(offer),
+      onQueueState: (_socketId, state) => callbacks.push(state.status),
+      onMatchFound: socketId => callbacks.push(`matched:${socketId}`),
+      onError: (_error, context) => callbacks.push(`error:${context}`),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+    const accepting = matchmaker.acceptTraining(
+      'a', 'sa', offered[0].offerId, 70_000,
+    );
+    await started;
+    const callbacksBeforeClose = [...callbacks];
+
+    expect(await settleWithin(matchmaker.close())).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: [],
+        pendingTrainingOfferIds: [offered[0].offerId],
+      },
+    });
+    await expect(accepting).resolves.toBeNull();
+    expect(rollbackCalls).toBe(1);
+
+    rollbackResolvers[0]();
+    await flushMicrotasks();
+    expect(rollbackCalls).toBe(1);
+    expect(callbacks).toEqual(callbacksBeforeClose);
   });
 
   it('restores connected candidates with original time before reserve validation', async () => {
@@ -369,8 +425,8 @@ describe('ArenaMatchmaker rules', () => {
     ]);
   });
 
-  it('rolls back without reviving a stale candidate after close', async () => {
-    let resolveRoom!: (created: boolean) => void;
+  it('closes while official room creation is pending and ignores its late rejection', async () => {
+    let rejectRoom!: (error: Error) => void;
     let roomCreationStarted!: () => void;
     const started = new Promise<void>(resolve => {
       roomCreationStarted = resolve;
@@ -381,8 +437,8 @@ describe('ArenaMatchmaker rules', () => {
     const matchmaker = new ArenaMatchmaker({
       now: () => 90_000,
       reserveOfficial: async () => ({ matchId: 'reserved' }),
-      createOfficialRoom: async () => new Promise(resolve => {
-        resolveRoom = resolve;
+      createOfficialRoom: async () => new Promise((_resolve, reject) => {
+        rejectRoom = reject;
         roomCreationStarted();
       }),
       rollbackOfficialRoom: async reservation => {
@@ -399,21 +455,23 @@ describe('ArenaMatchmaker rules', () => {
     matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
     const ticking = matchmaker.tick(60_000);
     await started;
-    let closeResolved = false;
-    const closing = matchmaker.close().then(() => {
-      closeResolved = true;
+    const outcome = await settleWithin(matchmaker.close());
+    expect(outcome).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: ['reserved'],
+        pendingTrainingOfferIds: [],
+      },
     });
-    await Promise.resolve();
-    expect(closeResolved).toBe(false);
-    resolveRoom(true);
-    await ticking;
-    await closing;
 
-    expect(rolledBack).toEqual(['reserved']);
-    expect(voided).toEqual(['reserved']);
+    rejectRoom(new Error('late room rejection'));
+    await ticking;
+    await flushMicrotasks();
+
+    expect(rolledBack).toEqual([]);
+    expect(voided).toEqual([]);
     expect(matched).toEqual([]);
     expect(matchmaker.inspectQueue()).toEqual([]);
-    expect(closeResolved).toBe(true);
   });
 
   it('keeps a candidate blocked and retries rollback then void after transient cleanup failures', async () => {
@@ -620,6 +678,182 @@ describe('ArenaMatchmaker rules', () => {
     expect(failed.hasBlockingParticipation('b')).toBe(false);
   });
 
+  it('closes with a finite report while official reservation is pending', async () => {
+    let resolveReserve!: (value: { matchId: string }) => void;
+    let reservationStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      reservationStarted = resolve;
+    });
+    const mutations: string[] = [];
+    const callbacks: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => new Promise(resolve => {
+        resolveReserve = resolve;
+        reservationStarted();
+      }),
+      createOfficialRoom: async reservation => {
+        mutations.push(`create:${reservation.matchId}`);
+        return true;
+      },
+      rollbackOfficialRoom: async reservation => {
+        mutations.push(`rollback:${reservation.matchId}`);
+      },
+      voidOfficial: async matchId => {
+        mutations.push(`void:${matchId}`);
+      },
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      onMatchFound: socketId => callbacks.push(`matched:${socketId}`),
+      onError: (_error, context) => callbacks.push(`error:${context}`),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    const ticking = matchmaker.tick(60_000);
+    await started;
+
+    const closing = matchmaker.close();
+    expect(matchmaker.close()).toBe(closing);
+    expect(await settleWithin(closing)).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: [],
+        pendingTrainingOfferIds: [],
+      },
+    });
+    expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
+
+    resolveReserve({ matchId: 'late-reservation' });
+    await ticking;
+    await flushMicrotasks();
+    expect(mutations).toEqual([]);
+    expect(callbacks).toEqual([]);
+  });
+
+  it('bounds a never-settling close cleanup and freezes its unresolved report', async () => {
+    let rollbackCalls = 0;
+    let resolveLateRollback!: () => void;
+    let voidCalls = 0;
+    let nextTimer = 0;
+    const timers = new Map<ReturnType<typeof setTimeout>, number>();
+    const callbacks: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => {
+        rollbackCalls += 1;
+        if (rollbackCalls === 1) throw new Error('initial cleanup failure');
+        await new Promise<void>(resolve => {
+          resolveLateRollback = resolve;
+        });
+      },
+      voidOfficial: async () => {
+        voidCalls += 1;
+      },
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      onQueueState: (_socketId, state) => callbacks.push(state.status),
+      onMatchFound: socketId => callbacks.push(`matched:${socketId}`),
+      onError: (_error, context) => callbacks.push(`error:${context}`),
+      setTimer: (_callback, delay) => {
+        const handle = ++nextTimer as unknown as ReturnType<typeof setTimeout>;
+        timers.set(handle, delay);
+        return handle;
+      },
+      clearTimer: handle => {
+        timers.delete(handle);
+      },
+    });
+    matchmaker.start();
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+    const callbacksBeforeClose = [...callbacks];
+
+    const closing = matchmaker.close();
+    expect(matchmaker.close()).toBe(closing);
+    const outcome = await settleWithin(closing);
+    expect(outcome.status).toBe('settled');
+    if (outcome.status !== 'settled') return;
+    expect(outcome.value).toEqual({
+      pendingOfficialMatchIds: ['reserved'],
+      pendingTrainingOfferIds: [],
+    });
+    expect(Object.isFrozen(outcome.value)).toBe(true);
+    expect(Object.isFrozen(outcome.value.pendingOfficialMatchIds)).toBe(true);
+    expect(Object.isFrozen(outcome.value.pendingTrainingOfferIds)).toBe(true);
+    expect(rollbackCalls).toBe(2);
+    expect(voidCalls).toBe(0);
+    expect(timers.size).toBe(0);
+    expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
+
+    resolveLateRollback();
+    await flushMicrotasks();
+    expect(rollbackCalls).toBe(2);
+    expect(voidCalls).toBe(0);
+    expect(callbacks).toEqual(callbacksBeforeClose);
+  });
+
+  it('returns the same close promise when cleanup re-enters close', async () => {
+    let rollbackCalls = 0;
+    let reentrantClose: ReturnType<ArenaMatchmaker['close']> | undefined;
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => {
+        rollbackCalls += 1;
+        if (rollbackCalls === 2) reentrantClose = matchmaker.close();
+        throw new Error('cleanup failure');
+      },
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+
+    const closing = matchmaker.close();
+    expect(reentrantClose).toBe(closing);
+    expect(await settleWithin(closing)).toEqual({
+      status: 'settled',
+      value: {
+        pendingOfficialMatchIds: ['reserved'],
+        pendingTrainingOfferIds: [],
+      },
+    });
+    expect(rollbackCalls).toBe(4);
+  });
+
+  it('does not report a delayed notification rejection after close resolves', async () => {
+    let rejectNotification!: (error: Error) => void;
+    const notification = new Promise<void>((_resolve, reject) => {
+      rejectNotification = reject;
+    });
+    const reported: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      onQueueState: () => notification,
+      onError: (_error, context) => reported.push(context),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    expect(await settleWithin(matchmaker.close())).toMatchObject({
+      status: 'settled',
+    });
+
+    rejectNotification(new Error('late notification failure'));
+    await flushMicrotasks();
+    expect(reported).toEqual([]);
+  });
+
   it('returns a finite close report when official cleanup permanently fails', async () => {
     let rollbackCalls = 0;
     let voidCalls = 0;
@@ -675,8 +909,7 @@ describe('ArenaMatchmaker rules', () => {
         pendingTrainingOfferIds: [],
       },
     });
-    expect(rollbackCalls).toBeGreaterThan(1);
-    expect(rollbackCalls).toBeLessThanOrEqual(10);
+    expect(rollbackCalls).toBe(4);
     expect(voidCalls).toBe(0);
     expect(timers.size).toBe(0);
     const callsAfterClose = rollbackCalls;
@@ -705,8 +938,7 @@ describe('ArenaMatchmaker rules', () => {
     const accepting = matchmaker.acceptTraining(
       'a', 'sa', offered[0].offerId, 70_000,
     );
-    await Promise.resolve();
-    await Promise.resolve();
+    await flushMicrotasks();
 
     const report = await matchmaker.close();
     await expect(accepting).resolves.toBeNull();
@@ -714,8 +946,7 @@ describe('ArenaMatchmaker rules', () => {
       pendingOfficialMatchIds: [],
       pendingTrainingOfferIds: [offered[0].offerId],
     });
-    expect(rollbackCalls).toBeGreaterThan(1);
-    expect(rollbackCalls).toBeLessThanOrEqual(10);
+    expect(rollbackCalls).toBe(4);
     expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
   });
 });
@@ -732,4 +963,30 @@ function testMatchmaker(
     createTrainingRoom: async () => null,
     rollbackTrainingRoom: async () => undefined,
   });
+}
+
+async function settleWithin<T>(
+  promise: Promise<T>,
+  timeoutMs = 100,
+): Promise<
+  | { status: 'settled'; value: T }
+  | { status: 'timeout' }
+> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise.then(value => ({ status: 'settled' as const, value })),
+      new Promise<{ status: 'timeout' }>(resolve => {
+        timer = setTimeout(() => resolve({ status: 'timeout' }), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function flushMicrotasks(): Promise<void> {
+  for (let index = 0; index < 10; index += 1) {
+    await Promise.resolve();
+  }
 }
