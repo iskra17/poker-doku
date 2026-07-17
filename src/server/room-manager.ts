@@ -26,6 +26,7 @@ import type { ArenaOfficialSummary } from './arena-service';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
+const RUNOUT_STREET_DELAY_MS = 1_600; // 올인 런아웃 스트리트 간 시간차 (핸드 공개 → 플랍 → 턴 → 리버 → 쇼다운)
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
 const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
 const PRE_HAND_RETRY_MS = 1_000;
@@ -36,6 +37,8 @@ const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
 
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
+  /** 올인 런아웃 스트리트 간 지연 (ms) — 테스트에서 짧게 줄이기 위한 옵션 */
+  runoutStreetDelayMs?: number;
   economy?: RoomEconomyHooks;
   progression?: RoomProgressionHooks;
   arena?: RoomArenaHooks;
@@ -1064,6 +1067,20 @@ export class RoomManager {
         return;
       }
 
+      // 타임뱅크까지 소진한 완전 타임아웃 → 자동 체크/폴드 + 자리비움 마킹.
+      // 응답 없는 좌석이 매 턴 테이블을 수십 초씩 멈추지 않게 한다 (캐시: 다음 핸드 딜아웃,
+      // SnG: away 자동 폴드). 복귀는 본인이 ActionBar [게임 복귀]를 눌러야 한다.
+      if (
+        current && stillActive && stillActive.id === activePlayer.id
+        && current.engine.state.isHandInProgress
+        && !stillActive.sitOutNext && stillActive.status !== 'sitting-out'
+      ) {
+        stillActive.sitOutNext = true;
+        this.sendSystemChat(
+          roomId,
+          `${stillActive.name}님이 응답이 없어 자리비움 처리됐어요 — [게임 복귀]를 누르면 다시 참여해요.`,
+        );
+      }
       this.autoActFor(roomId, activePlayer.id, '시간 초과');
     }, timeoutMs);
 
@@ -1207,6 +1224,8 @@ export class RoomManager {
     if (!keep) {
       return !this.leaveRoom(roomId, playerId);
     }
+    // 좌석을 지키기로 했으니 회수 카운트다운은 해제 (타임바가 0에서 얼어붙지 않게)
+    player.disconnectGraceDeadline = undefined;
     // 캐시 자리비움 이탈: 최종 정리 유예 (SnG는 유예 없이 블라인드 소진에 맡김)
     if (!isSng) this.scheduleSitOutAbandon(roomId, playerId);
     return true;
@@ -1325,14 +1344,22 @@ export class RoomManager {
 
   // --- 재접속 (grace period) ---
 
-  /** disconnect 직후: 좌석/칩은 유지하고 마킹만. 자기 턴이면 즉시 자동 처리 */
-  handleDisconnect(roomId: string, playerId: string): void {
+  /**
+   * disconnect 직후: 좌석/칩은 유지하고 마킹만. 자기 턴이면 즉시 자동 처리.
+   * graceDeadline(epoch ms)을 주면, grace 만료 시 좌석이 실제로 제거되는 경우
+   * (캐시 & 비자리비움 — handleGraceExpired의 keep 판정과 동일 기준)에만 스냅샷에 실어
+   * 클라이언트가 회수 카운트다운 타임바를 그리게 한다.
+   */
+  handleDisconnect(roomId: string, playerId: string, graceDeadline?: number): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return;
 
     player.isDisconnected = true;
+    const sittingOut = player.sitOutNext || player.status === 'sitting-out';
+    const willBeRemoved = room.config.gameMode !== 'sng' && !sittingOut;
+    player.disconnectGraceDeadline = willBeRemoved ? graceDeadline : undefined;
     this.sendSystemChat(roomId, `${player.name}님의 연결이 끊겼어요 — 잠시 자리를 지켜둘게요.`);
 
     if (room.engine.state.isHandInProgress) {
@@ -1355,6 +1382,7 @@ export class RoomManager {
 
     const wasDisconnected = !!player.isDisconnected;
     player.isDisconnected = false;
+    player.disconnectGraceDeadline = undefined;
     // 돌아왔으니 최종 정리 유예 취소
     this.cancelSitOutAbandon(roomId, playerId);
     // 명시적 자리비움(sitOutNext)은 재접속만으로 해제하지 않는다 — 본인이 복귀 버튼을 눌러야 함
@@ -1374,6 +1402,12 @@ export class RoomManager {
 
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.isHandInProgress) return;
+
+    // 올인 런아웃 모드: 더 이상 액션이 없다 — 턴 타이머 대신 스트리트 시간차 딜 체인을 돌린다
+    if (room.engine.state.allInRunout) {
+      this.scheduleRunoutStreet(roomId);
+      return;
+    }
 
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer) return;
@@ -1397,6 +1431,28 @@ export class RoomManager {
       // 휴먼 턴 → 타이머 시작
       this.startTurnTimer(roomId);
     }
+  }
+
+  /**
+   * 올인 런아웃 스트리트 딜 체인 — 핸드 공개 상태에서 스트리트를 하나씩 시간차로 깐다.
+   * 타이머는 turnTimers 슬롯을 재사용해 기존 정리 경로(dispose/leave/shutdown)를 그대로 탄다.
+   * 진행 중 이탈로 핸드가 먼저 끝났으면(allInRunout 해제) 아무것도 하지 않는다.
+   */
+  private scheduleRunoutStreet(roomId: string): void {
+    this.clearTurnTimer(roomId);
+    const timer = setTimeout(() => {
+      this.turnTimers.delete(roomId);
+      const room = this.rooms.get(roomId);
+      if (!room || !room.engine.state.isHandInProgress || !room.engine.state.allInRunout) return;
+      const done = room.engine.dealRunoutStreet();
+      if (done) {
+        this.handleCompletedHand(roomId);
+      } else {
+        this.onUpdate(roomId, room.engine);
+        this.scheduleRunoutStreet(roomId);
+      }
+    }, this.options.runoutStreetDelayMs ?? RUNOUT_STREET_DELAY_MS);
+    this.turnTimers.set(roomId, timer);
   }
 
   private startBotLoop(roomId: string): void {

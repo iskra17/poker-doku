@@ -33,8 +33,17 @@ npx tsc --noEmit
   절대 `pots[].amount +=` 증분 방식으로 되돌리지 말 것 (멀티 스트리트 소실 버그의 원인이었음).
 - **핸드 중 이탈**: 진행 중엔 절대 splice 금지 — `pendingRemoval` 마킹 + 폴드, 다음 핸드 시작 시
   `removePendingPlayers()`가 일괄 제거 (dealerIndex 보정 포함).
+- **올인 런아웃 단계 연출**: 응수 가능한 플레이어가 1명 이하로 베팅이 닫히면 엔진이 보드를 즉시
+  깔지 않고 `state.allInRunout` 모드로 전환한다(activePlayerIndex=-1, 핸드는 진행 중). 이때
+  getPublicState가 생존자 핸드를 미리 공개(revealed)하고, RoomManager `scheduleRunoutStreet()`가
+  `dealRunoutStreet()`를 스트리트당 1.6초 간격으로 호출해 플랍→턴→리버→쇼다운을 순차 브로드캐스트
+  한다 (타이머는 turnTimers 슬롯 재사용 — 기존 정리 경로를 그대로 탄다). 테스트에서 최종 결과만
+  보려면 `completeRunout(engine)`(test-helpers) 사용. 회귀: `room-manager.runout-timeout.test.ts`.
 - **재접속**: `src/server/session-manager.ts`. localStorage 토큰(비밀) ↔ playerId(공개) ↔ socketId
   매핑, disconnect 후 60초 grace 동안 좌석/칩 보존. 토큰을 gameState로 노출하지 말 것.
+  grace 만료로 좌석이 실제 제거되는 경우(캐시 & 비자리비움)에만 `Player.disconnectGraceDeadline`
+  (epoch ms)을 스냅샷에 실어 클라이언트(PlayerSeat)가 오프라인 회수 카운트다운 타임바를 그린다 —
+  SnG/자리비움 좌석은 보존되므로 세팅 금지, 재접속·grace 만료 keep 시 해제.
   소켓 재연결 시 클라이언트가 `resync`를 보내고, 방/좌석이 사라졌으면(서버 재시작·유휴 정리·
   grace 만료) 서버가 `room-lost`로 응답 → 클라이언트는 안내와 함께 로비 복귀. 이 계약이 없으면
   서버 재시작 때 클라이언트가 죽은 방 스냅샷을 든 채 얼어붙는다. 캐시 게임에서 파산(0칩) 좌석의
@@ -81,7 +90,8 @@ npx tsc --noEmit
   기존 보존 좌석은 회수되므로(JoinRoomModal이 경고) 주의. 회귀: `room-manager.myseat.test.ts`.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 타임뱅크가
-  남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드.
+  남아 있으면 자동 사용(+30초)해 연장하고, 다 쓰면 자동 체크/폴드 + `sitOutNext` 자리비움 마킹
+  (응답 없는 좌석이 매 턴 테이블을 멈추지 않게 — 복귀는 ActionBar [게임 복귀]).
 - **액션 규칙**: `computeValidActions(state, player)` (engine.ts export)가 **단일 소스** —
   서버 `PokerEngine.getValidActions`와 클라 `ActionBar` 버튼 노출이 **같은 함수**를 쓴다.
   규칙을 양쪽에 각각 구현하지 말 것: 어긋나면 "버튼은 보이는데 서버가 거부하는" 먹통 버튼이 된다

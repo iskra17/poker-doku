@@ -535,7 +535,8 @@ export function setupSocketHandlers(
       return;
     }
     const roomId = session.roomId;
-    roomManager.handleDisconnect(roomId, session.playerId);
+    // grace 만료로 좌석이 제거되는 경우 클라이언트가 회수 카운트다운 타임바를 그릴 수 있게 만료 시각 전달
+    roomManager.handleDisconnect(roomId, session.playerId, Date.now() + graceMs);
     sessions.startGrace(session, graceMs, () => {
       const seatKept = roomManager.handleGraceExpired(roomId, session.playerId);
       eventLog.log('grace-expired', {

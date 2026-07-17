@@ -61,6 +61,13 @@ export default function ProfileOnboarding() {
             <li>현금·현물 보상 없음</li>
             <li>칩 환전·양도 불가</li>
           </ul>
+          <div className="rounded-xl border border-cyber/30 bg-cyber/10 p-4">
+            <p className="text-sm font-bold text-cyber">🔒 개인정보를 수집하지 않아요</p>
+            <p className="mt-1.5 text-xs leading-relaxed text-ink">
+              가입·이메일·전화번호가 없습니다. 서버가 자동으로 만든 익명 별명과 게임 기록만 저장되고,
+              접속 정보는 이 브라우저에만 남아요. 브라우저 데이터를 지우면 복구 단어로만 되찾을 수 있어요.
+            </p>
+          </div>
           <label className="flex cursor-pointer items-start gap-2 text-sm leading-relaxed text-ink">
             <input
               type="checkbox"

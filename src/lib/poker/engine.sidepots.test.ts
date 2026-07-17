@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PokerEngine } from './engine';
 import { RoomConfig } from './types';
 import {
-  RiggedDeck, setupTable, act, actor, makePlayer, totalTableChips, totalStacks,
+  RiggedDeck, setupTable, act, actor, makePlayer, totalTableChips, totalStacks, completeRunout,
 } from './test-helpers';
 
 function setupWalletTable(chipCounts: number[], riggedCodes: string) {
@@ -51,7 +51,8 @@ describe('사이드팟 — 단일 스트리트 (기존에도 정상이던 케이
     const res = act(engine, 'call');
 
     expect(res.valid).toBe(true);
-    // 전원 올인 → 런아웃 → 쇼다운
+    // 전원 올인 → 단계별 런아웃 → 쇼다운
+    completeRunout(engine);
     expect(engine.state.street).toBe('showdown');
     expect(totalStacks(engine)).toBe(initialTotal);
   });
@@ -95,6 +96,7 @@ describe('사이드팟 — 멀티 스트리트 (버그 A 재현)', () => {
     expect(totalTableChips(engine)).toBe(initialTotal);
 
     act(engine, 'fold'); // p1 폴드 → 라운드 완료 → 런아웃 → 쇼다운
+    completeRunout(engine);
 
     // 쇼다운 후 스택 총합 보존 (팟은 표시용으로 유지되므로 스택만 검증)
     expect(engine.state.street).toBe('showdown');
@@ -137,6 +139,7 @@ describe('사이드팟 — 멀티 스트리트 (버그 A 재현)', () => {
     expect(totalTableChips(engine)).toBe(initialTotal);
 
     act(engine, 'fold'); // → 런아웃 → 쇼다운
+    completeRunout(engine);
     expect(engine.state.street).toBe('showdown');
     expect(totalStacks(engine)).toBe(initialTotal);
   });
@@ -159,6 +162,7 @@ describe('사이드팟 — 멀티 스트리트 (버그 A 재현)', () => {
     act(engine, 'all-in'); // p2 (900 잔여)
     const res = act(engine, 'call'); // p1
     expect(res.valid).toBe(true);
+    completeRunout(engine);
 
     expect(engine.state.street).toBe('showdown');
     expect(totalStacks(engine)).toBe(initialTotal);
@@ -207,6 +211,7 @@ describe('wallet cash rake with showdown pots', () => {
     act(engine, 'call');
     act(engine, 'all-in');
     act(engine, 'call');
+    completeRunout(engine);
 
     expect(engine.state.pots.map(pot => pot.amount)).toEqual([300, 200, 100]);
     expect(engine.state.handRake).toBe(30);

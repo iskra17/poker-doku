@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Player } from '@/lib/poker/types';
 import { SeatAction } from '@/lib/hooks/use-seat-actions';
@@ -25,6 +26,44 @@ interface PlayerSeatProps {
   /** 홀카드를 붙일 쪽 — 우측 열 좌석은 화면 클리핑 방지를 위해 왼쪽(테이블 중앙 방향) */
   cardSide?: 'left' | 'right';
   onSit?: (seatIndex: number) => void;
+}
+
+/**
+ * 오프라인 좌석 회수 카운트다운 — 서버가 준 절대 만료 시각(deadline)까지 줄어드는 빨간 타임바.
+ * 전체 유예 길이는 첫 틱 시점의 남은 시간으로 앵커링해 서버 graceMs 설정과 자동으로 맞는다.
+ * (렌더 중 Date.now() 금지 규칙 — 계산은 전부 인터벌 콜백에서만)
+ */
+function OfflineCountdown({ deadline, compact }: { deadline: number; compact: boolean }) {
+  const [view, setView] = useState<{ frac: number; seconds: number } | null>(null);
+  const totalRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    totalRef.current = null;
+    const tick = () => {
+      const remaining = Math.max(0, deadline - Date.now());
+      if (totalRef.current === null) totalRef.current = Math.max(1000, remaining);
+      setView({
+        frac: Math.min(1, remaining / totalRef.current),
+        seconds: Math.ceil(remaining / 1000),
+      });
+    };
+    tick();
+    const interval = setInterval(tick, 250);
+    return () => clearInterval(interval);
+  }, [deadline]);
+
+  if (!view) return null;
+  return (
+    <div className="flex items-center gap-1">
+      <div className={`${compact ? 'w-10' : 'w-14'} h-1 rounded-full bg-white/15 overflow-hidden`}>
+        <div
+          className="h-full rounded-full bg-red-500 transition-[width] duration-200 ease-linear"
+          style={{ width: `${view.frac * 100}%` }}
+        />
+      </div>
+      <span className="text-[9px] font-bold tabular-nums text-red-400">{view.seconds}s</span>
+    </div>
+  );
 }
 
 const actionLabels: Record<string, { text: string; color: string }> = {
@@ -211,7 +250,13 @@ export default function PlayerSeat({
           <div className={`z-20 mt-0.5 text-gray-500 font-bold ${compact ? 'text-[10px]' : 'text-[11px]'}`}>자리 비움</div>
         )}
         {player.isDisconnected && (
-          <div className={`z-20 mt-0.5 text-orange-400 font-bold ${compact ? 'text-[10px]' : 'text-[11px]'}`}>오프라인</div>
+          <div className="z-20 mt-0.5 flex flex-col items-center gap-0.5">
+            <div className={`text-orange-400 font-bold ${compact ? 'text-[10px]' : 'text-[11px]'}`}>오프라인</div>
+            {/* 회수 예정 좌석만 카운트다운 표시 — SnG/자리비움 좌석은 서버가 deadline을 싣지 않는다 */}
+            {player.disconnectGraceDeadline && (
+              <OfflineCountdown deadline={player.disconnectGraceDeadline} compact={compact} />
+            )}
+          </div>
         )}
       </div>
     </motion.div>

@@ -47,6 +47,12 @@ export interface Player {
   hasActed: boolean;
   pendingRemoval?: boolean; // 핸드 진행 중 이탈 → 다음 핸드 시작 전 제거 예약
   isDisconnected?: boolean; // 재접속 유예(grace) 중
+  /**
+   * grace 만료 시 좌석이 실제로 제거되는 경우에만 세팅되는 회수 예정 시각 (epoch ms).
+   * 클라이언트가 오프라인 좌석에 회수 카운트다운 타임바를 그리는 용도 —
+   * SnG(좌석 무조건 보존)·자리비움 좌석에는 세팅하지 않는다.
+   */
+  disconnectGraceDeadline?: number;
   revealed?: boolean; // 서버가 명시하는 홀카드 공개 여부 (쇼다운 생존자만 true)
   personalityId?: string; // for bots
   botSkill?: RoomDifficulty; // 봇 난이도 — 방 난이도에 따라 성향 수치를 변조 (기본 normal)
@@ -88,6 +94,12 @@ export interface GameState {
   smallBlind: number;
   bigBlind: number;
   isHandInProgress: boolean;
+  /**
+   * 단계별 올인 런아웃 진행 중 — 응수 가능한 플레이어가 없어(전원 올인 등) 베팅이 닫혔고,
+   * RoomManager가 dealRunoutStreet()를 시간차로 호출해 스트리트를 순차 공개한다.
+   * 이 동안 생존자의 홀카드는 getPublicState가 공개(revealed)한다 (표준 룰: 올인 확정 시 핸드 오픈).
+   */
+  allInRunout?: boolean;
   winners: WinResult[] | null;
   handRake: number;
   economyMode?: 'practice' | 'wallet' | 'arena';

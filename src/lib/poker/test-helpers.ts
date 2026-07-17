@@ -111,6 +111,16 @@ export function actor(engine: PokerEngine): Player {
   return engine.state.players[engine.state.activePlayerIndex];
 }
 
+/**
+ * 단계별 올인 런아웃을 즉시 끝까지 진행 (운영에선 RoomManager가 시간차로 호출).
+ * 올인으로 베팅이 닫힌 뒤의 최종 결과를 검증하는 테스트용.
+ */
+export function completeRunout(engine: PokerEngine): void {
+  while (engine.state.allInRunout && engine.state.isHandInProgress) {
+    engine.dealRunoutStreet();
+  }
+}
+
 /** 차례인 플레이어로 액션 실행 (편의 헬퍼) */
 export function act(
   engine: PokerEngine,

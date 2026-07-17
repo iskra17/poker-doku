@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { PokerEngine } from './engine';
 import { Deck } from './deck';
 import { RoomConfig } from './types';
-import { RiggedDeck, makePlayer, act, totalStacks } from './test-helpers';
+import { RiggedDeck, makePlayer, act, totalStacks, completeRunout } from './test-helpers';
 
 /**
  * 시트앤고 토너먼트 로직 테스트.
@@ -81,6 +81,7 @@ describe('시트앤고: 토너먼트 초기화', () => {
     act(engine, 'all-in');
     act(engine, 'call');
     act(engine, 'call');
+    completeRunout(engine);
 
     expect(engine.state.tournament!.finished).toBe(true);
     expect(engine.state.tournament!.results).toHaveLength(3);
@@ -156,7 +157,8 @@ describe('시트앤고: 탈락 순위', () => {
     engine.startHand();
     act(engine, 'all-in'); // p1 (딜러)
     act(engine, 'call');   // p2 → 올인
-    act(engine, 'call');   // p3 → 올인 (전원 올인 → 자동 런아웃)
+    act(engine, 'call');   // p3 → 올인 (전원 올인 → 단계별 런아웃)
+    completeRunout(engine);
 
     expect(engine.state.isHandInProgress).toBe(false);
     const p2 = engine.state.players.find(p => p.id === 'p2')!;
@@ -195,6 +197,7 @@ describe('시트앤고: 이탈과 종료', () => {
     act(engine, 'all-in');
     act(engine, 'call');
     act(engine, 'call');
+    completeRunout(engine);
     expect(engine.state.tournament!.finished).toBe(true);
 
     engine.startHand();

@@ -290,6 +290,7 @@ export class PokerEngine {
     this.state.handRake = 0;
     this.state.lastAction = null;
     this.state.lastAggressorId = null;
+    this.state.allInRunout = false;
 
     // Reset players
     for (const player of this.state.players) {
@@ -631,6 +632,16 @@ export class PokerEngine {
     const activePlayers = this.getActivePlayers();
     const actingPlayers = this.getActingPlayers();
 
+    // 응수 가능한 플레이어가 1명 이하(전원 올인 등)인데 컨텐더는 남아 있으면 단계별 런아웃 모드.
+    // 여기서 즉시 보드를 다 깔지 않는다 — 핸드를 먼저 공개(getPublicState revealed)하고,
+    // RoomManager가 dealRunoutStreet()를 시간차로 호출해 플랍→턴→리버를 순차 공개한다.
+    // (리버 베팅까지 끝난 뒤라면 남은 카드가 없으므로 곧장 쇼다운으로 간다)
+    if (actingPlayers.length <= 1 && activePlayers.length > 1 && this.state.street !== 'river') {
+      this.state.allInRunout = true;
+      this.state.activePlayerIndex = -1;
+      return false;
+    }
+
     switch (this.state.street) {
       case 'preflop':
         this.state.street = 'flop';
@@ -650,20 +661,42 @@ export class PokerEngine {
         return true;
     }
 
-    // If only one (or zero) player can act, run out remaining streets
-    if (actingPlayers.length <= 1 && activePlayers.length > 1) {
-      // All players are all-in or only one can act - run out board
-      return this.advanceStreet();
-    }
-
     // Set first actor for new street
     this.setFirstActor();
     return false;
   }
 
+  /**
+   * 단계별 올인 런아웃 — 다음 스트리트를 한 번씩 깐다 (RoomManager 타이머가 시간차로 호출).
+   * 리버까지 깔린 뒤 호출되면 쇼다운 정산까지 진행하고 true(핸드 종료)를 반환한다.
+   */
+  dealRunoutStreet(): boolean {
+    if (!this.state.allInRunout || !this.state.isHandInProgress) {
+      return !this.state.isHandInProgress;
+    }
+    switch (this.state.street) {
+      case 'preflop':
+        this.state.street = 'flop';
+        this.state.communityCards.push(...this.deck.deal(3));
+        return false;
+      case 'flop':
+        this.state.street = 'turn';
+        this.state.communityCards.push(...this.deck.deal(1));
+        return false;
+      case 'turn':
+        this.state.street = 'river';
+        this.state.communityCards.push(...this.deck.deal(1));
+        return false;
+      default:
+        this.endHand();
+        return true;
+    }
+  }
+
   private endHand(): void {
     this.state.street = 'showdown';
     this.state.isHandInProgress = false;
+    this.state.allInRunout = false;
 
     const activePlayers = this.getActivePlayers();
     const payoutPots = this.preparePayoutPots();
@@ -833,9 +866,10 @@ export class PokerEngine {
     return {
       ...this.state,
       players: this.state.players.map(p => {
-        // 쇼다운 생존자(active/all-in)만 공개. 폴드한 플레이어는 머킹(비공개)
+        // 쇼다운 생존자(active/all-in)만 공개. 폴드한 플레이어는 머킹(비공개).
+        // 올인 런아웃 중에는 표준 룰대로 남은 핸드를 미리 공개한다 (베팅이 이미 닫혔으므로 안전).
         const revealed =
-          this.state.street === 'showdown' &&
+          (this.state.street === 'showdown' || !!this.state.allInRunout) &&
           (p.status === 'active' || p.status === 'all-in');
         return {
           ...p,

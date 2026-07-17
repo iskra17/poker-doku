@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PokerEngine } from './engine';
 import { RoomConfig } from './types';
-import { RiggedDeck, act, makePlayer, setupTable, totalStacks } from './test-helpers';
+import { RiggedDeck, act, completeRunout, makePlayer, setupTable, totalStacks } from './test-helpers';
 
 function setupEconomyTable(
   chipCounts: number[],
@@ -130,6 +130,7 @@ describe('wallet cash rake settlement', () => {
 
     act(engine, 'all-in');
     act(engine, 'call');
+    completeRunout(engine);
 
     expect(engine.state.communityCards).toHaveLength(5);
     expect(engine.state.pots.map(pot => pot.amount)).toEqual([2000]);
