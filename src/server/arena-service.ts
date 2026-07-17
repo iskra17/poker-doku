@@ -487,23 +487,6 @@ export class ArenaService {
     });
   }
 
-  consumeMatchTickets(matchId: string, at = this.#clock()): void {
-    assertIdentifier(matchId, 'ARENA_MATCH_EXISTS');
-    assertTimestamp(at);
-    this.#repository.transaction(tx => {
-      const match = this.#repository.findMatch(matchId);
-      if (!match) fail('ARENA_MATCH_EXISTS');
-      const escrows = this.#escrowsForMatch(matchId);
-      if (escrows.every(escrow => escrow.status === 'consumed')) return;
-      if (escrows.some(escrow => escrow.status !== 'escrow')) {
-        fail('ARENA_TICKET_TERMINAL');
-      }
-      for (const escrow of escrows) {
-        tx.updateTicketEscrow({ ...escrow, status: 'consumed', settledAt: at });
-      }
-    });
-  }
-
   voidMatch(matchId: string, at = this.#clock()): ArenaMatchRecord {
     assertIdentifier(matchId, 'ARENA_MATCH_EXISTS');
     assertTimestamp(at);

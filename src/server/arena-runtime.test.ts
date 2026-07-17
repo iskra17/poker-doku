@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  expectTypeOf,
+  it,
+  vi,
+} from 'vitest';
 import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
 import { SNG_BLIND_SCHEDULE } from '@/lib/poker/blind-schedule';
 import type { Player, RoomConfig } from '@/lib/poker/types';
@@ -8,9 +16,12 @@ import {
 } from './arena-matchmaker';
 import { ArenaRepository } from './arena-repository';
 import { ArenaRuntime } from './arena-runtime';
-import { ArenaService } from './arena-service';
+import {
+  ArenaService,
+  type ArenaOfficialSummary,
+} from './arena-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
-import { RoomManager } from './room-manager';
+import { RoomManager, type RoomArenaHooks } from './room-manager';
 
 const EPOCH = Date.parse('2026-07-20T00:00:00+09:00');
 
@@ -42,6 +53,11 @@ describe('ArenaRuntime', () => {
     vi.useRealTimers();
     roomManager.shutdown();
     database.close();
+  });
+
+  it('keeps the official completion hook on a synchronous summary contract', () => {
+    expectTypeOf<ReturnType<RoomArenaHooks['completeOfficial']>>()
+      .toEqualTypeOf<ArenaOfficialSummary>();
   });
 
   it('creates a hidden shuffled official 6-max room from the durable match snapshot', async () => {
@@ -160,6 +176,108 @@ describe('ArenaRuntime', () => {
       reservation,
     );
     expect(roomManager.getRoom(roomId!)).toBeUndefined();
+  });
+
+  it('cleans an official match mapping on normal disposal and tolerates late rollback', async () => {
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b']);
+    roomManager.shutdown();
+    roomManager = new RoomManager(
+      () => undefined,
+      () => undefined,
+      undefined,
+      {
+        arena: {
+          completeOfficial: input => runtime.completeOfficial(input),
+        },
+        onRoomDisposed: (
+          disposedRoomId,
+          _playerIds,
+          _reason,
+          arenaMatchId,
+        ) => {
+          if (arenaMatchId) {
+            runtime.handleRoomDisposed(arenaMatchId, disposedRoomId);
+          }
+        },
+      },
+    );
+    const runtime = createRuntime();
+    const officialCandidate = candidate(['profile-a', 'profile-b']);
+    await expect(runtime.createOfficialRoom(
+      { matchId: 'match-a' },
+      officialCandidate,
+    )).resolves.toBe(true);
+    const roomId = runtime.getRoomId('match-a')!;
+    const room = roomManager.getRoom(roomId)!;
+
+    runtime.handleRoomDisposed('match-a', 'stale-room-id');
+    expect(runtime.getRoomId('match-a')).toBe(roomId);
+    const tournament = room.engine.state.tournament!;
+    tournament.entrants = 6;
+    tournament.finished = true;
+    tournament.results = room.engine.state.players.map((player, index) => ({
+      playerId: player.id,
+      name: player.name,
+      place: index + 1,
+      prize: 0,
+    }));
+
+    expect(roomManager.disposeRoom(roomId, 'sng-expired')).toBe(true);
+    expect(runtime.getRoomId('match-a')).toBeNull();
+    expect(roomManager.getRoom(roomId)).toBeUndefined();
+    await expect(runtime.rollbackOfficialRoom(
+      { matchId: 'match-a' },
+      officialCandidate,
+    )).resolves.toBeUndefined();
+    await expect(runtime.rollbackOfficialRoom(
+      { matchId: 'match-a' },
+      officialCandidate,
+    )).resolves.toBeUndefined();
+  });
+
+  it('cleans a training match mapping on empty disposal and keeps rollback idempotent', async () => {
+    roomManager.shutdown();
+    roomManager = new RoomManager(
+      () => undefined,
+      () => undefined,
+      undefined,
+      {
+        onRoomDisposed: (
+          disposedRoomId,
+          _playerIds,
+          _reason,
+          arenaMatchId,
+        ) => {
+          if (arenaMatchId) {
+            runtime.handleRoomDisposed(arenaMatchId, disposedRoomId);
+          }
+        },
+      },
+    );
+    const runtime = createRuntime();
+    const reservation = await runtime.createTrainingRoom(
+      'profile-a',
+      'socket-a',
+    );
+    const matchId = reservation!.matchId;
+    const roomId = runtime.getRoomId(matchId)!;
+
+    runtime.handleRoomDisposed(matchId, 'stale-room-id');
+    expect(runtime.getRoomId(matchId)).toBe(roomId);
+    expect(roomManager.disposeRoom(roomId, 'empty')).toBe(true);
+    expect(runtime.getRoomId(matchId)).toBeNull();
+    await expect(runtime.rollbackTrainingRoom(
+      'profile-a',
+      'socket-a',
+      'offer-a',
+      reservation,
+    )).resolves.toBeUndefined();
+    await expect(runtime.rollbackTrainingRoom(
+      'profile-a',
+      'socket-a',
+      'offer-a',
+      reservation,
+    )).resolves.toBeUndefined();
   });
 
   it.each(['arena-official', 'arena-training'] as const)(

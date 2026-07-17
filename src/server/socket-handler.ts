@@ -297,7 +297,10 @@ export function setupSocketHandlers(
           },
         }
         : {}),
-      onRoomDisposed: (roomId, playerIds, reason) => {
+      onRoomDisposed: (roomId, playerIds, reason, arenaMatchId) => {
+        if (arenaMatchId) {
+          arenaRuntime?.handleRoomDisposed(arenaMatchId, roomId);
+        }
         for (const playerId of playerIds) {
           const session = sessions.getByPlayerId(playerId);
           if (!session || session.roomId !== roomId) continue;

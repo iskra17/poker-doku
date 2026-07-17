@@ -305,6 +305,43 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .not.toContain('arenaParticipantIds');
   });
 
+  it('compensates every partial arena session binding when a later socket join fails', async () => {
+    harness = await createSocketTestHarness({ arenaEnabled: true });
+    const profiles = await Promise.all(
+      ['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'].map(avatarId =>
+        harness!.createProfile({ avatarId }),
+      ),
+    );
+    const clients = await Promise.all(profiles.map((profile, index) =>
+      harness!.connect(`arena-bind-failure-${index}`, {
+        profileCookie: profile.cookie,
+      }),
+    ));
+    const bindingFailed = harness.failNextServerSocketJoin(
+      clients[1].socket.id!,
+    );
+
+    const queueAcks = await Promise.all(clients.map(client =>
+      withAck(done => client.socket.emit('arena-queue-join', done)),
+    ));
+    expect(queueAcks.every(ack => ack.ok)).toBe(true);
+    await bindingFailed;
+    await waitUntil(() => (
+      harness!.runtime.roomManager.getRoomCount() === 0
+      && clients.every(client => (
+        harness!.arenaSnapshot(client.playerId)?.profile.availableTickets === 2
+      ))
+    ), 4_000);
+
+    expect(clients.map(client =>
+      harness!.runtime.sessions.getByPlayerId(client.playerId)?.roomId,
+    )).toEqual([null, null, null, null, null, null]);
+    expect(clients.every(client => (
+      harness!.getServerSocketRooms(client.socket.id!)
+        .every(room => !room.startsWith('room-'))
+    ))).toBe(true);
+  });
+
   it('sends the durable current progression snapshot on a future connection', async () => {
     harness = await createSocketTestHarness();
     const created = await harness.createProfile({ avatarId: 'sakura' });

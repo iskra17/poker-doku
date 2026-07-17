@@ -67,6 +67,7 @@ export interface SocketTestHarness {
   getServerSocketRawHeaders: (socketId: string) => string[] | undefined;
   getServerSocketAuth: (socketId: string) => Record<string, unknown> | undefined;
   getServerSocketRooms: (socketId: string) => string[];
+  failNextServerSocketJoin: (socketId: string) => Promise<void>;
   recentEvents: () => LogEvent[];
   walletState: (profileId: string) => {
     balance: number;
@@ -327,6 +328,23 @@ export async function createSocketTestHarness(
     getServerSocketRooms: socketId => [
       ...(io.sockets.sockets.get(socketId)?.rooms ?? []),
     ],
+    failNextServerSocketJoin: socketId => new Promise((resolve, reject) => {
+      const socket = io.sockets.sockets.get(socketId);
+      if (!socket) {
+        reject(new Error('server socket not found'));
+        return;
+      }
+      const originalJoin = socket.join.bind(socket);
+      let armed = true;
+      socket.join = rooms => {
+        if (armed) {
+          armed = false;
+          resolve();
+          throw new Error('injected room binding failure');
+        }
+        return originalJoin(rooms);
+      };
+    }),
     recentEvents: () => eventLog.recent(),
     walletState: profileId => {
       const row = database.db.prepare(`

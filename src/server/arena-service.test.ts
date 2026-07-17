@@ -272,15 +272,8 @@ describe('ArenaService free ticket lifecycle', () => {
     expect(repository.findMatch('stale')).toBeNull();
   });
 
-  it('consumes escrow exactly once without changing ticket balances', () => {
-    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
-    service.consumeMatchTickets('match-a', EPOCH + 1);
-    service.consumeMatchTickets('match-a', EPOCH + 2);
-    expect(repository.requireTicketEscrow('match-a', 'profile-a')).toMatchObject({
-      status: 'consumed', settledAt: EPOCH + 1,
-    });
-    expect(repository.requireProfile('arena-v1-0', 'profile-a').availableTickets)
-      .toBe(1);
+  it('does not expose premature ticket consumption outside result settlement', () => {
+    expect('consumeMatchTickets' in service).toBe(false);
   });
 
   it('voids and refunds exactly once while respecting escrow-aware cap', () => {
@@ -299,17 +292,6 @@ describe('ArenaService free ticket lifecycle', () => {
       status: 'refunded', settledAt: EPOCH + DAY + 1,
     });
     expect(repository.requireMatch('match-a').status).toBe('void');
-  });
-
-  it('does not refund consumed tickets', () => {
-    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
-    service.consumeMatchTickets('match-a', EPOCH + 1);
-    expectDomain(
-      () => service.voidMatch('match-a', EPOCH + 2),
-      'ARENA_TICKET_TERMINAL',
-    );
-    expect(repository.requireProfile('arena-v1-0', 'profile-a').availableTickets)
-      .toBe(1);
   });
 
   it('reconciles the same current season repeatedly without duplicate rows', () => {

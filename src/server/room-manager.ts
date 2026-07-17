@@ -22,6 +22,7 @@ import type {
   RoomEconomyHooks,
 } from './economy-runtime';
 import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
+import type { ArenaOfficialSummary } from './arena-service';
 
 const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 짧은 기본 + 타임뱅크 자동 연장
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -43,6 +44,7 @@ export interface RoomManagerOptions {
     roomId: string,
     playerIds: string[],
     reason: RoomDisposeReason,
+    arenaMatchId?: string,
   ) => void;
 }
 
@@ -54,7 +56,7 @@ export interface RoomArenaHooks {
       place: number;
       type: Player['type'];
     }[];
-  }): unknown;
+  }): ArenaOfficialSummary;
 }
 
 export type RoomDisposeReason =
@@ -243,6 +245,7 @@ export class RoomManager {
     const playerIds = room.engine.state.players
       .filter(player => player.type === 'human')
       .map(player => player.id);
+    const arenaMatchId = room.config.arenaMatchId;
 
     this.stopBotLoop(roomId);
     this.clearPendingStart(roomId);
@@ -269,7 +272,12 @@ export class RoomManager {
     this.options.progression?.disposeRoom(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
-      this.options.onRoomDisposed?.(roomId, playerIds, reason);
+      this.options.onRoomDisposed?.(
+        roomId,
+        playerIds,
+        reason,
+        arenaMatchId,
+      );
       this.onRoomsChanged?.();
     }
     return true;

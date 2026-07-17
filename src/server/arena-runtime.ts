@@ -66,6 +66,12 @@ export class ArenaRuntime {
     return this.#roomsByMatch.get(matchId) ?? null;
   }
 
+  handleRoomDisposed(matchId: string, roomId: string): void {
+    if (this.#roomsByMatch.get(matchId) === roomId) {
+      this.#roomsByMatch.delete(matchId);
+    }
+  }
+
   async createOfficialRoom(
     reservation: ArenaReservation,
     candidate: ArenaOfficialCandidate,
@@ -259,10 +265,14 @@ export class ArenaRuntime {
   #disposeTrackedRoom(matchId: string): void {
     const roomId = this.#roomsByMatch.get(matchId);
     if (!roomId) return;
-    if (!this.#roomManager.disposeRoom(roomId, 'arena-rollback', false)) {
+    if (!this.#roomManager.getRoom(roomId)) {
+      this.handleRoomDisposed(matchId, roomId);
+      return;
+    }
+    if (!this.#roomManager.disposeRoom(roomId, 'arena-rollback')) {
       throw new Error('ARENA_ROOM_ROLLBACK_FAILED');
     }
-    this.#roomsByMatch.delete(matchId);
+    this.handleRoomDisposed(matchId, roomId);
   }
 }
 
