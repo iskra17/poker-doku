@@ -92,13 +92,13 @@ describe('arena version 1 configuration and scoring', () => {
 });
 
 describe('weekly arena ranking', () => {
-  it('orders by points, wins, top-three finishes, average place, reached time, then profile id', () => {
+  it('orders by points, reached time, wins, top-three finishes, average place, then profile id', () => {
     const rows = [
       standing('points-low', 99, { wins: 99, top3: 99, placeSum: 100, matches: 100 }),
       standing('wins-low', 100, { wins: 1, top3: 3, placeSum: 3, matches: 3 }),
       standing('top3-low', 100, { wins: 2, top3: 2, placeSum: 3, matches: 3 }),
       standing('average-low', 100, { wins: 2, top3: 3, placeSum: 6, matches: 3 }),
-      standing('reached-late', 100, { wins: 2, top3: 3, placeSum: 3, matches: 3, scoreReachedAt: 2_000 }),
+      standing('reached-late', 100, { wins: 99, top3: 99, placeSum: 99, matches: 99, scoreReachedAt: 2_000 }),
       standing('b-id', 100, { wins: 2, top3: 3, placeSum: 3, matches: 3, scoreReachedAt: 1_000 }),
       standing('a-id', 100, { wins: 2, top3: 3, placeSum: 3, matches: 3, scoreReachedAt: 1_000 }),
     ];
@@ -106,10 +106,10 @@ describe('weekly arena ranking', () => {
     expect(rankWeeklyStandings(rows).map(row => row.profileId)).toEqual([
       'a-id',
       'b-id',
-      'reached-late',
       'average-low',
       'top3-low',
       'wins-low',
+      'reached-late',
       'points-low',
     ]);
   });

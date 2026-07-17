@@ -152,6 +152,7 @@ export interface ArenaTransaction {
   updateMatch(value: ArenaMatchRecord): void;
   updateEntry(value: ArenaEntryRecord): void;
   updateTicketEscrow(value: ArenaTicketEscrowRecord): void;
+  updateGroup(value: ArenaGroupRecord): void;
   updateGroupMember(value: ArenaGroupMemberRecord): void;
   insertWeeklySettlement(value: ArenaWeeklySettlementRecord): void;
   insertSeasonReward(value: ArenaSeasonRewardRecord): void;
@@ -579,6 +580,33 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     requireOneChange(result.changes);
   }
 
+  updateGroup(value: ArenaGroupRecord): void {
+    assertGroup(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    const currentRow = this.#database.db.prepare(`
+      SELECT id, season_id, week_key, tier, status, created_at, settled_at
+      FROM arena_groups WHERE id = ?
+    `).get(value.id) as unknown as GroupRow | undefined;
+    if (!currentRow) fail('ARENA_NOT_FOUND');
+    const current = mapGroup(currentRow);
+    assertGroupTransition(current, value);
+    const result = this.#database.db.prepare(`
+      UPDATE arena_groups SET status = ?, settled_at = ?
+      WHERE id = ? AND season_id = ? AND week_key = ? AND tier = ?
+        AND status = ? AND created_at = ? AND settled_at IS NULL
+    `).run(
+      value.status,
+      value.settledAt,
+      value.id,
+      value.seasonId,
+      value.weekKey,
+      value.tier,
+      current.status,
+      value.createdAt,
+    );
+    requireOneChange(result.changes);
+  }
+
   updateGroupMember(value: ArenaGroupMemberRecord): void {
     assertGroupMember(value, 'ARENA_INPUT_INVALID');
     this.#database.assertTransactionActive();
@@ -808,13 +836,55 @@ export class ArenaRepository {
     return rows.map(mapMatch);
   }
 
-  requireGroup(groupId: string): ArenaGroupRecord {
+  findGroup(groupId: string): ArenaGroupRecord | null {
     const row = this.#database.db.prepare(`
       SELECT id, season_id, week_key, tier, status, created_at, settled_at
       FROM arena_groups WHERE id = ?
     `).get(groupId) as unknown as GroupRow | undefined;
-    if (!row) throw new ArenaPersistenceError('ARENA_NOT_FOUND');
-    return mapGroup(row);
+    return row ? mapGroup(row) : null;
+  }
+
+  requireGroup(groupId: string): ArenaGroupRecord {
+    const value = this.findGroup(groupId);
+    if (!value) throw new ArenaPersistenceError('ARENA_NOT_FOUND');
+    return value;
+  }
+
+  findOldestOpenGroupBelowMemberCount(
+    seasonId: string,
+    weekKeyValue: string,
+    tier: ArenaTier,
+    maximumMembers: number,
+  ): ArenaGroupRecord | null {
+    const row = this.#database.db.prepare(`
+      SELECT groups.id, groups.season_id, groups.week_key, groups.tier,
+             groups.status, groups.created_at, groups.settled_at
+      FROM arena_groups AS groups
+      WHERE groups.season_id = ? AND groups.week_key = ?
+        AND groups.tier = ? AND groups.status = 'open'
+        AND (
+          SELECT COUNT(*) FROM arena_group_members AS members
+          WHERE members.group_id = groups.id
+        ) < ?
+      ORDER BY groups.created_at, groups.id
+      LIMIT 1
+    `).get(
+      seasonId,
+      weekKeyValue,
+      tier,
+      maximumMembers,
+    ) as unknown as GroupRow | undefined;
+    return row ? mapGroup(row) : null;
+  }
+
+  listOpenGroupsBeforeWeek(weekKeyExclusive: string): ArenaGroupRecord[] {
+    const rows = this.#database.db.prepare(`
+      SELECT id, season_id, week_key, tier, status, created_at, settled_at
+      FROM arena_groups
+      WHERE status = 'open' AND week_key < ?
+      ORDER BY week_key, season_id, created_at, id
+    `).all(weekKeyExclusive) as unknown as GroupRow[];
+    return rows.map(mapGroup);
   }
 
   listGroupMembers(groupId: string): ArenaGroupMemberRecord[] {
@@ -1257,6 +1327,23 @@ function assertGroupMemberTransition(
         ? next.scoreReachedAt !== current.scoreReachedAt
         : next.scoreReachedAt !== next.updatedAt
     )
+  ) fail('ARENA_INPUT_INVALID');
+}
+
+function assertGroupTransition(
+  current: ArenaGroupRecord,
+  next: ArenaGroupRecord,
+): void {
+  if (
+    next.id !== current.id
+    || next.seasonId !== current.seasonId
+    || next.weekKey !== current.weekKey
+    || next.tier !== current.tier
+    || next.createdAt !== current.createdAt
+    || current.status !== 'open'
+    || current.settledAt !== null
+    || next.status !== 'settled'
+    || next.settledAt === null
   ) fail('ARENA_INPUT_INVALID');
 }
 

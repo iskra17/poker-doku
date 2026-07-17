@@ -125,6 +125,29 @@ describe('ArenaScheduler', () => {
     expect(fake.activeCount).toBe(1);
   });
 
+  it('hands a shared KST Monday and season boundary to one ordered reconcile call', () => {
+    const boundary = EPOCH + 28 * DAY;
+    const fake = new FakeTimers(boundary - DAY);
+    const calls: number[] = [];
+    const scheduler = new ArenaScheduler({
+      epochMs: EPOCH,
+      now: () => fake.now,
+      reconcile: at => calls.push(at),
+      setTimer: fake.setTimer,
+      clearTimer: fake.clearTimer,
+    });
+
+    scheduler.start();
+    calls.length = 0;
+    expect(fake.nextAt).toBe(boundary);
+    fake.now = boundary;
+    fake.fire();
+
+    expect(calls).toEqual([boundary]);
+    expect(fake.nextAt).toBe(boundary + 7 * DAY);
+    scheduler.close();
+  });
+
   it('stops safely and a racing cleared callback cannot reconcile or leak a timer', () => {
     const fake = new FakeTimers(EPOCH);
     const calls: number[] = [];

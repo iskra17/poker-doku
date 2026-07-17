@@ -26,21 +26,23 @@ export function compareWeeklyStandings(
   assertStanding(left);
   assertStanding(right);
 
-  const numericDescending: Array<[number, number]> = [
-    [left.points, right.points],
+  if (left.points !== right.points) return right.points - left.points;
+
+  if (left.scoreReachedAt !== right.scoreReachedAt) {
+    return left.scoreReachedAt - right.scoreReachedAt;
+  }
+
+  const secondaryDescending: Array<[number, number]> = [
     [left.wins, right.wins],
     [left.top3, right.top3],
   ];
-  for (const [leftValue, rightValue] of numericDescending) {
+  for (const [leftValue, rightValue] of secondaryDescending) {
     if (leftValue !== rightValue) return rightValue - leftValue;
   }
 
   const averageOrder = compareAveragePlace(left, right);
   if (averageOrder !== 0) return averageOrder;
 
-  if (left.scoreReachedAt !== right.scoreReachedAt) {
-    return left.scoreReachedAt - right.scoreReachedAt;
-  }
   return compareCodeUnits(left.profileId, right.profileId);
 }
 

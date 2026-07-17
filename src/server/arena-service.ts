@@ -1,8 +1,15 @@
-import { ARENA_CONFIG_V1 } from '@/lib/arena/config';
+import { ARENA_CONFIG_V1, ARENA_TIERS } from '@/lib/arena/config';
 import { calculateMmrDelta } from '@/lib/arena/mmr';
-import { pointsForPlace, tierForPlacementTotal } from '@/lib/arena/rules';
+import {
+  pointsForPlace,
+  selectWeeklyMoves,
+  tierForPlacementTotal,
+} from '@/lib/arena/rules';
+import type { ArenaTier } from '@/lib/arena/types';
 import type {
   ArenaEntryRecord,
+  ArenaGroupMemberRecord,
+  ArenaGroupRecord,
   ArenaMatchRecord,
   ArenaProfileRecord,
   ArenaSeasonRecord,
@@ -237,6 +244,9 @@ export class ArenaService {
 
   reconcile(at = this.#clock()): ArenaSeasonWindow {
     const window = calculateArenaSeasonWindow(at, this.#config);
+    const currentWeekKey = getArenaKstWeekKey(at);
+    const groups = this.#repository.listOpenGroupsBeforeWeek(currentWeekKey);
+    for (const group of groups) this.#settleWeeklyGroup(group.id, at);
     this.#repository.transaction(tx => this.#ensureSeason(tx, window, at));
     return window;
   }
@@ -372,23 +382,22 @@ export class ArenaService {
           updatedAt: Math.max(profile.updatedAt, at),
         });
         if (wasPlaced) {
-          const member = this.#repository.findGroupMember(
-            match.seasonId,
+          const member = this.#assignWeeklyGroup(
+            tx,
+            profile,
             weekKey,
-            entry.profileId,
+            at,
           );
-          if (member) {
-            tx.updateGroupMember({
-              ...member,
-              points: safeIntegerAdd(member.points, points),
-              wins: safeIntegerAdd(member.wins, place === 1 ? 1 : 0),
-              top3: safeIntegerAdd(member.top3, place <= 3 ? 1 : 0),
-              placeSum: safeIntegerAdd(member.placeSum, place),
-              matches: safeIntegerAdd(member.matches, 1),
-              scoreReachedAt: points === 0 ? member.scoreReachedAt : at,
-              updatedAt: at,
-            });
-          }
+          tx.updateGroupMember({
+            ...member,
+            points: safeIntegerAdd(member.points, points),
+            wins: safeIntegerAdd(member.wins, place === 1 ? 1 : 0),
+            top3: safeIntegerAdd(member.top3, place <= 3 ? 1 : 0),
+            placeSum: safeIntegerAdd(member.placeSum, place),
+            matches: safeIntegerAdd(member.matches, 1),
+            scoreReachedAt: points === 0 ? member.scoreReachedAt : at,
+            updatedAt: at,
+          });
         }
         const escrow = this.#repository.requireTicketEscrow(
           match.id,
@@ -528,6 +537,199 @@ export class ArenaService {
     });
   }
 
+  #assignWeeklyGroup(
+    tx: ArenaTransaction,
+    profile: ArenaProfileRecord,
+    weekKey: string,
+    at: number,
+  ): ArenaGroupMemberRecord {
+    if (
+      profile.placementGames !== ARENA_CONFIG_V1.placementMatches
+      || profile.tier === null
+    ) fail('ARENA_PERSISTENCE_INVALID');
+    const existingMember = this.#repository.findGroupMember(
+      profile.seasonId,
+      weekKey,
+      profile.profileId,
+    );
+    if (existingMember) {
+      const existingGroup = this.#repository.requireGroup(
+        existingMember.groupId,
+      );
+      if (
+        existingGroup.seasonId !== profile.seasonId
+        || existingGroup.weekKey !== weekKey
+        || existingGroup.tier !== profile.tier
+        || existingGroup.status !== 'open'
+      ) fail('ARENA_PERSISTENCE_INVALID');
+      return existingMember;
+    }
+
+    const group = profile.tier === 'master'
+      ? this.#ensureMasterGroup(tx, profile.seasonId, weekKey, at)
+      : this.#ensureCappedGroup(
+        tx,
+        profile.seasonId,
+        weekKey,
+        profile.tier,
+        at,
+      );
+    tx.insertGroupMember({
+      groupId: group.id,
+      seasonId: profile.seasonId,
+      weekKey,
+      profileId: profile.profileId,
+      points: 0,
+      wins: 0,
+      top3: 0,
+      placeSum: 0,
+      matches: 0,
+      scoreReachedAt: at,
+      joinedAt: at,
+      updatedAt: at,
+    });
+    const member = this.#repository.findGroupMember(
+      profile.seasonId,
+      weekKey,
+      profile.profileId,
+    );
+    if (!member || member.groupId !== group.id) {
+      fail('ARENA_PERSISTENCE_INVALID');
+    }
+    return member;
+  }
+
+  #ensureMasterGroup(
+    tx: ArenaTransaction,
+    seasonId: string,
+    weekKey: string,
+    at: number,
+  ): ArenaGroupRecord {
+    const groupId = `master-global:${seasonId}:${weekKey}`;
+    const existing = this.#repository.findGroup(groupId);
+    if (existing) {
+      if (
+        existing.seasonId !== seasonId
+        || existing.weekKey !== weekKey
+        || existing.tier !== 'master'
+        || existing.status !== 'open'
+      ) fail('ARENA_PERSISTENCE_INVALID');
+      return existing;
+    }
+    const group: ArenaGroupRecord = {
+      id: groupId,
+      seasonId,
+      weekKey,
+      tier: 'master',
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    };
+    tx.insertGroup(group);
+    return group;
+  }
+
+  #ensureCappedGroup(
+    tx: ArenaTransaction,
+    seasonId: string,
+    weekKey: string,
+    tier: Exclude<ArenaTier, 'master'>,
+    at: number,
+  ): ArenaGroupRecord {
+    const oldest = this.#repository.findOldestOpenGroupBelowMemberCount(
+      seasonId,
+      weekKey,
+      tier,
+      ARENA_CONFIG_V1.targetGroupMax,
+    );
+    if (oldest) return oldest;
+
+    const prefix = `weekly:${seasonId}:${weekKey}:${tier}:`;
+    let ordinal = 1;
+    let groupId = `${prefix}${ordinal}`;
+    while (this.#repository.findGroup(groupId)) {
+      ordinal += 1;
+      if (!Number.isSafeInteger(ordinal)) fail('ARENA_PERSISTENCE_INVALID');
+      groupId = `${prefix}${ordinal}`;
+    }
+    const group: ArenaGroupRecord = {
+      id: groupId,
+      seasonId,
+      weekKey,
+      tier,
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    };
+    tx.insertGroup(group);
+    return group;
+  }
+
+  #settleWeeklyGroup(groupId: string, at: number): void {
+    this.#repository.transaction(tx => {
+      const group = this.#repository.requireGroup(groupId);
+      const marker = this.#repository.findWeeklySettlement(
+        group.seasonId,
+        group.weekKey,
+        group.id,
+      );
+      if (marker) return;
+      if (group.status !== 'open' || group.settledAt !== null) {
+        fail('ARENA_PERSISTENCE_INVALID');
+      }
+      const members = this.#repository.listGroupMembers(group.id);
+      const moves = selectWeeklyMoves(group.tier, members);
+      const movedIds = [
+        ...moves.promotedProfileIds,
+        ...moves.demotedProfileIds,
+      ];
+      if (new Set(movedIds).size !== movedIds.length) {
+        fail('ARENA_PERSISTENCE_INVALID');
+      }
+
+      const profiles = new Map(members.map(member => {
+        const profile = this.#repository.requireProfile(
+          group.seasonId,
+          member.profileId,
+        );
+        if (
+          profile.placementGames !== ARENA_CONFIG_V1.placementMatches
+          || profile.tier !== group.tier
+        ) fail('ARENA_PERSISTENCE_INVALID');
+        return [member.profileId, profile] as const;
+      }));
+      for (const profileId of moves.promotedProfileIds) {
+        const profile = profiles.get(profileId);
+        if (!profile) fail('ARENA_PERSISTENCE_INVALID');
+        tx.updateProfile({
+          ...profile,
+          tier: adjacentTier(group.tier, 1),
+          updatedAt: Math.max(profile.updatedAt, at),
+        });
+      }
+      for (const profileId of moves.demotedProfileIds) {
+        const profile = profiles.get(profileId);
+        if (!profile) fail('ARENA_PERSISTENCE_INVALID');
+        tx.updateProfile({
+          ...profile,
+          tier: adjacentTier(group.tier, -1),
+          updatedAt: Math.max(profile.updatedAt, at),
+        });
+      }
+      tx.updateGroup({
+        ...group,
+        status: 'settled',
+        settledAt: at,
+      });
+      tx.insertWeeklySettlement({
+        seasonId: group.seasonId,
+        weekKey: group.weekKey,
+        groupId: group.id,
+        settledAt: at,
+      });
+    });
+  }
+
   #ensureSeason(
     tx: ArenaTransaction,
     window: ArenaSeasonWindow,
@@ -661,6 +863,13 @@ function assertSeasonConfig(config: ArenaSeasonConfig): void {
     KST_OFFSET_MS,
     'ARENA_SEASON_EPOCH_INVALID',
   );
+}
+
+function adjacentTier(tier: ArenaTier, direction: -1 | 1): ArenaTier {
+  const index = ARENA_TIERS.indexOf(tier);
+  const next = ARENA_TIERS[index + direction];
+  if (!next) fail('ARENA_PERSISTENCE_INVALID');
+  return next;
 }
 
 function assertMatchRequest(matchId: string, profileIds: readonly string[]): void {

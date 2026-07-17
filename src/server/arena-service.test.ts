@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ArenaTier, WeeklyStanding } from '@/lib/arena/types';
 import { ArenaRepository } from './arena-repository';
 import {
   ArenaDomainError,
@@ -382,6 +383,51 @@ describe('ArenaService free ticket lifecycle', () => {
       placementPoints: 340,
       tier: 'gold',
     });
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-a',
+    )).toBeNull();
+    expect(countRows(database, 'arena_groups')).toBe(0);
+
+    service.reserveMatchTickets(
+      'match-b',
+      ['profile-a', 'profile-b'],
+      EPOCH + 3,
+    );
+    service.markMatchPlaying('match-b', EPOCH + 3);
+    service.settleOfficialMatch(
+      'match-b',
+      sixSeatResult([
+        ['profile-a', 2],
+        ['profile-b', 6],
+      ]),
+      EPOCH + 4,
+    );
+
+    const member = repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-a',
+    );
+    expect(member).toMatchObject({
+      profileId: 'profile-a',
+      points: 60,
+      wins: 0,
+      top3: 1,
+      placeSum: 2,
+      matches: 1,
+      scoreReachedAt: EPOCH + 4,
+      joinedAt: EPOCH + 4,
+      updatedAt: EPOCH + 4,
+    });
+    expect(repository.requireGroup(member!.groupId)).toMatchObject({
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier: 'gold',
+      status: 'open',
+    });
   });
 
   it('updates the current weekly group stats only for an already placed profile', () => {
@@ -437,6 +483,26 @@ describe('ArenaService free ticket lifecycle', () => {
         updatedAt: EPOCH + 2,
       }),
     ]);
+    service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 1],
+      ]),
+      EPOCH + 3,
+    );
+    expect(repository.listGroupMembers('group-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a',
+        points: 160,
+        wins: 1,
+        top3: 2,
+        placeSum: 4,
+        matches: 2,
+        scoreReachedAt: EPOCH + 2,
+        updatedAt: EPOCH + 2,
+      }),
+    ]);
 
     service.reserveMatchTickets('match-b', ['profile-a', 'profile-c'], EPOCH + 3);
     service.markMatchPlaying('match-b', EPOCH + 3);
@@ -460,6 +526,270 @@ describe('ArenaService free ticket lifecycle', () => {
         updatedAt: EPOCH + 4,
       }),
     ]);
+  });
+
+  it('fills the oldest weekly tier group to 30 before creating another group', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacement(repository, 'profile-b', [35, 35, 35, 35, 35]);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    const oldestIds = seedPlacedGroupMembers(
+      database,
+      repository,
+      'oldest',
+      'group-oldest',
+      weekKey,
+      'silver',
+      29,
+      EPOCH,
+    );
+    const fullIds = seedPlacedGroupMembers(
+      database,
+      repository,
+      'full',
+      'group-full',
+      weekKey,
+      'silver',
+      30,
+      EPOCH + 1,
+    );
+
+    service.reserveMatchTickets(
+      'match-cap',
+      ['profile-a', 'profile-b'],
+      EPOCH + 2,
+    );
+    service.markMatchPlaying('match-cap', EPOCH + 2);
+    service.settleOfficialMatch(
+      'match-cap',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 2],
+      ]),
+      EPOCH + 3,
+    );
+
+    expect(repository.listGroupMembers('group-oldest')).toHaveLength(30);
+    expect(repository.listGroupMembers('group-full')).toHaveLength(30);
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-a',
+    )?.groupId).toBe('group-oldest');
+    const secondMember = repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-b',
+    );
+    expect(secondMember?.groupId).not.toBe('group-oldest');
+    expect(secondMember?.groupId).not.toBe('group-full');
+    expect(countRows(database, 'arena_groups')).toBe(3);
+    expect(new Set([
+      ...oldestIds,
+      ...fullIds,
+      'profile-a',
+      'profile-b',
+    ]).size).toBe(61);
+  });
+
+  it('uses one deterministic uncapped Master group for the KST week', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacement(repository, 'profile-b', [35, 35, 35, 35, 35]);
+    setProfileTier(repository, 'profile-a', 'master', EPOCH);
+    setProfileTier(repository, 'profile-b', 'master', EPOCH);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    const masterId = `master-global:arena-v1-0:${weekKey}`;
+    seedPlacedGroupMembers(
+      database,
+      repository,
+      'master',
+      masterId,
+      weekKey,
+      'master',
+      30,
+      EPOCH,
+    );
+
+    service.reserveMatchTickets(
+      'match-master',
+      ['profile-a', 'profile-b'],
+      EPOCH + 1,
+    );
+    service.markMatchPlaying('match-master', EPOCH + 1);
+    service.settleOfficialMatch(
+      'match-master',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 6],
+      ]),
+      EPOCH + 2,
+    );
+
+    expect(repository.listGroupMembers(masterId)).toHaveLength(32);
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-a',
+    )?.groupId).toBe(masterId);
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      weekKey,
+      'profile-b',
+    )?.groupId).toBe(masterId);
+    expect(countRows(database, 'arena_groups')).toBe(1);
+  });
+
+  it('settles weekly moves once while preserving the closed group audit', () => {
+    service.reconcile(EPOCH);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    const standings = weeklyStandings('move', 5);
+    seedWeeklyGroup(
+      database,
+      repository,
+      'group-moves',
+      weekKey,
+      'silver',
+      standings,
+      EPOCH,
+    );
+    const beforeMembers = repository.listGroupMembers('group-moves');
+    const boundary = EPOCH + 7 * DAY;
+
+    service.reconcile(boundary);
+
+    expect(repository.requireProfile(
+      'arena-v1-0',
+      standings[0].profileId,
+    ).tier).toBe('gold');
+    expect(repository.requireProfile(
+      'arena-v1-0',
+      standings[4].profileId,
+    ).tier).toBe('bronze');
+    expect(repository.requireProfile(
+      'arena-v1-0',
+      standings[2].profileId,
+    ).tier).toBe('silver');
+    expect(repository.requireGroup('group-moves')).toMatchObject({
+      status: 'settled',
+      settledAt: boundary,
+    });
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-moves',
+    )).toEqual({
+      seasonId: 'arena-v1-0',
+      weekKey,
+      groupId: 'group-moves',
+      settledAt: boundary,
+    });
+    expect(repository.listGroupMembers('group-moves')).toEqual(beforeMembers);
+
+    service.reconcile(boundary + 1);
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-moves',
+    )?.settledAt).toBe(boundary);
+    expect(repository.listGroupMembers('group-moves')).toEqual(beforeMembers);
+  });
+
+  it('commits each weekly group independently and retries after the first failure', () => {
+    service.reconcile(EPOCH);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    seedWeeklyGroup(
+      database,
+      repository,
+      'group-a',
+      weekKey,
+      'silver',
+      weeklyStandings('retry-a', 5),
+      EPOCH,
+    );
+    seedWeeklyGroup(
+      database,
+      repository,
+      'group-b',
+      weekKey,
+      'silver',
+      weeklyStandings('retry-b', 5),
+      EPOCH + 1,
+    );
+    const requireProfile = repository.requireProfile.bind(repository);
+    const failure = vi.spyOn(repository, 'requireProfile')
+      .mockImplementation((seasonId, profileId) => {
+        if (profileId.startsWith('retry-b')) throw new Error('group-b-failed');
+        return requireProfile(seasonId, profileId);
+      });
+    const boundary = EPOCH + 7 * DAY;
+
+    expect(() => service.reconcile(boundary)).toThrow('group-b-failed');
+    failure.mockRestore();
+
+    expect(repository.requireGroup('group-a').status).toBe('settled');
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-a',
+    )?.settledAt).toBe(boundary);
+    expect(repository.requireGroup('group-b').status).toBe('open');
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-b',
+    )).toBeNull();
+
+    service.reconcile(boundary + 1);
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-a',
+    )?.settledAt).toBe(boundary);
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'group-b',
+    )?.settledAt).toBe(boundary + 1);
+  });
+
+  it('settles week four before creating the next season at the shared boundary', () => {
+    service.reconcile(EPOCH);
+    const weekFourAt = EPOCH + 21 * DAY;
+    const weekKey = getArenaKstWeekKey(weekFourAt);
+    seedWeeklyGroup(
+      database,
+      repository,
+      'week-four',
+      weekKey,
+      'silver',
+      weeklyStandings('week-four', 5),
+      weekFourAt,
+    );
+    const requireProfile = repository.requireProfile.bind(repository);
+    const failure = vi.spyOn(repository, 'requireProfile')
+      .mockImplementation((seasonId, profileId) => {
+        if (profileId.startsWith('week-four')) {
+          throw new Error('week-four-failed');
+        }
+        return requireProfile(seasonId, profileId);
+      });
+    const seasonBoundary = EPOCH + 28 * DAY;
+
+    expect(() => service.reconcile(seasonBoundary))
+      .toThrow('week-four-failed');
+    expect(repository.findSeason('arena-v1-1')).toBeNull();
+    failure.mockRestore();
+
+    service.reconcile(seasonBoundary);
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      weekKey,
+      'week-four',
+    )).not.toBeNull();
+    expect(repository.findSeason('arena-v1-1')).not.toBeNull();
   });
 
   it('rolls the whole result transaction back on an invalid six-seat result', () => {
@@ -642,5 +972,140 @@ function seedPlacement(
       tier: index === 4 ? 'silver' : null,
       updatedAt: profile.updatedAt,
     }));
+  });
+}
+
+function setProfileTier(
+  repository: ArenaRepository,
+  profileId: string,
+  tier: ArenaTier,
+  at: number,
+): void {
+  const profile = repository.requireProfile('arena-v1-0', profileId);
+  repository.transaction(tx => tx.updateProfile({
+    ...profile,
+    tier,
+    updatedAt: Math.max(profile.updatedAt, at),
+  }));
+}
+
+function seedPlacedGroupMembers(
+  database: PokerDatabase,
+  repository: ArenaRepository,
+  prefix: string,
+  groupId: string,
+  weekKey: string,
+  tier: ArenaTier,
+  count: number,
+  at: number,
+): string[] {
+  const profileIds = Array.from(
+    { length: count },
+    (_, index) => `${prefix}-${String(index + 1).padStart(2, '0')}`,
+  );
+  for (const profileId of profileIds) insertBaseProfile(database, profileId);
+  repository.transaction(tx => {
+    tx.insertGroup({
+      id: groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier,
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    });
+    for (const profileId of profileIds) {
+      tx.insertProfile({
+        seasonId: 'arena-v1-0',
+        profileId,
+        availableTickets: 2,
+        lastDailyGrantDate: '2026-07-20',
+        placementGames: 5,
+        placementPoints: 175,
+        tier,
+        mmr: 1_000,
+        createdAt: at,
+        updatedAt: at,
+      });
+      tx.insertGroupMember({
+        groupId,
+        seasonId: 'arena-v1-0',
+        weekKey,
+        profileId,
+        points: 0,
+        wins: 0,
+        top3: 0,
+        placeSum: 0,
+        matches: 0,
+        scoreReachedAt: at,
+        joinedAt: at,
+        updatedAt: at,
+      });
+    }
+  });
+  return profileIds;
+}
+
+function weeklyStandings(prefix: string, count: number): WeeklyStanding[] {
+  return Array.from({ length: count }, (_, index) => ({
+    profileId: `${prefix}-${String(index + 1).padStart(2, '0')}`,
+    points: count - index,
+    wins: 0,
+    top3: 0,
+    placeSum: 18,
+    matches: 3,
+    scoreReachedAt: EPOCH,
+  }));
+}
+
+function seedWeeklyGroup(
+  database: PokerDatabase,
+  repository: ArenaRepository,
+  groupId: string,
+  weekKey: string,
+  tier: ArenaTier,
+  standings: readonly WeeklyStanding[],
+  at: number,
+): void {
+  for (const row of standings) insertBaseProfile(database, row.profileId);
+  repository.transaction(tx => {
+    tx.insertGroup({
+      id: groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier,
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    });
+    for (const row of standings) {
+      tx.insertProfile({
+        seasonId: 'arena-v1-0',
+        profileId: row.profileId,
+        availableTickets: 2,
+        lastDailyGrantDate: '2026-07-20',
+        placementGames: 5,
+        placementPoints: 175,
+        tier,
+        mmr: 1_000,
+        createdAt: at,
+        updatedAt: at,
+      });
+      const scoreReachedAt = Math.max(row.scoreReachedAt, at);
+      tx.insertGroupMember({
+        groupId,
+        seasonId: 'arena-v1-0',
+        weekKey,
+        profileId: row.profileId,
+        points: row.points,
+        wins: row.wins,
+        top3: row.top3,
+        placeSum: row.placeSum,
+        matches: row.matches,
+        scoreReachedAt,
+        joinedAt: at,
+        updatedAt: scoreReachedAt,
+      });
+    }
   });
 }
