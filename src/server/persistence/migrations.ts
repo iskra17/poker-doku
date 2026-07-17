@@ -4100,7 +4100,7 @@ export const migrations: readonly Migration[] = [
         ),
         FOREIGN KEY (season_id, profile_id)
           REFERENCES arena_season_results(season_id, profile_id)
-          ON DELETE RESTRICT,
+          ON DELETE CASCADE,
         FOREIGN KEY (trophy_item_id)
           REFERENCES arena_season_catalog(item_id) ON DELETE RESTRICT,
         FOREIGN KEY (aura_item_id)

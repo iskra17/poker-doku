@@ -8,6 +8,7 @@ import {
   getArenaKstWeekKey,
 } from './arena-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { ProfileRepository } from './profile-repository';
 import { ProgressionRepository } from './progression-repository';
 
 const EPOCH = Date.parse('2026-07-20T00:00:00+09:00');
@@ -375,6 +376,92 @@ describe('Arena season settlement and rewards', () => {
       tier: 'diamond',
     });
   });
+
+  it('cascades a deleted champion while preserving unrelated season history', () => {
+    service.reconcile(EPOCH);
+    for (const profileId of ['deleted-champion', 'kept-champion']) {
+      addProfile(
+        database,
+        progression,
+        repository,
+        profileId,
+        'master',
+        1_400,
+      );
+    }
+    for (let round = 0; round < 10; round += 1) {
+      seedFinishedOfficialMatch(database, `delete-${round}`, [
+        ['deleted-champion', 1],
+        ['kept-champion', 2],
+      ], EPOCH + round + 1);
+    }
+    service.reconcile(BOUNDARY);
+    seedFinishedOfficialMatch(
+      database,
+      'kept-next-championship',
+      [
+        ['kept-champion', 1],
+        ['deleted-champion', 2],
+      ],
+      BOUNDARY + 1,
+      NEXT_SEASON_ID,
+    );
+    const secondBoundary = BOUNDARY + 28 * DAY;
+    service.reconcile(secondBoundary);
+    expect(repository.findHallOfFame(SEASON_ID)?.profileId)
+      .toBe('deleted-champion');
+    expect(repository.findHallOfFame(NEXT_SEASON_ID)?.profileId)
+      .toBe('kept-champion');
+    expect(() => database.db.prepare(`
+      DELETE FROM arena_season_results
+      WHERE season_id = ? AND profile_id = ?
+    `).run(SEASON_ID, 'deleted-champion'))
+      .toThrowError('arena season result is immutable');
+
+    expect(new ProfileRepository(database).deleteProfile('deleted-champion'))
+      .toBe('deleted');
+
+    expect(countOwnedRows(database, 'profiles', 'id', 'deleted-champion'))
+      .toBe(0);
+    for (const table of [
+      'arena_profiles',
+      'arena_season_results',
+      'arena_season_rewards',
+      'inventory_items',
+    ]) {
+      expect(countOwnedRows(
+        database,
+        table,
+        'profile_id',
+        'deleted-champion',
+      )).toBe(0);
+    }
+    expect(repository.findHallOfFame(SEASON_ID)).toBeNull();
+    expect(repository.findSeasonSettlement(SEASON_ID)).not.toBeNull();
+    expect(countOwnedRows(database, 'profiles', 'id', 'kept-champion'))
+      .toBe(1);
+    expect(countOwnedRows(
+      database,
+      'arena_season_results',
+      'profile_id',
+      'kept-champion',
+    )).toBe(2);
+    expect(countOwnedRows(
+      database,
+      'arena_season_rewards',
+      'profile_id',
+      'kept-champion',
+    )).toBeGreaterThan(0);
+    expect(countOwnedRows(
+      database,
+      'inventory_items',
+      'profile_id',
+      'kept-champion',
+    )).toBeGreaterThan(0);
+    expect(repository.findHallOfFame(NEXT_SEASON_ID)?.profileId)
+      .toBe('kept-champion');
+    expect(database.db.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+  });
 });
 
 function arenaService(
@@ -430,6 +517,7 @@ function seedFinishedOfficialMatch(
   matchId: string,
   results: readonly [profileId: string, place: number][],
   settledAt: number,
+  seasonId = SEASON_ID,
 ): void {
   database.db.prepare(`
     INSERT INTO arena_matches (
@@ -438,7 +526,7 @@ function seedFinishedOfficialMatch(
     ) VALUES (?, ?, 1, 'arena-v1-hard', 1000, ?, ?, 'finished', ?, ?, ?)
   `).run(
     matchId,
-    SEASON_ID,
+    seasonId,
     results.length,
     6 - results.length,
     settledAt - 2,
@@ -454,7 +542,7 @@ function seedFinishedOfficialMatch(
   for (const [profileId, place] of results) {
     insert.run(
       matchId,
-      SEASON_ID,
+      seasonId,
       profileId,
       place,
       pointsForPlace(place),
@@ -501,6 +589,17 @@ function countRows(database: PokerDatabase, table: string): number {
   return (database.db.prepare(`
     SELECT COUNT(*) AS count FROM ${table}
   `).get() as { count: number }).count;
+}
+
+function countOwnedRows(
+  database: PokerDatabase,
+  table: string,
+  ownerColumn: string,
+  profileId: string,
+): number {
+  return (database.db.prepare(`
+    SELECT COUNT(*) AS count FROM ${table} WHERE ${ownerColumn} = ?
+  `).get(profileId) as { count: number }).count;
 }
 
 function countArenaInventory(database: PokerDatabase): number {
