@@ -21,8 +21,9 @@ export function getRoomEntryAvailability({
   balance,
 }: RoomEntryAvailabilityInput): RoomEntryAvailability {
   const isSng = mode === 'sng';
-  const walletRequired = isSng || economyMode === 'wallet';
-  const cost = isSng ? CASUAL_SNG_ENTRY_COST : buyIn;
+  // 연습 SnG(economyMode 'practice')는 지갑을 걸지 않는다 — 잔고 검사·비용 표시 모두 제외
+  const walletRequired = economyMode === 'wallet';
+  const cost = isSng ? (walletRequired ? CASUAL_SNG_ENTRY_COST : 0) : buyIn;
   const knownBalance = Number.isSafeInteger(balance) && (balance as number) >= 0;
   const validCost = Number.isSafeInteger(cost) && cost >= 0;
   return {

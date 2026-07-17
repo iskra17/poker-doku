@@ -55,6 +55,23 @@ const TABLE_TYPES: Array<{ id: TableType; label: string; desc: string; hint: str
   },
 ];
 
+// SnG 참가 방식 — wallet은 지갑 에스크로라 사람 6명 전용, practice만 방장 봇 채우기가 가능하다
+type SngEntryMode = 'wallet' | 'practice';
+const SNG_ENTRY_MODES: Array<{ id: SngEntryMode; label: string; desc: string; hint: string }> = [
+  {
+    id: 'practice',
+    label: '연습 (무료)',
+    desc: '봇 채우기 가능',
+    hint: '지갑 칩을 걸지 않는 무료 토너먼트 — 방장이 남는 자리를 봇으로 채워 바로 시작할 수 있어요.',
+  },
+  {
+    id: 'wallet',
+    label: '지갑 걸기',
+    desc: '사람 6명 전용',
+    hint: '지갑 칩으로 바이인+수수료를 걸어요. 사람 6명이 모두 모여야 시작하고 봇은 참가할 수 없어요.',
+  },
+];
+
 export default function CreateRoomModal() {
   const { showCreateRoom, setShowCreateRoom, createRoom } = useGameStore();
   const [name, setName] = useState('');
@@ -64,6 +81,7 @@ export default function CreateRoomModal() {
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [turnTime, setTurnTime] = useState(8);
   const [tableType, setTableType] = useState<TableType>('mixed');
+  const [sngEntryMode, setSngEntryMode] = useState<SngEntryMode>('practice');
 
   const blind = BLIND_LEVELS[blindIndex];
   const sngStart = SNG_BLIND_SCHEDULE[0];
@@ -83,6 +101,7 @@ export default function CreateRoomModal() {
       turnTime,
       tableType: mode === 'cash' ? tableType : 'mixed', // SnG는 방장 봇 채우기가 있는 혼합 고정
       botCount: tableType === 'humans' ? 0 : tableType === 'bots' ? 5 : 2,
+      economyMode: mode === 'sng' ? sngEntryMode : undefined,
     });
     setName('');
     setPassword('');
@@ -250,28 +269,55 @@ export default function CreateRoomModal() {
             </div>
           </>
         ) : (
-          <div className="bg-gray-800/30 rounded-lg p-3 text-sm space-y-1">
-            <div className="flex justify-between text-gray-400">
-              <span>시작 스택</span>
-              <span className="text-yellow-300">{SNG_STARTING_STACK.toLocaleString()}</span>
+          <>
+            {/* SnG 참가 방식 — 연습(봇 채우기 가능) vs 지갑(사람 6명 전용) */}
+            <div>
+              <label className="text-gray-400 text-sm block mb-2">참가 방식</label>
+              <div className="grid grid-cols-2 gap-2">
+                {SNG_ENTRY_MODES.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setSngEntryMode(m.id)}
+                    className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                      sngEntryMode === m.id
+                        ? 'bg-purple-600 text-white border border-purple-400'
+                        : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                    }`}
+                  >
+                    {m.label}
+                    <span className="block text-[10px] font-normal opacity-70">{m.desc}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="text-[11px] text-gray-500 mt-1">
+                {SNG_ENTRY_MODES.find(m => m.id === sngEntryMode)!.hint}
+              </p>
             </div>
-            <div className="flex justify-between text-gray-400">
-              <span>시작 블라인드</span>
-              <span className="text-white">{sngStart.smallBlind}/{sngStart.bigBlind}</span>
+
+            <div className="bg-gray-800/30 rounded-lg p-3 text-sm space-y-1">
+              <div className="flex justify-between text-gray-400">
+                <span>시작 스택</span>
+                <span className="text-yellow-300">{SNG_STARTING_STACK.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-gray-400">
+                <span>시작 블라인드</span>
+                <span className="text-white">{sngStart.smallBlind}/{sngStart.bigBlind}</span>
+              </div>
+              <div className="flex justify-between text-gray-400">
+                <span>블라인드 인상</span>
+                <span className="text-white">{SNG_LEVEL_DURATION_MS / 60000}분마다</span>
+              </div>
+              <div className="flex justify-between text-gray-400">
+                <span>시상</span>
+                <span className="text-white">1~3위 (50/30/20%)</span>
+              </div>
+              <p className="text-[11px] text-gray-500 pt-1">
+                {sngEntryMode === 'practice'
+                  ? '6명이 모두 모이면 자동 시작돼요. 방장은 남는 자리를 봇으로 채워 바로 시작할 수도 있어요. 시작 후에는 참가·리바이가 불가능해요.'
+                  : '사람 6명이 모두 모이면 자동 시작돼요 (봇 참가 불가). 시작 후에는 참가·리바이가 불가능해요.'}
+              </p>
             </div>
-            <div className="flex justify-between text-gray-400">
-              <span>블라인드 인상</span>
-              <span className="text-white">{SNG_LEVEL_DURATION_MS / 60000}분마다</span>
-            </div>
-            <div className="flex justify-between text-gray-400">
-              <span>시상</span>
-              <span className="text-white">1~3위 (50/30/20%)</span>
-            </div>
-            <p className="text-[11px] text-gray-500 pt-1">
-              6명이 모두 모이면 자동 시작돼요. 방장은 남는 자리를 봇으로 채워 바로 시작할 수도 있어요.
-              시작 후에는 참가·리바이가 불가능해요.
-            </p>
-          </div>
+          </>
         )}
 
         {/* 만들기 */}

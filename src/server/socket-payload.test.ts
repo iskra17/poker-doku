@@ -95,10 +95,26 @@ describe('Socket.IO payload runtime parsing', () => {
         difficulty: 'hard',
         tableType: 'humans',
         botCount: 0,
+        economyMode: 'wallet', // 미지정 시 기본 wallet
         password: '1234',
       },
     });
     expect(parseCreateRoomRequest({ name: {}, bigBlind: Infinity }).ok).toBe(false);
+  });
+
+  it('create-room economyMode는 wallet/practice만 허용하고 기본은 wallet이다', () => {
+    const base = { name: '연습 SnG', gameMode: 'sng' };
+    const practice = parseCreateRoomRequest({ ...base, economyMode: 'practice' });
+    expect(practice.ok).toBe(true);
+    if (practice.ok) expect(practice.value.economyMode).toBe('practice');
+
+    const defaulted = parseCreateRoomRequest(base);
+    expect(defaulted.ok).toBe(true);
+    if (defaulted.ok) expect(defaulted.value.economyMode).toBe('wallet');
+
+    // arena 등 다른 economyMode는 클라이언트가 지정할 수 없다
+    expect(parseCreateRoomRequest({ ...base, economyMode: 'arena' }).ok).toBe(false);
+    expect(parseCreateRoomRequest({ ...base, economyMode: 1 }).ok).toBe(false);
   });
 
   it('leave-room은 payload 생략과 두 모드만 허용한다', () => {

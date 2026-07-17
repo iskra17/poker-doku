@@ -4,7 +4,7 @@ import { RoomManager } from './room-manager';
 import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
-import { SNG_BLIND_SCHEDULE } from '../lib/poker/blind-schedule';
+import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 import { eventLog, tokenHint } from './event-log';
 import type {
   ArenaQueueMetrics,
@@ -1742,18 +1742,31 @@ export function setupSocketHandlers(
               : Math.min(Math.max(Math.floor(Number(config.botCount ?? 2)), 1), 5),
         password: password || undefined,
         hostId: session.playerId, // 방장 — Sit & Go 봇 채우기 권한
-        // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택
+        // 시트앤고는 고정 구조: 블라인드 스케줄 1레벨 시작 + 고정 스택.
+        // wallet(기본)은 지갑 바이인+수수료 에스크로 — 휴먼 6명 전용이라 봇 채우기 불가.
+        // practice는 지갑 무관 무료 — 방장 봇 채우기(fillWithBots)는 이 모드에서만 동작한다.
         ...(isSng
           ? {
               gameMode: 'sng' as const,
-              economyMode: 'wallet' as const,
               smallBlind: SNG_BLIND_SCHEDULE[0].smallBlind,
               bigBlind: SNG_BLIND_SCHEDULE[0].bigBlind,
-              startingStack: ECONOMY_RULES.casualSngBuyIn,
-              minBuyIn: ECONOMY_RULES.casualSngBuyIn,
-              maxBuyIn: ECONOMY_RULES.casualSngBuyIn,
-              entryBuyIn: ECONOMY_RULES.casualSngBuyIn,
-              entryFee: ECONOMY_RULES.casualSngFee,
+              ...(config.economyMode === 'practice'
+                ? {
+                    economyMode: 'practice' as const,
+                    startingStack: SNG_STARTING_STACK,
+                    minBuyIn: SNG_STARTING_STACK,
+                    maxBuyIn: SNG_STARTING_STACK,
+                    entryBuyIn: undefined,
+                    entryFee: undefined,
+                  }
+                : {
+                    economyMode: 'wallet' as const,
+                    startingStack: ECONOMY_RULES.casualSngBuyIn,
+                    minBuyIn: ECONOMY_RULES.casualSngBuyIn,
+                    maxBuyIn: ECONOMY_RULES.casualSngBuyIn,
+                    entryBuyIn: ECONOMY_RULES.casualSngBuyIn,
+                    entryFee: ECONOMY_RULES.casualSngFee,
+                  }),
             }
           : {
               gameMode: 'cash' as const,
@@ -1789,7 +1802,17 @@ export function setupSocketHandlers(
         broadcastRoomList();
         ack?.({ ok: true });
       } else {
-        ack?.({ ok: false, code: 'action-rejected', message: '지금은 봇으로 채울 수 없어요.' });
+        // wallet SnG는 지갑 에스크로 계약상 휴먼 6명 전용 — 이유를 명확히 안내
+        const room = roomManager.getRoom(session.roomId);
+        const walletSng = room?.config.gameMode === 'sng'
+          && room.config.economyMode === 'wallet';
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: walletSng
+            ? '지갑 Sit & Go는 사람 6명이 모두 모여야 시작해요 — 봇과 하려면 연습 Sit & Go로 만들어 주세요.'
+            : '지금은 봇으로 채울 수 없어요.',
+        });
       }
     });
 

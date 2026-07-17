@@ -28,6 +28,8 @@ interface CreateRoomConfig {
   difficulty?: 'easy' | 'normal' | 'hard';
   botCount?: number;
   tableType?: 'bots' | 'mixed' | 'humans';
+  /** SnG 참가 방식 — wallet(지갑 바이인, 사람 6명 전용) | practice(무료, 봇 채우기 가능) */
+  economyMode?: 'wallet' | 'practice';
 }
 
 let joinTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -385,6 +387,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       difficulty: config.difficulty ?? 'normal',
       tableType: config.tableType ?? 'mixed',
       botCount: config.botCount ?? 2,
+      economyMode: config.economyMode ?? 'wallet',
       password: config.password,
     }, ack => {
       if (ack.ok) {

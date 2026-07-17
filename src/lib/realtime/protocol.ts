@@ -72,6 +72,11 @@ export interface CreateRoomRequest {
   tableType: 'bots' | 'mixed' | 'humans';
   botCount: number;
   password?: string;
+  /**
+   * SnG 참가 방식 (기본 'wallet'). wallet은 지갑 칩 바이인+수수료 에스크로라 사람 6명 전용 —
+   * 봇 채우기는 'practice'(무료, 지갑 무관)에서만 가능하다. 캐시 게임에는 적용되지 않는다.
+   */
+  economyMode?: 'wallet' | 'practice';
 }
 
 export interface LeaveRoomRequest {

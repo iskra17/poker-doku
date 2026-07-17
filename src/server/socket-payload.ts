@@ -14,6 +14,7 @@ const ACTIONS: readonly ActionType[] = ['fold', 'check', 'call', 'raise', 'all-i
 const MODES = ['cash', 'sng'] as const;
 const DIFFICULTIES = ['easy', 'normal', 'hard'] as const;
 const TABLE_TYPES = ['bots', 'mixed', 'humans'] as const;
+const CREATE_ECONOMY_MODES = ['wallet', 'practice'] as const;
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 const INVALID_MESSAGE = '요청 형식이 올바르지 않아요.';
 
@@ -118,6 +119,7 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
   const gameMode = input.gameMode === undefined ? 'cash' : input.gameMode;
   const difficulty = input.difficulty === undefined ? 'normal' : input.difficulty;
   const tableType = input.tableType === undefined ? 'mixed' : input.tableType;
+  const economyMode = input.economyMode === undefined ? 'wallet' : input.economyMode;
   const password = optionalText(input.password, 20);
   if (
     !name
@@ -128,6 +130,7 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
     || !memberOf(gameMode, MODES)
     || !memberOf(difficulty, DIFFICULTIES)
     || !memberOf(tableType, TABLE_TYPES)
+    || !memberOf(economyMode, CREATE_ECONOMY_MODES)
   ) return fail();
 
   return {
@@ -140,6 +143,7 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
       difficulty,
       tableType,
       botCount: Math.trunc(botCount),
+      economyMode,
       ...(password ? { password } : {}),
     },
   };

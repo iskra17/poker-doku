@@ -19,7 +19,9 @@ export default function SngWaitingOverlay() {
   const seated = gameState.players.length;
   const max = 6;
   const hostSeated = gameState.players.some(p => p.id === gameState.hostId);
-  const canFill = myPlayerId === gameState.hostId || !hostSeated;
+  // wallet SnG는 지갑 에스크로 계약상 휴먼 6명 전용 — 봇 채우기 버튼을 노출하지 않는다
+  const walletSng = gameState.economyMode === 'wallet';
+  const canFill = !walletSng && (myPlayerId === gameState.hostId || !hostSeated);
 
   return (
     <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
@@ -45,6 +47,10 @@ export default function SngWaitingOverlay() {
             <Button variant="primary" size="sm" className="w-full" onClick={sngFillBots}>
               🤖 남는 자리 봇으로 채우고 시작
             </Button>
+          ) : walletSng ? (
+            <p className="text-ink-dim/70 text-[10px]">
+              지갑 Sit &amp; Go는 사람 6명이 모두 모여야 시작해요 (봇 참가 불가).
+            </p>
           ) : (
             <p className="text-ink-dim/70 text-[10px]">방장이 봇을 채워 바로 시작할 수 있어요.</p>
           )}

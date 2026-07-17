@@ -993,6 +993,48 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .resolves.toMatchObject({ ok: false, code: 'action-rejected' });
   });
 
+  it('practice SNG allows host bot filling and starts without wallet escrow', async () => {
+    harness = await createSocketTestHarness();
+    const created = await harness.createProfile();
+    const client = await harness.connect('sng-practice-token', {
+      profileCookie: created.cookie,
+    });
+    const createdRoom = await withAck<{ roomId: string }>(done => client.socket.emit(
+      'create-room',
+      {
+        name: '연습 토너먼트',
+        bigBlind: 20,
+        turnTime: 8,
+        gameMode: 'sng',
+        difficulty: 'normal',
+        tableType: 'mixed',
+        botCount: 0,
+        economyMode: 'practice',
+      },
+      done,
+    ));
+    expect(createdRoom.ok).toBe(true);
+    if (!createdRoom.ok) throw new Error('room creation failed');
+    const roomId = createdRoom.data!.roomId;
+    const config = harness.runtime.roomManager.getRoom(roomId)?.config;
+    expect(config).toMatchObject({
+      gameMode: 'sng',
+      economyMode: 'practice',
+      startingStack: 1_500,
+      minBuyIn: 1_500,
+      maxBuyIn: 1_500,
+    });
+    expect(config?.entryBuyIn).toBeUndefined();
+    expect(config?.entryFee).toBeUndefined();
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({ ok: true });
+    await expect(withAck(done => client.socket.emit('sng-fill-bots', done)))
+      .resolves.toMatchObject({ ok: true });
+    const engine = harness.runtime.roomManager.getRoom(roomId)!.engine;
+    expect(engine.state.players).toHaveLength(6);
+    expect(engine.state.players.filter(player => player.type === 'bot')).toHaveLength(5);
+  });
+
   it('reserves a fixed SNG entry before seating, reuses it, and compensates seat failure', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_SNG_ROOM);

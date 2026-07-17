@@ -66,11 +66,20 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
 
         {isSng ? (
           <div className="bg-gray-800/30 rounded-lg p-3 text-sm space-y-1">
-            <div className="flex justify-between text-gray-400">
-              <span>바이인 1,500 + 참가 수수료 150</span>
-              <span className="text-yellow-300">총 {entryAvailability.cost.toLocaleString()}</span>
-            </div>
-            <p className="text-[11px] text-gilded/90">상금 풀에는 바이인만 포함</p>
+            {entryAvailability.walletRequired ? (
+              <>
+                <div className="flex justify-between text-gray-400">
+                  <span>바이인 1,500 + 참가 수수료 150</span>
+                  <span className="text-yellow-300">총 {entryAvailability.cost.toLocaleString()}</span>
+                </div>
+                <p className="text-[11px] text-gilded/90">상금 풀에는 바이인만 포함</p>
+              </>
+            ) : (
+              <div className="flex justify-between text-gray-400">
+                <span>연습 토너먼트 (지갑 칩 무관)</span>
+                <span className="text-yellow-300">무료</span>
+              </div>
+            )}
             <p className="text-[11px] text-gray-500 pt-1">
               6명이 모이면 시작해요. 탈락하면 리바이 없이 관전으로 전환됩니다.
             </p>
