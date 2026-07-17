@@ -557,6 +557,191 @@ describe('ArenaService free ticket lifecycle', () => {
     expect(repository.listGroupMembers('sunday-group')).toEqual(oldMembers);
   });
 
+  it('settles only the player due group before assigning the completion week tier', () => {
+    const sunday = EPOCH + 6 * DAY + DAY / 2;
+    const monday = EPOCH + 7 * DAY;
+    const nextMonday = EPOCH + 14 * DAY;
+    const sundayWeek = getArenaKstWeekKey(sunday);
+    const mondayWeek = getArenaKstWeekKey(monday);
+    service.getSnapshot('profile-a', sunday);
+    service.getSnapshot('profile-c', sunday);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacement(repository, 'profile-c', [35, 35, 35, 35, 35]);
+    seedEligibleWeeklyMember(
+      repository,
+      'due-profile-a',
+      sundayWeek,
+      'profile-a',
+      'silver',
+      sunday - 2,
+    );
+    seedPlacedWeeklyMember(
+      repository,
+      'unrelated-profile-c',
+      sundayWeek,
+      'profile-c',
+      'silver',
+      sunday - 1,
+    );
+    const dueAudit = repository.listGroupMembers('due-profile-a');
+    service.reserveMatchTickets(
+      'stale-tier-race',
+      ['profile-a', 'profile-b'],
+      sunday,
+    );
+    service.markMatchPlaying('stale-tier-race', sunday + 1);
+    const results = sixSeatResult([
+      ['profile-a', 1],
+      ['profile-b', 6],
+    ]);
+
+    const first = service.settleOfficialMatch(
+      'stale-tier-race',
+      results,
+      monday + 1,
+    );
+
+    expect(repository.requireGroup('due-profile-a')).toMatchObject({
+      status: 'settled',
+      settledAt: monday + 1,
+    });
+    expect(repository.listGroupMembers('due-profile-a')).toEqual(dueAudit);
+    expect(repository.requireGroup('unrelated-profile-c').status).toBe('open');
+    expect(repository.requireProfile('arena-v1-0', 'profile-a').tier)
+      .toBe('gold');
+    const currentMember = repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    );
+    expect(currentMember).toMatchObject({
+      points: 100,
+      wins: 1,
+      top3: 1,
+      matches: 1,
+    });
+    expect(repository.requireGroup(currentMember!.groupId)).toMatchObject({
+      weekKey: mondayWeek,
+      tier: 'gold',
+      status: 'open',
+    });
+
+    const duplicate = service.settleOfficialMatch(
+      'stale-tier-race',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 1],
+      ]),
+      monday + 2,
+    );
+    expect(duplicate).toEqual(first);
+    expect(countWeeklyMemberships(
+      database,
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toBe(1);
+
+    expect(() => service.reconcile(nextMonday)).not.toThrow();
+    expect(() => service.reconcile(nextMonday + 1)).not.toThrow();
+    expect(repository.requireGroup(currentMember!.groupId).status)
+      .toBe('settled');
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      sundayWeek,
+      'due-profile-a',
+    )).not.toBeNull();
+    expect(repository.findWeeklySettlement(
+      'arena-v1-0',
+      mondayWeek,
+      currentMember!.groupId,
+    )).not.toBeNull();
+  });
+
+  it('leaves the official result unchanged when a due group preflight fails', () => {
+    const sunday = EPOCH + 6 * DAY + DAY / 2;
+    const monday = EPOCH + 7 * DAY;
+    const sundayWeek = getArenaKstWeekKey(sunday);
+    const mondayWeek = getArenaKstWeekKey(monday);
+    service.getSnapshot('profile-a', sunday);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedEligibleWeeklyMember(
+      repository,
+      'due-preflight-failure',
+      sundayWeek,
+      'profile-a',
+      'silver',
+      sunday - 1,
+    );
+    service.reserveMatchTickets(
+      'preflight-failure',
+      ['profile-a', 'profile-b'],
+      sunday,
+    );
+    service.markMatchPlaying('preflight-failure', sunday + 1);
+    const matchBefore = repository.requireMatch('preflight-failure');
+    const entriesBefore = repository.listMatchEntries('preflight-failure');
+    const profileBefore = repository.requireProfile(
+      'arena-v1-0',
+      'profile-a',
+    );
+    const escrowBefore = repository.requireTicketEscrow(
+      'preflight-failure',
+      'profile-a',
+    );
+    const listGroupMembers = repository.listGroupMembers.bind(repository);
+    const failure = vi.spyOn(repository, 'listGroupMembers')
+      .mockImplementation(groupId => {
+        if (groupId === 'due-preflight-failure') {
+          throw new Error('due-group-unavailable');
+        }
+        return listGroupMembers(groupId);
+      });
+    const results = sixSeatResult([
+      ['profile-a', 1],
+      ['profile-b', 6],
+    ]);
+
+    expect(() => service.settleOfficialMatch(
+      'preflight-failure',
+      results,
+      monday + 1,
+    )).toThrow('due-group-unavailable');
+    failure.mockRestore();
+
+    expect(repository.requireMatch('preflight-failure')).toEqual(matchBefore);
+    expect(repository.listMatchEntries('preflight-failure'))
+      .toEqual(entriesBefore);
+    expect(repository.requireProfile('arena-v1-0', 'profile-a'))
+      .toEqual(profileBefore);
+    expect(repository.requireTicketEscrow(
+      'preflight-failure',
+      'profile-a',
+    )).toEqual(escrowBefore);
+    expect(repository.requireGroup('due-preflight-failure').status)
+      .toBe('open');
+    expect(repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    )).toBeNull();
+
+    service.settleOfficialMatch(
+      'preflight-failure',
+      results,
+      monday + 2,
+    );
+    expect(repository.requireGroup('due-preflight-failure').status)
+      .toBe('settled');
+    const currentMember = repository.findGroupMember(
+      'arena-v1-0',
+      mondayWeek,
+      'profile-a',
+    );
+    expect(repository.requireGroup(currentMember!.groupId).tier).toBe('gold');
+    expect(currentMember?.matches).toBe(1);
+  });
+
   it('keeps a cross-week fifth placement ungrouped until the next official result', () => {
     const sunday = EPOCH + 6 * DAY + DAY / 2;
     const monday = EPOCH + 7 * DAY;
@@ -1292,6 +1477,41 @@ function seedPlacedWeeklyMember(
       top3: 1,
       placeSum: 3,
       matches: 1,
+      scoreReachedAt: at,
+      joinedAt: at,
+      updatedAt: at,
+    });
+  });
+}
+
+function seedEligibleWeeklyMember(
+  repository: ArenaRepository,
+  groupId: string,
+  weekKey: string,
+  profileId: string,
+  tier: ArenaTier,
+  at: number,
+): void {
+  repository.transaction(tx => {
+    tx.insertGroup({
+      id: groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier,
+      status: 'open',
+      createdAt: at,
+      settledAt: null,
+    });
+    tx.insertGroupMember({
+      groupId,
+      seasonId: 'arena-v1-0',
+      weekKey,
+      profileId,
+      points: 100,
+      wins: 1,
+      top3: 3,
+      placeSum: 6,
+      matches: 3,
       scoreReachedAt: at,
       joinedAt: at,
       updatedAt: at,

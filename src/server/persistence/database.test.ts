@@ -48,7 +48,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(16);
+    expect(migration.version).toBe(17);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -181,7 +181,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(16);
+    expect(result.count).toBe(17);
   });
 
   it('preserves V13 data while atomically adding the Arena schema', () => {
@@ -197,7 +197,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 16 });
+    `).get()).toEqual({ version: 17 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -229,7 +229,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 16 });
+    `).get()).toEqual({ version: 17 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -472,7 +472,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 16 });
+    `).get()).toEqual({ version: 17 });
     expect(arena.requireSeason('v14-season').id).toBe('v14-season');
     expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
     expect(arena.requireMatch('v14-match').status).toBe('forming');
@@ -485,6 +485,120 @@ describe('PokerDatabase migrations', () => {
       'v14-season', '2020-W53', 'v15-settled-group',
     )).not.toBeNull();
     expect(arena.listSeasonRewards('v14-season', 'v1-marker')).toHaveLength(1);
+  });
+
+  it('upgrades V16 Arena rows once and indexes due groups without a temp sort', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV16Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertV15CompleteArenaFixture(rawDatabase);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+    const arena = new ArenaRepository(database);
+    const plan = database.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT id, season_id, week_key, tier, status, created_at, settled_at
+      FROM arena_groups
+      WHERE status = 'open' AND week_key < ?
+      ORDER BY week_key, season_id, created_at, id
+    `).all('2021-W01').map(row => (row as { detail: string }).detail);
+    const profilePlan = database.db.prepare(`
+      EXPLAIN QUERY PLAN
+      SELECT DISTINCT
+        groups.id,
+        groups.season_id,
+        groups.week_key,
+        groups.tier,
+        groups.status,
+        groups.created_at,
+        groups.settled_at
+      FROM arena_group_members AS members
+      INNER JOIN arena_groups AS groups ON groups.id = members.group_id
+      WHERE members.profile_id IN (?)
+        AND members.season_id = ?
+        AND members.week_key < ?
+        AND groups.status = 'open'
+      ORDER BY groups.week_key, groups.created_at, groups.id
+    `).all('v1-marker', 'v14-season', '2021-W01')
+      .map(row => (row as { detail: string }).detail);
+
+    expect(database.db.prepare(`
+      SELECT MAX(version) AS version FROM schema_migrations
+    `).get()).toEqual({ version: 17 });
+    expect(arena.requireGroup('v15-open-group').status).toBe('open');
+    expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
+    expect(database.db.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'index' AND name = 'idx_arena_groups_open_week_order'
+    `).get()).toEqual({ name: 'idx_arena_groups_open_week_order' });
+    expect(database.db.prepare(`
+      SELECT name FROM sqlite_schema
+      WHERE type = 'index'
+        AND name = 'idx_arena_group_members_profile_due_week'
+    `).get()).toEqual({
+      name: 'idx_arena_group_members_profile_due_week',
+    });
+    expect(plan.some(detail =>
+      detail.includes('idx_arena_groups_open_week_order'),
+    )).toBe(true);
+    expect(plan.some(detail => detail.includes('USE TEMP B-TREE'))).toBe(false);
+    expect(profilePlan.some(detail =>
+      detail.includes('idx_arena_group_members_profile_due_week'),
+    )).toBe(true);
+
+    database.close();
+    database = openPokerDatabase(path);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM schema_migrations WHERE version = 17
+    `).get()).toEqual({ count: 1 });
+    expect(new ArenaRepository(database)
+      .listGroupMembers('v15-open-group')).toHaveLength(1);
+  });
+
+  it('rolls back the V17 indexes and marker together on migration failure', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV16Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertV15CompleteArenaFixture(rawDatabase);
+    rawDatabase.exec(`
+      CREATE INDEX idx_arena_group_members_profile_due_week
+        ON arena_group_members(group_id);
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrow();
+
+    const verificationDatabase = new DatabaseSync(path);
+    try {
+      expect(verificationDatabase.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 16 });
+      expect(verificationDatabase.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'index' AND name = 'idx_arena_groups_open_week_order'
+      `).get()).toBeUndefined();
+      expect(verificationDatabase.prepare(`
+        SELECT name FROM sqlite_schema
+        WHERE type = 'index'
+          AND name = 'idx_arena_group_members_profile_due_week'
+      `).get()).toEqual({
+        name: 'idx_arena_group_members_profile_due_week',
+      });
+      expect(verificationDatabase.prepare(`
+        SELECT status FROM arena_groups WHERE id = 'v15-open-group'
+      `).get()).toEqual({ status: 'open' });
+      expect(verificationDatabase.prepare(`
+        SELECT COUNT(*) AS count
+        FROM arena_group_members WHERE group_id = 'v15-open-group'
+      `).get()).toEqual({ count: 1 });
+    } finally {
+      verificationDatabase.close();
+    }
   });
 
   it('rejects a second active Arena ticket escrow for one profile', () => {
@@ -1393,7 +1507,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -1418,7 +1532,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -1462,7 +1576,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
   });
 
@@ -1504,7 +1618,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -1812,7 +1926,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2068,7 +2182,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 },
+      { version: 16 }, { version: 17 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2335,7 +2449,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 16 });
+    `).get()).toEqual({ version: 17 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -2678,7 +2792,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 16 });
+    `).get()).toEqual({ version: 17 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -4048,6 +4162,22 @@ function createV15Database(path: string): void {
       ${migrations[14].sql}
       INSERT INTO schema_migrations (version, name, applied_at)
       VALUES (15, 'harden_poker_arena_lifecycle_invariants', 15);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function createV16Database(path: string): void {
+  createV15Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[15].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (16, 'audit_legacy_arena_persistence_rows', 16);
       COMMIT;
     `);
   } finally {

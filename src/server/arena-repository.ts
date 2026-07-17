@@ -887,6 +887,31 @@ export class ArenaRepository {
     return rows.map(mapGroup);
   }
 
+  listOpenGroupsBeforeWeekForProfiles(
+    seasonId: string,
+    weekKeyExclusive: string,
+    profileIds: readonly string[],
+  ): ArenaGroupRecord[] {
+    const uniqueProfileIds = [...new Set(profileIds)].sort(compareCodeUnits);
+    if (uniqueProfileIds.length === 0) return [];
+    const placeholders = uniqueProfileIds.map(() => '?').join(', ');
+    const rows = this.#database.db.prepare(`
+      SELECT DISTINCT groups.id, groups.season_id, groups.week_key,
+             groups.tier, groups.status, groups.created_at, groups.settled_at
+      FROM arena_group_members AS members
+      JOIN arena_groups AS groups ON groups.id = members.group_id
+      WHERE members.profile_id IN (${placeholders})
+        AND members.season_id = ? AND members.week_key < ?
+        AND groups.status = 'open'
+      ORDER BY groups.week_key, groups.created_at, groups.id
+    `).all(
+      ...uniqueProfileIds,
+      seasonId,
+      weekKeyExclusive,
+    ) as unknown as GroupRow[];
+    return rows.map(mapGroup);
+  }
+
   listGroupMembers(groupId: string): ArenaGroupMemberRecord[] {
     const rows = this.#database.db.prepare(`
       SELECT group_id, season_id, week_key, profile_id, points, wins, top3,
@@ -1395,6 +1420,11 @@ function asEnum<const TValues extends readonly string[]>(
     fail('ARENA_PERSISTENCE_INVALID');
   }
   return value;
+}
+
+function compareCodeUnits(left: string, right: string): number {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 function nonempty(value: unknown): value is string {

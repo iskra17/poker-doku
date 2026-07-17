@@ -302,6 +302,11 @@ export class ArenaService {
   ): ArenaOfficialSummary {
     assertIdentifier(matchId, 'ARENA_RESULT_INVALID');
     assertTimestamp(at);
+    this.#settleDueWeeklyGroupsBeforeOfficialResult(
+      matchId,
+      results,
+      at,
+    );
     return this.#repository.transaction(tx => {
       const match = this.#repository.findMatch(matchId);
       if (!match) fail('ARENA_MATCH_EXISTS');
@@ -539,6 +544,54 @@ export class ArenaService {
       }
       return voided;
     });
+  }
+
+  #settleDueWeeklyGroupsBeforeOfficialResult(
+    matchId: string,
+    results: readonly ArenaOfficialResult[],
+    at: number,
+  ): void {
+    const match = this.#repository.findMatch(matchId);
+    if (!match) fail('ARENA_MATCH_EXISTS');
+    if (match.status === 'finished') return;
+    const entries = this.#repository.listMatchEntries(match.id);
+    if (
+      match.status !== 'playing'
+      || entries.length !== match.humanCount
+      || match.startedAt === null
+    ) fail('ARENA_RESULT_INVALID');
+    validateOfficialResults(results, entries, match.botCount);
+    const completionWeekKey = weeklyCompletionKey(
+      match.seasonId,
+      at,
+      this.#config,
+    );
+    if (completionWeekKey === null) return;
+
+    const placedProfileIds: string[] = [];
+    for (const entry of entries) {
+      const profile = this.#repository.requireProfile(
+        match.seasonId,
+        entry.profileId,
+      );
+      if (profile.mmr !== entry.mmrBefore) {
+        fail('ARENA_PERSISTENCE_INVALID');
+      }
+      const escrow = this.#repository.requireTicketEscrow(
+        match.id,
+        entry.profileId,
+      );
+      if (escrow.status !== 'escrow') fail('ARENA_TICKET_TERMINAL');
+      if (profile.placementGames === ARENA_CONFIG_V1.placementMatches) {
+        placedProfileIds.push(profile.profileId);
+      }
+    }
+    const groups = this.#repository.listOpenGroupsBeforeWeekForProfiles(
+      match.seasonId,
+      completionWeekKey,
+      placedProfileIds,
+    );
+    for (const group of groups) this.#settleWeeklyGroup(group.id, at);
   }
 
   #assignWeeklyGroup(

@@ -3984,6 +3984,17 @@ export const migrations: readonly Migration[] = [
       DROP TABLE v16_arena_validation;
     `,
   },
+  {
+    version: 17,
+    name: 'index_due_arena_weekly_groups',
+    sql: `
+      CREATE INDEX idx_arena_groups_open_week_order
+        ON arena_groups(status, week_key, season_id, created_at, id);
+
+      CREATE INDEX idx_arena_group_members_profile_due_week
+        ON arena_group_members(profile_id, season_id, week_key, group_id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

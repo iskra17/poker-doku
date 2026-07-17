@@ -125,6 +125,90 @@ describe('ArenaScheduler', () => {
     expect(fake.activeCount).toBe(1);
   });
 
+  it('retries one failed reconciliation after 30 seconds then restores the absolute schedule', () => {
+    const fake = new FakeTimers(EPOCH);
+    const calls: number[] = [];
+    const errors: unknown[][] = [];
+    let attempts = 0;
+    const scheduler = new ArenaScheduler({
+      epochMs: EPOCH,
+      now: () => fake.now,
+      reconcile: at => {
+        calls.push(at);
+        attempts += 1;
+        if (attempts === 1) throw new Error('transient-reconcile');
+      },
+      setTimer: fake.setTimer,
+      clearTimer: fake.clearTimer,
+      logger: { error: (...args: unknown[]) => errors.push(args) },
+    });
+
+    expect(() => scheduler.start()).not.toThrow();
+    expect(calls).toEqual([EPOCH]);
+    expect(errors).toHaveLength(1);
+    expect(fake.activeCount).toBe(1);
+    expect(fake.nextAt).toBe(EPOCH + 30_000);
+
+    fake.now = fake.nextAt!;
+    fake.fire();
+    expect(calls).toEqual([EPOCH, EPOCH + 30_000]);
+    expect(fake.activeCount).toBe(1);
+    expect(fake.nextAt).toBe(EPOCH + 7 * DAY);
+    scheduler.close();
+  });
+
+  it('keeps one bounded retry timer across repeated failures and close cancels it', () => {
+    const fake = new FakeTimers(EPOCH);
+    const calls: number[] = [];
+    const scheduler = new ArenaScheduler({
+      epochMs: EPOCH,
+      now: () => fake.now,
+      reconcile: at => {
+        calls.push(at);
+        throw new Error('persistent-reconcile');
+      },
+      retryDelayMs: 5_000,
+      setTimer: fake.setTimer,
+      clearTimer: fake.clearTimer,
+      logger: { error: () => undefined },
+    });
+
+    expect(() => scheduler.start()).not.toThrow();
+    scheduler.start();
+    expect(calls).toEqual([EPOCH]);
+    expect(fake.activeCount).toBe(1);
+    expect(fake.nextAt).toBe(EPOCH + 5_000);
+
+    fake.now = fake.nextAt!;
+    fake.fire();
+    expect(calls).toEqual([EPOCH, EPOCH + 5_000]);
+    expect(fake.activeCount).toBe(1);
+    expect(fake.nextAt).toBe(EPOCH + 10_000);
+
+    const racedRetry = fake.callback;
+    scheduler.close();
+    racedRetry?.();
+    expect(calls).toEqual([EPOCH, EPOCH + 5_000]);
+    expect(fake.activeCount).toBe(0);
+  });
+
+  it('rejects unsafe reconciliation retry delays', () => {
+    for (const retryDelayMs of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      MAX_ARENA_TIMER_DELAY_MS + 1,
+    ]) {
+      expect(() => new ArenaScheduler({
+        epochMs: EPOCH,
+        retryDelayMs,
+        reconcile: () => undefined,
+      })).toThrowError('ARENA_SCHEDULER_TIME_INVALID');
+    }
+  });
+
   it('hands a shared KST Monday and season boundary to one ordered reconcile call', () => {
     const boundary = EPOCH + 28 * DAY;
     const fake = new FakeTimers(boundary - DAY);
