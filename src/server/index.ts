@@ -154,6 +154,7 @@ function initializePersistenceAndRecover(): void {
       // Arena room construction is introduced by the next phase. Until then a
       // successful ticket reservation is immediately voided and refunded.
       createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
       voidOfficial: async matchId => {
         arenaService!.voidMatch(matchId);
       },

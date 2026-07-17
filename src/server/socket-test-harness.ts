@@ -213,6 +213,7 @@ export async function createSocketTestHarness(
         return { matchId: match.id };
       },
       createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
       voidOfficial: async matchId => {
         arenaService.voidMatch(matchId);
       },

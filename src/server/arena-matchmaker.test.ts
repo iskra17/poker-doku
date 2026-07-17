@@ -77,6 +77,7 @@ describe('ArenaMatchmaker rules', () => {
         return null;
       },
       createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
       voidOfficial: async () => undefined,
       createTrainingRoom: async () => {
         trainingCalls += 1;
@@ -121,6 +122,7 @@ describe('ArenaMatchmaker rules', () => {
       now: () => 70_000,
       reserveOfficial: async () => ({ matchId: 'reserved' }),
       createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
       voidOfficial: async matchId => {
         voided.push(matchId);
       },
@@ -132,6 +134,142 @@ describe('ArenaMatchmaker rules', () => {
     expect(voided).toEqual(['reserved']);
     expect(matchmaker.inspectQueue().map(entry => entry.joinedAt))
       .toEqual([70_000, 70_000]);
+  });
+
+  it('voids a created room when a candidate disconnects during room creation', async () => {
+    let resolveRoom!: (created: boolean) => void;
+    let roomCreationStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      roomCreationStarted = resolve;
+    });
+    const voided: string[] = [];
+    const matched: string[] = [];
+    const rolledBack: string[] = [];
+    let tickets = 2;
+    let nextTimer = 0;
+    const timers = new Map<ReturnType<typeof setTimeout>, number>();
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => {
+        tickets -= 2;
+        return { matchId: 'reserved' };
+      },
+      createOfficialRoom: async () => new Promise(resolve => {
+        resolveRoom = resolve;
+        roomCreationStarted();
+      }),
+      rollbackOfficialRoom: async reservation => {
+        rolledBack.push(reservation.matchId);
+      },
+      voidOfficial: async matchId => {
+        voided.push(matchId);
+        tickets += 2;
+      },
+      createTrainingRoom: async () => null,
+      onMatchFound: socketId => matched.push(socketId),
+      setTimer: (_callback, delay) => {
+        const handle = ++nextTimer as unknown as ReturnType<typeof setTimeout>;
+        timers.set(handle, delay);
+        return handle;
+      },
+      clearTimer: handle => {
+        timers.delete(handle);
+      },
+    });
+    matchmaker.start();
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    const ticking = matchmaker.tick(60_000);
+    await started;
+    matchmaker.disconnect('sb');
+    resolveRoom(true);
+    await ticking;
+
+    expect(voided).toEqual(['reserved']);
+    expect(rolledBack).toEqual(['reserved']);
+    expect(tickets).toBe(2);
+    expect(matched).toEqual([]);
+    expect(matchmaker.inspectQueue()).toEqual([
+      { profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 70_000 },
+    ]);
+    expect([...timers.values()]).toEqual([60_000]);
+  });
+
+  it('voids only once when room creation fails after a candidate disconnects', async () => {
+    let resolveRoom!: (created: boolean) => void;
+    let roomCreationStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      roomCreationStarted = resolve;
+    });
+    const voided: string[] = [];
+    const rolledBack: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 80_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => new Promise(resolve => {
+        resolveRoom = resolve;
+        roomCreationStarted();
+      }),
+      rollbackOfficialRoom: async reservation => {
+        rolledBack.push(reservation.matchId);
+      },
+      voidOfficial: async matchId => {
+        voided.push(matchId);
+      },
+      createTrainingRoom: async () => null,
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    const ticking = matchmaker.tick(60_000);
+    await started;
+    matchmaker.disconnect('sb');
+    resolveRoom(false);
+    await ticking;
+
+    expect(voided).toEqual(['reserved']);
+    expect(rolledBack).toEqual([]);
+    expect(matchmaker.inspectQueue()).toEqual([
+      { profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 80_000 },
+    ]);
+  });
+
+  it('rolls back without reviving a stale candidate after close', async () => {
+    let resolveRoom!: (created: boolean) => void;
+    let roomCreationStarted!: () => void;
+    const started = new Promise<void>(resolve => {
+      roomCreationStarted = resolve;
+    });
+    const voided: string[] = [];
+    const rolledBack: string[] = [];
+    const matched: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 90_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => new Promise(resolve => {
+        resolveRoom = resolve;
+        roomCreationStarted();
+      }),
+      rollbackOfficialRoom: async reservation => {
+        rolledBack.push(reservation.matchId);
+      },
+      voidOfficial: async matchId => {
+        voided.push(matchId);
+      },
+      createTrainingRoom: async () => null,
+      onMatchFound: socketId => matched.push(socketId),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    const ticking = matchmaker.tick(60_000);
+    await started;
+    matchmaker.close();
+    resolveRoom(true);
+    await ticking;
+
+    expect(rolledBack).toEqual(['reserved']);
+    expect(voided).toEqual(['reserved']);
+    expect(matched).toEqual([]);
+    expect(matchmaker.inspectQueue()).toEqual([]);
   });
 
   it('removes queued and offered users immediately on disconnect and stores no identity metadata', async () => {
@@ -156,6 +294,7 @@ describe('ArenaMatchmaker rules', () => {
       now: () => 0,
       reserveOfficial: async () => null,
       createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
       voidOfficial: async () => undefined,
       createTrainingRoom: async () => null,
       setTimer: (_callback, delay) => {
@@ -184,6 +323,7 @@ function testMatchmaker(
     now: () => 70_000,
     reserveOfficial,
     createOfficialRoom: async () => true,
+    rollbackOfficialRoom: async () => undefined,
     voidOfficial: async () => undefined,
     createTrainingRoom: async () => null,
   });

@@ -48,6 +48,11 @@ export interface ArenaMatchmakerOptions {
     reservation: ArenaReservation,
     candidate: ArenaOfficialCandidate,
   ) => Promise<boolean>;
+  /** Dispose only the created room; reservation void/refund remains matchmaker-owned. */
+  readonly rollbackOfficialRoom: (
+    reservation: ArenaReservation,
+    candidate: ArenaOfficialCandidate,
+  ) => Promise<void>;
   readonly voidOfficial: (matchId: string) => Promise<void>;
   readonly createTrainingRoom: (
     profileId: string,
@@ -288,7 +293,9 @@ export class ArenaMatchmaker {
       this.#events.onQueueState?.(entry.socketId, { status: 'forming' });
     }
     const isValid = (): boolean => (
-      !this.#closed && state.connected.size === entries.length
+      !this.#closed
+      && this.#candidates.get(candidate.candidateId) === state
+      && state.connected.size === entries.length
     );
 
     let reservation: ArenaReservation | null = null;
@@ -318,6 +325,18 @@ export class ArenaMatchmaker {
       this.#restoreCandidate(state, true);
       return;
     }
+    if (!isValid()) {
+      try {
+        await this.#options.rollbackOfficialRoom(reservation, candidate);
+      } finally {
+        try {
+          await this.#options.voidOfficial(reservation.matchId);
+        } finally {
+          this.#restoreCandidate(state, true);
+        }
+      }
+      return;
+    }
     this.#candidates.delete(candidate.candidateId);
     for (const entry of entries) {
       if (!state.connected.has(entry.profileId)) continue;
@@ -327,6 +346,7 @@ export class ArenaMatchmaker {
 
   #restoreCandidate(state: CandidateState, resetJoinedAt: boolean): void {
     this.#candidates.delete(state.candidate.candidateId);
+    if (this.#closed) return;
     const joinedAt = this.#now();
     for (const entry of state.candidate.entries) {
       if (!state.connected.has(entry.profileId)) continue;
