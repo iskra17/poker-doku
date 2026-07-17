@@ -47,3 +47,6 @@ next-env.d.ts
 
 # isolated feature worktrees
 /.worktrees/
+
+# 로컬 QA 에이전트 산출물
+/qa-tmp

@@ -993,6 +993,32 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .resolves.toMatchObject({ ok: false, code: 'action-rejected' });
   });
 
+  it('clamps cash create-room big blind so buy-in ranges stay in safe integers', async () => {
+    harness = await createSocketTestHarness();
+    const created = await harness.createProfile();
+    const client = await harness.connect('bigblind-clamp-token', {
+      profileCookie: created.cookie,
+    });
+    const createdRoom = await withAck<{ roomId: string }>(done => client.socket.emit(
+      'create-room',
+      {
+        name: '거대 블라인드',
+        bigBlind: 1e15,
+        turnTime: 8,
+        gameMode: 'cash',
+        difficulty: 'normal',
+        tableType: 'humans',
+        botCount: 0,
+      },
+      done,
+    ));
+    expect(createdRoom.ok).toBe(true);
+    if (!createdRoom.ok) throw new Error('room creation failed');
+    const config = harness.runtime.roomManager.getRoom(createdRoom.data!.roomId)!.config;
+    expect(config.bigBlind).toBe(1_000);
+    expect(Number.isSafeInteger(config.maxBuyIn)).toBe(true);
+  });
+
   it('practice SNG allows host bot filling and starts without wallet escrow', async () => {
     harness = await createSocketTestHarness();
     const created = await harness.createProfile();

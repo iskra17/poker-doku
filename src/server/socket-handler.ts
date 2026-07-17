@@ -922,7 +922,8 @@ export function setupSocketHandlers(
       if (session.roomId) {
         restoreOrEvict();
       } else {
-        socket.emit('room-lost', { message: '서버가 재시작되어 게임이 초기화됐어요. 다시 입장해 주세요.' });
+        // roomId 없음 = 서버 재시작·grace 만료·다른 탭 퇴장 등 여러 원인 — 원인 단정 없이 중립 안내
+        socket.emit('room-lost', { message: '게임 세션이 만료되어 로비로 돌아왔어요. 다시 입장해 주세요.' });
       }
       ack?.({ ok: true });
     });
@@ -1717,7 +1718,8 @@ export function setupSocketHandlers(
       }
       const isSng = config.gameMode === 'sng';
       const password = String(config.password ?? '').trim().slice(0, 20);
-      const bigBlind = Math.max(Number(config.bigBlind) || 20, 2);
+      // 상한 없이 받으면 min/maxBuyIn(×40/×200)이 안전 정수를 넘어 칩 회계 정밀도가 깨진다
+      const bigBlind = Math.min(Math.max(Math.floor(Number(config.bigBlind) || 20), 2), 1_000);
       // 인원 구성 검증 — SnG는 방장 봇 채우기가 있는 혼합 테이블로 고정
       const tableType: TableType = isSng
         ? 'mixed'

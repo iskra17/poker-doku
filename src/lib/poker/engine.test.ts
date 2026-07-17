@@ -76,6 +76,44 @@ describe('hand rake state', () => {
     ]);
     expect(opponent.revealed).toBe(false);
   });
+
+  it('mucks the winner hole cards when everyone else folds (no showdown)', () => {
+    const { engine } = setupTable([1000, 1000], 'As Ah Kd Kc 2c 3d 4h 5s 6c');
+    engine.startHand();
+
+    act(engine, 'fold'); // p1(딜러/SB) 폴드 → p2 폴드 승리, 쇼다운 경합 없음
+
+    expect(engine.state.street).toBe('showdown'); // endHand는 street을 showdown으로 세팅하지만
+    const publicState = engine.getPublicState('p1'); // 상대 시점에서 승자 카드는 머킹이어야 한다
+    const winner = publicState.players.find(player => player.id === 'p2')!;
+    expect(winner.revealed).toBe(false);
+    expect(winner.holeCards).toEqual([
+      { suit: 'spades', rank: '2' },
+      { suit: 'spades', rank: '2' },
+    ]);
+  });
+
+  it('reveals contested showdown survivors and runout hands', () => {
+    const { engine } = setupTable([1000, 1000], 'As Ah Kd Kc 2c 3d 4h 5s 6c');
+    engine.startHand();
+
+    act(engine, 'all-in');
+    act(engine, 'call');
+
+    // 런아웃 중: 베팅이 닫혔으니 양쪽 핸드가 미리 공개된다
+    expect(engine.state.allInRunout).toBe(true);
+    const runoutState = engine.getPublicState('p1');
+    for (const id of ['p1', 'p2']) {
+      const seat = runoutState.players.find(player => player.id === id)!;
+      expect(seat.revealed).toBe(true);
+      expect(seat.holeCards).toEqual(engine.state.players.find(player => player.id === id)!.holeCards);
+    }
+
+    completeRunout(engine);
+    // 경합 쇼다운: 생존자 2인 모두 공개 유지
+    const showdownState = engine.getPublicState('p1');
+    expect(showdownState.players.find(player => player.id === 'p2')!.revealed).toBe(true);
+  });
 });
 
 describe('wallet cash rake settlement', () => {

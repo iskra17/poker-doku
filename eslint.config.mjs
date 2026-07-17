@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 로컬 QA 에이전트 산출물 (git 미추적)
+    "qa-tmp/**",
   ]),
 ]);
 

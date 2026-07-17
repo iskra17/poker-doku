@@ -863,13 +863,20 @@ export class PokerEngine {
   }
 
   getPublicState(forPlayerId?: string): GameState {
+    // 쇼다운 '경합'(생존자 2인 이상)일 때만 공개 대상이다. endHand는 전원 폴드 승리에도
+    // street='showdown'을 세팅하므로 생존자 수로 실제 쇼다운 여부를 구분해야 한다 —
+    // 안 그러면 상대가 다 폴드했는데 승자 홀카드가 노출된다 (표준 룰: 쇼다운 없으면 머킹).
+    const survivors = this.state.players.filter(
+      p => p.status === 'active' || p.status === 'all-in',
+    ).length;
+    const showdownContested = this.state.street === 'showdown' && survivors >= 2;
     return {
       ...this.state,
       players: this.state.players.map(p => {
-        // 쇼다운 생존자(active/all-in)만 공개. 폴드한 플레이어는 머킹(비공개).
+        // 쇼다운 경합 생존자(active/all-in)만 공개. 폴드한 플레이어·폴드 승자는 머킹(비공개).
         // 올인 런아웃 중에는 표준 룰대로 남은 핸드를 미리 공개한다 (베팅이 이미 닫혔으므로 안전).
         const revealed =
-          (this.state.street === 'showdown' || !!this.state.allInRunout) &&
+          (showdownContested || !!this.state.allInRunout) &&
           (p.status === 'active' || p.status === 'all-in');
         return {
           ...p,

@@ -27,7 +27,9 @@ npx tsc --noEmit
 
 - **서버 권위 모델**: 게임 상태는 서버의 `PokerEngine`만 소유. 클라이언트는 수신 전용.
   홀카드는 `getPublicState(forPlayerId)`가 본인 것 외 placeholder로 마스킹. `revealed` 플래그가
-  쇼다운 공개 여부의 유일한 계약 (클라이언트가 status로 추측하지 말 것).
+  쇼다운 공개 여부의 유일한 계약 (클라이언트가 status로 추측하지 말 것). 공개는 쇼다운
+  **경합**(생존자 2인 이상) 또는 올인 런아웃일 때만 — endHand가 폴드 승리에도 street='showdown'을
+  세팅하므로 street만으로 공개를 판정하면 폴드 승자 카드가 노출된다 (2026-07-17 QA에서 수정).
 - **팟 회계**: `Player.totalContributed`(핸드 누적 기여금)에서 `rebuildPots()`가 매번 팟 전체를
   재유도. 팟 계층은 올인 금액에서만 분할. 불변식: `sum(pots) === sum(totalContributed)`.
   절대 `pots[].amount +=` 증분 방식으로 되돌리지 말 것 (멀티 스트리트 소실 버그의 원인이었음).
@@ -107,9 +109,12 @@ npx tsc --noEmit
   `src/lib/poker/blind-schedule.ts` (시작 스택 1500, 3분마다 레벨 인상, 1~3위 50/30/20% 시상).
   엔진이 `state.tournament`(레벨/상금/순위 results)를 소유하고 getPublicState로 자동 브로드캐스트.
   순위 판정은 엔진(`finalizeTournamentHand` — 동시 탈락은 `handStartChips` 큰 쪽이 상위),
-  레벨 타이밍/공지는 RoomManager. **시작 규칙**: 자동 봇 충원 없음 — 6인이 모두 모여야 자동 시작,
-  또는 방장(`RoomConfig.hostId`, `state.hostId`로 노출)이 'sng-fill-bots'로 남는 자리를 봇 충원
-  (`RoomManager.fillWithBots`). 시작 후 재충원·중도 참가·리바이 금지. 탈락한 휴먼은 좌석 유지
+  레벨 타이밍/공지는 RoomManager. **참가 방식**: create-room `economyMode`('wallet' 기본 |
+  'practice') — wallet은 지갑 바이인 1500+수수료 150 에스크로라 **휴먼 6명 전용**(봇 채우기 불가,
+  fillWithBots가 거부하고 UI도 버튼 숨김), practice는 무료(지갑 무관, entryBuyIn/Fee 없음, 상금은
+  칩 풀 기반 표시용). **시작 규칙**: 자동 봇 충원 없음 — 6인이 모두 모여야 자동 시작, 또는
+  (practice 한정) 방장(`RoomConfig.hostId`, `state.hostId`로 노출)이 'sng-fill-bots'로 남는 자리를
+  봇 충원(`RoomManager.fillWithBots`). 시작 후 재충원·중도 참가·리바이 금지. 탈락한 휴먼은 좌석 유지
   상태로 관전(EliminationNotice가 순위 안내). 종료된 방은 결과 확인을 위해 10분 보존한 뒤
   `disposeRoom()`으로 정리하며, 연결된 참가자마다 `room-lost`를 한 번 보내고 모든 참가 세션의
   `roomId`를 비운다. 그 전에 모든 휴먼이 완전히 나가면 즉시 정리한다.
