@@ -3038,6 +3038,356 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'invalid equipment row'); END;
     `,
   },
+  {
+    version: 14,
+    name: 'poker_arena_persistence_schema',
+    sql: `
+      CREATE TABLE arena_seasons (
+        id TEXT PRIMARY KEY CHECK (length(id) > 0),
+        ordinal INTEGER NOT NULL UNIQUE CHECK (ordinal >= 0),
+        config_version INTEGER NOT NULL CHECK (config_version = 1),
+        preseason INTEGER NOT NULL CHECK (preseason IN (0, 1)),
+        starts_at INTEGER NOT NULL CHECK (
+          starts_at BETWEEN 0 AND 253402300799999
+        ),
+        ends_at INTEGER NOT NULL CHECK (
+          ends_at BETWEEN 0 AND 253402300799999 AND ends_at > starts_at
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_profiles (
+        season_id TEXT NOT NULL REFERENCES arena_seasons(id)
+          ON DELETE CASCADE,
+        profile_id TEXT NOT NULL REFERENCES profiles(id)
+          ON DELETE CASCADE,
+        available_tickets INTEGER NOT NULL CHECK (
+          available_tickets BETWEEN 0 AND 10
+        ),
+        last_daily_grant_date TEXT NOT NULL CHECK (
+          length(last_daily_grant_date) = 10
+          AND last_daily_grant_date
+            GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+          AND CAST(substr(last_daily_grant_date, 1, 4) AS INTEGER)
+            BETWEEN 1 AND 9999
+          AND COALESCE(
+            date(last_daily_grant_date, '+0 days') = last_daily_grant_date,
+            0
+          )
+        ),
+        placement_games INTEGER NOT NULL CHECK (placement_games BETWEEN 0 AND 5),
+        placement_points INTEGER NOT NULL CHECK (
+          placement_points >= 0
+          AND placement_points <= placement_games * 100
+        ),
+        tier TEXT CHECK (
+          tier IS NULL OR tier IN (
+            'bronze','silver','gold','platinum','diamond','master'
+          )
+        ),
+        mmr INTEGER NOT NULL CHECK (
+          mmr BETWEEN -9007199254740991 AND 9007199254740991
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        updated_at INTEGER NOT NULL CHECK (
+          updated_at BETWEEN created_at AND 253402300799999
+        ),
+        PRIMARY KEY (season_id, profile_id),
+        CHECK (
+          (placement_games < 5 AND tier IS NULL)
+          OR (placement_games = 5 AND tier IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_matches (
+        id TEXT PRIMARY KEY CHECK (length(id) > 0),
+        season_id TEXT NOT NULL REFERENCES arena_seasons(id)
+          ON DELETE RESTRICT,
+        config_version INTEGER NOT NULL CHECK (config_version = 1),
+        bot_version TEXT NOT NULL CHECK (length(bot_version) > 0),
+        bot_mmr INTEGER NOT NULL CHECK (
+          bot_mmr BETWEEN -9007199254740991 AND 9007199254740991
+        ),
+        human_count INTEGER NOT NULL CHECK (human_count BETWEEN 2 AND 6),
+        bot_count INTEGER NOT NULL CHECK (
+          bot_count BETWEEN 0 AND 4 AND human_count + bot_count = 6
+        ),
+        status TEXT NOT NULL CHECK (
+          status IN ('forming','playing','finished','void')
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        started_at INTEGER CHECK (
+          started_at IS NULL OR started_at BETWEEN created_at AND 253402300799999
+        ),
+        finished_at INTEGER CHECK (
+          finished_at IS NULL
+          OR finished_at BETWEEN COALESCE(started_at, created_at)
+            AND 253402300799999
+        ),
+        CHECK (
+          (status = 'forming' AND started_at IS NULL AND finished_at IS NULL)
+          OR (status = 'playing' AND started_at IS NOT NULL AND finished_at IS NULL)
+          OR (status = 'finished' AND started_at IS NOT NULL AND finished_at IS NOT NULL)
+          OR (status = 'void' AND finished_at IS NOT NULL)
+        ),
+        UNIQUE (id, season_id)
+      ) STRICT;
+
+      CREATE TABLE arena_ticket_escrows (
+        match_id TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+          status IN ('escrow','consumed','refunded')
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        settled_at INTEGER CHECK (
+          settled_at IS NULL
+          OR settled_at BETWEEN created_at AND 253402300799999
+        ),
+        PRIMARY KEY (match_id, profile_id),
+        FOREIGN KEY (match_id, season_id)
+          REFERENCES arena_matches(id, season_id) ON DELETE RESTRICT,
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_profiles(season_id, profile_id) ON DELETE CASCADE,
+        CHECK (
+          (status = 'escrow' AND settled_at IS NULL)
+          OR (status IN ('consumed','refunded') AND settled_at IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_active_arena_ticket_escrow_per_profile
+        ON arena_ticket_escrows(profile_id) WHERE status = 'escrow';
+
+      CREATE TABLE arena_entries (
+        match_id TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        place INTEGER CHECK (place IS NULL OR place BETWEEN 1 AND 6),
+        points INTEGER CHECK (
+          points IS NULL OR points IN (0, 5, 15, 35, 60, 100)
+        ),
+        mmr_before INTEGER NOT NULL CHECK (
+          mmr_before BETWEEN -9007199254740991 AND 9007199254740991
+        ),
+        mmr_after INTEGER CHECK (
+          mmr_after IS NULL
+          OR mmr_after BETWEEN -9007199254740991 AND 9007199254740991
+        ),
+        result_key TEXT UNIQUE CHECK (
+          result_key IS NULL OR length(result_key) > 0
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        settled_at INTEGER CHECK (
+          settled_at IS NULL
+          OR settled_at BETWEEN created_at AND 253402300799999
+        ),
+        PRIMARY KEY (match_id, profile_id),
+        FOREIGN KEY (match_id, season_id)
+          REFERENCES arena_matches(id, season_id) ON DELETE RESTRICT,
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_profiles(season_id, profile_id) ON DELETE CASCADE,
+        CHECK (
+          (result_key IS NULL AND place IS NULL AND points IS NULL
+            AND mmr_after IS NULL AND settled_at IS NULL)
+          OR (result_key IS NOT NULL AND place IS NOT NULL AND points IS NOT NULL
+            AND mmr_after IS NOT NULL AND settled_at IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_groups (
+        id TEXT NOT NULL CHECK (length(id) > 0),
+        season_id TEXT NOT NULL REFERENCES arena_seasons(id)
+          ON DELETE RESTRICT,
+        week_key TEXT NOT NULL CHECK (
+          length(week_key) = 8
+          AND week_key GLOB '[0-9][0-9][0-9][0-9]-W[0-9][0-9]'
+          AND CAST(substr(week_key, 1, 4) AS INTEGER) BETWEEN 1 AND 9999
+          AND CAST(substr(week_key, 7, 2) AS INTEGER) BETWEEN 1 AND 53
+        ),
+        tier TEXT NOT NULL CHECK (
+          tier IN ('bronze','silver','gold','platinum','diamond','master')
+        ),
+        status TEXT NOT NULL CHECK (status IN ('open','settled')),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        settled_at INTEGER CHECK (
+          settled_at IS NULL
+          OR settled_at BETWEEN created_at AND 253402300799999
+        ),
+        PRIMARY KEY (id),
+        UNIQUE (id, season_id, week_key),
+        CHECK (
+          (status = 'open' AND settled_at IS NULL)
+          OR (status = 'settled' AND settled_at IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_group_members (
+        group_id TEXT NOT NULL,
+        season_id TEXT NOT NULL,
+        week_key TEXT NOT NULL,
+        profile_id TEXT NOT NULL REFERENCES profiles(id)
+          ON DELETE CASCADE,
+        points INTEGER NOT NULL CHECK (points >= 0),
+        wins INTEGER NOT NULL CHECK (wins >= 0),
+        top3 INTEGER NOT NULL CHECK (top3 >= 0),
+        place_sum INTEGER NOT NULL CHECK (place_sum >= 0),
+        matches INTEGER NOT NULL CHECK (matches >= 0),
+        score_reached_at INTEGER NOT NULL CHECK (
+          score_reached_at BETWEEN 0 AND 253402300799999
+        ),
+        joined_at INTEGER NOT NULL CHECK (
+          joined_at BETWEEN 0 AND score_reached_at
+        ),
+        updated_at INTEGER NOT NULL CHECK (
+          updated_at BETWEEN score_reached_at AND 253402300799999
+        ),
+        PRIMARY KEY (group_id, profile_id),
+        UNIQUE (season_id, week_key, profile_id),
+        FOREIGN KEY (group_id, season_id, week_key)
+          REFERENCES arena_groups(id, season_id, week_key)
+          ON DELETE CASCADE,
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_profiles(season_id, profile_id)
+          ON DELETE CASCADE,
+        CHECK (wins <= top3 AND top3 <= matches),
+        CHECK (
+          (matches = 0 AND wins = 0 AND top3 = 0 AND place_sum = 0)
+          OR (matches > 0 AND place_sum BETWEEN matches AND matches * 6)
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_weekly_settlements (
+        season_id TEXT NOT NULL,
+        week_key TEXT NOT NULL,
+        group_id TEXT NOT NULL,
+        settled_at INTEGER NOT NULL CHECK (
+          settled_at BETWEEN 0 AND 253402300799999
+        ),
+        PRIMARY KEY (season_id, week_key, group_id),
+        FOREIGN KEY (group_id, season_id, week_key)
+          REFERENCES arena_groups(id, season_id, week_key)
+          ON DELETE RESTRICT
+      ) STRICT;
+
+      CREATE TABLE arena_season_rewards (
+        season_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        item_id TEXT NOT NULL CHECK (length(item_id) > 0),
+        granted_at INTEGER NOT NULL CHECK (
+          granted_at BETWEEN 0 AND 253402300799999
+        ),
+        PRIMARY KEY (season_id, profile_id, item_id),
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_profiles(season_id, profile_id)
+          ON DELETE CASCADE
+      ) STRICT;
+
+      CREATE INDEX idx_arena_profiles_profile_season
+        ON arena_profiles(profile_id, season_id);
+      CREATE INDEX idx_arena_matches_season_status_created
+        ON arena_matches(season_id, status, created_at);
+      CREATE INDEX idx_arena_entries_profile_match
+        ON arena_entries(profile_id, match_id);
+      CREATE INDEX idx_arena_groups_week_tier_status
+        ON arena_groups(season_id, week_key, tier, status, created_at);
+      CREATE INDEX idx_arena_group_members_rank
+        ON arena_group_members(
+          group_id, points DESC, wins DESC, top3 DESC, score_reached_at,
+          profile_id
+        );
+
+      CREATE TRIGGER protect_arena_profile_update
+      BEFORE UPDATE ON arena_profiles
+      WHEN NEW.season_id != OLD.season_id
+        OR NEW.profile_id != OLD.profile_id
+        OR NEW.created_at != OLD.created_at
+        OR NEW.updated_at < OLD.updated_at
+      BEGIN SELECT RAISE(ABORT, 'invalid arena profile update'); END;
+
+      CREATE TRIGGER protect_arena_match_update
+      BEFORE UPDATE ON arena_matches
+      WHEN NEW.id != OLD.id
+        OR NEW.season_id != OLD.season_id
+        OR NEW.config_version != OLD.config_version
+        OR NEW.bot_version != OLD.bot_version
+        OR NEW.bot_mmr != OLD.bot_mmr
+        OR NEW.human_count != OLD.human_count
+        OR NEW.bot_count != OLD.bot_count
+        OR NEW.created_at != OLD.created_at
+        OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
+        OR (OLD.finished_at IS NOT NULL AND NEW.finished_at IS NOT OLD.finished_at)
+        OR (OLD.status = 'forming'
+          AND NEW.status NOT IN ('forming','playing','void'))
+        OR (OLD.status = 'playing'
+          AND NEW.status NOT IN ('playing','finished','void'))
+        OR (OLD.status IN ('finished','void') AND NEW.status != OLD.status)
+      BEGIN SELECT RAISE(ABORT, 'invalid arena match update'); END;
+
+      CREATE TRIGGER protect_arena_ticket_escrow_update
+      BEFORE UPDATE ON arena_ticket_escrows
+      WHEN NEW.match_id != OLD.match_id
+        OR NEW.season_id != OLD.season_id
+        OR NEW.profile_id != OLD.profile_id
+        OR NEW.created_at != OLD.created_at
+        OR (OLD.settled_at IS NOT NULL AND NEW.settled_at IS NOT OLD.settled_at)
+        OR (OLD.status = 'escrow'
+          AND NEW.status NOT IN ('escrow','consumed','refunded'))
+        OR (OLD.status IN ('consumed','refunded') AND NEW.status != OLD.status)
+      BEGIN SELECT RAISE(ABORT, 'invalid arena ticket escrow update'); END;
+
+      CREATE TRIGGER protect_arena_entry_update
+      BEFORE UPDATE ON arena_entries
+      WHEN NEW.match_id != OLD.match_id
+        OR NEW.season_id != OLD.season_id
+        OR NEW.profile_id != OLD.profile_id
+        OR NEW.mmr_before != OLD.mmr_before
+        OR NEW.created_at != OLD.created_at
+        OR (OLD.result_key IS NOT NULL AND (
+          NEW.place IS NOT OLD.place
+          OR NEW.points IS NOT OLD.points
+          OR NEW.mmr_after IS NOT OLD.mmr_after
+          OR NEW.result_key IS NOT OLD.result_key
+          OR NEW.settled_at IS NOT OLD.settled_at
+        ))
+      BEGIN SELECT RAISE(ABORT, 'invalid arena entry update'); END;
+
+      CREATE TRIGGER protect_arena_group_update
+      BEFORE UPDATE ON arena_groups
+      WHEN NEW.id != OLD.id
+        OR NEW.season_id != OLD.season_id
+        OR NEW.week_key != OLD.week_key
+        OR NEW.tier != OLD.tier
+        OR NEW.created_at != OLD.created_at
+        OR (OLD.settled_at IS NOT NULL AND NEW.settled_at IS NOT OLD.settled_at)
+        OR (OLD.status = 'settled' AND NEW.status != 'settled')
+      BEGIN SELECT RAISE(ABORT, 'invalid arena group update'); END;
+
+      CREATE TRIGGER validate_arena_weekly_settlement_insert
+      BEFORE INSERT ON arena_weekly_settlements
+      WHEN NOT EXISTS (
+        SELECT 1 FROM arena_groups AS arena_group
+        WHERE arena_group.id = NEW.group_id
+          AND arena_group.season_id = NEW.season_id
+          AND arena_group.week_key = NEW.week_key
+          AND arena_group.status = 'settled'
+          AND arena_group.settled_at <= NEW.settled_at
+      )
+      BEGIN SELECT RAISE(ABORT, 'arena group is not settled'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

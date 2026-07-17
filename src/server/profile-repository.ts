@@ -187,7 +187,11 @@ export class ProfileRepository {
       const activeEscrow = this.database.db.prepare(`
         SELECT 1 FROM seat_escrows
         WHERE profile_id = ? AND status = 'active'
-      `).get(profileId);
+        UNION ALL
+        SELECT 1 FROM arena_ticket_escrows
+        WHERE profile_id = ? AND status = 'escrow'
+        LIMIT 1
+      `).get(profileId, profileId);
       if (activeEscrow) return 'active-escrow';
       const result = this.database.db.prepare(`
         DELETE FROM profiles WHERE id = ?
