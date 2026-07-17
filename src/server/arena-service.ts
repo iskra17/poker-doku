@@ -29,6 +29,7 @@ export type ArenaDomainErrorCode =
   | 'ARENA_MATCH_EXISTS'
   | 'ARENA_TICKET_INSUFFICIENT'
   | 'ARENA_TICKET_ALREADY_ESCROWED'
+  | 'ARENA_NON_ARENA_SEAT_ACTIVE'
   | 'ARENA_TICKET_TERMINAL'
   | 'ARENA_PERSISTENCE_INVALID';
 
@@ -46,6 +47,7 @@ export interface ArenaSeasonConfig {
 
 export interface ArenaServiceOptions extends ArenaSeasonConfig {
   readonly clock?: () => number;
+  readonly isProfileInNonArenaSeat: (profileId: string) => boolean;
 }
 
 export interface ArenaSeasonWindow {
@@ -132,6 +134,7 @@ export class ArenaService {
   readonly #repository: ArenaRepository;
   readonly #config: ArenaSeasonConfig;
   readonly #clock: () => number;
+  readonly #isProfileInNonArenaSeat: (profileId: string) => boolean;
 
   constructor(repository: ArenaRepository, options: ArenaServiceOptions) {
     assertSeasonConfig(options);
@@ -141,6 +144,7 @@ export class ArenaService {
       preseasonCount: options.preseasonCount,
     };
     this.#clock = options.clock ?? Date.now;
+    this.#isProfileInNonArenaSeat = options.isProfileInNonArenaSeat;
   }
 
   getSnapshot(profileId: string, at = this.#clock()): PublicArenaSnapshot {
@@ -173,6 +177,11 @@ export class ArenaService {
     }
 
     return this.#repository.transaction(tx => {
+      for (const profileId of profileIds) {
+        if (this.#isProfileInNonArenaSeat(profileId)) {
+          fail('ARENA_NON_ARENA_SEAT_ACTIVE');
+        }
+      }
       this.#ensureSeason(tx, window, at);
       if (this.#repository.findMatch(matchId)) fail('ARENA_MATCH_EXISTS');
       const profiles = profileIds.map(profileId =>

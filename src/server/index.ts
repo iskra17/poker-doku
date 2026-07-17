@@ -112,7 +112,20 @@ function initializePersistenceAndRecover(): void {
   progressionService = new ProgressionService(database, progressionRepository);
   const arenaConfig = parseArenaRuntimeConfig(process.env);
   if (arenaConfig.enabled) {
-    arenaService = new ArenaService(new ArenaRepository(database), arenaConfig);
+    arenaService = new ArenaService(new ArenaRepository(database), {
+      ...arenaConfig,
+      isProfileInNonArenaSeat: profileId => {
+        if (!economyService || !runtime) {
+          throw new Error('Arena participation authority is not ready');
+        }
+        if (economyService.getStatus(profileId).economy.hasActiveSeat) {
+          return true;
+        }
+        if (runtime.sessions.getByPlayerId(profileId)?.roomId) return true;
+        return runtime.roomManager.getRoomList(profileId)
+          .some(room => room.mySeat !== undefined);
+      },
+    });
     arenaScheduler = new ArenaScheduler({
       epochMs: arenaConfig.epochMs,
       reconcile: at => arenaService!.reconcile(at),

@@ -81,6 +81,7 @@ describe('ArenaService free ticket lifecycle', () => {
   let database: PokerDatabase;
   let repository: ArenaRepository;
   let service: ArenaService;
+  let inMemoryOccupied: Set<string>;
 
   beforeEach(() => {
     database = openPokerDatabase(':memory:');
@@ -88,10 +89,15 @@ describe('ArenaService free ticket lifecycle', () => {
     for (const id of ['profile-a', 'profile-b', 'profile-c']) {
       insertBaseProfile(database, id);
     }
+    inMemoryOccupied = new Set();
     service = new ArenaService(repository, {
       epochMs: EPOCH,
       preseasonCount: 1,
       clock: () => EPOCH,
+      isProfileInNonArenaSeat: profileId => (
+        hasActiveWalletSeat(database, profileId)
+        || inMemoryOccupied.has(profileId)
+      ),
     });
   });
 
@@ -164,6 +170,62 @@ describe('ArenaService free ticket lifecycle', () => {
     expect(repository.findProfile('arena-v1-0', 'profile-a')).toBeNull();
     expect(repository.requireProfile('arena-v1-0', 'profile-b').availableTickets)
       .toBe(0);
+  });
+
+  it('rechecks an active wallet seat escrow inside the reservation transaction', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount, checkpoint_amount,
+        checkpoint_hand, status, updated_at
+      ) VALUES ('cash-seat-b', 'profile-b', 'cash-room', 'cash', 1000, 1000,
+        0, 'active', ?)
+    `).run(EPOCH);
+
+    expectDomain(
+      () => service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH),
+      'ARENA_NON_ARENA_SEAT_ACTIVE',
+    );
+    expect(repository.findMatch('match-a')).toBeNull();
+    expect(repository.requireProfile('arena-v1-0', 'profile-a').availableTickets)
+      .toBe(2);
+    expect(repository.requireProfile('arena-v1-0', 'profile-b').availableTickets)
+      .toBe(2);
+  });
+
+  it('catches a casual/practice/SnG seat that appears after the earlier check', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    inMemoryOccupied.add('profile-b');
+
+    expectDomain(
+      () => service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH),
+      'ARENA_NON_ARENA_SEAT_ACTIVE',
+    );
+    expect(repository.findMatch('match-a')).toBeNull();
+    expect(repository.requireProfile('arena-v1-0', 'profile-a').availableTickets)
+      .toBe(2);
+    expect(repository.requireProfile('arena-v1-0', 'profile-b').availableTickets)
+      .toBe(2);
+  });
+
+  it('rolls back lazy initialization when the participation authority throws', () => {
+    const guarded = new ArenaService(repository, {
+      epochMs: EPOCH,
+      preseasonCount: 1,
+      isProfileInNonArenaSeat: profileId => {
+        if (profileId === 'profile-b') throw new Error('guard-unavailable');
+        return false;
+      },
+    });
+
+    expect(() => guarded.reserveMatchTickets(
+      'match-a', ['profile-a', 'profile-b'], EPOCH,
+    )).toThrowError('guard-unavailable');
+    expect(repository.findMatch('match-a')).toBeNull();
+    expect(repository.findProfile('arena-v1-0', 'profile-a')).toBeNull();
+    expect(repository.findProfile('arena-v1-0', 'profile-b')).toBeNull();
   });
 
   it('rejects duplicate players, active escrow, and stale season atomically', () => {
@@ -241,6 +303,14 @@ function insertBaseProfile(database: PokerDatabase, id: string): void {
       alias, avatar_id, adult_confirmed_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, 'sakura', 1, 1, 1)
   `).run(id, `ch-${id}`, `cl-${id}`, `rh-${id}`, `rl-${id}`, `alias-${id}`);
+}
+
+function hasActiveWalletSeat(database: PokerDatabase, profileId: string): boolean {
+  return database.db.prepare(`
+    SELECT 1 FROM seat_escrows
+    WHERE profile_id = ? AND status = 'active'
+    LIMIT 1
+  `).get(profileId) !== undefined;
 }
 
 function countRows(database: PokerDatabase, table: string): number {

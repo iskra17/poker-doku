@@ -62,7 +62,7 @@ export class ArenaScheduler {
     if (this.#closed || this.#started) return;
     this.#started = true;
     const at = this.#now();
-    this.#options.reconcile(at);
+    if (at >= this.#options.epochMs) this.#options.reconcile(at);
     this.#scheduleNext();
   }
 

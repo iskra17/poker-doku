@@ -10,6 +10,27 @@ const HOUR = 60 * 60 * 1_000;
 const DAY = 24 * HOUR;
 
 describe('ArenaScheduler', () => {
+  it('waits at the absolute epoch when started before the season', () => {
+    const fake = new FakeTimers(EPOCH - DAY);
+    const calls: number[] = [];
+    const scheduler = new ArenaScheduler({
+      epochMs: EPOCH,
+      now: () => fake.now,
+      reconcile: at => calls.push(at),
+      setTimer: fake.setTimer,
+      clearTimer: fake.clearTimer,
+    });
+
+    scheduler.start();
+    expect(calls).toEqual([]);
+    expect(fake.nextAt).toBe(EPOCH);
+    fake.now = EPOCH;
+    fake.fire();
+    expect(calls).toEqual([EPOCH]);
+    expect(fake.nextAt).toBe(EPOCH + 7 * DAY);
+    scheduler.close();
+  });
+
   it('finds the next absolute KST Monday and season boundary', () => {
     const wednesday = Date.parse('2026-07-22T12:00:00+09:00');
     expect(getNextKstMonday(wednesday))
