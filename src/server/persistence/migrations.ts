@@ -3995,6 +3995,341 @@ export const migrations: readonly Migration[] = [
         ON arena_group_members(profile_id, season_id, week_key, group_id);
     `,
   },
+  {
+    version: 18,
+    name: 'settle_and_reward_arena_seasons',
+    sql: `
+      CREATE TABLE arena_season_catalog (
+        season_id TEXT NOT NULL REFERENCES arena_seasons(id)
+          ON DELETE RESTRICT,
+        item_id TEXT PRIMARY KEY CHECK (
+          length(item_id) BETWEEN 1 AND 128
+          AND item_id NOT GLOB '*[^A-Za-z0-9_-]*'
+        ),
+        reward_key TEXT NOT NULL CHECK (reward_key IN (
+          'participation-emblem',
+          'gold-frame',
+          'diamond-featured-skin',
+          'master-cutin',
+          'top100-chroma',
+          'top100-title',
+          'rank-1-title',
+          'rank-2-title',
+          'rank-3-title',
+          'rank-4-title',
+          'rank-5-title',
+          'rank-6-title',
+          'rank-7-title',
+          'rank-8-title',
+          'rank-9-title',
+          'rank-10-title',
+          'champion-trophy',
+          'champion-aura'
+        )),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'emblem', 'frame', 'skin', 'cutin', 'title', 'trophy', 'aura'
+        )),
+        equip_slot TEXT CHECK (
+          equip_slot IS NULL OR equip_slot IN ('title','frame','skin','cutin')
+        ),
+        character_id TEXT CHECK (character_id IS NULL OR character_id IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )),
+        UNIQUE (season_id, reward_key),
+        CHECK (item_id = season_id || '-' || reward_key),
+        CHECK (
+          (kind = 'frame' AND equip_slot = 'frame' AND character_id IS NULL)
+          OR (kind = 'skin' AND equip_slot = 'skin'
+            AND character_id IS NOT NULL)
+          OR (kind = 'cutin' AND equip_slot = 'cutin'
+            AND character_id IS NULL)
+          OR (kind = 'title' AND equip_slot = 'title'
+            AND character_id IS NULL)
+          OR (kind IN ('emblem','trophy','aura')
+            AND equip_slot IS NULL AND character_id IS NULL)
+        )
+      ) STRICT;
+
+      CREATE TABLE arena_season_results (
+        season_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        final_rank INTEGER NOT NULL CHECK (final_rank >= 1),
+        points INTEGER NOT NULL CHECK (points >= 0),
+        wins INTEGER NOT NULL CHECK (wins >= 0),
+        top3 INTEGER NOT NULL CHECK (top3 >= 0),
+        place_sum INTEGER NOT NULL CHECK (place_sum >= 1),
+        matches INTEGER NOT NULL CHECK (matches >= 1),
+        score_reached_at INTEGER NOT NULL CHECK (
+          score_reached_at BETWEEN 0 AND 253402300799999
+        ),
+        final_tier TEXT CHECK (final_tier IS NULL OR final_tier IN (
+          'bronze','silver','gold','platinum','diamond','master'
+        )),
+        settled_at INTEGER NOT NULL CHECK (
+          settled_at BETWEEN score_reached_at AND 253402300799999
+        ),
+        PRIMARY KEY (season_id, profile_id),
+        UNIQUE (season_id, final_rank),
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_profiles(season_id, profile_id)
+          ON DELETE CASCADE,
+        CHECK (wins <= top3 AND top3 <= matches),
+        CHECK (place_sum BETWEEN matches AND matches * 6)
+      ) STRICT;
+
+      CREATE TABLE arena_season_settlements (
+        season_id TEXT PRIMARY KEY REFERENCES arena_seasons(id)
+          ON DELETE RESTRICT,
+        next_season_id TEXT NOT NULL UNIQUE REFERENCES arena_seasons(id)
+          ON DELETE RESTRICT,
+        participant_count INTEGER NOT NULL CHECK (participant_count >= 0),
+        settled_at INTEGER NOT NULL CHECK (
+          settled_at BETWEEN 0 AND 253402300799999
+        ),
+        CHECK (season_id != next_season_id)
+      ) STRICT;
+
+      CREATE TABLE arena_hall_of_fame (
+        season_id TEXT PRIMARY KEY,
+        profile_id TEXT NOT NULL,
+        final_rank INTEGER NOT NULL CHECK (final_rank = 1),
+        trophy_item_id TEXT NOT NULL,
+        aura_item_id TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL CHECK (
+          recorded_at BETWEEN 0 AND 253402300799999
+        ),
+        FOREIGN KEY (season_id, profile_id)
+          REFERENCES arena_season_results(season_id, profile_id)
+          ON DELETE RESTRICT,
+        FOREIGN KEY (trophy_item_id)
+          REFERENCES arena_season_catalog(item_id) ON DELETE RESTRICT,
+        FOREIGN KEY (aura_item_id)
+          REFERENCES arena_season_catalog(item_id) ON DELETE RESTRICT,
+        CHECK (trophy_item_id = season_id || '-champion-trophy'),
+        CHECK (aura_item_id = season_id || '-champion-aura')
+      ) STRICT;
+
+      CREATE INDEX idx_arena_entries_season_final_rank
+        ON arena_entries(
+          season_id, profile_id, settled_at, points, place
+        ) WHERE result_key IS NOT NULL;
+      CREATE INDEX idx_arena_season_results_rank
+        ON arena_season_results(season_id, final_rank, profile_id);
+
+      CREATE TRIGGER freeze_arena_season_catalog_update
+      BEFORE UPDATE ON arena_season_catalog
+      BEGIN SELECT RAISE(ABORT, 'arena season catalog is immutable'); END;
+      CREATE TRIGGER freeze_arena_season_catalog_delete
+      BEFORE DELETE ON arena_season_catalog
+      WHEN EXISTS (SELECT 1 FROM arena_seasons WHERE id = OLD.season_id)
+      BEGIN SELECT RAISE(ABORT, 'arena season catalog is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_season_result_update
+      BEFORE UPDATE ON arena_season_results
+      BEGIN SELECT RAISE(ABORT, 'arena season result is immutable'); END;
+      CREATE TRIGGER freeze_arena_season_result_delete
+      BEFORE DELETE ON arena_season_results
+      WHEN EXISTS (SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT, 'arena season result is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_season_settlement_update
+      BEFORE UPDATE ON arena_season_settlements
+      BEGIN SELECT RAISE(ABORT, 'arena season settlement is immutable'); END;
+      CREATE TRIGGER freeze_arena_season_settlement_delete
+      BEFORE DELETE ON arena_season_settlements
+      WHEN EXISTS (SELECT 1 FROM arena_seasons WHERE id = OLD.season_id)
+      BEGIN SELECT RAISE(ABORT, 'arena season settlement is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_hall_of_fame_update
+      BEFORE UPDATE ON arena_hall_of_fame
+      BEGIN SELECT RAISE(ABORT, 'arena hall of fame is immutable'); END;
+      CREATE TRIGGER freeze_arena_hall_of_fame_delete
+      BEFORE DELETE ON arena_hall_of_fame
+      WHEN EXISTS (SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT, 'arena hall of fame is immutable'); END;
+
+      CREATE TRIGGER validate_arena_season_reward_insert
+      BEFORE INSERT ON arena_season_rewards
+      WHEN NEW.season_id GLOB 'arena-v1-[0-9]*'
+      AND NOT EXISTS (
+        SELECT 1 FROM arena_season_catalog AS catalog
+        WHERE catalog.season_id = NEW.season_id
+          AND catalog.item_id = NEW.item_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena season reward'); END;
+
+      CREATE TRIGGER sync_arena_season_reward_inventory
+      AFTER INSERT ON arena_season_rewards
+      WHEN EXISTS (
+        SELECT 1 FROM arena_season_catalog AS catalog
+        WHERE catalog.season_id = NEW.season_id
+          AND catalog.item_id = NEW.item_id
+      )
+      BEGIN
+        INSERT INTO inventory_items (
+          profile_id, item_id, quantity, granted_at, updated_at
+        ) VALUES (
+          NEW.profile_id, NEW.item_id, 1, NEW.granted_at, NEW.granted_at
+        )
+        ON CONFLICT(profile_id, item_id) DO NOTHING;
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM inventory_items
+          WHERE profile_id = NEW.profile_id
+            AND item_id = NEW.item_id
+            AND quantity = 1
+            AND granted_at = NEW.granted_at
+            AND updated_at = NEW.granted_at
+        ) THEN RAISE(ABORT, 'arena reward inventory mismatch') END;
+      END;
+
+      CREATE TRIGGER protect_arena_season_reward_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM arena_season_rewards
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable arena reward inventory'); END;
+
+      CREATE TRIGGER protect_arena_season_reward_inventory_delete
+      BEFORE DELETE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM arena_season_rewards
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      ) AND EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable arena reward inventory'); END;
+
+      DROP TRIGGER validate_catalog_inventory_insert;
+      DROP TRIGGER validate_catalog_inventory_update;
+      DROP TRIGGER validate_catalog_equipment_insert;
+      DROP TRIGGER validate_catalog_equipment_update;
+      DROP TRIGGER validate_selected_character_skin_update;
+
+      CREATE TRIGGER validate_catalog_inventory_insert
+      BEFORE INSERT ON inventory_items
+      WHEN NOT EXISTS (
+        SELECT 1 FROM collection_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id
+          AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+            OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+      ) AND NOT EXISTS (
+        SELECT 1 FROM arena_season_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id AND NEW.quantity = 1
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      CREATE TRIGGER validate_catalog_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN NEW.item_id != 'streak-fragment'
+        AND OLD.item_id != 'streak-fragment'
+        AND NOT EXISTS (
+          SELECT 1 FROM collection_catalog AS catalog
+          WHERE catalog.item_id = NEW.item_id
+            AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+              OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM arena_season_catalog AS catalog
+          WHERE catalog.item_id = NEW.item_id AND NEW.quantity = 1
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      CREATE TRIGGER validate_catalog_equipment_insert
+      BEFORE INSERT ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM collection_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity >= 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM arena_season_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+
+      CREATE TRIGGER validate_catalog_equipment_update
+      BEFORE UPDATE ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM collection_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity >= 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM arena_season_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+
+      CREATE TRIGGER validate_selected_character_skin_update
+      BEFORE UPDATE OF selected_character_id ON progression_profiles
+      WHEN EXISTS (
+        SELECT 1
+        FROM profile_equipment AS equipment
+        JOIN collection_catalog AS catalog ON catalog.item_id = equipment.item_id
+        WHERE equipment.profile_id = NEW.profile_id
+          AND equipment.slot = 'skin'
+          AND catalog.kind = 'skin'
+          AND catalog.character_id != NEW.selected_character_id
+      ) OR EXISTS (
+        SELECT 1
+        FROM profile_equipment AS equipment
+        JOIN arena_season_catalog AS catalog
+          ON catalog.item_id = equipment.item_id
+        WHERE equipment.profile_id = NEW.profile_id
+          AND equipment.slot = 'skin'
+          AND catalog.kind = 'skin'
+          AND catalog.character_id != NEW.selected_character_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'selected character conflicts with skin'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

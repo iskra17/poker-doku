@@ -11,6 +11,7 @@ import {
   parseArenaRuntimeConfig,
 } from './arena-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { ProgressionRepository } from './progression-repository';
 
 const EPOCH_TEXT = '2026-07-20T00:00:00+09:00';
 const EPOCH = Date.parse(EPOCH_TEXT);
@@ -826,7 +827,9 @@ describe('ArenaService free ticket lifecycle', () => {
       seasonSunday,
     );
     service.markMatchPlaying('cross-season', seasonSunday + 1);
-    service.reconcile(seasonBoundary);
+    expect(() => service.reconcile(seasonBoundary))
+      .toThrowError('ARENA_PERSISTENCE_INVALID');
+    expect(repository.findSeason('arena-v1-1')).toBeNull();
 
     const first = service.settleOfficialMatch(
       'cross-season',
@@ -836,6 +839,7 @@ describe('ArenaService free ticket lifecycle', () => {
       ]),
       seasonBoundary + 1,
     );
+    service.reconcile(seasonBoundary + 2);
     const entries = repository.listMatchEntries('cross-season');
 
     expect(first).toMatchObject({
@@ -881,7 +885,7 @@ describe('ArenaService free ticket lifecycle', () => {
         ['profile-a', 6],
         ['profile-b', 1],
       ]),
-      seasonBoundary + 2,
+      seasonBoundary + 3,
     );
     expect(duplicate).toEqual(first);
     expect(repository.listMatchEntries('cross-season')).toEqual(entries);
@@ -1345,6 +1349,7 @@ function insertBaseProfile(database: PokerDatabase, id: string): void {
       alias, avatar_id, adult_confirmed_at, created_at, updated_at
     ) VALUES (?, ?, ?, ?, ?, ?, 'sakura', 1, 1, 1)
   `).run(id, `ch-${id}`, `cl-${id}`, `rh-${id}`, `rl-${id}`, `alias-${id}`);
+  new ProgressionRepository(database).getOrCreate(id, 'sakura', 1);
 }
 
 function hasActiveWalletSeat(database: PokerDatabase, profileId: string): boolean {

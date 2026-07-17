@@ -2071,7 +2071,11 @@ function grantPermanentForTest(
   grantedAt: number,
 ): void {
   const definition = getCollectionItemDefinition(itemId);
-  if (!definition || definition.source.kind === 'streak') {
+  if (
+    !definition
+    || definition.source.kind === 'streak'
+    || definition.source.kind === 'arena-season'
+  ) {
     throw new Error(`Not a permanent reward: ${itemId}`);
   }
   const source = definition.source;
@@ -2125,7 +2129,11 @@ function insertPermanentGrantProofForTest(input: {
   summary: Record<string, unknown>;
 }): void {
   const definition = getCollectionItemDefinition(input.itemId);
-  if (!definition || definition.source.kind === 'streak') {
+  if (
+    !definition
+    || definition.source.kind === 'streak'
+    || definition.source.kind === 'arena-season'
+  ) {
     throw new Error(`Not a permanent reward: ${input.itemId}`);
   }
   const source = definition.source;

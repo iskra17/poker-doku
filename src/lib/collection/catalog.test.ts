@@ -3,6 +3,7 @@ import {
   AFFINITY_REWARD_LEVELS,
   COLLECTION_CATALOG,
   DOJO_REWARD_LEVELS,
+  getArenaSeasonRewardItems,
   getAffinityRewardItems,
   getCollectionItemDefinition,
   getDojoRewardItems,
@@ -79,5 +80,66 @@ describe('collection catalog', () => {
     expect(getAffinityRewardItems('sakura', 4, 20).map(item => item.source.level))
       .toEqual([5, 10, 15, 20]);
     expect(getAffinityRewardItems('sakura', 20, 20)).toEqual([]);
+  });
+
+  it('builds every immutable season-scoped Arena cosmetic with stable ids', () => {
+    const seasonId = 'arena-v1-12';
+    const rewards = getArenaSeasonRewardItems(seasonId);
+
+    expect(rewards.map(reward => [
+      reward.source.rewardKey,
+      reward.kind,
+      reward.equipSlot,
+    ])).toEqual([
+      ['participation-emblem', 'emblem', null],
+      ['gold-frame', 'frame', 'frame'],
+      ['diamond-featured-skin', 'skin', 'skin'],
+      ['master-cutin', 'cutin', 'cutin'],
+      ['top100-chroma', 'skin', 'skin'],
+      ['top100-title', 'title', 'title'],
+      ...Array.from({ length: 10 }, (_, index) => [
+        `rank-${index + 1}-title`,
+        'title',
+        'title',
+      ]),
+      ['champion-trophy', 'trophy', null],
+      ['champion-aura', 'aura', null],
+    ]);
+    expect(rewards).toHaveLength(18);
+    expect(new Set(rewards.map(reward => reward.id)).size).toBe(18);
+    expect(rewards.every(reward =>
+      reward.id.startsWith(`${seasonId}-`)
+      && reward.source.kind === 'arena-season'
+      && reward.source.seasonId === seasonId
+      && reward.stackable === false
+      && reward.gameplayModifiers.length === 0
+      && Object.isFrozen(reward)
+      && Object.isFrozen(reward.source)
+      && Object.isFrozen(reward.gameplayModifiers)
+      && getCollectionItemDefinition(reward.id) === reward,
+    )).toBe(true);
+    expect(rewards.find(reward =>
+      reward.source.rewardKey === 'top100-title',
+    )?.name).toContain('TOP 100');
+    expect(rewards.filter(reward =>
+      reward.source.rewardKey.startsWith('rank-'),
+    ).map(reward => reward.name)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `시즌 ${index + 1}위`),
+    );
+  });
+
+  it('keeps Arena reward ids disjoint by season and rejects malformed ids', () => {
+    const first = getArenaSeasonRewardItems('arena-v1-1');
+    const second = getArenaSeasonRewardItems('arena-v1-2');
+    expect(first).toBe(getArenaSeasonRewardItems('arena-v1-1'));
+    expect(new Set([
+      ...first.map(reward => reward.id),
+      ...second.map(reward => reward.id),
+    ]).size).toBe(first.length + second.length);
+    for (const invalid of ['', 'season-1', 'arena-v1--1', 'arena-v1-01']) {
+      expect(() => getArenaSeasonRewardItems(invalid))
+        .toThrowError('ARENA_SEASON_CATALOG_INVALID');
+    }
+    expect(getCollectionItemDefinition('arena-v1-1-rank-11-title')).toBeNull();
   });
 });

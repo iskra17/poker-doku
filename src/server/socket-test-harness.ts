@@ -130,13 +130,15 @@ export async function createSocketTestHarness(
         UPDATE progression_profiles SET dojo_level = ?, dojo_xp_milli = 0
         WHERE profile_id = ? AND dojo_level < ?
       `).run(source.level, profileId, source.level);
-    } else {
+    } else if (source.kind === 'affinity-level') {
       database.db.prepare(`
         INSERT INTO character_affinity (profile_id, character_id, level, xp_milli)
         VALUES (?, ?, ?, 0)
         ON CONFLICT(profile_id, character_id) DO UPDATE SET
           level = MAX(level, excluded.level), xp_milli = 0
       `).run(profileId, source.characterId, source.level);
+    } else {
+      throw new Error('expected permanent progression reward');
     }
     const sourceEventId = `harness-grant-${itemId}`;
     database.transaction(() => {

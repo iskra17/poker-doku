@@ -229,13 +229,15 @@ describe('progression HTTP API', () => {
         UPDATE progression_profiles SET dojo_level = ?, dojo_xp_milli = 0
         WHERE profile_id = ? AND dojo_level < ?
       `).run(source.level, profile.id, source.level);
-    } else {
+    } else if (source.kind === 'affinity-level') {
       database.db.prepare(`
         INSERT INTO character_affinity (profile_id, character_id, level, xp_milli)
         VALUES (?, ?, ?, 0)
         ON CONFLICT(profile_id, character_id) DO UPDATE SET
           level = MAX(level, excluded.level), xp_milli = 0
       `).run(profile.id, source.characterId, source.level);
+    } else {
+      throw new Error('expected permanent progression reward');
     }
     const sourceEventId = `http-grant-${itemId}`;
     database.transaction(() => {

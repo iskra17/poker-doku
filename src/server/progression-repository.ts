@@ -247,7 +247,10 @@ export interface PermanentInventoryGrant {
   profileId: string;
   itemId: string;
   sourceEventId: string;
-  source: Exclude<CollectionRewardSource, { kind: 'streak' }>;
+  source: Exclude<
+    CollectionRewardSource,
+    { kind: 'streak' } | { kind: 'arena-season' }
+  >;
   grantedAt: number;
 }
 
@@ -1144,6 +1147,7 @@ export class ProgressionRepository {
       !definition
       || definition.stackable
       || definition.source.kind === 'streak'
+      || definition.source.kind === 'arena-season'
       || definition.source.kind !== safe.source.kind
       || definition.source.level !== safe.source.level
       || (definition.source.kind === 'affinity-level'
@@ -1264,6 +1268,7 @@ export class ProgressionRepository {
         if (
           !definition
           || definition.source.kind === 'streak'
+          || definition.source.kind === 'arena-season'
           || definition.source.kind !== row.source_kind
           || definition.source.level !== row.source_level
           || (definition.source.kind === 'affinity-level'

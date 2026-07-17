@@ -115,7 +115,9 @@ export class ArenaScheduler {
       } catch {
         // Logging failure must not stop the bounded retry.
       }
-      this.#scheduleRetryAt(safeTimeAdd(at, this.#retryDelayMs));
+      const failedAt = this.#now();
+      assertTime(failedAt);
+      this.#scheduleRetryAt(safeTimeAdd(failedAt, this.#retryDelayMs));
       return;
     }
     this.#scheduleNext();

@@ -1,4 +1,14 @@
-import type { ArenaTier } from '@/lib/arena/types';
+import { rankWeeklyStandings } from '@/lib/arena/rules';
+import type { ArenaTier, WeeklyStanding } from '@/lib/arena/types';
+import type {
+  ArenaSeasonRewardKey,
+  CollectionItemKind,
+} from '@/lib/collection/catalog';
+import { getCollectionItemDefinition } from '@/lib/collection/catalog';
+import type {
+  ProgressionCharacterId,
+  ProgressionEquipmentSlot,
+} from '@/lib/progression/types';
 import type { PokerDatabase } from './persistence/database';
 
 const MAX_TIMESTAMP = 253_402_300_799_999;
@@ -124,9 +134,45 @@ export interface ArenaSeasonRewardRecord {
   grantedAt: number;
 }
 
+export interface ArenaSeasonCatalogRecord {
+  seasonId: string;
+  itemId: string;
+  rewardKey: ArenaSeasonRewardKey;
+  kind: CollectionItemKind;
+  equipSlot: ProgressionEquipmentSlot | null;
+  characterId: ProgressionCharacterId | null;
+}
+
+export interface ArenaSeasonStanding extends WeeklyStanding {
+  finalTier: ArenaTier | null;
+}
+
+export interface ArenaSeasonResultRecord extends ArenaSeasonStanding {
+  seasonId: string;
+  finalRank: number;
+  settledAt: number;
+}
+
+export interface ArenaSeasonSettlementRecord {
+  seasonId: string;
+  nextSeasonId: string;
+  participantCount: number;
+  settledAt: number;
+}
+
+export interface ArenaHallOfFameRecord {
+  seasonId: string;
+  profileId: string;
+  finalRank: 1;
+  trophyItemId: string;
+  auraItemId: string;
+  recordedAt: number;
+}
+
 export interface PublicArenaSnapshot {
   season: {
     preseason: boolean;
+    preseasonScarceRewardsSuppressed: boolean;
     startsAt: number;
     endsAt: number;
   };
@@ -156,6 +202,10 @@ export interface ArenaTransaction {
   updateGroupMember(value: ArenaGroupMemberRecord): void;
   insertWeeklySettlement(value: ArenaWeeklySettlementRecord): void;
   insertSeasonReward(value: ArenaSeasonRewardRecord): void;
+  insertSeasonCatalogIfAbsent(value: ArenaSeasonCatalogRecord): void;
+  insertSeasonResult(value: ArenaSeasonResultRecord): void;
+  insertSeasonSettlement(value: ArenaSeasonSettlementRecord): void;
+  insertHallOfFame(value: ArenaHallOfFameRecord): void;
 }
 
 type SynchronousResult<T> = T extends PromiseLike<unknown> ? never : T;
@@ -254,6 +304,48 @@ interface SeasonRewardRow {
   profile_id: unknown;
   item_id: unknown;
   granted_at: unknown;
+}
+
+interface SeasonCatalogRow {
+  season_id: unknown;
+  item_id: unknown;
+  reward_key: unknown;
+  kind: unknown;
+  equip_slot: unknown;
+  character_id: unknown;
+}
+
+interface SeasonStandingRow {
+  profile_id: unknown;
+  points: unknown;
+  wins: unknown;
+  top3: unknown;
+  place_sum: unknown;
+  matches: unknown;
+  score_reached_at: unknown;
+  final_tier: unknown;
+}
+
+interface SeasonResultRow extends SeasonStandingRow {
+  season_id: unknown;
+  final_rank: unknown;
+  settled_at: unknown;
+}
+
+interface SeasonSettlementRow {
+  season_id: unknown;
+  next_season_id: unknown;
+  participant_count: unknown;
+  settled_at: unknown;
+}
+
+interface HallOfFameRow {
+  season_id: unknown;
+  profile_id: unknown;
+  final_rank: unknown;
+  trophy_item_id: unknown;
+  aura_item_id: unknown;
+  recorded_at: unknown;
 }
 
 class ArenaTransactionImplementation implements ArenaTransaction {
@@ -661,6 +753,78 @@ class ArenaTransactionImplementation implements ArenaTransaction {
       ) VALUES (?, ?, ?, ?)
     `).run(value.seasonId, value.profileId, value.itemId, value.grantedAt);
   }
+
+  insertSeasonCatalogIfAbsent(value: ArenaSeasonCatalogRecord): void {
+    assertSeasonCatalog(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT OR IGNORE INTO arena_season_catalog (
+        season_id, item_id, reward_key, kind, equip_slot, character_id
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      value.seasonId,
+      value.itemId,
+      value.rewardKey,
+      value.kind,
+      value.equipSlot,
+      value.characterId,
+    );
+  }
+
+  insertSeasonResult(value: ArenaSeasonResultRecord): void {
+    assertSeasonResult(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT INTO arena_season_results (
+        season_id, profile_id, final_rank, points, wins, top3,
+        place_sum, matches, score_reached_at, final_tier, settled_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.seasonId,
+      value.profileId,
+      value.finalRank,
+      value.points,
+      value.wins,
+      value.top3,
+      value.placeSum,
+      value.matches,
+      value.scoreReachedAt,
+      value.finalTier,
+      value.settledAt,
+    );
+  }
+
+  insertSeasonSettlement(value: ArenaSeasonSettlementRecord): void {
+    assertSeasonSettlement(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT INTO arena_season_settlements (
+        season_id, next_season_id, participant_count, settled_at
+      ) VALUES (?, ?, ?, ?)
+    `).run(
+      value.seasonId,
+      value.nextSeasonId,
+      value.participantCount,
+      value.settledAt,
+    );
+  }
+
+  insertHallOfFame(value: ArenaHallOfFameRecord): void {
+    assertHallOfFame(value, 'ARENA_INPUT_INVALID');
+    this.#database.assertTransactionActive();
+    this.#database.db.prepare(`
+      INSERT INTO arena_hall_of_fame (
+        season_id, profile_id, final_rank, trophy_item_id,
+        aura_item_id, recorded_at
+      ) VALUES (?, ?, 1, ?, ?, ?)
+    `).run(
+      value.seasonId,
+      value.profileId,
+      value.trophyItemId,
+      value.auraItemId,
+      value.recordedAt,
+    );
+  }
 }
 
 export class ArenaRepository {
@@ -708,6 +872,21 @@ export class ArenaRepository {
     return value;
   }
 
+  listUnsettledSeasonsEndingAtOrBefore(at: number): ArenaSeasonRecord[] {
+    if (!timestamp(at)) fail('ARENA_INPUT_INVALID');
+    const rows = this.#database.db.prepare(`
+      SELECT seasons.id, seasons.ordinal, seasons.config_version,
+             seasons.preseason, seasons.starts_at, seasons.ends_at,
+             seasons.created_at
+      FROM arena_seasons AS seasons
+      LEFT JOIN arena_season_settlements AS settlements
+        ON settlements.season_id = seasons.id
+      WHERE seasons.ends_at <= ? AND settlements.season_id IS NULL
+      ORDER BY seasons.ordinal, seasons.id
+    `).all(at) as unknown as SeasonRow[];
+    return rows.map(mapSeason);
+  }
+
   findProfile(seasonId: string, profileId: string): ArenaProfileRecord | null {
     const row = this.#database.db.prepare(`
       SELECT season_id, profile_id, available_tickets, last_daily_grant_date,
@@ -721,6 +900,15 @@ export class ArenaRepository {
     const value = this.findProfile(seasonId, profileId);
     if (!value) throw new ArenaPersistenceError('ARENA_NOT_FOUND');
     return value;
+  }
+
+  listSeasonProfiles(seasonId: string): ArenaProfileRecord[] {
+    const rows = this.#database.db.prepare(`
+      SELECT season_id, profile_id, available_tickets, last_daily_grant_date,
+             placement_games, placement_points, tier, mmr, created_at, updated_at
+      FROM arena_profiles WHERE season_id = ? ORDER BY profile_id
+    `).all(seasonId) as unknown as ProfileRow[];
+    return rows.map(mapProfile);
   }
 
   getPublicSnapshot(
@@ -769,6 +957,7 @@ export class ArenaRepository {
     return {
       season: {
         preseason: season.preseason,
+        preseasonScarceRewardsSuppressed: season.preseason,
         startsAt: season.startsAt,
         endsAt: season.endsAt,
       },
@@ -833,6 +1022,17 @@ export class ArenaRepository {
       FROM arena_matches WHERE status IN ('forming', 'playing')
       ORDER BY created_at, id
     `).all() as unknown as MatchRow[];
+    return rows.map(mapMatch);
+  }
+
+  listUnfinishedMatchesForSeason(seasonId: string): ArenaMatchRecord[] {
+    const rows = this.#database.db.prepare(`
+      SELECT id, season_id, config_version, bot_version, bot_mmr,
+             human_count, bot_count, status, created_at, started_at, finished_at
+      FROM arena_matches
+      WHERE season_id = ? AND status IN ('forming', 'playing')
+      ORDER BY created_at, id
+    `).all(seasonId) as unknown as MatchRow[];
     return rows.map(mapMatch);
   }
 
@@ -967,6 +1167,85 @@ export class ArenaRepository {
     `).all(seasonId, profileId) as unknown as SeasonRewardRow[];
     return rows.map(mapSeasonReward);
   }
+
+  listSeasonCatalog(seasonId: string): ArenaSeasonCatalogRecord[] {
+    const rows = this.#database.db.prepare(`
+      SELECT season_id, item_id, reward_key, kind, equip_slot, character_id
+      FROM arena_season_catalog
+      WHERE season_id = ? ORDER BY reward_key, item_id
+    `).all(seasonId) as unknown as SeasonCatalogRow[];
+    return rows.map(mapSeasonCatalog);
+  }
+
+  listSeasonStandings(seasonId: string): ArenaSeasonStanding[] {
+    const rows = this.#database.db.prepare(`
+      SELECT
+        entries.profile_id,
+        SUM(entries.points) AS points,
+        SUM(CASE WHEN entries.place = 1 THEN 1 ELSE 0 END) AS wins,
+        SUM(CASE WHEN entries.place <= 3 THEN 1 ELSE 0 END) AS top3,
+        SUM(entries.place) AS place_sum,
+        COUNT(*) AS matches,
+        COALESCE(
+          MAX(CASE WHEN entries.points > 0 THEN entries.settled_at END),
+          MIN(entries.settled_at)
+        ) AS score_reached_at,
+        profiles.tier AS final_tier
+      FROM arena_entries AS entries
+      INNER JOIN arena_matches AS matches
+        ON matches.id = entries.match_id
+        AND matches.season_id = entries.season_id
+      INNER JOIN arena_profiles AS profiles
+        ON profiles.season_id = entries.season_id
+        AND profiles.profile_id = entries.profile_id
+      WHERE entries.season_id = ?
+        AND matches.status = 'finished'
+        AND entries.result_key IS NOT NULL
+        AND entries.points IS NOT NULL
+        AND entries.place IS NOT NULL
+        AND entries.settled_at IS NOT NULL
+      GROUP BY entries.profile_id, profiles.tier
+    `).all(seasonId) as unknown as SeasonStandingRow[];
+    const standings = rows.map(mapSeasonStanding);
+    const ranked = rankWeeklyStandings(standings);
+    const byProfileId = new Map(
+      standings.map(standing => [standing.profileId, standing] as const),
+    );
+    return ranked.map(standing => {
+      const complete = byProfileId.get(standing.profileId);
+      if (!complete) fail('ARENA_PERSISTENCE_INVALID');
+      return complete;
+    });
+  }
+
+  listSeasonResults(seasonId: string): ArenaSeasonResultRecord[] {
+    const rows = this.#database.db.prepare(`
+      SELECT season_id, profile_id, final_rank, points, wins, top3,
+             place_sum, matches, score_reached_at, final_tier, settled_at
+      FROM arena_season_results
+      WHERE season_id = ? ORDER BY final_rank, profile_id
+    `).all(seasonId) as unknown as SeasonResultRow[];
+    return rows.map(mapSeasonResult);
+  }
+
+  findSeasonSettlement(
+    seasonId: string,
+  ): ArenaSeasonSettlementRecord | null {
+    const row = this.#database.db.prepare(`
+      SELECT season_id, next_season_id, participant_count, settled_at
+      FROM arena_season_settlements WHERE season_id = ?
+    `).get(seasonId) as unknown as SeasonSettlementRow | undefined;
+    return row ? mapSeasonSettlement(row) : null;
+  }
+
+  findHallOfFame(seasonId: string): ArenaHallOfFameRecord | null {
+    const row = this.#database.db.prepare(`
+      SELECT season_id, profile_id, final_rank, trophy_item_id,
+             aura_item_id, recorded_at
+      FROM arena_hall_of_fame WHERE season_id = ?
+    `).get(seasonId) as unknown as HallOfFameRow | undefined;
+    return row ? mapHallOfFame(row) : null;
+  }
 }
 
 function mapSeason(row: SeasonRow): ArenaSeasonRecord {
@@ -1100,6 +1379,84 @@ function mapSeasonReward(row: SeasonRewardRow): ArenaSeasonRewardRecord {
     grantedAt: asNumber(row.granted_at),
   };
   assertSeasonReward(value, 'ARENA_PERSISTENCE_INVALID');
+  return value;
+}
+
+function mapSeasonCatalog(row: SeasonCatalogRow): ArenaSeasonCatalogRecord {
+  const definition = getCollectionItemDefinition(asString(row.item_id));
+  if (!definition || definition.source.kind !== 'arena-season') {
+    fail('ARENA_PERSISTENCE_INVALID');
+  }
+  const value: ArenaSeasonCatalogRecord = {
+    seasonId: asString(row.season_id),
+    itemId: definition.id,
+    rewardKey: definition.source.rewardKey,
+    kind: definition.kind,
+    equipSlot: definition.equipSlot,
+    characterId: definition.characterId ?? null,
+  };
+  if (
+    asString(row.reward_key) !== value.rewardKey
+    || asString(row.kind) !== value.kind
+    || asNullableString(row.equip_slot) !== value.equipSlot
+    || asNullableString(row.character_id) !== value.characterId
+  ) fail('ARENA_PERSISTENCE_INVALID');
+  assertSeasonCatalog(value, 'ARENA_PERSISTENCE_INVALID');
+  return value;
+}
+
+function mapSeasonStanding(row: SeasonStandingRow): ArenaSeasonStanding {
+  const value: ArenaSeasonStanding = {
+    profileId: asString(row.profile_id),
+    points: asNumber(row.points),
+    wins: asNumber(row.wins),
+    top3: asNumber(row.top3),
+    placeSum: asNumber(row.place_sum),
+    matches: asNumber(row.matches),
+    scoreReachedAt: asNumber(row.score_reached_at),
+    finalTier: asNullableTier(row.final_tier),
+  };
+  assertSeasonStanding(value, 'ARENA_PERSISTENCE_INVALID');
+  return value;
+}
+
+function mapSeasonResult(row: SeasonResultRow): ArenaSeasonResultRecord {
+  const standing = mapSeasonStanding(row);
+  const value: ArenaSeasonResultRecord = {
+    ...standing,
+    seasonId: asString(row.season_id),
+    finalRank: asNumber(row.final_rank),
+    settledAt: asNumber(row.settled_at),
+  };
+  assertSeasonResult(value, 'ARENA_PERSISTENCE_INVALID');
+  return value;
+}
+
+function mapSeasonSettlement(
+  row: SeasonSettlementRow,
+): ArenaSeasonSettlementRecord {
+  const value: ArenaSeasonSettlementRecord = {
+    seasonId: asString(row.season_id),
+    nextSeasonId: asString(row.next_season_id),
+    participantCount: asNumber(row.participant_count),
+    settledAt: asNumber(row.settled_at),
+  };
+  assertSeasonSettlement(value, 'ARENA_PERSISTENCE_INVALID');
+  return value;
+}
+
+function mapHallOfFame(row: HallOfFameRow): ArenaHallOfFameRecord {
+  const finalRank = asNumber(row.final_rank);
+  if (finalRank !== 1) fail('ARENA_PERSISTENCE_INVALID');
+  const value: ArenaHallOfFameRecord = {
+    seasonId: asString(row.season_id),
+    profileId: asString(row.profile_id),
+    finalRank,
+    trophyItemId: asString(row.trophy_item_id),
+    auraItemId: asString(row.aura_item_id),
+    recordedAt: asNumber(row.recorded_at),
+  };
+  assertHallOfFame(value, 'ARENA_PERSISTENCE_INVALID');
   return value;
 }
 
@@ -1279,6 +1636,78 @@ function assertSeasonReward(
     || !nonempty(value.profileId)
     || !nonempty(value.itemId)
     || !timestamp(value.grantedAt)
+  ) fail(code);
+}
+
+function assertSeasonCatalog(
+  value: ArenaSeasonCatalogRecord,
+  code: ArenaPersistenceErrorCode,
+): void {
+  const definition = getCollectionItemDefinition(value.itemId);
+  if (
+    !nonempty(value.seasonId)
+    || !definition
+    || definition.source.kind !== 'arena-season'
+    || definition.source.seasonId !== value.seasonId
+    || definition.source.rewardKey !== value.rewardKey
+    || definition.kind !== value.kind
+    || definition.equipSlot !== value.equipSlot
+    || (definition.characterId ?? null) !== value.characterId
+    || definition.stackable
+    || definition.gameplayModifiers.length !== 0
+  ) fail(code);
+}
+
+function assertSeasonStanding(
+  value: ArenaSeasonStanding,
+  code: ArenaPersistenceErrorCode,
+): void {
+  try {
+    rankWeeklyStandings([value]);
+  } catch {
+    fail(code);
+  }
+  if (value.finalTier !== null && !TIERS.includes(value.finalTier)) fail(code);
+}
+
+function assertSeasonResult(
+  value: ArenaSeasonResultRecord,
+  code: ArenaPersistenceErrorCode,
+): void {
+  assertSeasonStanding(value, code);
+  if (
+    !nonempty(value.seasonId)
+    || !nonnegative(value.finalRank)
+    || value.finalRank < 1
+    || !timestamp(value.settledAt)
+    || value.scoreReachedAt > value.settledAt
+  ) fail(code);
+}
+
+function assertSeasonSettlement(
+  value: ArenaSeasonSettlementRecord,
+  code: ArenaPersistenceErrorCode,
+): void {
+  if (
+    !nonempty(value.seasonId)
+    || !nonempty(value.nextSeasonId)
+    || value.seasonId === value.nextSeasonId
+    || !nonnegative(value.participantCount)
+    || !timestamp(value.settledAt)
+  ) fail(code);
+}
+
+function assertHallOfFame(
+  value: ArenaHallOfFameRecord,
+  code: ArenaPersistenceErrorCode,
+): void {
+  if (
+    !nonempty(value.seasonId)
+    || !nonempty(value.profileId)
+    || value.finalRank !== 1
+    || value.trophyItemId !== `${value.seasonId}-champion-trophy`
+    || value.auraItemId !== `${value.seasonId}-champion-aura`
+    || !timestamp(value.recordedAt)
   ) fail(code);
 }
 

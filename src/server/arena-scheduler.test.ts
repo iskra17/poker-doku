@@ -157,6 +157,27 @@ describe('ArenaScheduler', () => {
     scheduler.close();
   });
 
+  it('starts the retry delay when a slow failed reconciliation completes', () => {
+    const fake = new FakeTimers(EPOCH);
+    const scheduler = new ArenaScheduler({
+      epochMs: EPOCH,
+      now: () => fake.now,
+      reconcile: () => {
+        fake.now += 40_000;
+        throw new Error('slow-reconcile');
+      },
+      setTimer: fake.setTimer,
+      clearTimer: fake.clearTimer,
+      logger: { error: () => undefined },
+    });
+
+    scheduler.start();
+
+    expect(fake.nextAt).toBe(EPOCH + 70_000);
+    expect(fake.lastDelay).toBe(30_000);
+    scheduler.close();
+  });
+
   it('keeps one bounded retry timer across repeated failures and close cancels it', () => {
     const fake = new FakeTimers(EPOCH);
     const calls: number[] = [];

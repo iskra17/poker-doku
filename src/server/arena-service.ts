@@ -3,9 +3,15 @@ import { calculateMmrDelta } from '@/lib/arena/mmr';
 import {
   pointsForPlace,
   selectWeeklyMoves,
+  softResetMmr,
+  softResetTier,
   tierForPlacementTotal,
 } from '@/lib/arena/rules';
 import type { ArenaTier } from '@/lib/arena/types';
+import {
+  getArenaSeasonRewardItems,
+  type ArenaSeasonRewardKey,
+} from '@/lib/collection/catalog';
 import type {
   ArenaEntryRecord,
   ArenaGroupMemberRecord,
@@ -212,7 +218,7 @@ export class ArenaService {
   }
 
   getSnapshot(profileId: string, at = this.#clock()): PublicArenaSnapshot {
-    const window = calculateArenaSeasonWindow(at, this.#config);
+    const window = this.reconcile(at);
     return this.#repository.transaction(tx => {
       this.#ensureSeason(tx, window, at);
       this.#ensureProfile(tx, window, profileId, at);
@@ -228,7 +234,7 @@ export class ArenaService {
     mmr: number;
     activeArenaEscrow: boolean;
   } {
-    const window = calculateArenaSeasonWindow(at, this.#config);
+    const window = this.reconcile(at);
     return this.#repository.transaction(tx => {
       this.#ensureSeason(tx, window, at);
       const profile = this.#ensureProfile(tx, window, profileId, at);
@@ -247,6 +253,12 @@ export class ArenaService {
     const currentWeekKey = getArenaKstWeekKey(at);
     const groups = this.#repository.listOpenGroupsBeforeWeek(currentWeekKey);
     for (const group of groups) this.#settleWeeklyGroup(group.id, at);
+    while (true) {
+      const endedSeasons =
+        this.#repository.listUnsettledSeasonsEndingAtOrBefore(at);
+      if (endedSeasons.length === 0) break;
+      for (const season of endedSeasons) this.#settleSeason(season, at);
+    }
     this.#repository.transaction(tx => this.#ensureSeason(tx, window, at));
     return window;
   }
@@ -439,10 +451,14 @@ export class ArenaService {
     expectedSeasonId?: string,
   ): ArenaMatchRecord {
     assertMatchRequest(matchId, profileIds);
-    const window = calculateArenaSeasonWindow(at, this.#config);
-    if (expectedSeasonId !== undefined && expectedSeasonId !== window.id) {
+    const requestedWindow = calculateArenaSeasonWindow(at, this.#config);
+    if (
+      expectedSeasonId !== undefined
+      && expectedSeasonId !== requestedWindow.id
+    ) {
       fail('ARENA_SEASON_MISMATCH');
     }
+    const window = this.reconcile(at);
 
     return this.#repository.transaction(tx => {
       for (const profileId of profileIds) {
@@ -787,6 +803,107 @@ export class ArenaService {
     });
   }
 
+  #settleSeason(season: ArenaSeasonRecord, at: number): void {
+    this.#repository.transaction(tx => {
+      if (this.#repository.findSeasonSettlement(season.id)) return;
+      if (
+        this.#repository.listUnfinishedMatchesForSeason(season.id).length > 0
+      ) fail('ARENA_PERSISTENCE_INVALID');
+      const nextWindow = calculateArenaSeasonWindow(
+        season.endsAt,
+        this.#config,
+      );
+      if (nextWindow.ordinal !== season.ordinal + 1) {
+        fail('ARENA_PERSISTENCE_INVALID');
+      }
+      this.#ensureSeason(tx, nextWindow, at);
+      const standings = this.#repository.listSeasonStandings(season.id);
+      const profiles = this.#repository.listSeasonProfiles(season.id);
+      const profileById = new Map(
+        profiles.map(profile => [profile.profileId, profile] as const),
+      );
+      const rewards = new Map(
+        getArenaSeasonRewardItems(season.id).map(reward => [
+          reward.source.rewardKey,
+          reward,
+        ] as const),
+      );
+
+      for (const [index, standing] of standings.entries()) {
+        const finalRank = index + 1;
+        const profile = profileById.get(standing.profileId);
+        if (!profile || profile.tier !== standing.finalTier) {
+          fail('ARENA_PERSISTENCE_INVALID');
+        }
+        tx.insertSeasonResult({
+          ...standing,
+          seasonId: season.id,
+          finalRank,
+          settledAt: at,
+        });
+        for (const rewardKey of seasonRewardKeys(
+          season,
+          standing.finalTier,
+          standing.matches,
+          finalRank,
+        )) {
+          const reward = rewards.get(rewardKey);
+          if (!reward) fail('ARENA_PERSISTENCE_INVALID');
+          tx.insertSeasonReward({
+            seasonId: season.id,
+            profileId: standing.profileId,
+            itemId: reward.id,
+            grantedAt: at,
+          });
+        }
+      }
+
+      if (!season.preseason && standings.length > 0) {
+        const champion = standings[0];
+        tx.insertHallOfFame({
+          seasonId: season.id,
+          profileId: champion.profileId,
+          finalRank: 1,
+          trophyItemId: `${season.id}-champion-trophy`,
+          auraItemId: `${season.id}-champion-aura`,
+          recordedAt: at,
+        });
+      }
+
+      const nextDate = getArenaKstDate(nextWindow.startsAt);
+      for (const profile of profiles) {
+        tx.insertProfileIfAbsent({
+          seasonId: nextWindow.id,
+          profileId: profile.profileId,
+          availableTickets: ARENA_CONFIG_V1.startingTickets,
+          lastDailyGrantDate: nextDate,
+          placementGames: ARENA_CONFIG_V1.placementMatches,
+          placementPoints: 0,
+          tier: softResetTier(profile.tier ?? 'bronze'),
+          mmr: softResetMmr(profile.mmr),
+          createdAt: at,
+          updatedAt: at,
+        });
+        const reset = this.#repository.requireProfile(
+          nextWindow.id,
+          profile.profileId,
+        );
+        if (
+          reset.placementGames !== ARENA_CONFIG_V1.placementMatches
+          || reset.placementPoints !== 0
+          || reset.tier !== softResetTier(profile.tier ?? 'bronze')
+          || reset.mmr !== softResetMmr(profile.mmr)
+        ) fail('ARENA_PERSISTENCE_INVALID');
+      }
+      tx.insertSeasonSettlement({
+        seasonId: season.id,
+        nextSeasonId: nextWindow.id,
+        participantCount: standings.length,
+        settledAt: at,
+      });
+    });
+  }
+
   #ensureSeason(
     tx: ArenaTransaction,
     window: ArenaSeasonWindow,
@@ -808,6 +925,29 @@ export class ArenaService {
       || season.preseason !== window.preseason
       || season.startsAt !== window.startsAt
       || season.endsAt !== window.endsAt
+    ) fail('ARENA_PERSISTENCE_INVALID');
+    const definitions = getArenaSeasonRewardItems(window.id);
+    for (const definition of definitions) {
+      tx.insertSeasonCatalogIfAbsent({
+        seasonId: window.id,
+        itemId: definition.id,
+        rewardKey: definition.source.rewardKey,
+        kind: definition.kind,
+        equipSlot: definition.equipSlot,
+        characterId: definition.characterId ?? null,
+      });
+    }
+    const storedCatalog = this.#repository.listSeasonCatalog(window.id);
+    if (
+      storedCatalog.length !== definitions.length
+      || storedCatalog.some(stored => {
+        const definition = definitions.find(item => item.id === stored.itemId);
+        return !definition
+          || stored.rewardKey !== definition.source.rewardKey
+          || stored.kind !== definition.kind
+          || stored.equipSlot !== definition.equipSlot
+          || stored.characterId !== (definition.characterId ?? null);
+      })
     ) fail('ARENA_PERSISTENCE_INVALID');
     return season;
   }
@@ -927,6 +1067,38 @@ function adjacentTier(tier: ArenaTier, direction: -1 | 1): ArenaTier {
   const next = ARENA_TIERS[index + direction];
   if (!next) fail('ARENA_PERSISTENCE_INVALID');
   return next;
+}
+
+function seasonRewardKeys(
+  season: ArenaSeasonRecord,
+  finalTier: ArenaTier | null,
+  matches: number,
+  finalRank: number,
+): ArenaSeasonRewardKey[] {
+  const rewardKeys: ArenaSeasonRewardKey[] = [];
+  if (matches >= 10) rewardKeys.push('participation-emblem');
+  if (season.preseason) return rewardKeys;
+
+  const tierIndex = finalTier === null ? -1 : ARENA_TIERS.indexOf(finalTier);
+  if (tierIndex >= ARENA_TIERS.indexOf('gold')) {
+    rewardKeys.push('gold-frame');
+  }
+  if (tierIndex >= ARENA_TIERS.indexOf('diamond')) {
+    rewardKeys.push('diamond-featured-skin');
+  }
+  if (finalTier === 'master') rewardKeys.push('master-cutin');
+  if (finalRank <= 100) {
+    rewardKeys.push('top100-chroma', 'top100-title');
+  }
+  if (finalRank <= 10) {
+    rewardKeys.push(
+      `rank-${finalRank}-title` as ArenaSeasonRewardKey,
+    );
+  }
+  if (finalRank === 1) {
+    rewardKeys.push('champion-trophy', 'champion-aura');
+  }
+  return rewardKeys;
 }
 
 function weeklyCompletionKey(

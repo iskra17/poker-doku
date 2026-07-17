@@ -27,6 +27,7 @@ describe('ArenaRepository', () => {
     expect(repository.getPublicSnapshot('season-0', 'profile-a')).toEqual({
       season: {
         preseason: true,
+        preseasonScarceRewardsSuppressed: true,
         startsAt: 1_000,
         endsAt: 2_000,
       },
