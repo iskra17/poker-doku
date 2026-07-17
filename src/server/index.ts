@@ -70,7 +70,20 @@ const shutdown = createServerShutdown({
   runtime: {
     close: async () => {
       arenaScheduler?.close();
-      await runtime?.close();
+      const arenaClose = await runtime?.close();
+      if (
+        arenaClose
+        && (
+          arenaClose.pendingOfficialMatchIds.length > 0
+          || arenaClose.pendingTrainingOfferIds.length > 0
+        )
+      ) {
+        try {
+          console.error('[arena] cleanup deferred to startup recovery', arenaClose);
+        } catch {
+          // Shutdown must continue even if diagnostic output is unavailable.
+        }
+      }
     },
   },
   rateLimiter: {
@@ -160,6 +173,9 @@ function initializePersistenceAndRecover(): void {
       },
       createTrainingRoom: async () => null,
       rollbackTrainingRoom: async () => undefined,
+      onError: (error, context) => {
+        console.error(`[arena] notification failed (${context})`, error);
+      },
     });
   }
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.

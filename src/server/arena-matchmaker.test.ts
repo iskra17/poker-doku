@@ -520,6 +520,204 @@ describe('ArenaMatchmaker rules', () => {
     matchmaker.close();
     expect(timers.size).toBe(0);
   });
+
+  it('isolates throwing notification hooks and still attempts every recipient', async () => {
+    const queueAttempts: string[] = [];
+    const matchAttempts: string[] = [];
+    const reported: string[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => true,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      onQueueState: socketId => {
+        queueAttempts.push(socketId);
+        throw new Error(`queue:${socketId}`);
+      },
+      onMatchFound: ((socketId: string) => {
+        matchAttempts.push(socketId);
+        return Promise.reject(new Error(`match:${socketId}`));
+      }) as unknown as (socketId: string, matchId: string) => void,
+      onError: (error, context) => {
+        reported.push(`${context}:${String(error)}`);
+        throw new Error('reporter failed');
+      },
+    } as ConstructorParameters<typeof ArenaMatchmaker>[0]);
+
+    expect(() => matchmaker.join({
+      profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0,
+    })).not.toThrow();
+    expect(() => matchmaker.join({
+      profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0,
+    })).not.toThrow();
+    await expect(matchmaker.tick(60_000)).resolves.toBeUndefined();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(matchAttempts).toEqual(['sa', 'sb']);
+    expect(queueAttempts).toEqual(expect.arrayContaining(['sa', 'sb']));
+    expect(reported.some(item => item.startsWith('queue-state:'))).toBe(true);
+    expect(reported.some(item => item.startsWith('match-found:'))).toBe(true);
+    expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
+  });
+
+  it('resolves training acceptance deterministically when notification hooks throw', async () => {
+    const offered: ArenaTrainingOffer[] = [];
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => ({ matchId: 'training-room' }),
+      rollbackTrainingRoom: async () => undefined,
+      onQueueState: () => {
+        throw new Error('queue hook');
+      },
+      onTrainingOffered: (_socketId, offer) => {
+        offered.push(offer);
+        throw new Error('offer hook');
+      },
+      onMatchFound: () => {
+        throw new Error('match hook');
+      },
+      onError: async () => {
+        throw new Error('async reporter failed');
+      },
+    } as ConstructorParameters<typeof ArenaMatchmaker>[0]);
+
+    expect(() => matchmaker.join({
+      profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0,
+    })).not.toThrow();
+    await expect(matchmaker.tick(60_000)).resolves.toBeUndefined();
+    await expect(matchmaker.acceptTraining(
+      'a', 'sa', offered[0].offerId, 70_000,
+    )).resolves.toEqual({ matchId: 'training-room' });
+    expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
+
+    const failedOffers: ArenaTrainingOffer[] = [];
+    const failed = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      onQueueState: () => {
+        throw new Error('idle hook');
+      },
+      onTrainingOffered: (_socketId, offer) => failedOffers.push(offer),
+    });
+    failed.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    await failed.tick(60_000);
+    await expect(failed.acceptTraining(
+      'b', 'sb', failedOffers[0].offerId, 70_000,
+    )).resolves.toBeNull();
+    expect(failed.hasBlockingParticipation('b')).toBe(false);
+  });
+
+  it('returns a finite close report when official cleanup permanently fails', async () => {
+    let rollbackCalls = 0;
+    let voidCalls = 0;
+    let nextTimer = 0;
+    const timers = new Map<ReturnType<typeof setTimeout>, number>();
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => ({ matchId: 'reserved' }),
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => {
+        rollbackCalls += 1;
+        throw new Error('permanent rollback failure');
+      },
+      voidOfficial: async () => {
+        voidCalls += 1;
+      },
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
+      setTimer: (_callback, delay) => {
+        const handle = ++nextTimer as unknown as ReturnType<typeof setTimeout>;
+        timers.set(handle, delay);
+        return handle;
+      },
+      clearTimer: handle => {
+        timers.delete(handle);
+      },
+    });
+    matchmaker.start();
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    matchmaker.join({ profileId: 'b', socketId: 'sb', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+
+    const first = matchmaker.close();
+    const second = matchmaker.close();
+    expect(second).toBe(first);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let outcome;
+    try {
+      outcome = await Promise.race([
+        first.then(report => ({ status: 'closed' as const, report })),
+        new Promise<{ status: 'timeout' }>(resolve => {
+          timeout = setTimeout(() => resolve({ status: 'timeout' }), 50);
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
+
+    expect(outcome).toEqual({
+      status: 'closed',
+      report: {
+        pendingOfficialMatchIds: ['reserved'],
+        pendingTrainingOfferIds: [],
+      },
+    });
+    expect(rollbackCalls).toBeGreaterThan(1);
+    expect(rollbackCalls).toBeLessThanOrEqual(10);
+    expect(voidCalls).toBe(0);
+    expect(timers.size).toBe(0);
+    const callsAfterClose = rollbackCalls;
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(rollbackCalls).toBe(callsAfterClose);
+  });
+
+  it('reports unresolved training cleanup and releases its pending acceptance on close', async () => {
+    const offered: ArenaTrainingOffer[] = [];
+    let rollbackCalls = 0;
+    const matchmaker = new ArenaMatchmaker({
+      now: () => 70_000,
+      reserveOfficial: async () => null,
+      createOfficialRoom: async () => false,
+      rollbackOfficialRoom: async () => undefined,
+      voidOfficial: async () => undefined,
+      createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => {
+        rollbackCalls += 1;
+        throw new Error('permanent training rollback failure');
+      },
+      onTrainingOffered: (_socketId, offer) => offered.push(offer),
+    });
+    matchmaker.join({ profileId: 'a', socketId: 'sa', mmr: 1_000, joinedAt: 0 });
+    await matchmaker.tick(60_000);
+    const accepting = matchmaker.acceptTraining(
+      'a', 'sa', offered[0].offerId, 70_000,
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const report = await matchmaker.close();
+    await expect(accepting).resolves.toBeNull();
+    expect(report).toEqual({
+      pendingOfficialMatchIds: [],
+      pendingTrainingOfferIds: [offered[0].offerId],
+    });
+    expect(rollbackCalls).toBeGreaterThan(1);
+    expect(rollbackCalls).toBeLessThanOrEqual(10);
+    expect(matchmaker.hasBlockingParticipation('a')).toBe(false);
+  });
 });
 
 function testMatchmaker(

@@ -7,6 +7,7 @@ const TRAINING_OFFER_MS = 30_000;
 const MAX_SEATS = 6;
 const CLEANUP_RETRY_BASE_MS = 100;
 const CLEANUP_RETRY_MAX_MS = 5_000;
+const CLOSE_CLEANUP_ATTEMPTS = 3;
 
 export interface ArenaQueueEntry {
   readonly profileId: string;
@@ -29,6 +30,13 @@ export interface ArenaTrainingOffer {
   readonly offerId: string;
   readonly expiresAt: number;
 }
+
+export interface ArenaMatchmakerCloseReport {
+  readonly pendingOfficialMatchIds: readonly string[];
+  readonly pendingTrainingOfferIds: readonly string[];
+}
+
+type NotificationResult = unknown;
 
 interface StoredOffer extends ArenaTrainingOffer {
   readonly profileId: string;
@@ -82,12 +90,22 @@ export interface ArenaMatchmakerOptions {
     offerId: string,
     result: ArenaReservation | null,
   ) => Promise<void>;
-  readonly onQueueState?: (socketId: string, state: ArenaQueueState) => void;
+  readonly onQueueState?: (
+    socketId: string,
+    state: ArenaQueueState,
+  ) => NotificationResult;
   readonly onTrainingOffered?: (
     socketId: string,
     offer: ArenaTrainingOffer,
-  ) => void;
-  readonly onMatchFound?: (socketId: string, matchId: string) => void;
+  ) => NotificationResult;
+  readonly onMatchFound?: (
+    socketId: string,
+    matchId: string,
+  ) => NotificationResult;
+  readonly onError?: (
+    error: unknown,
+    context: string,
+  ) => NotificationResult;
   readonly setTimer?: (
     callback: () => void,
     delay: number,
@@ -96,12 +114,18 @@ export interface ArenaMatchmakerOptions {
 }
 
 export interface ArenaMatchmakerEventHandlers {
-  readonly onQueueState?: (socketId: string, state: ArenaQueueState) => void;
+  readonly onQueueState?: (
+    socketId: string,
+    state: ArenaQueueState,
+  ) => NotificationResult;
   readonly onTrainingOffered?: (
     socketId: string,
     offer: ArenaTrainingOffer,
-  ) => void;
-  readonly onMatchFound?: (socketId: string, matchId: string) => void;
+  ) => NotificationResult;
+  readonly onMatchFound?: (
+    socketId: string,
+    matchId: string,
+  ) => NotificationResult;
 }
 
 export function arenaMmrRangeForWait(waitMs: number): number | null {
@@ -138,17 +162,48 @@ export class ArenaMatchmaker {
   #closed = false;
   #processing = false;
   #processingOperation: Promise<void> | undefined;
-  #closePromise: Promise<void> | undefined;
+  #closePromise: Promise<ArenaMatchmakerCloseReport> | undefined;
   #events: ArenaMatchmakerEventHandlers;
+  readonly #onError?: ArenaMatchmakerOptions['onError'];
 
   constructor(options: ArenaMatchmakerOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
     this.#events = options;
+    this.#onError = options.onError;
   }
 
   setEventHandlers(handlers: ArenaMatchmakerEventHandlers): void {
     this.#events = handlers;
+  }
+
+  #safeNotify(
+    context: string,
+    callback: (() => NotificationResult) | undefined,
+  ): void {
+    if (!callback) return;
+    try {
+      const result = callback();
+      if (isPromiseLike(result)) {
+        void Promise.resolve(result).catch(error => {
+          this.#reportNotificationError(error, context);
+        });
+      }
+    } catch (error) {
+      this.#reportNotificationError(error, context);
+    }
+  }
+
+  #reportNotificationError(error: unknown, context: string): void {
+    if (!this.#onError) return;
+    try {
+      const result = this.#onError(error, context);
+      if (isPromiseLike(result)) {
+        void Promise.resolve(result).catch(() => undefined);
+      }
+    } catch {
+      // Reporting is diagnostic only and must never control match lifecycle.
+    }
   }
 
   start(): void {
@@ -157,7 +212,7 @@ export class ArenaMatchmaker {
     this.#schedule();
   }
 
-  close(): Promise<void> {
+  close(): Promise<ArenaMatchmakerCloseReport> {
     if (this.#closePromise) return this.#closePromise;
     this.#closed = true;
     if (this.#timer) (this.#options.clearTimer ?? clearTimeout)(this.#timer);
@@ -183,7 +238,8 @@ export class ArenaMatchmaker {
     const stored = Object.freeze({ ...entry });
     this.#queue.set(entry.profileId, stored);
     const state = { status: 'queued', joinedAt: entry.joinedAt } as const;
-    this.#events.onQueueState?.(entry.socketId, state);
+    this.#safeNotify('queue-state', () =>
+      this.#events.onQueueState?.(entry.socketId, state));
     this.#schedule(this.#queue.size >= 2);
     return state;
   }
@@ -201,7 +257,8 @@ export class ArenaMatchmaker {
       ) return false;
       this.#offers.delete(profileId);
     }
-    this.#events.onQueueState?.(socketId, { status: 'idle' });
+    this.#safeNotify('queue-state', () =>
+      this.#events.onQueueState?.(socketId, { status: 'idle' }));
     this.#schedule();
     return true;
   }
@@ -284,7 +341,8 @@ export class ArenaMatchmaker {
       for (const [profileId, offer] of this.#offers) {
         if (offer.phase === 'offered' && offer.expiresAt <= at) {
           this.#offers.delete(profileId);
-          this.#events.onQueueState?.(offer.socketId, { status: 'idle' });
+          this.#safeNotify('queue-state', () =>
+            this.#events.onQueueState?.(offer.socketId, { status: 'idle' }));
         }
       }
       const ranked = this.#rankedQueue();
@@ -320,13 +378,15 @@ export class ArenaMatchmaker {
           resolveCompletion,
         } satisfies StoredOffer;
         this.#offers.set(anchor.profileId, offer);
-        this.#events.onQueueState?.(anchor.socketId, {
-          status: 'training-offered',
-        });
-        this.#events.onTrainingOffered?.(anchor.socketId, {
-          offerId: offer.offerId,
-          expiresAt: offer.expiresAt,
-        });
+        this.#safeNotify('queue-state', () =>
+          this.#events.onQueueState?.(anchor.socketId, {
+            status: 'training-offered',
+          }));
+        this.#safeNotify('training-offered', () =>
+          this.#events.onTrainingOffered?.(anchor.socketId, {
+            offerId: offer.offerId,
+            expiresAt: offer.expiresAt,
+          }));
         return;
       }
     } finally {
@@ -376,8 +436,9 @@ export class ArenaMatchmaker {
       && offer.phase === 'creating'
     ) {
       this.#offers.delete(offer.profileId);
-      this.#events.onMatchFound?.(offer.socketId, result.matchId);
       offer.resolveCompletion(result);
+      this.#safeNotify('match-found', () =>
+        this.#events.onMatchFound?.(offer.socketId, result.matchId));
       this.#schedule();
       return;
     }
@@ -403,7 +464,8 @@ export class ArenaMatchmaker {
     };
     this.#candidates.set(candidate.candidateId, state);
     for (const entry of entries) {
-      this.#events.onQueueState?.(entry.socketId, { status: 'forming' });
+      this.#safeNotify('queue-state', () =>
+        this.#events.onQueueState?.(entry.socketId, { status: 'forming' }));
     }
     const isValid = (): boolean => (
       !this.#closed
@@ -449,7 +511,8 @@ export class ArenaMatchmaker {
     this.#candidates.delete(candidate.candidateId);
     for (const entry of entries) {
       if (!state.connected.has(entry.profileId)) continue;
-      this.#events.onMatchFound?.(entry.socketId, reservation.matchId);
+      this.#safeNotify('match-found', () =>
+        this.#events.onMatchFound?.(entry.socketId, reservation.matchId));
     }
   }
 
@@ -499,10 +562,11 @@ export class ArenaMatchmaker {
       }
     }
     this.#offers.delete(offer.profileId);
-    if (!this.#closed && offer.connected) {
-      this.#events.onQueueState?.(offer.socketId, { status: 'idle' });
-    }
     offer.resolveCompletion(null);
+    if (!this.#closed && offer.connected) {
+      this.#safeNotify('queue-state', () =>
+        this.#events.onQueueState?.(offer.socketId, { status: 'idle' }));
+    }
     this.#schedule();
   }
 
@@ -518,7 +582,7 @@ export class ArenaMatchmaker {
     this.#schedule();
   }
 
-  async #drainClose(): Promise<void> {
+  async #drainClose(): Promise<ArenaMatchmakerCloseReport> {
     while (true) {
       const processing = this.#processingOperation;
       const training = [...this.#offers.values()]
@@ -531,26 +595,17 @@ export class ArenaMatchmaker {
         ]);
         continue;
       }
+      break;
+    }
 
+    for (let attempt = 0; attempt < CLOSE_CLEANUP_ATTEMPTS; attempt += 1) {
       const officialCleanup = [...this.#candidates.values()]
         .filter(state => state.phase === 'cleanup');
       const trainingCleanup = [...this.#offers.values()]
         .filter(offer => offer.phase === 'cleanup');
       if (officialCleanup.length === 0 && trainingCleanup.length === 0) {
-        this.#candidates.clear();
-        this.#offers.clear();
-        if (this.#timer) {
-          (this.#options.clearTimer ?? clearTimeout)(this.#timer);
-          this.#timer = undefined;
-        }
-        return;
+        break;
       }
-
-      const nextRetryAt = Math.min(
-        ...officialCleanup.map(state => state.retryAt ?? this.#now()),
-        ...trainingCleanup.map(offer => offer.retryAt ?? this.#now()),
-      );
-      await this.#waitForCleanupRetry(Math.max(1, nextRetryAt - this.#now()));
       for (const state of officialCleanup) {
         await this.#attemptOfficialCleanup(state);
       }
@@ -558,15 +613,27 @@ export class ArenaMatchmaker {
         await this.#attemptTrainingCleanup(offer);
       }
     }
-  }
 
-  #waitForCleanupRetry(delay: number): Promise<void> {
-    return new Promise(resolve => {
-      const setTimer = this.#options.setTimer ?? setTimeout;
-      this.#timer = setTimer(() => {
-        this.#timer = undefined;
-        resolve();
-      }, Math.min(MAX_ARENA_TIMER_DELAY_MS, Math.max(1, delay)));
+    const pendingOfficialMatchIds = [...this.#candidates.values()]
+      .map(state => state.reservation?.matchId)
+      .filter((matchId): matchId is string => !!matchId)
+      .sort(binaryCompare);
+    const pendingTrainingOfferIds = [...this.#offers.values()]
+      .filter(offer => offer.phase !== 'offered')
+      .map(offer => offer.offerId)
+      .sort(binaryCompare);
+    for (const offer of this.#offers.values()) {
+      if (offer.phase !== 'offered') offer.resolveCompletion(null);
+    }
+    this.#candidates.clear();
+    this.#offers.clear();
+    if (this.#timer) {
+      (this.#options.clearTimer ?? clearTimeout)(this.#timer);
+      this.#timer = undefined;
+    }
+    return Object.freeze({
+      pendingOfficialMatchIds: Object.freeze(pendingOfficialMatchIds),
+      pendingTrainingOfferIds: Object.freeze(pendingTrainingOfferIds),
     });
   }
 
@@ -574,6 +641,7 @@ export class ArenaMatchmaker {
     this.#candidates.delete(state.candidate.candidateId);
     if (this.#closed) return;
     const joinedAt = this.#now();
+    const restoredEntries: ArenaQueueEntry[] = [];
     for (const entry of state.candidate.entries) {
       if (!state.connected.has(entry.profileId)) continue;
       const restored = Object.freeze({
@@ -581,10 +649,14 @@ export class ArenaMatchmaker {
         joinedAt: resetJoinedAt ? joinedAt : entry.joinedAt,
       });
       this.#queue.set(entry.profileId, restored);
-      this.#events.onQueueState?.(entry.socketId, {
-        status: 'queued',
-        joinedAt: restored.joinedAt,
-      });
+      restoredEntries.push(restored);
+    }
+    for (const restored of restoredEntries) {
+      this.#safeNotify('queue-state', () =>
+        this.#events.onQueueState?.(restored.socketId, {
+          status: 'queued',
+          joinedAt: restored.joinedAt,
+        }));
     }
   }
 
@@ -652,4 +724,13 @@ function assertEntry(entry: ArenaQueueEntry): void {
 function binaryCompare(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null
+    && (typeof value === 'object' || typeof value === 'function')
+    && 'then' in value
+    && typeof value.then === 'function'
+  );
 }

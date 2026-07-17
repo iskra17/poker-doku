@@ -41,7 +41,10 @@ import {
   type ProgressionRuntimeService,
 } from './progression-runtime';
 import { buildPublicCosmetics } from '../lib/collection/public-cosmetics';
-import type { ArenaMatchmaker } from './arena-matchmaker';
+import type {
+  ArenaMatchmaker,
+  ArenaMatchmakerCloseReport,
+} from './arena-matchmaker';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -82,7 +85,7 @@ export interface SocketRuntime {
     profileId: string,
     snapshot: import('../lib/progression/types').ProgressionSnapshot,
   ) => boolean;
-  close: () => Promise<void>;
+  close: () => Promise<ArenaMatchmakerCloseReport>;
 }
 
 export interface AuthenticatedSocketData {
@@ -1612,9 +1615,13 @@ export function setupSocketHandlers(
     },
     close: async () => {
       if (sweepTimer) clearInterval(sweepTimer);
-      await arena?.matchmaker.close();
+      const report = await arena?.matchmaker.close() ?? {
+        pendingOfficialMatchIds: [],
+        pendingTrainingOfferIds: [],
+      };
       sessions.shutdown();
       roomManager.shutdown();
+      return report;
     },
   };
 }
