@@ -3711,6 +3711,279 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'delete arena profile through profile owner'); END;
     `,
   },
+  {
+    version: 16,
+    name: 'audit_legacy_arena_persistence_rows',
+    sql: `
+      CREATE TABLE v16_arena_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_seasons
+      WHERE length(id) = 0
+        OR ordinal NOT BETWEEN 0 AND 9007199254740991
+        OR config_version != 1
+        OR preseason NOT IN (0, 1)
+        OR starts_at NOT BETWEEN 0 AND 253402300799999
+        OR ends_at NOT BETWEEN 0 AND 253402300799999
+        OR ends_at <= starts_at
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_profiles
+      WHERE length(season_id) = 0
+        OR length(profile_id) = 0
+        OR available_tickets NOT BETWEEN 0 AND 10
+        OR length(last_daily_grant_date) != 10
+        OR last_daily_grant_date
+          NOT GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+        OR CAST(substr(last_daily_grant_date, 1, 4) AS INTEGER)
+          NOT BETWEEN 1 AND 9999
+        OR COALESCE(
+          date(last_daily_grant_date, '+0 days') != last_daily_grant_date,
+          1
+        )
+        OR placement_games NOT BETWEEN 0 AND 5
+        OR placement_points < 0
+        OR placement_points > placement_games * 100
+        OR (tier IS NOT NULL AND tier NOT IN (
+          'bronze','silver','gold','platinum','diamond','master'
+        ))
+        OR NOT (
+          (placement_games < 5 AND tier IS NULL)
+          OR (placement_games = 5 AND tier IS NOT NULL)
+        )
+        OR mmr NOT BETWEEN -9007199254740991 AND 9007199254740991
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+        OR updated_at NOT BETWEEN created_at AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_matches
+      WHERE length(id) = 0
+        OR length(season_id) = 0
+        OR config_version != 1
+        OR length(bot_version) = 0
+        OR bot_mmr NOT BETWEEN -9007199254740991 AND 9007199254740991
+        OR human_count NOT BETWEEN 2 AND 6
+        OR bot_count NOT BETWEEN 0 AND 4
+        OR human_count + bot_count != 6
+        OR status NOT IN ('forming','playing','finished','void')
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+        OR (started_at IS NOT NULL AND started_at
+          NOT BETWEEN created_at AND 253402300799999)
+        OR (finished_at IS NOT NULL AND finished_at
+          NOT BETWEEN COALESCE(started_at, created_at) AND 253402300799999)
+        OR NOT (
+          (status = 'forming' AND started_at IS NULL AND finished_at IS NULL)
+          OR (status = 'playing' AND started_at IS NOT NULL
+            AND finished_at IS NULL)
+          OR (status = 'finished' AND started_at IS NOT NULL
+            AND finished_at IS NOT NULL)
+          OR (status = 'void' AND finished_at IS NOT NULL)
+        )
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_ticket_escrows
+      WHERE length(match_id) = 0
+        OR length(season_id) = 0
+        OR length(profile_id) = 0
+        OR status NOT IN ('escrow','consumed','refunded')
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+        OR (settled_at IS NOT NULL
+          AND settled_at NOT BETWEEN created_at AND 253402300799999)
+        OR NOT (
+          (status = 'escrow' AND settled_at IS NULL)
+          OR (status IN ('consumed','refunded') AND settled_at IS NOT NULL)
+        )
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_entries
+      WHERE length(match_id) = 0
+        OR length(season_id) = 0
+        OR length(profile_id) = 0
+        OR mmr_before NOT BETWEEN -9007199254740991 AND 9007199254740991
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+        OR COALESCE(NOT (
+          (result_key IS NULL AND place IS NULL AND points IS NULL
+            AND mmr_after IS NULL AND settled_at IS NULL)
+          OR (
+            length(result_key) > 0
+            AND place BETWEEN 1 AND 6
+            AND points = CASE place
+              WHEN 1 THEN 100 WHEN 2 THEN 60 WHEN 3 THEN 35
+              WHEN 4 THEN 15 WHEN 5 THEN 5 WHEN 6 THEN 0
+            END
+            AND mmr_after BETWEEN -9007199254740991 AND 9007199254740991
+            AND settled_at BETWEEN created_at AND 253402300799999
+          )
+        ), 1)
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_groups
+      WHERE length(id) = 0
+        OR length(season_id) = 0
+        OR length(week_key) != 8
+        OR week_key NOT GLOB '[0-9][0-9][0-9][0-9]-W[0-9][0-9]'
+        OR CAST(substr(week_key, 1, 4) AS INTEGER) NOT BETWEEN 1 AND 9999
+        OR CAST(substr(week_key, 7, 2) AS INTEGER) NOT BETWEEN 1 AND 53
+        OR (
+          substr(week_key, 7, 2) = '53'
+          AND NOT (
+            CAST(strftime(
+              '%w', substr(week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 4
+            OR (
+              CAST(strftime(
+                '%w', substr(week_key, 1, 4) || '-01-01'
+              ) AS INTEGER) = 3
+              AND (
+                CAST(substr(week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+        OR tier NOT IN ('bronze','silver','gold','platinum','diamond','master')
+        OR status NOT IN ('open','settled')
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+        OR (settled_at IS NOT NULL
+          AND settled_at NOT BETWEEN created_at AND 253402300799999)
+        OR NOT (
+          (status = 'open' AND settled_at IS NULL)
+          OR (status = 'settled' AND settled_at IS NOT NULL)
+        )
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_group_members
+      WHERE length(group_id) = 0
+        OR length(season_id) = 0
+        OR length(profile_id) = 0
+        OR length(week_key) != 8
+        OR week_key NOT GLOB '[0-9][0-9][0-9][0-9]-W[0-9][0-9]'
+        OR CAST(substr(week_key, 1, 4) AS INTEGER) NOT BETWEEN 1 AND 9999
+        OR CAST(substr(week_key, 7, 2) AS INTEGER) NOT BETWEEN 1 AND 53
+        OR (
+          substr(week_key, 7, 2) = '53'
+          AND NOT (
+            CAST(strftime(
+              '%w', substr(week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 4
+            OR (
+              CAST(strftime(
+                '%w', substr(week_key, 1, 4) || '-01-01'
+              ) AS INTEGER) = 3
+              AND (
+                CAST(substr(week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+        OR points NOT BETWEEN 0 AND 9007199254740991
+        OR wins NOT BETWEEN 0 AND 9007199254740991
+        OR top3 NOT BETWEEN 0 AND 9007199254740991
+        OR place_sum NOT BETWEEN 0 AND 9007199254740991
+        OR matches NOT BETWEEN 0 AND 9007199254740991
+        OR wins > top3
+        OR top3 > matches
+        OR NOT (
+          (matches = 0 AND wins = 0 AND top3 = 0 AND place_sum = 0)
+          OR (matches > 0 AND place_sum BETWEEN matches AND matches * 6)
+        )
+        OR score_reached_at NOT BETWEEN 0 AND 253402300799999
+        OR joined_at NOT BETWEEN 0 AND score_reached_at
+        OR updated_at NOT BETWEEN score_reached_at AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_weekly_settlements
+      WHERE length(season_id) = 0
+        OR length(group_id) = 0
+        OR length(week_key) != 8
+        OR week_key NOT GLOB '[0-9][0-9][0-9][0-9]-W[0-9][0-9]'
+        OR CAST(substr(week_key, 1, 4) AS INTEGER) NOT BETWEEN 1 AND 9999
+        OR CAST(substr(week_key, 7, 2) AS INTEGER) NOT BETWEEN 1 AND 53
+        OR (
+          substr(week_key, 7, 2) = '53'
+          AND NOT (
+            CAST(strftime(
+              '%w', substr(week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 4
+            OR (
+              CAST(strftime(
+                '%w', substr(week_key, 1, 4) || '-01-01'
+              ) AS INTEGER) = 3
+              AND (
+                CAST(substr(week_key, 1, 4) AS INTEGER) % 400 = 0
+                OR (
+                  CAST(substr(week_key, 1, 4) AS INTEGER) % 4 = 0
+                  AND CAST(substr(week_key, 1, 4) AS INTEGER) % 100 != 0
+                )
+              )
+            )
+          )
+        )
+        OR settled_at NOT BETWEEN 0 AND 253402300799999
+        OR NOT EXISTS (
+          SELECT 1 FROM arena_groups AS arena_group
+          WHERE arena_group.id = arena_weekly_settlements.group_id
+            AND arena_group.season_id = arena_weekly_settlements.season_id
+            AND arena_group.week_key = arena_weekly_settlements.week_key
+            AND arena_group.status = 'settled'
+            AND arena_group.settled_at <= arena_weekly_settlements.settled_at
+        )
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM arena_season_rewards
+      WHERE length(season_id) = 0
+        OR length(profile_id) = 0
+        OR length(item_id) = 0
+        OR granted_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM (
+        SELECT profile_id FROM arena_ticket_escrows
+        WHERE status = 'escrow'
+        GROUP BY profile_id HAVING COUNT(*) > 1
+      ) LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM (
+        SELECT result_key FROM arena_entries
+        WHERE result_key IS NOT NULL
+        GROUP BY result_key HAVING COUNT(*) > 1
+      ) LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM (
+        SELECT match_id, place FROM arena_entries
+        WHERE place IS NOT NULL
+        GROUP BY match_id, place HAVING COUNT(*) > 1
+      ) LIMIT 1;
+
+      INSERT INTO v16_arena_validation (invalid)
+      SELECT 1 FROM pragma_foreign_key_check
+      WHERE "table" LIKE 'arena_%'
+      LIMIT 1;
+
+      DROP TABLE v16_arena_validation;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

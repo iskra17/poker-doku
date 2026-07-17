@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './database';
 import { ProfileRepository } from '../profile-repository';
 import { ProgressionRepository } from '../progression-repository';
+import { ArenaRepository } from '../arena-repository';
 import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import { parseProgressionRewardSummary } from '@/lib/progression/reward-summary';
 import {
@@ -47,7 +48,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(15);
+    expect(migration.version).toBe(16);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -180,7 +181,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(15);
+    expect(result.count).toBe(16);
   });
 
   it('preserves V13 data while atomically adding the Arena schema', () => {
@@ -196,7 +197,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 15 });
+    `).get()).toEqual({ version: 16 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -228,7 +229,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 15 });
+    `).get()).toEqual({ version: 16 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -323,6 +324,167 @@ describe('PokerDatabase migrations', () => {
     } finally {
       reopened.close();
     }
+  });
+
+  it('rolls V15 back when V16 rejects a corrupt V14 Arena entry', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV14Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertV14ArenaFixture(rawDatabase);
+    rawDatabase.exec(`
+      INSERT INTO arena_entries VALUES (
+        'v14-match', 'v14-season', 'v1-marker',
+        NULL, NULL, 1000, NULL, NULL, 10, NULL
+      )
+    `);
+    corruptIgnoringChecks(
+      rawDatabase,
+      `UPDATE arena_entries SET mmr_before = 9007199254740992
+       WHERE match_id = 'v14-match' AND profile_id = 'v1-marker'`,
+      'protect_arena_entry_update',
+    );
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 14 });
+      expect(reopened.prepare(`
+        SELECT 1 FROM sqlite_schema
+        WHERE type = 'index' AND name = 'one_arena_finisher_per_place'
+      `).get()).toBeUndefined();
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it.each([
+    ['season timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_seasons SET starts_at = -1 WHERE id = 'v14-season'`,
+    )],
+    ['profile MMR', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_profiles SET mmr = 9007199254740992
+       WHERE season_id = 'v14-season' AND profile_id = 'v1-marker'`,
+    )],
+    ['match timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_matches SET created_at = -1 WHERE id = 'v14-match'`,
+      'protect_arena_match_update',
+    )],
+    ['escrow timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_ticket_escrows SET created_at = -1
+       WHERE match_id = 'v14-match' AND profile_id = 'v1-marker'`,
+      'protect_arena_ticket_escrow_update',
+    )],
+    ['entry MMR', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_entries SET mmr_before = 9007199254740992
+       WHERE match_id = 'v14-match' AND profile_id = 'v1-marker'`,
+      'protect_arena_entry_update',
+    )],
+    ['entry result tuple', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_entries SET result_key = 'partial-result'
+       WHERE match_id = 'v14-match' AND profile_id = 'v1-marker'`,
+    )],
+    ['entry place', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_entries
+       SET place = 7, points = 100, mmr_after = 1016,
+           result_key = 'invalid-place', settled_at = 20
+       WHERE match_id = 'v14-match' AND profile_id = 'v1-marker'`,
+      'validate_arena_entry_points_update',
+    )],
+    ['group timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_groups SET created_at = -1 WHERE id = 'v15-open-group'`,
+      'protect_arena_group_update',
+    )],
+    ['group-member counter', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_group_members SET points = 9007199254740992
+       WHERE group_id = 'v15-open-group' AND profile_id = 'v1-marker'`,
+      'validate_arena_group_counters_update',
+    )],
+    ['weekly-settlement timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_weekly_settlements SET settled_at = -1
+       WHERE group_id = 'v15-settled-group'`,
+      'freeze_arena_weekly_settlement_update',
+    )],
+    ['season-reward timestamp', (db: DatabaseSync) => corruptIgnoringChecks(
+      db,
+      `UPDATE arena_season_rewards SET granted_at = -1
+       WHERE item_id = 'v15-reward'`,
+      'freeze_arena_season_reward_update',
+    )],
+    ['cross-table reference', (db: DatabaseSync) => {
+      db.exec('PRAGMA foreign_keys=OFF');
+      bypassTrigger(db, 'freeze_arena_season_reward_update', `
+        UPDATE arena_season_rewards SET profile_id = 'missing-profile'
+        WHERE item_id = 'v15-reward'
+      `);
+    }],
+  ])('atomically rejects corrupt V15 Arena %s before V16 is recorded', (
+    _label,
+    corrupt,
+  ) => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV15Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertV15CompleteArenaFixture(rawDatabase);
+    corrupt(rawDatabase);
+    rawDatabase.close();
+
+    expectOpenDatabaseToThrow(path);
+
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 15 });
+    } finally {
+      reopened.close();
+    }
+  });
+
+  it('preserves valid V15 Arena rows and maps every row after V16 audit', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createV15Database(path);
+    const rawDatabase = new DatabaseSync(path);
+    insertV15CompleteArenaFixture(rawDatabase);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+    const arena = new ArenaRepository(database);
+
+    expect(database.db.prepare(`
+      SELECT MAX(version) AS version FROM schema_migrations
+    `).get()).toEqual({ version: 16 });
+    expect(arena.requireSeason('v14-season').id).toBe('v14-season');
+    expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
+    expect(arena.requireMatch('v14-match').status).toBe('forming');
+    expect(arena.listMatchEntries('v14-match')).toHaveLength(1);
+    expect(arena.requireTicketEscrow('v14-match', 'v1-marker').status)
+      .toBe('escrow');
+    expect(arena.requireGroup('v15-open-group').status).toBe('open');
+    expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
+    expect(arena.findWeeklySettlement(
+      'v14-season', '2020-W53', 'v15-settled-group',
+    )).not.toBeNull();
+    expect(arena.listSeasonRewards('v14-season', 'v1-marker')).toHaveLength(1);
   });
 
   it('rejects a second active Arena ticket escrow for one profile', () => {
@@ -1231,6 +1393,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -1255,6 +1418,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -1298,6 +1462,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
   });
 
@@ -1339,6 +1504,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -1646,6 +1812,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -1901,6 +2068,7 @@ describe('PokerDatabase migrations', () => {
       { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 },
       { version: 14 },
       { version: 15 },
+      { version: 16 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2167,7 +2335,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 15 });
+    `).get()).toEqual({ version: 16 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -2510,7 +2678,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 15 });
+    `).get()).toEqual({ version: 16 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -3871,6 +4039,22 @@ function createV14Database(path: string): void {
   }
 }
 
+function createV15Database(path: string): void {
+  createV14Database(path);
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      BEGIN IMMEDIATE;
+      ${migrations[14].sql}
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (15, 'harden_poker_arena_lifecycle_invariants', 15);
+      COMMIT;
+    `);
+  } finally {
+    rawDatabase.close();
+  }
+}
+
 function insertV14ArenaFixture(database: DatabaseSync): void {
   database.exec(`
     INSERT INTO arena_seasons VALUES (
@@ -3885,6 +4069,51 @@ function insertV14ArenaFixture(database: DatabaseSync): void {
       2, 4, 'forming', 10, NULL, NULL
     );
   `);
+}
+
+function insertV15CompleteArenaFixture(database: DatabaseSync): void {
+  insertV14ArenaFixture(database);
+  database.exec(`
+    INSERT INTO arena_ticket_escrows VALUES (
+      'v14-match', 'v14-season', 'v1-marker', 'escrow', 10, NULL
+    );
+    INSERT INTO arena_entries VALUES (
+      'v14-match', 'v14-season', 'v1-marker',
+      NULL, NULL, 1000, NULL, NULL, 10, NULL
+    );
+    INSERT INTO arena_groups VALUES (
+      'v15-open-group', 'v14-season', '2020-W53',
+      'bronze', 'open', 10, NULL
+    );
+    INSERT INTO arena_group_members VALUES (
+      'v15-open-group', 'v14-season', '2020-W53', 'v1-marker',
+      0, 0, 0, 0, 0, 10, 10, 10
+    );
+    INSERT INTO arena_groups VALUES (
+      'v15-settled-group', 'v14-season', '2020-W53',
+      'bronze', 'settled', 10, 20
+    );
+    INSERT INTO arena_weekly_settlements VALUES (
+      'v14-season', '2020-W53', 'v15-settled-group', 20
+    );
+    INSERT INTO arena_season_rewards VALUES (
+      'v14-season', 'v1-marker', 'v15-reward', 20
+    );
+  `);
+}
+
+function corruptIgnoringChecks(
+  database: DatabaseSync,
+  statement: string,
+  triggerName?: string,
+): void {
+  database.exec('PRAGMA ignore_check_constraints=ON');
+  try {
+    if (triggerName) bypassTrigger(database, triggerName, statement);
+    else database.exec(statement);
+  } finally {
+    database.exec('PRAGMA ignore_check_constraints=OFF');
+  }
 }
 
 function expectOpenDatabaseToThrow(path: string): void {
