@@ -316,6 +316,126 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       .not.toContain('arenaParticipantIds');
   });
 
+  it('replays the authenticated current playing Arena room on a fresh socket', async () => {
+    harness = await createSocketTestHarness({ graceMs: 200 });
+    const profile = await harness.createProfile({ avatarId: 'sakura' });
+    const first = await harness.connect('arena-replay-playing', {
+      profileCookie: profile.cookie,
+    });
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...HUMAN_ROOM,
+      name: 'Arena replay playing',
+      gameMode: 'sng',
+      economyMode: 'arena',
+      startingStack: 1_500,
+      minBuyIn: 1_500,
+      maxBuyIn: 1_500,
+      tableType: 'mixed',
+      competitionMode: 'arena-training',
+      arenaMatchId: 'training-replay-playing',
+      arenaBotVersion: 'arena-v1-hard',
+      arenaParticipantIds: [first.playerId],
+    });
+    await expect(joinRoom(first, roomId, 0)).resolves.toMatchObject({ ok: true });
+    const usedCharacters = ['sakura'];
+    for (let seatIndex = 1; seatIndex < 6; seatIndex += 1) {
+      const bot = createBot(seatIndex, 1_500, usedCharacters, 'hard');
+      expect(harness.runtime.roomManager.joinRoom(roomId, bot)).toBe(true);
+      if (bot.personalityId) usedCharacters.push(bot.personalityId);
+    }
+
+    first.socket.disconnect();
+    const second = await harness.connect('arena-replay-playing', {
+      profileCookie: profile.cookie,
+    });
+    await waitUntil(() => second.arenaReplays.length > 0);
+
+    expect(second.arenaReplays.at(-1)).toEqual({
+      roomId,
+      matchId: 'training-replay-playing',
+      training: true,
+      finished: false,
+      result: null,
+    });
+    expect(second.arenaMatches).toEqual([]);
+
+    second.arenaReplays.length = 0;
+    await expect(withAck(done => second.socket.emit('resync', done)))
+      .resolves.toMatchObject({ ok: true });
+    await waitUntil(() => second.arenaReplays.length > 0);
+    expect(second.arenaReplays.at(-1)).toEqual({
+      roomId,
+      matchId: 'training-replay-playing',
+      training: true,
+      finished: false,
+      result: null,
+    });
+  });
+
+  it('replays a durable finished Arena result on a fresh socket', async () => {
+    harness = await createSocketTestHarness({
+      arenaEnabled: true,
+      graceMs: 200,
+    });
+    const profiles = await Promise.all(
+      ['sakura', 'hana'].map(avatarId => harness!.createProfile({ avatarId })),
+    );
+    const clients = await Promise.all(profiles.map((profile, index) =>
+      harness!.connect(`arena-replay-result-${index}`, {
+        profileCookie: profile.cookie,
+      }),
+    ));
+    const found = clients.map(client => new Promise<{ matchId: string }>(
+      resolve => client.socket.once('arena-match-found', resolve),
+    ));
+    await Promise.all(clients.map(client =>
+      withAck(done => client.socket.emit('arena-queue-join', done)),
+    ));
+    const [match] = await Promise.all(found);
+    await waitUntil(() => clients.every(client => (
+      harness!.runtime.sessions.getByPlayerId(client.playerId)?.roomId != null
+    )));
+    const roomId = harness.runtime.sessions.getByPlayerId(
+      clients[0].playerId,
+    )!.roomId!;
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const tournament = room.engine.state.tournament!;
+    tournament.entrants = 6;
+    tournament.finished = true;
+    tournament.results = room.engine.state.players.map((player, index) => ({
+      playerId: player.id,
+      name: player.name,
+      place: index + 1,
+      prize: 0,
+    }));
+    const expectedPlace = tournament.results.find(
+      result => result.playerId === clients[0].playerId,
+    )!.place;
+    expect(harness.runtime.roomManager.leaveRoom(
+      roomId,
+      'missing-arena-player',
+    )).toBe(true);
+    expect(harness.runtime.roomManager.getRoom(roomId)).toBeDefined();
+
+    clients[0].socket.disconnect();
+    const reconnected = await harness.connect('arena-replay-result-0', {
+      profileCookie: profiles[0].cookie,
+    });
+    await waitUntil(() => reconnected.arenaReplays.length > 0);
+
+    expect(reconnected.arenaReplays.at(-1)).toMatchObject({
+      roomId,
+      matchId: match.matchId,
+      training: false,
+      finished: true,
+      result: {
+        matchId: match.matchId,
+        training: false,
+        place: expectedPlace,
+      },
+    });
+  });
+
   it('compensates every partial arena session binding when a later socket join fails', async () => {
     harness = await createSocketTestHarness({ arenaEnabled: true });
     const profiles = await Promise.all(

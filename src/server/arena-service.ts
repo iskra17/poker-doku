@@ -259,6 +259,47 @@ export class ArenaService {
     };
   }
 
+  getPublicResultViewForMatch(
+    matchId: string,
+    profileId: string,
+  ): ArenaPublicResultView {
+    const match = this.#repository.findMatch(matchId);
+    if (!match || match.status !== 'finished' || match.finishedAt === null) {
+      fail('ARENA_RESULT_INVALID');
+    }
+    const profile = this.#repository.requireProfile(
+      match.seasonId,
+      profileId,
+    );
+    const entry = this.#repository.listMatchEntries(match.id)
+      .find(candidate => candidate.profileId === profileId);
+    if (!entry?.resultKey || entry.settledAt === null) {
+      fail('ARENA_RESULT_INVALID');
+    }
+    const weekKey = weeklyCompletionKey(
+      match.seasonId,
+      match.finishedAt,
+      this.#config,
+    );
+    const member = weekKey === null
+      ? null
+      : this.#repository.findGroupMember(
+        match.seasonId,
+        weekKey,
+        profileId,
+      );
+    const ranked = member
+      ? rankWeeklyStandings(this.#repository.listGroupMembers(member.groupId))
+      : [];
+    const index = ranked.findIndex(row => row.profileId === profileId);
+    return {
+      placementGames: profile.placementGames,
+      placementMatches: ARENA_CONFIG_V1.placementMatches,
+      tier: profile.tier,
+      weeklyRank: index < 0 ? null : index + 1,
+    };
+  }
+
   getMatchmakingProfile(profileId: string, at = this.#clock()): {
     seasonId: string;
     availableTickets: number;

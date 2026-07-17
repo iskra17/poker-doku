@@ -33,6 +33,14 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
           <p aria-live="polite" className="mt-2 text-sm text-ink-dim">
             순위와 시즌 점수를 안전하게 확인하고 있어요…
           </p>
+          <button
+            type="button"
+            aria-label="결과 확인을 건너뛰고 로비로 돌아가기"
+            onClick={onLeave}
+            className="mt-5 w-full rounded-xl border border-mystic/50 bg-mystic/10 px-4 py-3 text-sm font-bold text-mystic"
+          >
+            결과 없이 로비로 돌아가기
+          </button>
         </div>
       </div>
     );

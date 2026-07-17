@@ -66,6 +66,10 @@ describe('arena Korean lobby UI contract', () => {
     expect(page).toContain('<ArenaLobby');
     expect(economy).toContain('아레나 경기권');
     expect(overlay).toContain('ArenaResultSummary');
+    expect(overlay).toContain('결과 없이 로비로 돌아가기');
+    expect(overlay).toContain(
+      'aria-label="결과 확인을 건너뛰고 로비로 돌아가기"',
+    );
   });
 });
 

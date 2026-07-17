@@ -6,6 +6,7 @@ import type { ArenaTier } from '@/lib/arena/types';
 import type {
   ArenaQueueState,
   ArenaResultPayload,
+  ArenaStateReplay,
   PokerClientSocket,
 } from '@/lib/realtime/protocol';
 
@@ -81,6 +82,7 @@ export interface ArenaStoreState {
   receiveMatchFound(match: { matchId: string; training: boolean }): void;
   receiveRoomJoined(room: { roomId: string }): void;
   receiveResult(result: ArenaResultPayload): void;
+  applyServerReplay(replay: ArenaStateReplay): void;
   receiveRoomLost(): void;
   resetAfterResult(): void;
   reset(): void;
@@ -324,6 +326,34 @@ export function createArenaStore(
         void get().load();
       },
 
+      applyServerReplay: replay => {
+        if (
+          !validReplay(replay)
+          || (
+            (get().phase === 'playing' || get().phase === 'result')
+            && get().matchId !== replay.matchId
+          )
+          || (
+            get().phase === 'result'
+            && replay.result === null
+          )
+        ) return;
+        stopTimer();
+        if (replay.result) seenResults.add(replay.result.resultId);
+        set({
+          phase: replay.result ? 'result' : 'playing',
+          joinedAt: null,
+          deadlineAt: null,
+          remainingMs: 0,
+          offer: null,
+          matchId: replay.matchId,
+          training: replay.training,
+          result: replay.result ? { ...replay.result } : null,
+          error: null,
+        });
+        void get().load();
+      },
+
       receiveRoomLost: resetMatch,
       resetAfterResult: resetMatch,
       reset: () => {
@@ -356,6 +386,9 @@ export function createArenaStore(
         const onResult = (value: ArenaResultPayload): void => {
           get().receiveResult(value);
         };
+        const onReplay = (value: ArenaStateReplay): void => {
+          get().applyServerReplay(value);
+        };
         const onRoomLost = (): void => {
           get().receiveRoomLost();
         };
@@ -364,6 +397,7 @@ export function createArenaStore(
         socket.on('arena-match-found', onMatch);
         socket.on('room-joined', onRoomJoined);
         socket.on('arena-result', onResult);
+        socket.on('arena-state-replay', onReplay);
         socket.on('room-lost', onRoomLost);
         unbindListeners = () => {
           socket.off('arena-queue-update', onQueue);
@@ -371,6 +405,7 @@ export function createArenaStore(
           socket.off('arena-match-found', onMatch);
           socket.off('room-joined', onRoomJoined);
           socket.off('arena-result', onResult);
+          socket.off('arena-state-replay', onReplay);
           socket.off('room-lost', onRoomLost);
         };
         return releaseBinding;
@@ -414,6 +449,21 @@ function parseSnapshot(value: unknown): ArenaSnapshot | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validReplay(replay: ArenaStateReplay): boolean {
+  if (
+    !replay.roomId
+    || !replay.matchId
+    || typeof replay.training !== 'boolean'
+    || typeof replay.finished !== 'boolean'
+  ) return false;
+  if (replay.result === null) return true;
+  return replay.finished
+    && replay.result.matchId === replay.matchId
+    && replay.result.training === replay.training
+    && replay.result.resultId.startsWith(`${replay.matchId}:`)
+    && replay.result.resultId.length > replay.matchId.length + 1;
 }
 
 export const useArenaStore = createArenaStore(browserDependencies);

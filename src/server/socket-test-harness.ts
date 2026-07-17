@@ -6,6 +6,7 @@ import { io as createClient } from 'socket.io-client';
 import type { PublicProfile } from '../lib/profile/types';
 import type { ProgressionSnapshot } from '../lib/progression/types';
 import type {
+  ArenaStateReplay,
   ClientToServerEvents,
   PokerClientSocket,
   ServerToClientEvents,
@@ -37,6 +38,8 @@ export interface ConnectedTestClient {
   socket: PokerClientSocket;
   playerId: string;
   initialProgression: ProgressionSnapshot;
+  arenaReplays: ArenaStateReplay[];
+  arenaMatches: Array<{ matchId: string; training: boolean }>;
 }
 
 export interface TestProfileCredential {
@@ -304,10 +307,18 @@ export async function createSocketTestHarness(
         };
         let playerId: string | undefined;
         let initialProgression: ProgressionSnapshot | undefined;
+        const arenaReplays: ArenaStateReplay[] = [];
+        const arenaMatches: Array<{ matchId: string; training: boolean }> = [];
         const resolveWhenReady = (): void => {
           if (!playerId || !initialProgression) return;
           socket.off('connect_error', onConnectError);
-          resolve({ socket, playerId, initialProgression });
+          resolve({
+            socket,
+            playerId,
+            initialProgression,
+            arenaReplays,
+            arenaMatches,
+          });
         };
         socket.once('connect_error', onConnectError);
         socket.once('session', data => {
@@ -317,6 +328,12 @@ export async function createSocketTestHarness(
         socket.once('progression-update', snapshot => {
           initialProgression = snapshot;
           resolveWhenReady();
+        });
+        socket.on('arena-state-replay', replay => {
+          arenaReplays.push(replay);
+        });
+        socket.on('arena-match-found', match => {
+          arenaMatches.push(match);
         });
       });
     },

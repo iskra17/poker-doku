@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type {
   ArenaResultPayload,
+  ArenaStateReplay,
   PokerClientSocket,
   ServerToClientEvents,
 } from '@/lib/realtime/protocol';
@@ -92,6 +93,9 @@ describe('arena store state machine', () => {
     const second = store.getState().bindSocket(socket as unknown as PokerClientSocket);
 
     expect(socket.listenerCount('arena-queue-update')).toBe(1);
+    expect(socket.listenerCount(
+      'arena-state-replay' as keyof ServerToClientEvents,
+    )).toBe(1);
     socket.serverEmit('arena-queue-update', { status: 'queued', joinedAt: 42 });
     expect(store.getState().phase).toBe('queued');
 
@@ -99,6 +103,79 @@ describe('arena store state machine', () => {
     expect(socket.listenerCount('arena-queue-update')).toBe(1);
     second();
     expect(socket.listenerCount('arena-queue-update')).toBe(0);
+    expect(socket.listenerCount(
+      'arena-state-replay' as keyof ServerToClientEvents,
+    )).toBe(0);
+  });
+
+  it('hydrates a fresh idle store only from an authenticated Arena replay event', () => {
+    const { store } = harness();
+    const socket = new FakeSocket();
+    store.getState().bindSocket(socket as unknown as PokerClientSocket);
+
+    socket.serverEmit('arena-match-found', {
+      matchId: 'live-from-idle',
+      training: false,
+    });
+    expect(store.getState().phase).toBe('idle');
+
+    socket.serverEmitRaw('arena-state-replay', {
+      roomId: 'room-replay',
+      matchId: 'match-replay',
+      training: false,
+      finished: false,
+      result: null,
+    } satisfies ArenaStateReplay);
+
+    expect(store.getState()).toMatchObject({
+      phase: 'playing',
+      matchId: 'match-replay',
+      training: false,
+      result: null,
+    });
+  });
+
+  it('hydrates a finished replay and ignores stale or inconsistent replay data', () => {
+    const { store } = harness();
+    const applyReplay = store.getState().applyServerReplay;
+
+    applyReplay({
+      roomId: 'room-a',
+      matchId: 'match-a',
+      training: false,
+      finished: true,
+      result: {
+        ...officialResult('wrong-match'),
+        resultId: 'wrong-match:profile-self',
+      },
+    });
+    expect(store.getState().phase).toBe('idle');
+
+    const result = officialResult('match-a');
+    applyReplay({
+      roomId: 'room-a',
+      matchId: 'match-a',
+      training: false,
+      finished: true,
+      result,
+    });
+    expect(store.getState()).toMatchObject({
+      phase: 'result',
+      matchId: 'match-a',
+      result: { resultId: 'match-a:profile-self' },
+    });
+
+    applyReplay({
+      roomId: 'stale-room',
+      matchId: 'stale-match',
+      training: false,
+      finished: false,
+      result: null,
+    });
+    expect(store.getState()).toMatchObject({
+      phase: 'result',
+      matchId: 'match-a',
+    });
   });
 
   it('loads an authenticated snapshot and never defines a hidden rating field', async () => {
@@ -219,6 +296,12 @@ class FakeSocket {
   ): void {
     for (const listener of this.listeners.get(event) ?? []) {
       listener(...args as unknown as never[]);
+    }
+  }
+
+  serverEmitRaw(event: string, ...args: unknown[]): void {
+    for (const listener of this.listeners.get(event) ?? []) {
+      listener(...args as never[]);
     }
   }
 }

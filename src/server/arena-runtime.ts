@@ -53,6 +53,10 @@ export class ArenaRuntime {
   readonly #clock: () => number;
   readonly #rng: () => number;
   readonly #roomsByMatch = new Map<string, string>();
+  readonly #resultsByMatch = new Map<
+    string,
+    Map<string, ArenaResultPayload>
+  >();
   #trainingSequence = 0;
 
   constructor(
@@ -73,9 +77,18 @@ export class ArenaRuntime {
     return this.#roomsByMatch.get(matchId) ?? null;
   }
 
+  getResult(
+    matchId: string,
+    profileId: string,
+  ): ArenaResultPayload | null {
+    const result = this.#resultsByMatch.get(matchId)?.get(profileId);
+    return result ? { ...result } : null;
+  }
+
   handleRoomDisposed(matchId: string, roomId: string): void {
     if (this.#roomsByMatch.get(matchId) === roomId) {
       this.#roomsByMatch.delete(matchId);
+      this.#resultsByMatch.delete(matchId);
     }
   }
 
@@ -196,36 +209,32 @@ export class ArenaRuntime {
     }[];
   }) {
     const at = this.#clock();
-    const humanIds = input.results
-      .filter(result => result.type === 'human')
-      .map(result => result.playerId);
-    const before = new Map(humanIds.map(profileId => [
-      profileId,
-      this.#service.getPublicResultView(profileId, at),
-    ] as const));
     const summary = this.#service.settleOfficialMatch(
       input.matchId,
       input.results,
       at,
     );
     for (const result of summary.results) {
-      const previous = before.get(result.profileId);
-      const current = this.#service.getPublicResultView(
-        result.profileId,
-        summary.finishedAt,
-      );
-      this.#emitResult(result.profileId, {
-        resultId: `${summary.matchId}:${result.profileId}`,
-        matchId: summary.matchId,
-        training: false,
-        place: result.place,
-        points: result.points,
-        weeklyRankBefore: previous?.weeklyRank ?? null,
-        weeklyRankAfter: current.weeklyRank,
-        placementGames: current.placementGames,
-        placementMatches: current.placementMatches,
-        tier: current.tier,
-      });
+      try {
+        const current = this.#service.getPublicResultViewForMatch(
+          summary.matchId,
+          result.profileId,
+        );
+        this.#emitResult(result.profileId, {
+          resultId: `${summary.matchId}:${result.profileId}`,
+          matchId: summary.matchId,
+          training: false,
+          place: result.place,
+          points: result.points,
+          weeklyRankBefore: null,
+          weeklyRankAfter: current.weeklyRank,
+          placementGames: current.placementGames,
+          placementMatches: current.placementMatches,
+          tier: current.tier,
+        });
+      } catch {
+        // Durable settlement succeeded. Reconnect can retry public projection.
+      }
     }
     return summary;
   }
@@ -260,6 +269,12 @@ export class ArenaRuntime {
   }
 
   #emitResult(profileId: string, result: ArenaResultPayload): void {
+    let results = this.#resultsByMatch.get(result.matchId);
+    if (!results) {
+      results = new Map();
+      this.#resultsByMatch.set(result.matchId, results);
+    }
+    results.set(profileId, { ...result });
     try {
       this.#onResult?.(profileId, result);
     } catch {

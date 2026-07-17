@@ -25,6 +25,7 @@ import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { RoomManager, type RoomArenaHooks } from './room-manager';
 
 const EPOCH = Date.parse('2026-07-20T00:00:00+09:00');
+const DAY = 24 * 60 * 60 * 1_000;
 
 describe('ArenaRuntime', () => {
   let database: PokerDatabase;
@@ -227,6 +228,119 @@ describe('ArenaRuntime', () => {
     expect(JSON.stringify(onResult.mock.calls)).not.toMatch(
       /mmr|credential|wallet|recovery/iu,
     );
+  });
+
+  it('settles a same-season official result before building its public view', () => {
+    service.reserveMatchTickets('ordered-match', ['profile-a', 'profile-b']);
+    service.markMatchPlaying('ordered-match', EPOCH + 1);
+    const order: string[] = [];
+    const settle = service.settleOfficialMatch.bind(service);
+    const publicView = service.getPublicResultViewForMatch.bind(service);
+    vi.spyOn(service, 'settleOfficialMatch').mockImplementation((
+      matchId,
+      results,
+      at,
+    ) => {
+      order.push('settle');
+      return settle(matchId, results, at);
+    });
+    vi.spyOn(service, 'getPublicResultViewForMatch').mockImplementation((
+      matchId,
+      profileId,
+    ) => {
+      order.push('public-view');
+      return publicView(matchId, profileId);
+    });
+
+    createRuntime().completeOfficial({
+      matchId: 'ordered-match',
+      results: officialResults('profile-a', 'profile-b'),
+    });
+
+    expect(order[0]).toBe('settle');
+  });
+
+  it('finishes and consumes an official match after its season boundary', () => {
+    service.reserveMatchTickets(
+      'cross-season-match',
+      ['profile-a', 'profile-b'],
+      EPOCH,
+    );
+    service.markMatchPlaying('cross-season-match', EPOCH + 1);
+    const onResult = vi.fn();
+    const runtime = createRuntime({
+      clock: () => EPOCH + 28 * DAY + 1,
+      onResult,
+    });
+
+    expect(() => runtime.completeOfficial({
+      matchId: 'cross-season-match',
+      results: officialResults('profile-a', 'profile-b'),
+    })).not.toThrow();
+
+    expect(repository.requireMatch('cross-season-match').status).toBe('finished');
+    expect(repository.requireTicketEscrow(
+      'cross-season-match',
+      'profile-a',
+    ).status).toBe('consumed');
+    expect(onResult).toHaveBeenCalledWith(
+      'profile-a',
+      expect.objectContaining({
+        matchId: 'cross-season-match',
+        placementGames: 1,
+      }),
+    );
+  });
+
+  it('keeps a durable result retryable when public view construction faults', () => {
+    service.reserveMatchTickets('view-fault-match', ['profile-a', 'profile-b']);
+    service.markMatchPlaying('view-fault-match', EPOCH + 1);
+    const onResult = vi.fn();
+    const runtime = createRuntime({ onResult });
+    const publicView = vi.spyOn(service, 'getPublicResultViewForMatch')
+      .mockImplementation(() => {
+        throw new Error('public-view-fault');
+      });
+
+    let first: ArenaOfficialSummary | undefined;
+    expect(() => {
+      first = runtime.completeOfficial({
+        matchId: 'view-fault-match',
+        results: officialResults('profile-a', 'profile-b'),
+      });
+    }).not.toThrow();
+    expect(repository.requireMatch('view-fault-match').status).toBe('finished');
+    expect(repository.requireTicketEscrow(
+      'view-fault-match',
+      'profile-a',
+    ).status).toBe('consumed');
+    expect(onResult).not.toHaveBeenCalled();
+    expect(runtime.getResult(
+      'view-fault-match',
+      'profile-a',
+    )).toBeNull();
+
+    publicView.mockRestore();
+    const duplicate = runtime.completeOfficial({
+      matchId: 'view-fault-match',
+      results: officialResults('profile-a', 'profile-b'),
+    });
+
+    expect(duplicate).toEqual(first);
+    expect(onResult).toHaveBeenCalled();
+    expect(runtime.getResult(
+      'view-fault-match',
+      'profile-a',
+    )).toMatchObject({
+      resultId: 'view-fault-match:profile-a',
+      matchId: 'view-fault-match',
+      training: false,
+      place: 1,
+    });
+    expect(repository.requireProfile(
+      'arena-v1-0',
+      'profile-a',
+    ).placementGames).toBe(1);
   });
 
   it('cleans an official match mapping on normal disposal and tolerates late rollback', async () => {
@@ -544,6 +658,7 @@ describe('ArenaRuntime', () => {
   });
 
   function createRuntime(overrides: {
+    clock?: () => number;
     rng?: () => number;
     resolveHuman?: (
       profileId: string,
@@ -559,7 +674,7 @@ describe('ArenaRuntime', () => {
     onResult?: (profileId: string, result: ArenaResultPayload) => void;
   } = {}): ArenaRuntime {
     return new ArenaRuntime(roomManager, service, {
-      clock: () => EPOCH + 10,
+      clock: overrides.clock ?? (() => EPOCH + 10),
       rng: overrides.rng ?? (() => 0.5),
       onOfficialRoomCreated: overrides.onOfficialRoomCreated,
       onResult: overrides.onResult,
@@ -583,6 +698,21 @@ function candidate(profileIds: readonly string[]): ArenaOfficialCandidate {
       joinedAt: EPOCH,
     })),
   };
+}
+
+function officialResults(
+  firstProfileId: string,
+  secondProfileId: string,
+): Array<{ playerId: string; place: number; type: Player['type'] }> {
+  return [
+    { playerId: firstProfileId, place: 1, type: 'human' },
+    { playerId: secondProfileId, place: 2, type: 'human' },
+    ...[3, 4, 5, 6].map(place => ({
+      playerId: `bot-${place}`,
+      place,
+      type: 'bot' as const,
+    })),
+  ];
 }
 
 function insertBaseProfile(database: PokerDatabase, profileId: string): void {

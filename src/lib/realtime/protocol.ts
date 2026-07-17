@@ -115,6 +115,14 @@ export interface ArenaResultPayload {
   tier: ArenaTier | null;
 }
 
+export interface ArenaStateReplay {
+  roomId: string;
+  matchId: string;
+  training: boolean;
+  finished: boolean;
+  result: ArenaResultPayload | null;
+}
+
 export interface ServerToClientEvents {
   session: (data: { playerId: string }) => void;
   'session-replaced': (data: { message: string }) => void;
@@ -135,6 +143,7 @@ export interface ServerToClientEvents {
     data: { matchId: string; training: boolean },
   ) => void;
   'arena-result': (data: ArenaResultPayload) => void;
+  'arena-state-replay': (data: ArenaStateReplay) => void;
 }
 
 export interface ClientToServerEvents {

@@ -647,16 +647,16 @@ export function setupSocketHandlers(
         socket.join(session.roomId);
         roomManager.handleReconnect(session.roomId, session.playerId);
         if (room.config.competitionMode && room.config.arenaMatchId) {
-          socket.emit('arena-match-found', {
-            matchId: room.config.arenaMatchId,
-            training: room.config.competitionMode === 'arena-training',
-          });
-          if (room.engine.state.tournament?.finished && arenaRuntime) {
+          const matchId = room.config.arenaMatchId;
+          const training = room.config.competitionMode === 'arena-training';
+          const tournament = room.engine.state.tournament;
+          const finished = !!tournament?.finished;
+          if (tournament?.finished && arenaRuntime) {
             try {
               const playerTypes = new Map(
                 room.engine.state.players.map(player => [player.id, player.type]),
               );
-              const results = room.engine.state.tournament.results.map(result => {
+              const results = tournament.results.map(result => {
                 const type = playerTypes.get(result.playerId);
                 if (!type) throw new Error('Arena result player is unavailable');
                 return {
@@ -667,12 +667,12 @@ export function setupSocketHandlers(
               });
               if (room.config.competitionMode === 'arena-official') {
                 arenaRuntime.completeOfficial({
-                  matchId: room.config.arenaMatchId,
+                  matchId,
                   results,
                 });
               } else {
                 arenaRuntime.completeTraining({
-                  matchId: room.config.arenaMatchId,
+                  matchId,
                   results,
                 });
               }
@@ -680,6 +680,15 @@ export function setupSocketHandlers(
               // The room snapshot still restores; a later lobby load heals public data.
             }
           }
+          socket.emit('arena-state-replay', {
+            roomId: session.roomId,
+            matchId,
+            training,
+            finished,
+            result: finished
+              ? arenaRuntime?.getResult(matchId, session.playerId) ?? null
+              : null,
+          });
         }
         socket.emit('room-joined', {
           roomId: session.roomId,
