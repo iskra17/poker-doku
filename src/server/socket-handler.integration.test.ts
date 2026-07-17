@@ -186,6 +186,16 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     const bob = await harness.connect('cosmetic-bob', { profileCookie: bobProfile.cookie });
     await expect(joinRoom(alice, roomId, 0)).resolves.toMatchObject({ ok: true });
     await expect(joinRoom(bob, roomId, 1)).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const aliceBefore = room.engine.state.players.find(player => player.id === alice.playerId)!;
+    const gameplayBefore = {
+      validActions: room.engine.getValidActions(aliceBefore),
+      chips: aliceBefore.chips,
+      currentBet: aliceBefore.currentBet,
+      totalContributed: aliceBefore.totalContributed,
+      handRake: room.engine.state.handRake,
+      wallet: harness.walletState(alice.playerId),
+    };
 
     const titleSnapshot = harness.progressionService.setEquipment(
       alice.playerId, 'title', 'dojo-title-sprout-challenger', Date.now(),
@@ -207,6 +217,15 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       frameId: 'dojo-frame-cherry-blossom',
     });
     expect(JSON.stringify(publicAlice)).not.toMatch(/inventory|affinit|skin|cutin|session/iu);
+    const aliceAfter = room.engine.state.players.find(player => player.id === alice.playerId)!;
+    expect({
+      validActions: room.engine.getValidActions(aliceAfter),
+      chips: aliceAfter.chips,
+      currentBet: aliceAfter.currentBet,
+      totalContributed: aliceAfter.totalContributed,
+      handRake: room.engine.state.handRake,
+      wallet: harness.walletState(alice.playerId),
+    }).toEqual(gameplayBefore);
 
     harness.progressionService.setEquipment(alice.playerId, 'title', null, Date.now());
     const unequippedSnapshot = harness.progressionService.setEquipment(

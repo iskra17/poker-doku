@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { ProfileRepository } from './profile-repository';
@@ -496,6 +499,66 @@ describe('ProgressionService', () => {
       .toBe(10_000);
     expect(totalAffinityMilli(after.affinities[0])
       - totalAffinityMilli(before.affinities[0])).toBe(2_000);
+  });
+
+  it('keeps the practice threshold across a database restart and accumulates four reduced rewards exactly', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-practice-restart-'));
+    const path = join(directory, 'poker.sqlite');
+    const profileId = 'practice-restart-profile';
+    const at = Date.parse('2026-07-17T03:00:00+09:00');
+    let durableDatabase: PokerDatabase | undefined;
+
+    try {
+      durableDatabase = openPokerDatabase(path);
+      insertProfile(durableDatabase, profileId);
+      let durableRepository = new ProgressionRepository(durableDatabase);
+      let durableService = new ProgressionService(durableDatabase, durableRepository);
+      for (let handNumber = 1; handNumber <= 30; handNumber += 1) {
+        durableService.recordCompletedHand({
+          profileId,
+          roomId: 'practice-restart-room',
+          handNumber,
+          mode: 'practice',
+          selectedCharacterId: 'hana',
+          completedAt: at + handNumber,
+        });
+      }
+      const beforeRestart = durableRepository.getOrCreate(profileId, 'hana', at + 31);
+      durableDatabase.close();
+      durableDatabase = undefined;
+
+      durableDatabase = openPokerDatabase(path);
+      durableRepository = new ProgressionRepository(durableDatabase);
+      durableService = new ProgressionService(durableDatabase, durableRepository);
+      const summaries = [31, 32, 33, 34].map(handNumber => (
+        durableService.recordCompletedHand({
+          profileId,
+          roomId: 'practice-restart-room',
+          handNumber,
+          mode: 'practice',
+          selectedCharacterId: 'hana',
+          completedAt: at + handNumber,
+        })
+      ));
+      const afterRestart = durableRepository.getOrCreate(profileId, 'hana', at + 35);
+
+      expect(summaries.map(summary => [summary.dojoXpMilli, summary.affinityMilli]))
+        .toEqual(Array.from({ length: 4 }, () => [2_500, 500]));
+      expect(afterRestart.profile).toMatchObject({
+        practiceDate: '2026-07-17',
+        practiceHands: 34,
+        practiceHandsTotal: 34,
+      });
+      expect(totalDojoMilli(afterRestart.profile) - totalDojoMilli(beforeRestart.profile))
+        .toBe(10_000);
+      expect(
+        totalAffinityMilli(afterRestart.affinities[0])
+        - totalAffinityMilli(beforeRestart.affinities[0]),
+      ).toBe(2_000);
+    } finally {
+      durableDatabase?.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('resets the practice counter exactly at KST midnight', () => {
