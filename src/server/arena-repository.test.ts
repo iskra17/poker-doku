@@ -110,10 +110,16 @@ describe('ArenaRepository', () => {
     repository.createProfile(arenaProfile('profile-a'));
     repository.createMatch(match());
     database.db.exec('PRAGMA ignore_check_constraints=ON');
+    const profileUpdateTrigger = database.db.prepare(`
+      SELECT sql FROM sqlite_schema
+      WHERE type = 'trigger' AND name = 'protect_arena_profile_update'
+    `).get() as { sql: string };
+    database.db.exec('DROP TRIGGER protect_arena_profile_update');
     database.db.prepare(`
       UPDATE arena_profiles SET tier = 'legend', placement_games = 5
       WHERE season_id = 'season-0' AND profile_id = 'profile-a'
     `).run();
+    database.db.exec(profileUpdateTrigger.sql);
     const matchUpdateTrigger = database.db.prepare(`
       SELECT sql FROM sqlite_schema
       WHERE type = 'trigger' AND name = 'protect_arena_match_update'
@@ -263,6 +269,69 @@ describe('ArenaRepository', () => {
       seasonId: 'season-0', profileId: 'profile-a',
       itemId: 'arena-season-0-emblem', grantedAt: 1_400,
     }]);
+  });
+
+  it('rejects mismatched place points before writing an Arena result', () => {
+    repository.createSeason(season());
+    repository.createProfile(arenaProfile('profile-a'));
+    repository.createMatch(match());
+
+    expectErrorCode(() => repository.transaction(tx => tx.insertEntry({
+      ...entry('profile-a'),
+      place: 1,
+      points: 60,
+      mmrAfter: 1_010,
+      resultKey: 'wrong-points',
+      settledAt: 1_200,
+    })), 'ARENA_INPUT_INVALID');
+    expect(repository.listMatchEntries('match-a')).toEqual([]);
+  });
+
+  it('rejects profile lifecycle regression before executing its update', () => {
+    repository.createSeason(season());
+    repository.createProfile(arenaProfile('profile-a'));
+    repository.transaction(tx => tx.updateProfile({
+      ...arenaProfile('profile-a'),
+      placementGames: 1,
+      placementPoints: 60,
+      updatedAt: 1_100,
+    }));
+
+    expectErrorCode(() => repository.transaction(tx => tx.updateProfile({
+      ...arenaProfile('profile-a'),
+      lastDailyGrantDate: '2026-07-19',
+      updatedAt: 1_200,
+    })), 'ARENA_INPUT_INVALID');
+    expect(repository.requireProfile('season-0', 'profile-a')).toMatchObject({
+      lastDailyGrantDate: '2026-07-20',
+      placementGames: 1,
+      placementPoints: 60,
+    });
+  });
+
+  it('uses exact ISO week validation in typed Arena writes', () => {
+    repository.createSeason(season());
+    const group = {
+      id: 'week-group',
+      seasonId: 'season-0',
+      weekKey: '2021-W53',
+      tier: 'bronze',
+      status: 'open',
+      createdAt: 1_100,
+      settledAt: null,
+    } as const;
+
+    expectErrorCode(
+      () => repository.transaction(tx => tx.insertGroup(group)),
+      'ARENA_INPUT_INVALID',
+    );
+    repository.transaction(tx => tx.insertGroup({
+      ...group,
+      id: 'valid-week-group',
+      weekKey: '2020-W53',
+    }));
+    expect(repository.requireGroup('valid-week-group').weekKey)
+      .toBe('2020-W53');
   });
 });
 

@@ -3388,6 +3388,329 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'arena group is not settled'); END;
     `,
   },
+  {
+    version: 15,
+    name: 'harden_poker_arena_lifecycle_invariants',
+    sql: `
+      CREATE TABLE v15_arena_validation (
+        invalid INTEGER NOT NULL CHECK (invalid = 0)
+      ) STRICT;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_entries
+      WHERE place IS NOT NULL AND points != CASE place
+        WHEN 1 THEN 100 WHEN 2 THEN 60 WHEN 3 THEN 35
+        WHEN 4 THEN 15 WHEN 5 THEN 5 WHEN 6 THEN 0
+      END
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_entries
+      WHERE place IS NULL AND points IS NOT NULL
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM (
+        SELECT match_id, place, COUNT(*) AS duplicate_count
+        FROM arena_entries
+        WHERE place IS NOT NULL
+        GROUP BY match_id, place
+        HAVING duplicate_count > 1
+      ) LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_seasons
+      WHERE ordinal NOT BETWEEN 0 AND 9007199254740991
+        OR starts_at NOT BETWEEN 0 AND 253402300799999
+        OR ends_at NOT BETWEEN 0 AND 253402300799999
+        OR ends_at <= starts_at
+        OR created_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_group_members
+      WHERE points NOT BETWEEN 0 AND 9007199254740991
+        OR wins NOT BETWEEN 0 AND 9007199254740991
+        OR top3 NOT BETWEEN 0 AND 9007199254740991
+        OR place_sum NOT BETWEEN 0 AND 9007199254740991
+        OR matches NOT BETWEEN 0 AND 9007199254740991
+        OR wins > top3
+        OR top3 > matches
+        OR (matches = 0 AND place_sum != 0)
+        OR (matches > 0 AND place_sum NOT BETWEEN matches AND matches * 6)
+        OR score_reached_at NOT BETWEEN 0 AND 253402300799999
+        OR joined_at NOT BETWEEN 0 AND score_reached_at
+        OR updated_at NOT BETWEEN score_reached_at AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_groups
+      WHERE created_at NOT BETWEEN 0 AND 253402300799999
+        OR (
+          status = 'open' AND settled_at IS NOT NULL
+        )
+        OR (
+          status = 'settled'
+          AND settled_at NOT BETWEEN created_at AND 253402300799999
+        )
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_weekly_settlements
+      WHERE settled_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_season_rewards
+      WHERE granted_at NOT BETWEEN 0 AND 253402300799999
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_groups
+      WHERE substr(week_key, 7, 2) = '53'
+        AND NOT (
+          CAST(strftime(
+            '%w', substr(week_key, 1, 4) || '-01-01'
+          ) AS INTEGER) = 4
+          OR (
+            CAST(strftime(
+              '%w', substr(week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 3
+            AND (
+              CAST(substr(week_key, 1, 4) AS INTEGER) % 400 = 0
+              OR (
+                CAST(substr(week_key, 1, 4) AS INTEGER) % 4 = 0
+                AND CAST(substr(week_key, 1, 4) AS INTEGER) % 100 != 0
+              )
+            )
+          )
+        )
+      LIMIT 1;
+
+      INSERT INTO v15_arena_validation (invalid)
+      SELECT 1 FROM arena_weekly_settlements
+      WHERE substr(week_key, 7, 2) = '53'
+        AND NOT (
+          CAST(strftime(
+            '%w', substr(week_key, 1, 4) || '-01-01'
+          ) AS INTEGER) = 4
+          OR (
+            CAST(strftime(
+              '%w', substr(week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 3
+            AND (
+              CAST(substr(week_key, 1, 4) AS INTEGER) % 400 = 0
+              OR (
+                CAST(substr(week_key, 1, 4) AS INTEGER) % 4 = 0
+                AND CAST(substr(week_key, 1, 4) AS INTEGER) % 100 != 0
+              )
+            )
+          )
+        )
+      LIMIT 1;
+
+      DROP TABLE v15_arena_validation;
+
+      CREATE UNIQUE INDEX one_arena_finisher_per_place
+        ON arena_entries(match_id, place) WHERE place IS NOT NULL;
+
+      DROP TRIGGER protect_arena_profile_update;
+
+      CREATE TRIGGER protect_arena_profile_update
+      BEFORE UPDATE ON arena_profiles
+      WHEN NEW.season_id != OLD.season_id
+        OR NEW.profile_id != OLD.profile_id
+        OR NEW.created_at != OLD.created_at
+        OR NEW.updated_at < OLD.updated_at
+        OR NEW.last_daily_grant_date < OLD.last_daily_grant_date
+        OR NEW.placement_games < OLD.placement_games
+        OR NEW.placement_games > OLD.placement_games + 1
+        OR NEW.placement_points < OLD.placement_points
+        OR (
+          NEW.placement_games = OLD.placement_games
+          AND NEW.placement_points != OLD.placement_points
+        )
+        OR (
+          NEW.placement_games = OLD.placement_games + 1
+          AND NEW.placement_points - OLD.placement_points
+            NOT IN (0, 5, 15, 35, 60, 100)
+        )
+        OR (
+          OLD.placement_games = 5
+          AND (
+            NEW.placement_games != OLD.placement_games
+            OR NEW.placement_points != OLD.placement_points
+          )
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena profile update'); END;
+
+      CREATE TRIGGER validate_arena_entry_points_insert
+      BEFORE INSERT ON arena_entries
+      WHEN (NEW.place IS NULL) != (NEW.points IS NULL)
+        OR (
+          NEW.place IS NOT NULL
+          AND NEW.points != CASE NEW.place
+            WHEN 1 THEN 100 WHEN 2 THEN 60 WHEN 3 THEN 35
+            WHEN 4 THEN 15 WHEN 5 THEN 5 WHEN 6 THEN 0
+          END
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena placement points'); END;
+
+      CREATE TRIGGER validate_arena_entry_points_update
+      BEFORE UPDATE ON arena_entries
+      WHEN (NEW.place IS NULL) != (NEW.points IS NULL)
+        OR (
+          NEW.place IS NOT NULL
+          AND NEW.points != CASE NEW.place
+            WHEN 1 THEN 100 WHEN 2 THEN 60 WHEN 3 THEN 35
+            WHEN 4 THEN 15 WHEN 5 THEN 5 WHEN 6 THEN 0
+          END
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena placement points'); END;
+
+      CREATE TRIGGER validate_arena_season_safe_insert
+      BEFORE INSERT ON arena_seasons
+      WHEN NEW.ordinal > 9007199254740991
+      BEGIN SELECT RAISE(ABORT, 'invalid arena season ordinal'); END;
+
+      CREATE TRIGGER validate_arena_season_safe_update
+      BEFORE UPDATE ON arena_seasons
+      WHEN NEW.ordinal < 0 OR NEW.ordinal > 9007199254740991
+      BEGIN SELECT RAISE(ABORT, 'invalid arena season ordinal'); END;
+
+      CREATE TRIGGER validate_arena_group_counters_insert
+      BEFORE INSERT ON arena_group_members
+      WHEN NEW.points > 9007199254740991
+        OR NEW.wins > 9007199254740991
+        OR NEW.top3 > 9007199254740991
+        OR NEW.place_sum > 9007199254740991
+        OR NEW.matches > 9007199254740991
+      BEGIN SELECT RAISE(ABORT, 'unsafe arena group counter'); END;
+
+      CREATE TRIGGER validate_arena_group_counters_update
+      BEFORE UPDATE ON arena_group_members
+      WHEN NEW.points > 9007199254740991
+        OR NEW.wins > 9007199254740991
+        OR NEW.top3 > 9007199254740991
+        OR NEW.place_sum > 9007199254740991
+        OR NEW.matches > 9007199254740991
+      BEGIN SELECT RAISE(ABORT, 'unsafe arena group counter'); END;
+
+      CREATE TRIGGER validate_arena_group_week_insert
+      BEFORE INSERT ON arena_groups
+      WHEN substr(NEW.week_key, 7, 2) = '53'
+        AND NOT (
+          CAST(strftime(
+            '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+          ) AS INTEGER) = 4
+          OR (
+            CAST(strftime(
+              '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 3
+            AND (
+              CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 400 = 0
+              OR (
+                CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 4 = 0
+                AND CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 100 != 0
+              )
+            )
+          )
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena ISO week'); END;
+
+      CREATE TRIGGER validate_arena_group_week_update
+      BEFORE UPDATE ON arena_groups
+      WHEN substr(NEW.week_key, 7, 2) = '53'
+        AND NOT (
+          CAST(strftime(
+            '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+          ) AS INTEGER) = 4
+          OR (
+            CAST(strftime(
+              '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 3
+            AND (
+              CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 400 = 0
+              OR (
+                CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 4 = 0
+                AND CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 100 != 0
+              )
+            )
+          )
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena ISO week'); END;
+
+      CREATE TRIGGER validate_arena_settlement_week_insert
+      BEFORE INSERT ON arena_weekly_settlements
+      WHEN substr(NEW.week_key, 7, 2) = '53'
+        AND NOT (
+          CAST(strftime(
+            '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+          ) AS INTEGER) = 4
+          OR (
+            CAST(strftime(
+              '%w', substr(NEW.week_key, 1, 4) || '-01-01'
+            ) AS INTEGER) = 3
+            AND (
+              CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 400 = 0
+              OR (
+                CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 4 = 0
+                AND CAST(substr(NEW.week_key, 1, 4) AS INTEGER) % 100 != 0
+              )
+            )
+          )
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena ISO week'); END;
+
+      CREATE TRIGGER freeze_settled_arena_group_member_update
+      BEFORE UPDATE ON arena_group_members
+      WHEN EXISTS (
+        SELECT 1 FROM arena_weekly_settlements AS settlement
+        WHERE settlement.group_id = OLD.group_id
+          AND settlement.season_id = OLD.season_id
+          AND settlement.week_key = OLD.week_key
+      )
+      BEGIN SELECT RAISE(ABORT, 'arena standing is settled'); END;
+
+      CREATE TRIGGER freeze_settled_arena_group_member_delete
+      BEFORE DELETE ON arena_group_members
+      WHEN EXISTS (
+        SELECT 1 FROM arena_weekly_settlements AS settlement
+        WHERE settlement.group_id = OLD.group_id
+          AND settlement.season_id = OLD.season_id
+          AND settlement.week_key = OLD.week_key
+      ) AND EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'arena standing is settled'); END;
+
+      CREATE TRIGGER freeze_arena_weekly_settlement_update
+      BEFORE UPDATE ON arena_weekly_settlements
+      BEGIN SELECT RAISE(ABORT, 'arena settlement is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_weekly_settlement_delete
+      BEFORE DELETE ON arena_weekly_settlements
+      BEGIN SELECT RAISE(ABORT, 'arena settlement is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_season_reward_update
+      BEFORE UPDATE ON arena_season_rewards
+      BEGIN SELECT RAISE(ABORT, 'arena season reward is immutable'); END;
+
+      CREATE TRIGGER freeze_arena_season_reward_delete
+      BEFORE DELETE ON arena_season_rewards
+      WHEN EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'arena season reward is immutable'); END;
+
+      CREATE TRIGGER protect_arena_profile_direct_delete
+      BEFORE DELETE ON arena_profiles
+      WHEN EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'delete arena profile through profile owner'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

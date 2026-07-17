@@ -410,6 +410,13 @@ class ArenaTransactionImplementation implements ArenaTransaction {
   updateProfile(value: ArenaProfileRecord): void {
     assertProfile(value, 'ARENA_INPUT_INVALID');
     this.#database.assertTransactionActive();
+    const currentRow = this.#database.db.prepare(`
+      SELECT season_id, profile_id, available_tickets, last_daily_grant_date,
+             placement_games, placement_points, tier, mmr, created_at, updated_at
+      FROM arena_profiles WHERE season_id = ? AND profile_id = ?
+    `).get(value.seasonId, value.profileId) as unknown as ProfileRow | undefined;
+    if (!currentRow) fail('ARENA_NOT_FOUND');
+    assertProfileTransition(mapProfile(currentRow), value);
     const result = this.#database.db.prepare(`
       UPDATE arena_profiles
       SET available_tickets = ?, last_daily_grant_date = ?,
@@ -950,7 +957,7 @@ function assertEntry(
     && value.settledAt === null;
   const settled = nonempty(value.resultKey)
     && integerBetween(value.place, 1, 6)
-    && [0, 5, 15, 35, 60, 100].includes(value.points as number)
+    && value.points === pointsForArenaPlace(value.place as number)
     && safeInteger(value.mmrAfter)
     && timestamp(value.settledAt);
   if (
@@ -1068,6 +1075,33 @@ function requireOneChange(changes: number | bigint): void {
   if (changes !== 1 && changes !== BigInt(1)) fail('ARENA_NOT_FOUND');
 }
 
+function assertProfileTransition(
+  current: ArenaProfileRecord,
+  next: ArenaProfileRecord,
+): void {
+  const gamesDelta = next.placementGames - current.placementGames;
+  const pointsDelta = next.placementPoints - current.placementPoints;
+  if (
+    next.seasonId !== current.seasonId
+    || next.profileId !== current.profileId
+    || next.createdAt !== current.createdAt
+    || next.updatedAt < current.updatedAt
+    || next.lastDailyGrantDate < current.lastDailyGrantDate
+    || gamesDelta < 0
+    || gamesDelta > 1
+    || pointsDelta < 0
+    || (gamesDelta === 0 && pointsDelta !== 0)
+    || (gamesDelta === 1
+      && ![0, 5, 15, 35, 60, 100].includes(pointsDelta))
+    || (current.placementGames === 5
+      && (gamesDelta !== 0 || pointsDelta !== 0))
+  ) fail('ARENA_INPUT_INVALID');
+}
+
+function pointsForArenaPlace(place: number): number {
+  return [100, 60, 35, 15, 5, 0][place - 1] ?? -1;
+}
+
 function fail(code: ArenaPersistenceErrorCode): never {
   throw new ArenaPersistenceError(code);
 }
@@ -1163,5 +1197,12 @@ function weekKey(value: unknown): boolean {
   if (!match) return false;
   const year = Number(match[1]);
   const week = Number(match[2]);
-  return year >= 1 && year <= 9_999 && week >= 1 && week <= 53;
+  if (year < 1 || year > 9_999 || week < 1 || week > 53) return false;
+  if (week < 53) return true;
+  const firstDay = new Date(0);
+  firstDay.setUTCHours(0, 0, 0, 0);
+  firstDay.setUTCFullYear(year, 0, 1);
+  const weekday = firstDay.getUTCDay();
+  const leap = year % 400 === 0 || (year % 4 === 0 && year % 100 !== 0);
+  return weekday === 4 || (weekday === 3 && leap);
 }
