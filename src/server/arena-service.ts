@@ -100,6 +100,11 @@ export interface ArenaPublicResultView {
   readonly weeklyRank: number | null;
 }
 
+export interface ArenaMatchResultView extends ArenaPublicResultView {
+  readonly weeklyRankBefore: number | null;
+  readonly weeklyRankAfter: number | null;
+}
+
 export type ArenaRuntimeConfig =
   | { readonly enabled: false }
   | ({ readonly enabled: true } & ArenaSeasonConfig);
@@ -262,7 +267,7 @@ export class ArenaService {
   getPublicResultViewForMatch(
     matchId: string,
     profileId: string,
-  ): ArenaPublicResultView {
+  ): ArenaMatchResultView {
     const match = this.#repository.findMatch(matchId);
     if (!match || match.status !== 'finished' || match.finishedAt === null) {
       fail('ARENA_RESULT_INVALID');
@@ -276,27 +281,13 @@ export class ArenaService {
     if (!entry?.resultKey || entry.settledAt === null) {
       fail('ARENA_RESULT_INVALID');
     }
-    const weekKey = weeklyCompletionKey(
-      match.seasonId,
-      match.finishedAt,
-      this.#config,
-    );
-    const member = weekKey === null
-      ? null
-      : this.#repository.findGroupMember(
-        match.seasonId,
-        weekKey,
-        profileId,
-      );
-    const ranked = member
-      ? rankWeeklyStandings(this.#repository.listGroupMembers(member.groupId))
-      : [];
-    const index = ranked.findIndex(row => row.profileId === profileId);
     return {
       placementGames: profile.placementGames,
       placementMatches: ARENA_CONFIG_V1.placementMatches,
       tier: profile.tier,
-      weeklyRank: index < 0 ? null : index + 1,
+      weeklyRank: entry.weeklyRankAfter,
+      weeklyRankBefore: entry.weeklyRankBefore,
+      weeklyRankAfter: entry.weeklyRankAfter,
     };
   }
 
@@ -417,6 +408,25 @@ export class ArenaService {
         at,
         this.#config,
       );
+      const weeklyRankFor = (profileId: string): number | null => {
+        if (completionWeekKey === null) return null;
+        const member = this.#repository.findGroupMember(
+          match.seasonId,
+          completionWeekKey,
+          profileId,
+        );
+        if (!member) return null;
+        const ranked = rankWeeklyStandings(
+          this.#repository.listGroupMembers(member.groupId),
+        );
+        const index = ranked.findIndex(row => row.profileId === profileId);
+        return index < 0 ? null : index + 1;
+      };
+      const weeklyRanksBefore = new Map(entries.map(entry => [
+        entry.profileId,
+        weeklyRankFor(entry.profileId),
+      ] as const));
+      const settledEntries: ArenaEntryRecord[] = [];
 
       for (const entry of entries) {
         const place = places.get(entry.profileId);
@@ -458,7 +468,7 @@ export class ArenaService {
           ? (profile.tier ?? tierForPlacementTotal(placementPoints))
           : null;
 
-        tx.updateEntry({
+        settledEntries.push({
           ...entry,
           place,
           points,
@@ -501,6 +511,13 @@ export class ArenaService {
           ...escrow,
           status: 'consumed',
           settledAt: at,
+        });
+      }
+      for (const settled of settledEntries) {
+        tx.updateEntry({
+          ...settled,
+          weeklyRankBefore: weeklyRanksBefore.get(settled.profileId) ?? null,
+          weeklyRankAfter: weeklyRankFor(settled.profileId),
         });
       }
       const finished: ArenaMatchRecord = {
@@ -578,6 +595,8 @@ export class ArenaService {
           mmrBefore: profile.mmr,
           mmrAfter: null,
           resultKey: null,
+          weeklyRankBefore: null,
+          weeklyRankAfter: null,
           createdAt: at,
           settledAt: null,
         });

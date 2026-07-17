@@ -79,6 +79,8 @@ export interface ArenaEntryRecord {
   mmrBefore: number;
   mmrAfter: number | null;
   resultKey: string | null;
+  weeklyRankBefore: number | null;
+  weeklyRankAfter: number | null;
   createdAt: number;
   settledAt: number | null;
 }
@@ -263,6 +265,8 @@ interface EntryRow {
   mmr_before: unknown;
   mmr_after: unknown;
   result_key: unknown;
+  weekly_rank_before: unknown;
+  weekly_rank_after: unknown;
   created_at: unknown;
   settled_at: unknown;
 }
@@ -472,10 +476,11 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     this.#database.db.prepare(`
       INSERT INTO arena_entries (
         match_id, season_id, profile_id, place, points, mmr_before, mmr_after,
-        result_key, created_at, settled_at
+        result_key, weekly_rank_before, weekly_rank_after, created_at,
+        settled_at
       ) VALUES (
         ?, (SELECT season_id FROM arena_matches WHERE id = ?),
-        ?, ?, ?, ?, ?, ?, ?, ?
+        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
       )
     `).run(
       value.matchId,
@@ -486,6 +491,8 @@ class ArenaTransactionImplementation implements ArenaTransaction {
       value.mmrBefore,
       value.mmrAfter,
       value.resultKey,
+      value.weeklyRankBefore,
+      value.weeklyRankAfter,
       value.createdAt,
       value.settledAt,
     );
@@ -622,7 +629,8 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     this.#database.assertTransactionActive();
     const currentRow = this.#database.db.prepare(`
       SELECT match_id, profile_id, place, points, mmr_before, mmr_after,
-             result_key, created_at, settled_at
+             result_key, weekly_rank_before, weekly_rank_after, created_at,
+             settled_at
       FROM arena_entries WHERE match_id = ? AND profile_id = ?
     `).get(value.matchId, value.profileId) as unknown as EntryRow | undefined;
     if (!currentRow) fail('ARENA_NOT_FOUND');
@@ -634,7 +642,8 @@ class ArenaTransactionImplementation implements ArenaTransaction {
     ) fail('ARENA_INPUT_INVALID');
     const result = this.#database.db.prepare(`
       UPDATE arena_entries
-      SET place = ?, points = ?, mmr_after = ?, result_key = ?, settled_at = ?
+      SET place = ?, points = ?, mmr_after = ?, result_key = ?,
+          weekly_rank_before = ?, weekly_rank_after = ?, settled_at = ?
       WHERE match_id = ? AND profile_id = ? AND result_key IS NULL
         AND created_at = ? AND mmr_before = ?
     `).run(
@@ -642,6 +651,8 @@ class ArenaTransactionImplementation implements ArenaTransaction {
       value.points,
       value.mmrAfter,
       value.resultKey,
+      value.weeklyRankBefore,
+      value.weeklyRankAfter,
       value.settledAt,
       value.matchId,
       value.profileId,
@@ -996,7 +1007,8 @@ export class ArenaRepository {
   listMatchEntries(matchId: string): ArenaEntryRecord[] {
     const rows = this.#database.db.prepare(`
       SELECT match_id, profile_id, place, points, mmr_before, mmr_after,
-             result_key, created_at, settled_at
+             result_key, weekly_rank_before, weekly_rank_after, created_at,
+             settled_at
       FROM arena_entries WHERE match_id = ? ORDER BY profile_id
     `).all(matchId) as unknown as EntryRow[];
     return rows.map(mapEntry);
@@ -1350,6 +1362,8 @@ function mapEntry(row: EntryRow): ArenaEntryRecord {
     mmrBefore: asNumber(row.mmr_before),
     mmrAfter: asNullableNumber(row.mmr_after),
     resultKey: asNullableString(row.result_key),
+    weeklyRankBefore: asNullableNumber(row.weekly_rank_before),
+    weeklyRankAfter: asNullableNumber(row.weekly_rank_after),
     createdAt: asNumber(row.created_at),
     settledAt: asNullableNumber(row.settled_at),
   };
@@ -1584,11 +1598,18 @@ function assertEntry(
     && value.place === null
     && value.points === null
     && value.mmrAfter === null
+    && value.weeklyRankBefore === null
+    && value.weeklyRankAfter === null
     && value.settledAt === null;
+  const weeklyRankValid = (rank: number | null): boolean =>
+    rank === null || (safeInteger(rank) && rank >= 1);
   const settled = nonempty(value.resultKey)
     && integerBetween(value.place, 1, 6)
     && value.points === pointsForArenaPlace(value.place as number)
     && safeInteger(value.mmrAfter)
+    && weeklyRankValid(value.weeklyRankBefore)
+    && weeklyRankValid(value.weeklyRankAfter)
+    && (value.weeklyRankBefore === null || value.weeklyRankAfter !== null)
     && timestamp(value.settledAt);
   if (
     !nonempty(value.matchId)

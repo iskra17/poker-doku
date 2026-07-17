@@ -993,6 +993,128 @@ describe('ArenaService free ticket lifecycle', () => {
     ]);
   });
 
+  it('persists settlement-time weekly ranks on official result entries', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    seedPlacement(repository, 'profile-a', [35, 35, 35, 35, 35]);
+    seedPlacement(repository, 'profile-b', [35, 35, 35, 35, 35]);
+    const weekKey = getArenaKstWeekKey(EPOCH);
+    repository.transaction(tx => {
+      tx.insertGroup({
+        id: 'group-a',
+        seasonId: 'arena-v1-0',
+        weekKey,
+        tier: 'silver',
+        status: 'open',
+        createdAt: EPOCH,
+        settledAt: null,
+      });
+      for (const [profileId, points] of [
+        ['profile-a', 60],
+        ['profile-b', 100],
+      ] as const) {
+        tx.insertGroupMember({
+          groupId: 'group-a',
+          seasonId: 'arena-v1-0',
+          weekKey,
+          profileId,
+          points,
+          wins: 0,
+          top3: 1,
+          placeSum: 2,
+          matches: 1,
+          scoreReachedAt: EPOCH,
+          joinedAt: EPOCH,
+          updatedAt: EPOCH,
+        });
+      }
+    });
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+
+    service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 6],
+      ]),
+      EPOCH + 2,
+    );
+
+    expect(repository.listMatchEntries('match-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a',
+        weeklyRankBefore: 2,
+        weeklyRankAfter: 1,
+      }),
+      expect.objectContaining({
+        profileId: 'profile-b',
+        weeklyRankBefore: 1,
+        weeklyRankAfter: 2,
+      }),
+    ]);
+    expect(service.getPublicResultViewForMatch('match-a', 'profile-a'))
+      .toMatchObject({
+        weeklyRank: 1,
+        weeklyRankBefore: 2,
+        weeklyRankAfter: 1,
+      });
+
+    service.reserveMatchTickets('match-b', ['profile-a', 'profile-b'], EPOCH + 3);
+    service.markMatchPlaying('match-b', EPOCH + 3);
+    service.settleOfficialMatch(
+      'match-b',
+      sixSeatResult([
+        ['profile-a', 6],
+        ['profile-b', 1],
+      ]),
+      EPOCH + 4,
+    );
+
+    expect(service.getPublicResultViewForMatch('match-a', 'profile-a'))
+      .toMatchObject({ weeklyRankBefore: 2, weeklyRankAfter: 1 });
+    expect(service.getPublicResultViewForMatch('match-a', 'profile-b'))
+      .toMatchObject({ weeklyRankBefore: 1, weeklyRankAfter: 2 });
+    expect(service.getPublicResultViewForMatch('match-b', 'profile-b'))
+      .toMatchObject({ weeklyRankBefore: 2, weeklyRankAfter: 1 });
+  });
+
+  it('keeps weekly ranks null for placement entries and first grouped results', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    seedPlacement(repository, 'profile-b', [35, 35, 35, 35, 35]);
+    service.reserveMatchTickets('match-a', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('match-a', EPOCH + 1);
+
+    service.settleOfficialMatch(
+      'match-a',
+      sixSeatResult([
+        ['profile-a', 1],
+        ['profile-b', 2],
+      ]),
+      EPOCH + 2,
+    );
+
+    expect(repository.listMatchEntries('match-a')).toEqual([
+      expect.objectContaining({
+        profileId: 'profile-a',
+        weeklyRankBefore: null,
+        weeklyRankAfter: null,
+      }),
+      expect.objectContaining({
+        profileId: 'profile-b',
+        weeklyRankBefore: null,
+        weeklyRankAfter: 1,
+      }),
+    ]);
+    expect(service.getPublicResultViewForMatch('match-a', 'profile-a'))
+      .toMatchObject({
+        weeklyRank: null,
+        weeklyRankBefore: null,
+        weeklyRankAfter: null,
+      });
+  });
+
   it('fills the oldest weekly tier group to 30 before creating another group', () => {
     service.getSnapshot('profile-a', EPOCH);
     service.getSnapshot('profile-b', EPOCH);

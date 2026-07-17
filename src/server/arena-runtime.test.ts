@@ -19,6 +19,7 @@ import { ArenaRepository } from './arena-repository';
 import { ArenaRuntime } from './arena-runtime';
 import {
   ArenaService,
+  getArenaKstWeekKey,
   type ArenaOfficialSummary,
 } from './arena-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
@@ -288,6 +289,81 @@ describe('ArenaRuntime', () => {
       expect.objectContaining({
         matchId: 'cross-season-match',
         placementGames: 1,
+      }),
+    );
+  });
+
+  it('replays persisted weekly rank movement after standings drift', () => {
+    service.getSnapshot('profile-a', EPOCH);
+    service.getSnapshot('profile-b', EPOCH);
+    seedPlacedWeeklyGroup(repository, [
+      ['profile-a', 60],
+      ['profile-b', 100],
+    ]);
+    service.reserveMatchTickets('rank-match', ['profile-a', 'profile-b'], EPOCH);
+    service.markMatchPlaying('rank-match', EPOCH + 1);
+    const onResult = vi.fn();
+    const runtime = createRuntime({ onResult });
+    const rankResults = [
+      { playerId: 'profile-a', place: 1, type: 'human' as const },
+      { playerId: 'profile-b', place: 6, type: 'human' as const },
+      ...[2, 3, 4, 5].map(place => ({
+        playerId: `bot-${place}`,
+        place,
+        type: 'bot' as const,
+      })),
+    ];
+
+    runtime.completeOfficial({ matchId: 'rank-match', results: rankResults });
+
+    expect(onResult).toHaveBeenCalledWith(
+      'profile-a',
+      expect.objectContaining({
+        matchId: 'rank-match',
+        weeklyRankBefore: 2,
+        weeklyRankAfter: 1,
+      }),
+    );
+    expect(onResult).toHaveBeenCalledWith(
+      'profile-b',
+      expect.objectContaining({
+        matchId: 'rank-match',
+        weeklyRankBefore: 1,
+        weeklyRankAfter: 2,
+      }),
+    );
+
+    service.reserveMatchTickets(
+      'drift-match',
+      ['profile-a', 'profile-b'],
+      EPOCH + 11,
+    );
+    service.markMatchPlaying('drift-match', EPOCH + 12);
+    service.settleOfficialMatch(
+      'drift-match',
+      [
+        { playerId: 'profile-b', place: 1, type: 'human' },
+        { playerId: 'profile-a', place: 6, type: 'human' },
+        ...[2, 3, 4, 5].map(place => ({
+          playerId: `bot-${place}`,
+          place,
+          type: 'bot' as const,
+        })),
+      ],
+      EPOCH + 13,
+    );
+    const replayed = vi.fn();
+    createRuntime({ onResult: replayed }).completeOfficial({
+      matchId: 'rank-match',
+      results: rankResults,
+    });
+
+    expect(replayed).toHaveBeenCalledWith(
+      'profile-a',
+      expect.objectContaining({
+        matchId: 'rank-match',
+        weeklyRankBefore: 2,
+        weeklyRankAfter: 1,
       }),
     );
   });
@@ -713,6 +789,51 @@ function officialResults(
       type: 'bot' as const,
     })),
   ];
+}
+
+function seedPlacedWeeklyGroup(
+  repository: ArenaRepository,
+  members: readonly (readonly [profileId: string, points: number])[],
+): void {
+  const weekKey = getArenaKstWeekKey(EPOCH);
+  for (const [profileId] of members) {
+    for (let games = 1; games <= 5; games += 1) {
+      const profile = repository.requireProfile('arena-v1-0', profileId);
+      repository.transaction(tx => tx.updateProfile({
+        ...profile,
+        placementGames: games,
+        placementPoints: profile.placementPoints + 35,
+        tier: games === 5 ? 'silver' : null,
+      }));
+    }
+  }
+  repository.transaction(tx => {
+    tx.insertGroup({
+      id: 'group-rank',
+      seasonId: 'arena-v1-0',
+      weekKey,
+      tier: 'silver',
+      status: 'open',
+      createdAt: EPOCH,
+      settledAt: null,
+    });
+    for (const [profileId, points] of members) {
+      tx.insertGroupMember({
+        groupId: 'group-rank',
+        seasonId: 'arena-v1-0',
+        weekKey,
+        profileId,
+        points,
+        wins: 0,
+        top3: 1,
+        placeSum: 2,
+        matches: 1,
+        scoreReachedAt: EPOCH,
+        joinedAt: EPOCH,
+        updatedAt: EPOCH,
+      });
+    }
+  });
 }
 
 function insertBaseProfile(database: PokerDatabase, profileId: string): void {

@@ -4330,6 +4330,60 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'selected character conflicts with skin'); END;
     `,
   },
+  {
+    version: 19,
+    name: 'persist_arena_entry_weekly_ranks',
+    sql: `
+      ALTER TABLE arena_entries ADD COLUMN weekly_rank_before INTEGER
+        CHECK (
+          weekly_rank_before IS NULL
+          OR weekly_rank_before BETWEEN 1 AND 9007199254740991
+        );
+
+      ALTER TABLE arena_entries ADD COLUMN weekly_rank_after INTEGER
+        CHECK (
+          weekly_rank_after IS NULL
+          OR weekly_rank_after BETWEEN 1 AND 9007199254740991
+        );
+
+      CREATE TRIGGER validate_arena_entry_weekly_rank_insert
+      BEFORE INSERT ON arena_entries
+      WHEN (
+          NEW.result_key IS NULL
+          AND (
+            NEW.weekly_rank_before IS NOT NULL
+            OR NEW.weekly_rank_after IS NOT NULL
+          )
+        )
+        OR (
+          NEW.weekly_rank_before IS NOT NULL
+          AND NEW.weekly_rank_after IS NULL
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena entry weekly rank'); END;
+
+      CREATE TRIGGER validate_arena_entry_weekly_rank_update
+      BEFORE UPDATE ON arena_entries
+      WHEN (
+          NEW.result_key IS NULL
+          AND (
+            NEW.weekly_rank_before IS NOT NULL
+            OR NEW.weekly_rank_after IS NOT NULL
+          )
+        )
+        OR (
+          NEW.weekly_rank_before IS NOT NULL
+          AND NEW.weekly_rank_after IS NULL
+        )
+        OR (
+          OLD.result_key IS NOT NULL
+          AND (
+            NEW.weekly_rank_before IS NOT OLD.weekly_rank_before
+            OR NEW.weekly_rank_after IS NOT OLD.weekly_rank_after
+          )
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid arena entry weekly rank update'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

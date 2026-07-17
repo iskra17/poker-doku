@@ -395,6 +395,8 @@ function entry(profileId: string) {
     mmrBefore: 1_000,
     mmrAfter: null,
     resultKey: null,
+    weeklyRankBefore: null,
+    weeklyRankAfter: null,
     createdAt: 1_100,
     settledAt: null,
   } as const;
