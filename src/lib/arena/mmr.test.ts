@@ -101,4 +101,19 @@ describe('six-player arena MMR', () => {
       expect(() => calculateMmrDelta(input)).toThrowError('ARENA_MMR_INPUT_INVALID');
     }
   });
+
+  it('rejects a sparse five-slot opponent array', () => {
+    const sparseOpponents = new Array<number>(5);
+    sparseOpponents[0] = 1_000;
+    sparseOpponents[2] = 1_000;
+    sparseOpponents[3] = 1_000;
+    sparseOpponents[4] = 1_000;
+
+    expect(() => calculateMmrDelta({
+      playerMmr: 1_000,
+      opponentMmrs: sparseOpponents,
+      place: 1,
+      k: 32,
+    })).toThrowError('ARENA_MMR_INPUT_INVALID');
+  });
 });

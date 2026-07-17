@@ -143,6 +143,32 @@ describe('weekly arena ranking', () => {
       .toEqual(['Z', 'a']);
   });
 
+  it('compares large rational averages exactly when floating-point division collides', () => {
+    const matches = 1_000_000_000_000_000;
+    const worse = standing('a-worse', 10, {
+      placeSum: 3 * matches + 1,
+      matches,
+    });
+    const better = standing('z-better', 10, {
+      placeSum: 3 * (matches + 1) + 1,
+      matches: matches + 1,
+    });
+    expect(worse.placeSum / worse.matches)
+      .toBe(better.placeSum / better.matches);
+
+    expect(compareWeeklyStandings(better, worse)).toBeLessThan(0);
+    expect(rankWeeklyStandings([worse, better]).map(row => row.profileId))
+      .toEqual(['z-better', 'a-worse']);
+  });
+
+  it('rejects duplicate profile ids before direct ranking or movement selection', () => {
+    const duplicates = [standing('same', 10), standing('same', 9)];
+    expect(() => rankWeeklyStandings(duplicates))
+      .toThrowError('ARENA_STANDING_PROFILE_DUPLICATE');
+    expect(() => selectWeeklyMoves('gold', duplicates))
+      .toThrowError('ARENA_STANDING_PROFILE_DUPLICATE');
+  });
+
   it('rejects malformed standing values instead of producing NaN or unstable output', () => {
     const valid = standing('valid', 1);
     const invalidRows: WeeklyStanding[] = [
@@ -247,5 +273,10 @@ describe('arena season soft reset', () => {
     for (const mmr of [1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => softResetMmr(mmr)).toThrowError('ARENA_MMR_INVALID');
     }
+  });
+
+  it('rounds both safe-integer extremes exactly without an unsafe intermediate', () => {
+    expect(softResetMmr(Number.MAX_SAFE_INTEGER)).toBe(4_503_599_627_370_996);
+    expect(softResetMmr(Number.MIN_SAFE_INTEGER)).toBe(-4_503_599_627_369_995);
   });
 });

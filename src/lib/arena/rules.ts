@@ -35,13 +35,8 @@ export function compareWeeklyStandings(
     if (leftValue !== rightValue) return rightValue - leftValue;
   }
 
-  const leftAverage = left.matches === 0
-    ? Number.POSITIVE_INFINITY
-    : left.placeSum / left.matches;
-  const rightAverage = right.matches === 0
-    ? Number.POSITIVE_INFINITY
-    : right.placeSum / right.matches;
-  if (leftAverage !== rightAverage) return leftAverage - rightAverage;
+  const averageOrder = compareAveragePlace(left, right);
+  if (averageOrder !== 0) return averageOrder;
 
   if (left.scoreReachedAt !== right.scoreReachedAt) {
     return left.scoreReachedAt - right.scoreReachedAt;
@@ -52,7 +47,14 @@ export function compareWeeklyStandings(
 export function rankWeeklyStandings(
   standings: readonly WeeklyStanding[],
 ): WeeklyStanding[] {
-  for (const row of standings) assertStanding(row);
+  const profileIds = new Set<string>();
+  for (const row of standings) {
+    assertStanding(row);
+    if (profileIds.has(row.profileId)) {
+      throw new Error('ARENA_STANDING_PROFILE_DUPLICATE');
+    }
+    profileIds.add(row.profileId);
+  }
   return [...standings].sort(compareWeeklyStandings);
 }
 
@@ -97,10 +99,13 @@ export function softResetTier(tier: ArenaTier): ArenaTier {
 
 export function softResetMmr(oldMmr: number): number {
   if (!Number.isSafeInteger(oldMmr)) throw new Error('ARENA_MMR_INVALID');
-  return Math.round(
-    ARENA_CONFIG_V1.initialMmr
-      + (oldMmr - ARENA_CONFIG_V1.initialMmr) * 0.5,
-  );
+  const numerator = BigInt(oldMmr) + BigInt(ARENA_CONFIG_V1.initialMmr);
+  const rounded = numerator >= 0
+    ? (numerator + BigInt(1)) / BigInt(2)
+    : numerator / BigInt(2);
+  const result = Number(rounded);
+  if (!Number.isSafeInteger(result)) throw new Error('ARENA_MMR_INVALID');
+  return result;
 }
 
 function moveCount(groupSize: number): number {
@@ -151,4 +156,18 @@ function isNonnegativeSafeInteger(value: number): boolean {
 function compareCodeUnits(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
+}
+
+function compareAveragePlace(
+  left: WeeklyStanding,
+  right: WeeklyStanding,
+): number {
+  if (left.matches === 0 || right.matches === 0) {
+    if (left.matches === right.matches) return 0;
+    return left.matches === 0 ? 1 : -1;
+  }
+  const leftProduct = BigInt(left.placeSum) * BigInt(right.matches);
+  const rightProduct = BigInt(right.placeSum) * BigInt(left.matches);
+  if (leftProduct === rightProduct) return 0;
+  return leftProduct < rightProduct ? -1 : 1;
 }

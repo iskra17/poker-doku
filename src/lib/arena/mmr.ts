@@ -25,9 +25,7 @@ function assertMmrInput(input: MmrDeltaInput): void {
   if (
     !input
     || !Number.isSafeInteger(input.playerMmr)
-    || !Array.isArray(input.opponentMmrs)
-    || input.opponentMmrs.length !== ARENA_CONFIG_V1.seats - 1
-    || input.opponentMmrs.some(mmr => !Number.isSafeInteger(mmr))
+    || !hasExactlyValidOpponentMmrs(input.opponentMmrs)
     || !Number.isInteger(input.place)
     || input.place < 1
     || input.place > ARENA_CONFIG_V1.seats
@@ -36,4 +34,19 @@ function assertMmrInput(input: MmrDeltaInput): void {
   ) {
     throw new Error('ARENA_MMR_INPUT_INVALID');
   }
+}
+
+function hasExactlyValidOpponentMmrs(value: readonly number[]): boolean {
+  if (!Array.isArray(value) || value.length !== ARENA_CONFIG_V1.seats - 1) {
+    return false;
+  }
+  for (let index = 0; index < value.length; index += 1) {
+    if (
+      !Object.prototype.hasOwnProperty.call(value, index)
+      || !Number.isSafeInteger(value[index])
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
