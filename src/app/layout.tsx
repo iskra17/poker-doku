@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Noto_Sans_KR, Jua } from "next/font/google";
 import ProgressionLifecycle from '@/components/progression/ProgressionLifecycle';
 import ArenaLifecycle from '@/components/arena/ArenaLifecycle';
+import InstallPrompt from '@/components/pwa/InstallPrompt';
 import "./globals.css";
 
 const notoSansKr = Noto_Sans_KR({
@@ -21,6 +22,9 @@ const jua = Jua({
 export const metadata: Metadata = {
   title: "Poker Doku",
   description: "Anime-style online poker room with visual novel aesthetics",
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
@@ -46,6 +50,7 @@ export default function RootLayout({
       <body className="h-dvh bg-grid overflow-hidden touch-manipulation">
         <ProgressionLifecycle />
         <ArenaLifecycle />
+        <InstallPrompt />
         {children}
       </body>
     </html>

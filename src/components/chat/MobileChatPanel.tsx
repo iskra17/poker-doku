@@ -43,21 +43,21 @@ export default function MobileChatPanel() {
       <AnimatePresence>
         {isOpen && (
           <>
-            {/* Backdrop */}
+            {/* Backdrop — 테이블 좌석이 비쳐 보이도록 거의 투명 (탭하면 닫힘 용도만) */}
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/40 z-30"
+              className="fixed inset-0 bg-black/10 z-30"
               onClick={() => setIsOpen(false)}
             />
-            {/* Bottom sheet */}
+            {/* Bottom sheet — 반투명: 시트가 올라와도 뒤의 좌석 프로필/타이머가 어느 정도 보인다 */}
             <motion.div
               initial={{ y: '100%' }}
               animate={{ y: 0 }}
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d0818]/98 backdrop-blur-md rounded-t-2xl border-t border-purple-500/20 flex flex-col pb-safe"
+              className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d0818]/70 backdrop-blur-[2px] rounded-t-2xl border-t border-purple-500/20 flex flex-col pb-safe"
               style={{ maxHeight: '60dvh' }}
             >
               {/* Handle */}
