@@ -410,15 +410,18 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           return 'error';
         }
         const committed = responseSnapshot.profile.selectedCharacterId;
+        const committedSkin = responseSnapshot.equipment.skin;
         protectedCharacter = {
           profileId: responseSnapshot.profile.profileId,
           value: committed,
         };
+        protectedEquipment.set('skin', committedSkin);
         set(state => ({
           snapshot: state.snapshot
             ? {
                 ...state.snapshot,
                 profile: { ...state.snapshot.profile, selectedCharacterId: committed },
+                equipment: { ...state.snapshot.equipment, skin: committedSkin },
               }
             : responseSnapshot,
           status: 'ready',

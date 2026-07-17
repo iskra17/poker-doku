@@ -226,6 +226,51 @@ describe('progression store', () => {
     });
   });
 
+  it('commits a character-cascaded skin change and protects it from stale gameplay sockets', async () => {
+    let resolveRequest!: (response: Response) => void;
+    const store = createProgressionStore({
+      fetch: vi.fn(() => new Promise<Response>(resolve => {
+        resolveRequest = resolve;
+      })),
+    });
+    store.getState().setProfileIdentity('profile-1');
+    const initial = snapshot(2);
+    initial.equipment.skin = 'skin-sakura-2';
+    initial.equipment.frame = 'frame-current';
+    store.getState().receiveSnapshot(initial);
+    const mutation = store.getState().selectCharacter('ara');
+    await vi.waitFor(() => expect(resolveRequest).toBeDefined());
+
+    const response = snapshot(2);
+    response.profile.selectedCharacterId = 'ara';
+    response.equipment.skin = null;
+    response.equipment.frame = 'frame-unrelated-response';
+    resolveRequest(progressionResponse(response));
+    await mutation;
+
+    expect(store.getState().snapshot).toMatchObject({
+      profile: { selectedCharacterId: 'ara' },
+      equipment: { skin: null, frame: 'frame-current' },
+    });
+    const staleGameplay = snapshot(9);
+    staleGameplay.equipment.skin = 'skin-sakura-2';
+    store.getState().receiveSnapshot(staleGameplay);
+    expect(store.getState().snapshot).toMatchObject({
+      profile: { dojoLevel: 9, selectedCharacterId: 'ara' },
+      equipment: { skin: null },
+    });
+
+    const caughtUp = snapshot(10);
+    caughtUp.profile.selectedCharacterId = 'ara';
+    caughtUp.equipment.skin = null;
+    store.getState().receiveSnapshot(caughtUp);
+    const newerAuthoritative = snapshot(11);
+    newerAuthoritative.profile.selectedCharacterId = 'ara';
+    newerAuthoritative.equipment.skin = 'skin-ara-2';
+    store.getState().receiveSnapshot(newerAuthoritative);
+    expect(store.getState().snapshot?.equipment.skin).toBe('skin-ara-2');
+  });
+
   it('keeps committed equipment when a stale gameplay socket arrives during and after POST', async () => {
     let resolveRequest!: (response: Response) => void;
     let requestSignal!: AbortSignal;
