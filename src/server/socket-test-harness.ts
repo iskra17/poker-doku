@@ -218,6 +218,7 @@ export async function createSocketTestHarness(
         arenaService.voidMatch(matchId);
       },
       createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
     })
     : undefined;
   const runtime = setupSocketHandlers(io, {
@@ -377,7 +378,7 @@ export async function createSocketTestHarness(
       closed = true;
       for (const socket of clients) socket.disconnect();
       clients.clear();
-      runtime.close();
+      await runtime.close();
       await new Promise<void>(resolve => io.close(() => resolve()));
       if (httpServer.listening) {
         await new Promise<void>((resolve, reject) => {

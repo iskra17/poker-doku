@@ -68,9 +68,9 @@ const shutdown = createServerShutdown({
     },
   },
   runtime: {
-    close: () => {
+    close: async () => {
       arenaScheduler?.close();
-      runtime?.close();
+      await runtime?.close();
     },
   },
   rateLimiter: {
@@ -159,6 +159,7 @@ function initializePersistenceAndRecover(): void {
         arenaService!.voidMatch(matchId);
       },
       createTrainingRoom: async () => null,
+      rollbackTrainingRoom: async () => undefined,
     });
   }
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.

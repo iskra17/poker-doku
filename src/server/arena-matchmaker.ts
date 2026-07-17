@@ -5,6 +5,8 @@ const RANGE_STEP_MS = 10_000;
 const FALLBACK_MS = 60_000;
 const TRAINING_OFFER_MS = 30_000;
 const MAX_SEATS = 6;
+const CLEANUP_RETRY_BASE_MS = 100;
+const CLEANUP_RETRY_MAX_MS = 5_000;
 
 export interface ArenaQueueEntry {
   readonly profileId: string;
@@ -31,11 +33,27 @@ export interface ArenaTrainingOffer {
 interface StoredOffer extends ArenaTrainingOffer {
   readonly profileId: string;
   readonly socketId: string;
+  phase: 'offered' | 'creating' | 'cleanup';
+  connected: boolean;
+  rollbackDone: boolean;
+  cleanupAttempts: number;
+  retryAt?: number;
+  result?: ArenaReservation | null;
+  operation?: Promise<void>;
+  completion: Promise<ArenaReservation | null>;
+  resolveCompletion: (result: ArenaReservation | null) => void;
 }
 
 interface CandidateState {
   readonly candidate: ArenaOfficialCandidate;
   readonly connected: Set<string>;
+  phase: 'reserving' | 'creating' | 'cleanup';
+  reservation?: ArenaReservation;
+  rollbackRequired: boolean;
+  rollbackDone: boolean;
+  voidDone: boolean;
+  cleanupAttempts: number;
+  retryAt?: number;
 }
 
 export interface ArenaMatchmakerOptions {
@@ -58,6 +76,12 @@ export interface ArenaMatchmakerOptions {
     profileId: string,
     socketId: string,
   ) => Promise<ArenaReservation | null>;
+  readonly rollbackTrainingRoom: (
+    profileId: string,
+    socketId: string,
+    offerId: string,
+    result: ArenaReservation | null,
+  ) => Promise<void>;
   readonly onQueueState?: (socketId: string, state: ArenaQueueState) => void;
   readonly onTrainingOffered?: (
     socketId: string,
@@ -113,6 +137,8 @@ export class ArenaMatchmaker {
   #started = false;
   #closed = false;
   #processing = false;
+  #processingOperation: Promise<void> | undefined;
+  #closePromise: Promise<void> | undefined;
   #events: ArenaMatchmakerEventHandlers;
 
   constructor(options: ArenaMatchmakerOptions) {
@@ -131,14 +157,19 @@ export class ArenaMatchmaker {
     this.#schedule();
   }
 
-  close(): void {
-    if (this.#closed) return;
+  close(): Promise<void> {
+    if (this.#closePromise) return this.#closePromise;
     this.#closed = true;
     if (this.#timer) (this.#options.clearTimer ?? clearTimeout)(this.#timer);
     this.#timer = undefined;
     this.#queue.clear();
-    this.#offers.clear();
-    this.#candidates.clear();
+    for (const [profileId, offer] of this.#offers) {
+      offer.connected = false;
+      if (offer.phase === 'offered') this.#offers.delete(profileId);
+    }
+    for (const state of this.#candidates.values()) state.connected.clear();
+    this.#closePromise = this.#drainClose();
+    return this.#closePromise;
   }
 
   join(entry: ArenaQueueEntry): ArenaQueueState {
@@ -163,7 +194,11 @@ export class ArenaMatchmaker {
       this.#queue.delete(profileId);
     } else {
       const offer = this.#offers.get(profileId);
-      if (!offer || offer.socketId !== socketId) return false;
+      if (
+        !offer
+        || offer.socketId !== socketId
+        || offer.phase !== 'offered'
+      ) return false;
       this.#offers.delete(profileId);
     }
     this.#events.onQueueState?.(socketId, { status: 'idle' });
@@ -176,7 +211,9 @@ export class ArenaMatchmaker {
       if (entry.socketId === socketId) this.#queue.delete(profileId);
     }
     for (const [profileId, offer] of this.#offers) {
-      if (offer.socketId === socketId) this.#offers.delete(profileId);
+      if (offer.socketId !== socketId) continue;
+      offer.connected = false;
+      if (offer.phase === 'offered') this.#offers.delete(profileId);
     }
     for (const state of this.#candidates.values()) {
       for (const entry of state.candidate.entries) {
@@ -208,12 +245,44 @@ export class ArenaMatchmaker {
     return this.#rankedQueue().map(entry => ({ ...entry }));
   }
 
-  async tick(at = this.#now()): Promise<void> {
-    if (this.#closed || this.#processing) return;
+  tick(at = this.#now()): Promise<void> {
+    if (this.#closed || this.#processing) return Promise.resolve();
     this.#processing = true;
+    const operation = this.#runTick(at);
+    this.#processingOperation = operation;
+    void operation.then(
+      () => {
+        if (this.#processingOperation === operation) {
+          this.#processingOperation = undefined;
+        }
+      },
+      () => {
+        if (this.#processingOperation === operation) {
+          this.#processingOperation = undefined;
+        }
+      },
+    );
+    return operation;
+  }
+
+  async #runTick(at: number): Promise<void> {
     try {
+      let cleanupAttempted = false;
+      for (const state of this.#candidates.values()) {
+        if (state.phase === 'cleanup' && (state.retryAt ?? 0) <= at) {
+          cleanupAttempted = true;
+          await this.#attemptOfficialCleanup(state);
+        }
+      }
+      for (const offer of this.#offers.values()) {
+        if (offer.phase === 'cleanup' && (offer.retryAt ?? 0) <= at) {
+          cleanupAttempted = true;
+          await this.#attemptTrainingCleanup(offer);
+        }
+      }
+      if (cleanupAttempted) return;
       for (const [profileId, offer] of this.#offers) {
-        if (offer.expiresAt <= at) {
+        if (offer.phase === 'offered' && offer.expiresAt <= at) {
           this.#offers.delete(profileId);
           this.#events.onQueueState?.(offer.socketId, { status: 'idle' });
         }
@@ -234,12 +303,22 @@ export class ArenaMatchmaker {
       if (at - anchor.joinedAt < FALLBACK_MS) return;
       if (selected.length === 1) {
         this.#queue.delete(anchor.profileId);
+        let resolveCompletion!: (result: ArenaReservation | null) => void;
+        const completion = new Promise<ArenaReservation | null>(resolve => {
+          resolveCompletion = resolve;
+        });
         const offer = {
           profileId: anchor.profileId,
           socketId: anchor.socketId,
           offerId: `training-${++this.#counter}`,
           expiresAt: at + TRAINING_OFFER_MS,
-        };
+          phase: 'offered',
+          connected: true,
+          rollbackDone: false,
+          cleanupAttempts: 0,
+          completion,
+          resolveCompletion,
+        } satisfies StoredOffer;
         this.#offers.set(anchor.profileId, offer);
         this.#events.onQueueState?.(anchor.socketId, {
           status: 'training-offered',
@@ -256,7 +335,7 @@ export class ArenaMatchmaker {
     }
   }
 
-  async acceptTraining(
+  acceptTraining(
     profileId: string,
     socketId: string,
     offerId: string,
@@ -267,14 +346,43 @@ export class ArenaMatchmaker {
       !offer
       || offer.socketId !== socketId
       || offer.offerId !== offerId
+      || offer.phase !== 'offered'
       || at >= offer.expiresAt
-    ) return null;
-    this.#offers.delete(profileId);
-    const result = await this.#options.createTrainingRoom(profileId, socketId);
-    if (result) this.#events.onMatchFound?.(socketId, result.matchId);
-    else this.#events.onQueueState?.(socketId, { status: 'idle' });
-    this.#schedule();
-    return result;
+    ) return Promise.resolve(null);
+    offer.phase = 'creating';
+    const operation = this.#createTraining(offer);
+    offer.operation = operation;
+    void operation.catch(() => undefined);
+    return offer.completion;
+  }
+
+  async #createTraining(offer: StoredOffer): Promise<void> {
+    let result: ArenaReservation | null = null;
+    try {
+      result = await this.#options.createTrainingRoom(
+        offer.profileId,
+        offer.socketId,
+      );
+    } catch {
+      result = null;
+    }
+    offer.operation = undefined;
+    offer.result = result;
+    if (
+      result
+      && !this.#closed
+      && this.#offers.get(offer.profileId) === offer
+      && offer.connected
+      && offer.phase === 'creating'
+    ) {
+      this.#offers.delete(offer.profileId);
+      this.#events.onMatchFound?.(offer.socketId, result.matchId);
+      offer.resolveCompletion(result);
+      this.#schedule();
+      return;
+    }
+    offer.phase = 'cleanup';
+    await this.#attemptTrainingCleanup(offer);
   }
 
   async #formOfficial(entries: readonly ArenaQueueEntry[]): Promise<void> {
@@ -287,6 +395,11 @@ export class ArenaMatchmaker {
     const state: CandidateState = {
       candidate,
       connected: new Set(entries.map(entry => entry.profileId)),
+      phase: 'reserving',
+      rollbackRequired: false,
+      rollbackDone: false,
+      voidDone: false,
+      cleanupAttempts: 0,
     };
     this.#candidates.set(candidate.candidateId, state);
     for (const entry of entries) {
@@ -309,32 +422,28 @@ export class ArenaMatchmaker {
       this.#restoreCandidate(state, false);
       return;
     }
+    state.reservation = reservation;
     if (!isValid()) {
-      await this.#options.voidOfficial(reservation.matchId);
-      this.#restoreCandidate(state, true);
+      state.phase = 'cleanup';
+      await this.#attemptOfficialCleanup(state);
       return;
     }
-    let created = false;
+    state.phase = 'creating';
+    state.rollbackRequired = true;
+    let created: boolean;
     try {
       created = await this.#options.createOfficialRoom(reservation, candidate);
     } catch {
       created = false;
     }
     if (!created) {
-      await this.#options.voidOfficial(reservation.matchId);
-      this.#restoreCandidate(state, true);
+      state.phase = 'cleanup';
+      await this.#attemptOfficialCleanup(state);
       return;
     }
     if (!isValid()) {
-      try {
-        await this.#options.rollbackOfficialRoom(reservation, candidate);
-      } finally {
-        try {
-          await this.#options.voidOfficial(reservation.matchId);
-        } finally {
-          this.#restoreCandidate(state, true);
-        }
-      }
+      state.phase = 'cleanup';
+      await this.#attemptOfficialCleanup(state);
       return;
     }
     this.#candidates.delete(candidate.candidateId);
@@ -342,6 +451,123 @@ export class ArenaMatchmaker {
       if (!state.connected.has(entry.profileId)) continue;
       this.#events.onMatchFound?.(entry.socketId, reservation.matchId);
     }
+  }
+
+  async #attemptOfficialCleanup(state: CandidateState): Promise<void> {
+    const reservation = state.reservation;
+    if (!reservation || state.phase !== 'cleanup') return;
+    state.retryAt = undefined;
+    if (state.rollbackRequired && !state.rollbackDone) {
+      try {
+        await this.#options.rollbackOfficialRoom(
+          reservation,
+          state.candidate,
+        );
+        state.rollbackDone = true;
+      } catch {
+        this.#deferCleanup(state);
+        return;
+      }
+    }
+    if (!state.voidDone) {
+      try {
+        await this.#options.voidOfficial(reservation.matchId);
+        state.voidDone = true;
+      } catch {
+        this.#deferCleanup(state);
+        return;
+      }
+    }
+    this.#restoreCandidate(state, true);
+  }
+
+  async #attemptTrainingCleanup(offer: StoredOffer): Promise<void> {
+    if (offer.phase !== 'cleanup') return;
+    offer.retryAt = undefined;
+    if (!offer.rollbackDone) {
+      try {
+        await this.#options.rollbackTrainingRoom(
+          offer.profileId,
+          offer.socketId,
+          offer.offerId,
+          offer.result ?? null,
+        );
+        offer.rollbackDone = true;
+      } catch {
+        this.#deferCleanup(offer);
+        return;
+      }
+    }
+    this.#offers.delete(offer.profileId);
+    if (!this.#closed && offer.connected) {
+      this.#events.onQueueState?.(offer.socketId, { status: 'idle' });
+    }
+    offer.resolveCompletion(null);
+    this.#schedule();
+  }
+
+  #deferCleanup(
+    state: Pick<CandidateState | StoredOffer, 'cleanupAttempts' | 'retryAt'>,
+  ): void {
+    state.cleanupAttempts += 1;
+    const exponent = Math.min(state.cleanupAttempts - 1, 20);
+    state.retryAt = this.#now() + Math.min(
+      CLEANUP_RETRY_MAX_MS,
+      CLEANUP_RETRY_BASE_MS * (2 ** exponent),
+    );
+    this.#schedule();
+  }
+
+  async #drainClose(): Promise<void> {
+    while (true) {
+      const processing = this.#processingOperation;
+      const training = [...this.#offers.values()]
+        .map(offer => offer.operation)
+        .filter((operation): operation is Promise<void> => !!operation);
+      if (processing || training.length > 0) {
+        await Promise.allSettled([
+          ...(processing ? [processing] : []),
+          ...training,
+        ]);
+        continue;
+      }
+
+      const officialCleanup = [...this.#candidates.values()]
+        .filter(state => state.phase === 'cleanup');
+      const trainingCleanup = [...this.#offers.values()]
+        .filter(offer => offer.phase === 'cleanup');
+      if (officialCleanup.length === 0 && trainingCleanup.length === 0) {
+        this.#candidates.clear();
+        this.#offers.clear();
+        if (this.#timer) {
+          (this.#options.clearTimer ?? clearTimeout)(this.#timer);
+          this.#timer = undefined;
+        }
+        return;
+      }
+
+      const nextRetryAt = Math.min(
+        ...officialCleanup.map(state => state.retryAt ?? this.#now()),
+        ...trainingCleanup.map(offer => offer.retryAt ?? this.#now()),
+      );
+      await this.#waitForCleanupRetry(Math.max(1, nextRetryAt - this.#now()));
+      for (const state of officialCleanup) {
+        await this.#attemptOfficialCleanup(state);
+      }
+      for (const offer of trainingCleanup) {
+        await this.#attemptTrainingCleanup(offer);
+      }
+    }
+  }
+
+  #waitForCleanupRetry(delay: number): Promise<void> {
+    return new Promise(resolve => {
+      const setTimer = this.#options.setTimer ?? setTimeout;
+      this.#timer = setTimer(() => {
+        this.#timer = undefined;
+        resolve();
+      }, Math.min(MAX_ARENA_TIMER_DELAY_MS, Math.max(1, delay)));
+    });
   }
 
   #restoreCandidate(state: CandidateState, resetJoinedAt: boolean): void {
@@ -385,7 +611,15 @@ export class ArenaMatchmaker {
       });
     const due = [
       ...(immediate && queued.length >= 2 ? [now + 1] : queueDue),
-      ...[...this.#offers.values()].map(offer => offer.expiresAt),
+      ...[...this.#candidates.values()]
+        .filter(state => state.phase === 'cleanup')
+        .map(state => state.retryAt ?? now + 1),
+      ...[...this.#offers.values()]
+        .filter(offer => offer.phase === 'offered')
+        .map(offer => offer.expiresAt),
+      ...[...this.#offers.values()]
+        .filter(offer => offer.phase === 'cleanup')
+        .map(offer => offer.retryAt ?? now + 1),
     ].sort((a, b) => a - b)[0];
     if (due === undefined) return;
     const delay = Math.min(

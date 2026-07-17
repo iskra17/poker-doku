@@ -82,7 +82,7 @@ export interface SocketRuntime {
     profileId: string,
     snapshot: import('../lib/progression/types').ProgressionSnapshot,
   ) => boolean;
-  close: () => void;
+  close: () => Promise<void>;
 }
 
 export interface AuthenticatedSocketData {
@@ -1610,9 +1610,9 @@ export function setupSocketHandlers(
       });
       socket?.disconnect(true);
     },
-    close: () => {
+    close: async () => {
       if (sweepTimer) clearInterval(sweepTimer);
-      arena?.matchmaker.close();
+      await arena?.matchmaker.close();
       sessions.shutdown();
       roomManager.shutdown();
     },
