@@ -809,6 +809,7 @@ export class ArenaService {
       if (
         this.#repository.listUnfinishedMatchesForSeason(season.id).length > 0
       ) fail('ARENA_PERSISTENCE_INVALID');
+      const sourceDefinitions = this.#ensureSeasonCatalog(tx, season.id);
       const nextWindow = calculateArenaSeasonWindow(
         season.endsAt,
         this.#config,
@@ -823,7 +824,7 @@ export class ArenaService {
         profiles.map(profile => [profile.profileId, profile] as const),
       );
       const rewards = new Map(
-        getArenaSeasonRewardItems(season.id).map(reward => [
+        sourceDefinitions.map(reward => [
           reward.source.rewardKey,
           reward,
         ] as const),
@@ -926,10 +927,18 @@ export class ArenaService {
       || season.startsAt !== window.startsAt
       || season.endsAt !== window.endsAt
     ) fail('ARENA_PERSISTENCE_INVALID');
-    const definitions = getArenaSeasonRewardItems(window.id);
+    this.#ensureSeasonCatalog(tx, window.id);
+    return season;
+  }
+
+  #ensureSeasonCatalog(
+    tx: ArenaTransaction,
+    seasonId: string,
+  ): ReturnType<typeof getArenaSeasonRewardItems> {
+    const definitions = getArenaSeasonRewardItems(seasonId);
     for (const definition of definitions) {
       tx.insertSeasonCatalogIfAbsent({
-        seasonId: window.id,
+        seasonId,
         itemId: definition.id,
         rewardKey: definition.source.rewardKey,
         kind: definition.kind,
@@ -937,7 +946,7 @@ export class ArenaService {
         characterId: definition.characterId ?? null,
       });
     }
-    const storedCatalog = this.#repository.listSeasonCatalog(window.id);
+    const storedCatalog = this.#repository.listSeasonCatalog(seasonId);
     if (
       storedCatalog.length !== definitions.length
       || storedCatalog.some(stored => {
@@ -949,7 +958,7 @@ export class ArenaService {
           || stored.characterId !== (definition.characterId ?? null);
       })
     ) fail('ARENA_PERSISTENCE_INVALID');
-    return season;
+    return definitions;
   }
 
   #ensureProfile(
