@@ -141,3 +141,107 @@ describe('자리비움 — 턴을 붙잡지 않는다', () => {
     expect(player.status).not.toBe('sitting-out');
   });
 });
+
+/**
+ * 시간 초과 자동 마킹(sitOutAuto) 계약 — 명시적 자리비움과 달리 같은 핸드 안에서는
+ * 매 스트리트 기본 턴 시간을 그대로 준다. 회귀: 플랍에서 한 번 시간 초과로 자동 체크되면
+ * 턴/리버에서도 1초 만에 즉시 체크돼 버리던 문제 (2026-07-18).
+ */
+describe('시간 초과 자동 마킹 — 같은 핸드에선 매 스트리트 기본 시간을 보장한다', () => {
+  let manager: RoomManager;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = new RoomManager(() => {}, () => {});
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  /** 현재 액터를 체크/콜로 진행 (무한 루프 방지 가드 포함) */
+  function act(roomId: string): void {
+    const st = manager.getRoom(roomId)!.engine.state;
+    const p = st.players[st.activePlayerIndex];
+    const ok = manager.processPlayerAction(
+      roomId, p.id, p.currentBet >= st.currentBet ? 'check' : 'call',
+    );
+    expect(ok).toBe(true);
+  }
+
+  /** 현재 스트리트가 끝날 때까지 나머지 액터들을 체크/콜로 진행 */
+  function finishStreet(roomId: string, street: string): void {
+    const st = manager.getRoom(roomId)!.engine.state;
+    for (let i = 0; i < 10 && st.isHandInProgress && st.street === street; i++) act(roomId);
+  }
+
+  /** 프리플랍을 콜/체크로 마감하고, 플랍 첫 액터를 8초 시간 초과시켜 자동 마킹 상태로 만든다 */
+  function timeoutOnFlop(roomId: string): Player {
+    const st = manager.getRoom(roomId)!.engine.state;
+    finishStreet(roomId, 'preflop');
+    expect(st.street).toBe('flop');
+
+    const target = st.players[st.activePlayerIndex];
+    vi.advanceTimersByTime(8100); // 기본 턴 시간(8초) 소진 → 자동 체크 + 자동 마킹
+    expect(target.sitOutNext).toBe(true);
+    expect(target.sitOutAuto).toBe(true);
+    return target;
+  }
+
+  it('플랍 시간 초과 후에도 턴 스트리트에서 기본 턴 타이머가 다시 주어진다 (1초 자동 처리 아님)', () => {
+    const roomId = startedRoom(manager);
+    const st = manager.getRoom(roomId)!.engine.state;
+    const target = timeoutOnFlop(roomId);
+
+    finishStreet(roomId, 'flop');
+    expect(st.street).toBe('turn');
+    expect(st.players[st.activePlayerIndex].id).toBe(target.id);
+
+    // 기본 턴 타이머(8초)가 돌아야 한다 — 즉시 자동 처리 경로는 deadline을 세팅하지 않는다
+    expect(manager.getTurnTimeRemaining(roomId)).toBeGreaterThan(5000);
+
+    // 2초가 지나도 여전히 본인 턴 (버그 시절엔 1초 만에 자동 체크로 턴이 넘어갔다)
+    vi.advanceTimersByTime(2000);
+    expect(st.players[st.activePlayerIndex].id).toBe(target.id);
+
+    // 기본 시간을 다 쓰면 그제야 자동 체크
+    vi.advanceTimersByTime(6200);
+    const stillMyTurn = st.isHandInProgress && st.players[st.activePlayerIndex].id === target.id;
+    expect(stillMyTurn).toBe(false);
+  });
+
+  it('자동 마킹 상태에서 본인이 액션하면 마킹이 풀려 자동 복귀한다', () => {
+    const roomId = startedRoom(manager);
+    const st = manager.getRoom(roomId)!.engine.state;
+    const target = timeoutOnFlop(roomId);
+
+    finishStreet(roomId, 'flop');
+    expect(st.players[st.activePlayerIndex].id).toBe(target.id);
+
+    manager.processPlayerAction(roomId, target.id, 'check');
+    expect(target.sitOutNext).toBe(false);
+    expect(target.sitOutAuto).toBeFalsy();
+  });
+
+  it('끝내 액션하지 않으면 다음 핸드부터 일반 자리비움으로 전환된다 (캐시: 딜인 제외)', () => {
+    const roomId = startedRoom(manager);
+    const target = timeoutOnFlop(roomId);
+
+    // 턴/리버는 target 시간 초과 + 나머지 체크로 핸드를 끝까지 진행
+    for (const street of ['flop', 'turn', 'river']) {
+      finishStreet(roomId, street);
+      const st = manager.getRoom(roomId)!.engine.state;
+      if (!st.isHandInProgress) break;
+      if (st.players[st.activePlayerIndex].id === target.id) vi.advanceTimersByTime(8100);
+    }
+    // 쇼다운 정산 + 다음 핸드 예약(승리 연출 6.5초) 소화
+    vi.advanceTimersByTime(8000);
+
+    const st = manager.getRoom(roomId)!.engine.state;
+    const seat = st.players.find(p => p.id === target.id)!;
+    expect(st.isHandInProgress).toBe(true); // 남은 2명으로 다음 핸드 진행
+    expect(seat.status).toBe('sitting-out'); // 자동 마킹 → 일반 자리비움 전환으로 딜인 제외
+    expect(seat.sitOutAuto).toBeFalsy();
+  });
+});

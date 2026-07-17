@@ -59,6 +59,12 @@ export interface Player {
   finishPlace?: number; // 시트앤고 최종 순위 (탈락/우승 시 확정)
   handStartChips?: number; // 핸드 시작 시점 스택 — 동시 탈락 순위 판정용
   sitOutNext?: boolean; // 자리비움 — 캐시: 다음 핸드부터 sitting-out / SnG: 딜인 유지 + 자동 폴드(away)
+  /**
+   * 턴 시간 초과로 인한 자동 자리비움 마킹 (명시적 자리비움과 구분).
+   * 같은 핸드 안에서는 매 스트리트 기본 턴 시간을 그대로 주고(1초 자동 처리 제외),
+   * 본인이 액션하면 마킹째 해제된다. 핸드가 끝나면 소멸 — 다음 핸드부터는 일반 자리비움 취급.
+   */
+  sitOutAuto?: boolean;
   sitOutSinceHand?: number; // 캐시 자리비움 시작 시점의 handNumber — 경과 핸드로 미납 블라인드(≈오르빗) 산정
   timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준

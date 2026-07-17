@@ -956,6 +956,9 @@ export class RoomManager {
     // SnG: 자리비움/끊김도 딜인 유지 — 블라인드는 계속 나가고 턴은 자동 폴드 (블라인드 회피 방지).
     const isSng = !!tournament;
     for (const p of room.engine.state.players) {
+      // 시간 초과 자동 마킹은 해당 핸드 안에서만 유효 — 새 핸드부터는 일반 자리비움 취급
+      // (캐시: 딜인 제외 / SnG: away 자동 폴드로 복귀. 안 그러면 부재 좌석이 매 핸드 테이블을 붙잡는다)
+      p.sitOutAuto = undefined;
       if (p.chips > 0) {
         const out = !isSng && (p.isDisconnected || p.sitOutNext);
         p.status = out ? 'sitting-out' : 'waiting';
@@ -1121,10 +1124,13 @@ export class RoomManager {
         && current.engine.state.isHandInProgress
         && !stillActive.sitOutNext && stillActive.status !== 'sitting-out'
       ) {
+        // 자동 마킹(sitOutAuto)은 명시적 자리비움과 다르다 — 같은 핸드의 남은 스트리트에서는
+        // 기본 턴 시간을 그대로 주고, 본인이 액션하면 즉시 해제된다 (잠깐 자리 비운 사람 보호)
         stillActive.sitOutNext = true;
+        stillActive.sitOutAuto = true;
         this.sendSystemChat(
           roomId,
-          `${stillActive.name}님이 응답이 없어 자리비움 처리됐어요 — [게임 복귀]를 누르면 다시 참여해요.`,
+          `${stillActive.name}님이 응답이 없어 자리비움 처리됐어요 — 다시 액션하거나 [게임 복귀]를 누르면 참여해요.`,
         );
       }
       this.autoActFor(roomId, activePlayer.id, '시간 초과');
@@ -1184,6 +1190,7 @@ export class RoomManager {
     if (sittingOut) {
       // --- 게임 복귀 ---
       player.sitOutNext = false;
+      player.sitOutAuto = undefined;
       player.sitOutSinceHand = undefined;
       this.cancelSitOutAbandon(roomId, playerId);
       if (player.status === 'sitting-out' && player.chips > 0 && !player.isDisconnected) {
@@ -1200,8 +1207,9 @@ export class RoomManager {
       return true;
     }
 
-    // --- 자리비움 시작 ---
+    // --- 자리비움 시작 --- (명시 선언이므로 시간 초과 자동 마킹은 소거 — 턴 즉시 자동 처리 대상)
     player.sitOutNext = true;
+    player.sitOutAuto = undefined;
     const inHand = room.engine.state.isHandInProgress
       && (player.status === 'active' || player.status === 'all-in');
     // 캐시는 핸드에 끼어 있지 않으면 즉시 자리비움 확정 (핸드 중이면 다음 핸드 딜인에서 제외된다)
@@ -1235,6 +1243,9 @@ export class RoomManager {
 
     const already = player.sitOutNext || player.status === 'sitting-out';
     if (!already) this.toggleSitOut(roomId, playerId);
+    // 방을 떠나는 것도 명시적 부재 선언 — 시간 초과 마킹의 '기본 시간 보장'을 해제해
+    // 남은 턴이 1초 자동 처리되게 한다 (떠난 사람을 스트리트마다 8초씩 기다리지 않게)
+    player.sitOutAuto = undefined;
 
     // 떠난 뒤 지금이 본인 턴이면(핸드 중 이탈) 즉시 자동 처리 — 남은 플레이어가 기다리지 않게
     if (room.engine.state.isHandInProgress) {
@@ -1458,11 +1469,14 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer) return;
 
-    // 즉시 자동 처리 대상: 접속 끊김(부재) 또는 자리비움(캐시·SnG 공통).
+    // 즉시 자동 처리 대상: 접속 끊김(부재) 또는 명시적 자리비움(캐시·SnG 공통).
     // 자리비움은 "나는 이 자리에 없다"는 선언이므로 그 사람의 턴을 기다리지 않는다 — 기다리면
     // 타임뱅크까지 소진되며 테이블이 최대 38초 멈춘다. 팟에 이미 넣은 칩은 체크 가능하면
     // 체크로 지켜진다(autoActFor). 캐시/SnG 차이는 딜인 여부일 뿐 턴 처리는 동일.
-    const autoAct = activePlayer.isDisconnected || !!activePlayer.sitOutNext;
+    // 단, 시간 초과 자동 마킹(sitOutAuto)은 예외 — 같은 핸드의 남은 스트리트에서는 매번
+    // 기본 턴 시간을 그대로 준다 (플랍 타임아웃이 턴/리버 즉시 체크로 번지지 않게).
+    const autoAct = activePlayer.isDisconnected
+      || (!!activePlayer.sitOutNext && !activePlayer.sitOutAuto);
     if (activePlayer.type === 'bot') {
       this.startBotLoop(roomId);
     } else if (autoAct) {
@@ -1704,6 +1718,16 @@ export class RoomManager {
     // 자동 체크/폴드가 사라져 게임이 멈춘다
     if (!result.valid) return false;
     this.clearTurnTimer(roomId);
+
+    // 시간 초과 자동 마킹은 본인 액션으로 즉시 해제 — 잠깐 자리를 비웠다 돌아온 사람이
+    // [게임 복귀]를 따로 누르지 않아도 다음 핸드에서 빠지지 않는다 (명시적 자리비움은 유지)
+    const actor = room.engine.state.players.find(p => p.id === playerId);
+    if (actor?.sitOutAuto) {
+      actor.sitOutAuto = undefined;
+      actor.sitOutNext = false;
+      actor.sitOutSinceHand = undefined;
+      this.sendSystemChat(roomId, `${actor.name}님이 게임에 복귀했습니다.`);
+    }
 
     if (result.handComplete) {
       this.handleCompletedHand(roomId);

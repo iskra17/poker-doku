@@ -92,10 +92,15 @@ npx tsc --noEmit
   기존 보존 좌석은 회수되므로(JoinRoomModal이 경고) 주의. 회귀: `room-manager.myseat.test.ts`.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
   스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 즉시 자동
-  체크/폴드 + `sitOutNext` 자리비움 마킹 (응답 없는 좌석이 매 턴 테이블을 멈추지 않게 —
-  복귀는 ActionBar [게임 복귀]). 타임칩(+30초)은 **자동 소모하지 않는다** — 본인이 턴 중에
+  체크/폴드 + `sitOutNext` 자리비움 마킹. 단 시간 초과 마킹은 `sitOutAuto`(자동)로 구분:
+  **같은 핸드의 남은 스트리트에서는 매번 기본 턴 시간을 그대로 주고**(1초 즉시 처리는 명시적
+  자리비움·접속 끊김만), 본인이 액션하면 마킹째 자동 해제, 핸드가 끝나면 일반 자리비움으로
+  전환된다(새 핸드 시작 시 `sitOutAuto` 소거 — 캐시 딜인 제외/SnG away 복귀. 부재 좌석이 매 핸드
+  테이블을 붙잡지 않게 하는 안전장치이므로 유지할 것). 복귀는 ActionBar [게임 복귀] 또는 액션.
+  타임칩(+30초)은 **자동 소모하지 않는다** — 본인이 턴 중에
   ActionBar 타임칩 버튼을 눌러야만 연장(`useTimeBank`). 부재중 좌석이 타임칩 수만큼 매 턴
   테이블을 붙잡는 문제로 2026-07-18에 자동 연장을 제거했으니 되살리지 말 것.
+  회귀: `room-manager.sitout-turn.test.ts` (시간 초과 마킹 스트리트별 기본 시간 보장 포함).
 - **액션 규칙**: `computeValidActions(state, player)` (engine.ts export)가 **단일 소스** —
   서버 `PokerEngine.getValidActions`와 클라 `ActionBar` 버튼 노출이 **같은 함수**를 쓴다.
   규칙을 양쪽에 각각 구현하지 말 것: 어긋나면 "버튼은 보이는데 서버가 거부하는" 먹통 버튼이 된다
