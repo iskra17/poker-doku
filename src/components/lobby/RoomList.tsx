@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 import Button from '../ui/Button';
-import HelpModal from '../help/HelpModal';
 
 interface RoomListProps {
   onJoin: (roomId: string) => void;
@@ -89,7 +88,6 @@ function applyFilters(rooms: RoomInfo[], mode: ModeFilter, type: TypeFilter, joi
 
 export default function RoomList({ onJoin }: RoomListProps) {
   const { rooms } = useGameStore();
-  const [helpOpen, setHelpOpen] = useState(false);
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [joinableOnly, setJoinableOnly] = useState(false);
@@ -103,23 +101,18 @@ export default function RoomList({ onJoin }: RoomListProps) {
   const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
 
   return (
-    <div className="max-w-3xl mx-auto px-3 md:px-4">
-      <div className="flex items-center justify-between mb-3 md:mb-4">
+    // 헤더/복귀 배너/필터는 고정, 테이블 목록만 내부 스크롤 — 테이블이 늘어나도 컨트롤이 화면 밖으로 밀리지 않는다
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-3 md:px-4">
+      <div className="flex flex-none items-center justify-between mb-2 md:mb-3">
         <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => setHelpOpen(true)}>
-            ❓ 도움말
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => useGameStore.getState().setShowCreateRoom(true)}
-          >
-            + 방 만들기
-          </Button>
-        </div>
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => useGameStore.getState().setShowCreateRoom(true)}
+        >
+          + 방 만들기
+        </Button>
       </div>
-      <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
 
       {/* 보존 중인 내 좌석 — 자리비움으로 나온 테이블은 바이인/설정 없이 한 번에 복귀 */}
       {myRooms.map(room => (
@@ -127,7 +120,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
           key={`mine-${room.id}`}
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-3 bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
+          className="mb-3 flex-none bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
         >
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 min-w-0">
@@ -145,7 +138,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
       ))}
 
       {/* 필터/정렬 바 */}
-      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+      <div className="flex flex-none flex-wrap items-center gap-1.5 mb-2">
         <div className="flex rounded-lg border border-mystic/20 overflow-hidden">
           {MODE_FILTERS.map(f => (
             <button
@@ -195,7 +188,8 @@ export default function RoomList({ onJoin }: RoomListProps) {
         </button>
       </div>
 
-      <div className="space-y-2 md:space-y-3">
+      {/* 테이블 목록 — 유일한 스크롤 영역 */}
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-4 scrollbar-thin md:space-y-3">
         {visible.map((room, i) => (
           <motion.div
             key={room.id}

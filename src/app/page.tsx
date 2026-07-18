@@ -15,6 +15,7 @@ import SettingsModal from '@/components/layout/SettingsModal';
 import FeedbackModal from '@/components/lobby/FeedbackModal';
 import HandHistoryModal from '@/components/history/HandHistoryModal';
 import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
+import HelpModal from '@/components/help/HelpModal';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
 import ArenaLobby from '@/components/arena/ArenaLobby';
 import { useArenaStore } from '@/lib/store/arena-store';
@@ -34,6 +35,7 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [lobbyView, setLobbyView] = useState<'games' | 'arena' | 'missions'>('games');
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
@@ -109,14 +111,17 @@ export default function Home() {
   }
 
   return (
-    <div className="h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
+    // 고정 헤더/프로필/탭 + 콘텐츠 영역만 내부 스크롤 — 테이블이 늘어나도 상단 UI는 제자리
+    <div className="flex h-dvh flex-col overflow-hidden pt-safe" style={LOBBY_BG_STYLE}>
       <LobbyHeader
+        compact
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
+        onOpenHelp={() => setHelpOpen(true)}
       />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
-      <nav aria-label="로비 메뉴" className="mx-auto mb-4 grid w-full max-w-4xl grid-cols-3 gap-2 px-4">
+      <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-3 gap-2 px-3 md:px-4">
         {([
           ['games', '일반 게임', '친구·봇과 자유롭게'],
           ['arena', '포커 아레나', '시즌 공식 경쟁'],
@@ -127,38 +132,51 @@ export default function Home() {
             type="button"
             onClick={() => setLobbyView(value)}
             aria-pressed={lobbyView === value}
-            className={`rounded-2xl border p-3 text-left ${
+            className={`rounded-2xl border p-2 text-left md:p-3 ${
               lobbyView === value
                 ? 'border-blossom/50 bg-blossom/15'
                 : 'border-mystic/25 bg-panel/85'
             }`}
           >
             <span className="block text-sm font-bold text-ink">{title}</span>
-            <span className="mt-1 block text-[10px] text-ink-dim">{description}</span>
+            <span className="mt-0.5 block text-[10px] text-ink-dim">{description}</span>
           </button>
         ))}
       </nav>
-      {lobbyView === 'missions' && <MissionPanel />}
-      {lobbyView === 'arena' && <ArenaLobby />}
-      {lobbyView === 'games' && <div className="py-4">
-        {joinError && <p className="mb-3 text-center text-xs text-blossom">{joinError}</p>}
-        {pendingRoomId && <p className="mb-3 text-center text-xs text-gilded">입장 확인 중…</p>}
-        {inviteNotFound && (
-          <p className="mb-3 text-center text-xs text-blossom">
-            초대받은 방을 찾을 수 없어요 — 이미 종료됐을 수 있어요.
-          </p>
+      <main className="min-h-0 flex-1">
+        {lobbyView === 'missions' && (
+          <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><MissionPanel /></div>
         )}
-        {inviteRoom?.locked && (
-          <p className="mb-3 text-center text-xs text-blossom">
-            초대받은 Sit &amp; Go가 이미 시작됐어요.
-          </p>
+        {lobbyView === 'arena' && (
+          <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><ArenaLobby /></div>
         )}
-        <RoomList onJoin={handleJoinRoom} />
-      </div>}
+        {lobbyView === 'games' && (
+          <div className="flex h-full min-h-0 flex-col pt-1">
+            {(joinError || pendingRoomId || inviteNotFound || inviteRoom?.locked) && (
+              <div className="flex-none">
+                {joinError && <p className="mb-2 text-center text-xs text-blossom">{joinError}</p>}
+                {pendingRoomId && <p className="mb-2 text-center text-xs text-gilded">입장 확인 중…</p>}
+                {inviteNotFound && (
+                  <p className="mb-2 text-center text-xs text-blossom">
+                    초대받은 방을 찾을 수 없어요 — 이미 종료됐을 수 있어요.
+                  </p>
+                )}
+                {inviteRoom?.locked && (
+                  <p className="mb-2 text-center text-xs text-blossom">
+                    초대받은 Sit &amp; Go가 이미 시작됐어요.
+                  </p>
+                )}
+              </div>
+            )}
+            <RoomList onJoin={handleJoinRoom} />
+          </div>
+        )}
+      </main>
       <CreateRoomModal />
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
       {activeJoinTarget && (
         <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
       )}

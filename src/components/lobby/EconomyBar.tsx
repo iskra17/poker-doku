@@ -38,9 +38,10 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
     ? balance.dojoXpForNextLevel(progression.profile.dojoLevel) : 0;
 
   return (
-    <section className="mx-auto mb-4 w-full max-w-4xl px-4">
-      <div className="rounded-2xl border border-mystic/20 bg-panel/85 p-4 backdrop-blur-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <section className="mx-auto mb-2 w-full max-w-4xl px-3 md:px-4">
+      <div className="rounded-2xl border border-mystic/20 bg-panel/85 p-3 backdrop-blur-sm">
+        {/* 한 줄 통합: 프로필 | 도장 레벨(우측 빈공간 활용) | 버튼. 좁은 화면에선 자연 줄바꿈 */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 items-center gap-3">
             <span className="block h-11 w-11 shrink-0 overflow-hidden rounded-full border border-mystic/40">
               <CharacterImage
@@ -55,18 +56,23 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
               <p className="text-xs text-ink-dim">
                 지갑 <span className="font-bold text-gilded">{profile.wallet.balance.toLocaleString('ko-KR')}칩</span>
                 {activeSeatChips !== null && <> · 좌석 {activeSeatChips.toLocaleString('ko-KR')}칩</>}
+                {arenaSnapshot?.enabled && (
+                  <> · 경기권 <span className="font-bold text-mystic">{arenaSnapshot.profile.availableTickets}장</span></>
+                )}
               </p>
-              {arenaSnapshot?.enabled && (
-                <p className="mt-0.5 text-[11px] text-ink-dim">
-                  아레나 경기권{' '}
-                  <span className="font-bold text-mystic">
-                    {arenaSnapshot.profile.availableTickets}장
-                  </span>
-                </p>
-              )}
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          {progression && balance && (
+            <div className="min-w-[150px] max-w-[240px] flex-1">
+              <div className="flex justify-between text-[11px]">
+                <span className="font-bold text-mystic">도장 Lv.{progression.profile.dojoLevel}</span>
+                <span className="text-ink-dim">{dojoThreshold ? `${milliToUiUnits(progression.profile.dojoXpMilli)}/${milliToUiUnits(dojoThreshold)} XP` : '최고 레벨'}</span>
+              </div>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-abyss"><div className="h-full bg-mystic" style={{ width: dojoThreshold ? `${Math.floor(progression.profile.dojoXpMilli / dojoThreshold * 100)}%` : '100%' }} /></div>
+              <p className="mt-0.5 text-[10px] text-ink-dim">인연 <span className="font-bold text-blossom">Lv.{selectedAffinity?.level ?? 1}</span></p>
+            </div>
+          )}
+          <div className="ml-auto flex items-center gap-2">
             {recoveryWarning && (
               <button
                 type="button"
@@ -108,15 +114,6 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
             >
               {action === 'rescue' ? '지원 중…' : `${economy.rescue.grantAmount.toLocaleString('ko-KR')}칩 받기`}
             </Button>
-          </div>
-        )}
-        {progression && balance && (
-          <div className="mt-3 grid gap-2 border-t border-mystic/20 pt-3 md:grid-cols-2">
-            <div>
-              <div className="flex justify-between text-[11px]"><span className="font-bold text-mystic">도장 Lv.{progression.profile.dojoLevel}</span><span className="text-ink-dim">{dojoThreshold ? `${milliToUiUnits(progression.profile.dojoXpMilli)}/${milliToUiUnits(dojoThreshold)} XP` : '최고 레벨'}</span></div>
-              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-abyss"><div className="h-full bg-mystic" style={{ width: dojoThreshold ? `${Math.floor(progression.profile.dojoXpMilli / dojoThreshold * 100)}%` : '100%' }} /></div>
-            </div>
-            <div className="text-[11px] text-ink-dim">선택 캐릭터 인연 <span className="font-bold text-blossom">Lv.{selectedAffinity?.level ?? 1}</span></div>
           </div>
         )}
         {error && <p className="mt-2 text-center text-xs text-blossom">{error}</p>}
