@@ -53,6 +53,12 @@ interface SettingsStore {
   /** 좌석 칩 스택 표기 (칩 부분 터치로 토글) */
   chipDisplayMode: ChipDisplayMode;
   toggleChipDisplayMode: () => void;
+  /** 핸드 히스토리 금액 표기 — 칩 / BB 환산 (GGPoker 방식) */
+  historyBBView: boolean;
+  toggleHistoryBBView: () => void;
+  /** 핸드 히스토리에서 닉네임을 지우고 포지션만 표시 (GGPoker 방식) */
+  historyHideNames: boolean;
+  toggleHistoryHideNames: () => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -83,6 +89,10 @@ export const useSettingsStore = create<SettingsStore>()(
       toggleStackedPot: () => set(s => ({ stackedPot: !s.stackedPot })),
       chipDisplayMode: 'chips',
       toggleChipDisplayMode: () => set(s => ({ chipDisplayMode: s.chipDisplayMode === 'chips' ? 'bb' : 'chips' })),
+      historyBBView: false,
+      toggleHistoryBBView: () => set(s => ({ historyBBView: !s.historyBBView })),
+      historyHideNames: false,
+      toggleHistoryHideNames: () => set(s => ({ historyHideNames: !s.historyHideNames })),
     }),
     {
       name: 'poker-doku-settings',

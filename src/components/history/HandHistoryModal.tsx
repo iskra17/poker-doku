@@ -4,16 +4,18 @@ import { useCallback, useEffect, useState } from 'react';
 import Modal from '../ui/Modal';
 import CardComponent from '../table/Card';
 import { HAND_RANK_KO } from '@/lib/poker/evaluator';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import type {
-  HandHistoryAction,
+  CompletedHandRecord,
   HandHistoryDetail,
   HandHistorySummary,
 } from '@/lib/poker/hand-history';
 import type { Card, Street } from '@/lib/poker/types';
 
 /**
- * 핸드 히스토리 (GGPoker PokerCraft Game History 벤치마킹):
- * 목록(내 홀카드·보드·수익) → 핸드 클릭 시 스트리트별 액션 리플레이 상세.
+ * 핸드 히스토리 (GGPoker PokerCraft + WPL 리플레이 벤치마킹):
+ * 목록(내 홀카드·보드·수익) → 상세는 블라인드~리버 5개 스트리트 컬럼에 액션을 세로로 쌓아
+ * 스크롤 없이 한 화면에 담는다. 금액 칩/BB 토글·닉네임/포지션 토글은 GGPoker 방식.
  * 데이터는 /api/hands (프로필 쿠키 인증, 본인 핸드만).
  */
 interface HandHistoryModalProps {
@@ -22,22 +24,42 @@ interface HandHistoryModalProps {
 }
 
 type HandDetail = HandHistoryDetail & { id: number };
+type PlayStreet = Exclude<Street, 'showdown'>;
 
 const LOAD_ERROR = '핸드 히스토리를 불러오지 못했어요. 잠시 후 다시 시도해주세요.';
-const STREET_LABEL: Record<Exclude<Street, 'showdown'>, string> = {
+const STREET_ORDER: PlayStreet[] = ['preflop', 'flop', 'turn', 'river'];
+const STREET_LABEL: Record<PlayStreet, string> = {
   preflop: '프리플랍',
   flop: '플랍',
   turn: '턴',
   river: '리버',
 };
-const STREET_ORDER: Exclude<Street, 'showdown'>[] = ['preflop', 'flop', 'turn', 'river'];
+/** 포지션별 식별 색 — GG의 좌석 컬러처럼 컬럼을 훑을 때 같은 플레이어를 쉽게 따라가게 한다 */
+const POSITION_COLOR: Record<string, string> = {
+  'BTN': 'text-gilded',
+  'BTN/SB': 'text-gilded',
+  'SB': 'text-cyber',
+  'BB': 'text-blossom',
+  'UTG': 'text-mystic',
+  'HJ': 'text-emerald-400',
+  'CO': 'text-orange-300',
+};
 
 function formatChips(amount: number): string {
   return amount.toLocaleString('ko-KR');
 }
 
-function formatProfit(amount: number): string {
-  return `${amount > 0 ? '+' : ''}${formatChips(amount)}`;
+/** BB 환산 — 소수 1자리, 정수면 소수점 생략 */
+function formatBB(amount: number, bigBlind: number): string {
+  const bb = amount / Math.max(1, bigBlind);
+  const rounded = Math.round(bb * 10) / 10;
+  return `${Number.isInteger(rounded) ? rounded : rounded.toFixed(1)} BB`;
+}
+
+function formatProfit(amount: number, inBB: boolean, bigBlind: number): string {
+  const sign = amount > 0 ? '+' : amount < 0 ? '-' : '';
+  const abs = Math.abs(amount);
+  return `${sign}${inBB ? formatBB(abs, bigBlind) : formatChips(abs)}`;
 }
 
 function profitColor(amount: number): string {
@@ -55,26 +77,71 @@ function formatPlayedAt(playedAt: number): string {
   });
 }
 
-function actionLabel(action: HandHistoryAction): string {
-  switch (action.kind) {
-    case 'post-sb': return `SB ${formatChips(action.amount)}`;
-    case 'post-bb': return `BB ${formatChips(action.amount)}`;
-    case 'fold': return '폴드';
-    case 'check': return '체크';
-    case 'call': return `콜 ${formatChips(action.amount)}`;
-    case 'raise': return `레이즈 ${formatChips(action.amount)}`;
-    case 'all-in': return `올인 ${formatChips(action.amount)}`;
-  }
-}
-
 /** 해당 스트리트에 새로 깔린 보드 카드 */
-function streetCards(street: Exclude<Street, 'showdown'>, board: Card[]): Card[] {
+function streetCards(street: PlayStreet, board: Card[]): Card[] {
   switch (street) {
     case 'preflop': return [];
     case 'flop': return board.slice(0, 3);
     case 'turn': return board.slice(3, 4);
     case 'river': return board.slice(4, 5);
   }
+}
+
+/**
+ * 스트리트 시작 시점 팟 (WPL/GG 컬럼 헤더 표기와 동일 의미 — 프리플랍은 블라인드 합).
+ * raise/all-in 액션의 amount는 "그 스트리트 총 벳"이라 플레이어별 스트리트 벳을 추적해 증분만 더한다.
+ * 도달하지 않은 스트리트는 null.
+ */
+function computeStreetStartPots(record: CompletedHandRecord): Record<PlayStreet, number | null> {
+  const startPots: Record<PlayStreet, number | null> = {
+    preflop: null, flop: null, turn: null, river: null,
+  };
+  const streetBets = new Map<string, number>();
+  let pot = 0;
+  let current: PlayStreet = 'preflop';
+  let posts = 0;
+
+  for (const action of record.actions) {
+    if (action.street !== current && action.street !== 'showdown') {
+      startPots[action.street as PlayStreet] = pot;
+      streetBets.clear();
+      current = action.street as PlayStreet;
+    }
+    switch (action.kind) {
+      case 'post-sb':
+      case 'post-bb':
+        pot += action.amount;
+        posts += action.amount;
+        streetBets.set(action.playerId, (streetBets.get(action.playerId) ?? 0) + action.amount);
+        break;
+      case 'call':
+        pot += action.amount;
+        streetBets.set(action.playerId, (streetBets.get(action.playerId) ?? 0) + action.amount);
+        break;
+      case 'raise':
+      case 'all-in': {
+        const previous = streetBets.get(action.playerId) ?? 0;
+        pot += action.amount - previous;
+        streetBets.set(action.playerId, action.amount);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  startPots.preflop = posts;
+  // 베팅 없이 런아웃된 스트리트 — 보드가 깔렸으면 진입 팟은 최종 팟과 같다
+  if (record.board.length >= 3 && startPots.flop === null) startPots.flop = pot;
+  if (record.board.length >= 4 && startPots.turn === null) startPots.turn = pot;
+  if (record.board.length >= 5 && startPots.river === null) startPots.river = pot;
+  return startPots;
+}
+
+/** 승자/쇼다운 블록을 붙일 컬럼 — 핸드가 끝난 스트리트 */
+function finalStreet(record: CompletedHandRecord): PlayStreet {
+  if (record.showdown || record.board.length >= 5) return 'river';
+  const last = record.actions[record.actions.length - 1];
+  return last && last.street !== 'showdown' ? last.street : 'preflop';
 }
 
 function MiniCards({ cards, size = '2xs' }: { cards: Card[]; size?: '2xs' | 'xs' | 'sm' }) {
@@ -87,8 +154,35 @@ function MiniCards({ cards, size = '2xs' }: { cards: Card[]; size?: '2xs' | 'xs'
   );
 }
 
-function HandListRow({ item, onSelect }: {
+/** [칩|BB] 같은 2단 세그먼트 토글 */
+function SegmentToggle({ options, active, onToggle }: {
+  options: [string, string];
+  active: 0 | 1;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex overflow-hidden rounded-lg border border-mystic/25 text-[10px] font-bold"
+    >
+      {options.map((label, index) => (
+        <span
+          key={label}
+          className={`px-2 py-1 transition-colors ${
+            active === index ? 'bg-purple-600 text-white' : 'bg-panel/60 text-ink-dim'
+          }`}
+        >
+          {label}
+        </span>
+      ))}
+    </button>
+  );
+}
+
+function HandListRow({ item, inBB, onSelect }: {
   item: HandHistorySummary;
+  inBB: boolean;
   onSelect: (id: number) => void;
 }) {
   return (
@@ -112,129 +206,202 @@ function HandListRow({ item, onSelect }: {
         ? <MiniCards cards={item.board} />
         : <span className="text-[10px] text-ink-dim/60">보드 없음</span>}
       <span className={`w-16 shrink-0 text-right text-xs font-bold ${profitColor(item.profit)}`}>
-        {formatProfit(item.profit)}
+        {formatProfit(item.profit, inBB, item.bigBlind)}
       </span>
     </button>
   );
 }
 
 function HandDetailView({ hand, onBack }: { hand: HandDetail; onBack: () => void }) {
+  const inBB = useSettingsStore(s => s.historyBBView);
+  const toggleBB = useSettingsStore(s => s.toggleHistoryBBView);
+  const hideNames = useSettingsStore(s => s.historyHideNames);
+  const toggleNames = useSettingsStore(s => s.toggleHistoryHideNames);
+
   const playerById = new Map(hand.players.map(p => [p.id, p]));
   const hero = playerById.get(hand.heroId);
-  const nameOf = (playerId: string): string => playerById.get(playerId)?.name ?? playerId;
-  const revealedPlayers = hand.players.filter(p => p.revealed && p.holeCards);
+  const startPots = computeStreetStartPots(hand);
+  const resultStreet = finalStreet(hand);
+  const amountText = (amount: number) => inBB ? formatBB(amount, hand.bigBlind) : formatChips(amount);
+
+  const positionOf = (playerId: string) => playerById.get(playerId)?.position ?? '?';
+  const displayName = (playerId: string) => {
+    const player = playerById.get(playerId);
+    if (!player) return '?';
+    return player.id === hand.heroId ? '나' : player.name;
+  };
+
+  const actionText = (kind: string, amount: number): string => {
+    switch (kind) {
+      case 'post-sb': return `SB ${amountText(amount)}`;
+      case 'post-bb': return `BB ${amountText(amount)}`;
+      case 'fold': return '폴드';
+      case 'check': return '체크';
+      case 'call': return `콜 ${amountText(amount)}`;
+      case 'raise': return `레이즈 ${amountText(amount)}`;
+      case 'all-in': return `올인 ${amountText(amount)}`;
+      default: return kind;
+    }
+  };
+
+  // 블라인드 포스팅은 별도 컬럼 (WPL 방식) — 프리플랍 컬럼은 실제 액션만
+  const postActions = hand.actions.filter(a => a.kind === 'post-sb' || a.kind === 'post-bb');
+  const streetActions = (street: PlayStreet) =>
+    hand.actions.filter(a => a.street === street && a.kind !== 'post-sb' && a.kind !== 'post-bb');
+
+  const winnersByPlayer = new Map<string, number>();
+  for (const w of hand.winners) {
+    winnersByPlayer.set(w.playerId, (winnersByPlayer.get(w.playerId) ?? 0) + w.amount);
+  }
+  const revealedLosers = hand.players.filter(
+    p => p.revealed && p.holeCards && !winnersByPlayer.has(p.id),
+  );
+
+  const actionCell = (playerId: string, text: string, emphasized: boolean, key: string) => {
+    const isHero = playerId === hand.heroId;
+    return (
+      <div
+        key={key}
+        className={`rounded-md border px-1 py-0.5 ${
+          isHero ? 'border-blossom/40 bg-blossom/10' : 'border-mystic/15 bg-panel/70'
+        }`}
+      >
+        {!hideNames && (
+          <p className="truncate text-[9px] leading-tight text-ink-dim">{displayName(playerId)}</p>
+        )}
+        <p className="text-[10px] leading-tight">
+          <span className={`font-bold ${POSITION_COLOR[positionOf(playerId)] ?? 'text-ink-dim'}`}>
+            {positionOf(playerId)}
+          </span>{' '}
+          <span className={emphasized ? 'font-bold text-ink' : 'text-ink-dim'}>{text}</span>
+        </p>
+      </div>
+    );
+  };
+
+  /** 승자·쇼다운 결과 블록 — 핸드가 끝난 스트리트 컬럼 맨 아래에 붙는다 */
+  const resultBlock = (
+    <div className="space-y-1">
+      {hand.winners.map((winner, index) => {
+        const player = playerById.get(winner.playerId);
+        const isHero = winner.playerId === hand.heroId;
+        return (
+          <div
+            key={`win-${index}`}
+            className={`rounded-md border px-1 py-1 ${
+              isHero ? 'border-gilded/60 bg-gilded/15' : 'border-gilded/30 bg-panel/70'
+            }`}
+          >
+            <p className="text-[9px] leading-tight text-ink-dim">
+              🏆 <span className={`font-bold ${POSITION_COLOR[positionOf(winner.playerId)] ?? ''}`}>
+                {positionOf(winner.playerId)}
+              </span>
+              {!hideNames && <span className="ml-0.5">{displayName(winner.playerId)}</span>}
+            </p>
+            <p className="text-[10px] font-bold leading-tight text-gilded">+{amountText(winner.amount)}</p>
+            {winner.handRank && (
+              <p className="text-[9px] leading-tight text-gilded/80">{HAND_RANK_KO[winner.handRank]}</p>
+            )}
+            {player?.revealed && player.holeCards && (
+              <div className="mt-0.5"><MiniCards cards={player.holeCards} /></div>
+            )}
+          </div>
+        );
+      })}
+      {revealedLosers.map(player => (
+        <div key={`shown-${player.id}`} className="rounded-md border border-mystic/15 bg-panel/70 px-1 py-1">
+          <p className="text-[9px] leading-tight text-ink-dim">
+            <span className={`font-bold ${POSITION_COLOR[player.position] ?? ''}`}>{player.position}</span>
+            {!hideNames && <span className="ml-0.5">{player.id === hand.heroId ? '나' : player.name}</span>}
+          </p>
+          <div className="mt-0.5"><MiniCards cards={player.holeCards!} /></div>
+          {player.handRank && (
+            <p className="text-[9px] leading-tight text-ink-dim">{HAND_RANK_KO[player.handRank]}</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 
   return (
-    <div className="space-y-4">
-      <button
-        type="button"
-        onClick={onBack}
-        className="rounded-lg border border-mystic/25 bg-panel/85 px-3 py-1.5 text-xs text-ink-dim transition-colors hover:text-ink"
-      >
-        ← 목록으로
-      </button>
-
-      <div className="rounded-xl border border-mystic/20 bg-panel/85 p-3">
-        <p className="text-xs font-bold text-ink">
-          {hand.roomName} <span className="font-normal text-ink-dim">#{hand.handNumber}</span>
-        </p>
-        <p className="mt-0.5 text-[10px] text-ink-dim">
-          {formatPlayedAt(hand.playedAt)} · 블라인드 {formatChips(hand.smallBlind)}/{formatChips(hand.bigBlind)}
-          {hand.gameMode === 'sng' ? ' · Sit & Go' : ''}
-        </p>
-        {hero && (
-          <div className="mt-2 flex items-center gap-3">
-            {hero.holeCards && <MiniCards cards={hero.holeCards} size="sm" />}
-            <div>
-              <p className="text-[10px] text-ink-dim">
-                내 포지션 <span className="font-bold text-cyber">{hero.position}</span>
-              </p>
-              <p className={`text-sm font-bold ${profitColor(hero.profit)}`}>
-                {formatProfit(hero.profit)}
-              </p>
-              {hero.handRank && (
-                <p className="text-[10px] text-gilded">{HAND_RANK_KO[hero.handRank]}</p>
-              )}
-            </div>
-          </div>
-        )}
+    <div className="space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded-lg border border-mystic/25 bg-panel/85 px-2.5 py-1 text-xs text-ink-dim transition-colors hover:text-ink"
+        >
+          ← 목록
+        </button>
+        <div className="flex gap-1.5">
+          <SegmentToggle options={['칩', 'BB']} active={inBB ? 1 : 0} onToggle={toggleBB} />
+          <SegmentToggle options={['닉네임', '포지션']} active={hideNames ? 1 : 0} onToggle={toggleNames} />
+        </div>
       </div>
 
-      <div className="space-y-3">
+      {/* 요약 헤더 — 결과·내 카드·메타를 한 줄에 (보드는 스트리트 컬럼에서 공개) */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-mystic/20 bg-panel/85 px-3 py-2">
+        {hero?.holeCards && <MiniCards cards={hero.holeCards} size="xs" />}
+        {hero && (
+          <span className={`text-base font-bold ${profitColor(hero.profit)}`}>
+            {formatProfit(hero.profit, inBB, hand.bigBlind)}
+          </span>
+        )}
+        {hero?.handRank && (
+          <span className="text-[11px] font-bold text-gilded">{HAND_RANK_KO[hero.handRank]}</span>
+        )}
+        {hero && <span className="text-[10px] text-ink-dim">내 포지션 <b className="text-cyber">{hero.position}</b></span>}
+        <span className="ml-auto text-right text-[9px] leading-tight text-ink-dim">
+          {hand.roomName} #{hand.handNumber}{hand.gameMode === 'sng' ? ' · Sit & Go' : ''}
+          <br />
+          {formatPlayedAt(hand.playedAt)} · 블라인드 {formatChips(hand.smallBlind)}/{formatChips(hand.bigBlind)}
+          {' · '}팟 {amountText(hand.potTotal)}
+          {hand.rake > 0 && ` (레이크 ${amountText(hand.rake)})`}
+        </span>
+      </div>
+
+      {/* 스트리트 컬럼 — WPL/GG 방식: 세로 스크롤 대신 5컬럼에 액션을 나눠 담는다 */}
+      <div className="grid grid-cols-5 gap-1">
+        <div className="min-w-0">
+          <div className="mb-1 rounded-md bg-abyss/60 px-1 py-1 text-center">
+            <p className="text-[9px] font-bold text-mystic">블라인드</p>
+            <p className="text-[9px] text-ink-dim">&nbsp;</p>
+          </div>
+          <div className="space-y-1">
+            {postActions.map((action, index) =>
+              actionCell(action.playerId, actionText(action.kind, action.amount), false, `post-${index}`))}
+          </div>
+        </div>
         {STREET_ORDER.map(street => {
-          const actions = hand.actions.filter(action => action.street === street);
+          const actions = streetActions(street);
           const dealt = streetCards(street, hand.board);
-          if (actions.length === 0 && dealt.length === 0) return null;
+          const startPot = startPots[street];
+          const reached = street === 'preflop' || startPot !== null;
           return (
-            <div key={street}>
-              <div className="mb-1 flex items-center gap-2">
-                <span className="text-[11px] font-bold text-mystic">{STREET_LABEL[street]}</span>
-                {dealt.length > 0 && <MiniCards cards={dealt} size="xs" />}
+            <div key={street} className="min-w-0">
+              <div className={`mb-1 rounded-md px-1 py-1 text-center ${reached ? 'bg-abyss/60' : 'bg-abyss/25'}`}>
+                <p className={`text-[9px] font-bold ${reached ? 'text-mystic' : 'text-ink-dim/40'}`}>
+                  {STREET_LABEL[street]}
+                </p>
+                <p className="text-[9px] text-gilded">
+                  {reached && startPot !== null && startPot > 0 ? amountText(startPot) : ' '}
+                </p>
+                {dealt.length > 0 && (
+                  <div className="mt-0.5 flex justify-center"><MiniCards cards={dealt} /></div>
+                )}
               </div>
-              <ul className="space-y-0.5">
-                {actions.map((action, index) => {
-                  const isHero = action.playerId === hand.heroId;
-                  const position = playerById.get(action.playerId)?.position;
-                  return (
-                    <li
-                      key={`${street}-${index}`}
-                      className={`flex justify-between rounded px-2 py-0.5 text-[11px] ${
-                        isHero ? 'bg-blossom/10 text-ink' : 'text-ink-dim'
-                      }`}
-                    >
-                      <span className="truncate">
-                        {nameOf(action.playerId)}
-                        {position && <span className="ml-1 text-[9px] text-ink-dim/70">{position}</span>}
-                      </span>
-                      <span className={action.kind === 'fold' ? '' : 'font-bold'}>
-                        {actionLabel(action)}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
+              <div className="space-y-1">
+                {actions.map((action, index) => actionCell(
+                  action.playerId,
+                  actionText(action.kind, action.amount),
+                  action.kind === 'raise' || action.kind === 'all-in',
+                  `${street}-${index}`,
+                ))}
+                {street === resultStreet && resultBlock}
+              </div>
             </div>
           );
         })}
-      </div>
-
-      {hand.showdown && revealedPlayers.length > 0 && (
-        <div>
-          <p className="mb-1 text-[11px] font-bold text-mystic">쇼다운</p>
-          <ul className="space-y-1">
-            {revealedPlayers.map(player => (
-              <li key={player.id} className="flex items-center gap-2 text-[11px] text-ink-dim">
-                {player.holeCards && <MiniCards cards={player.holeCards} size="xs" />}
-                <span className={player.id === hand.heroId ? 'font-bold text-ink' : ''}>
-                  {player.name}
-                </span>
-                {player.handRank && (
-                  <span className="text-gilded">{HAND_RANK_KO[player.handRank]}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="rounded-xl border border-gilded/25 bg-panel/85 p-3">
-        <p className="text-[11px] font-bold text-gilded">
-          팟 {formatChips(hand.potTotal)}
-          {hand.rake > 0 && <span className="ml-1 font-normal text-ink-dim">(레이크 {formatChips(hand.rake)})</span>}
-        </p>
-        <ul className="mt-1 space-y-0.5">
-          {hand.winners.map((winner, index) => (
-            <li key={index} className="flex justify-between text-[11px]">
-              <span className={winner.playerId === hand.heroId ? 'font-bold text-ink' : 'text-ink-dim'}>
-                🏆 {nameOf(winner.playerId)}
-                {winner.handRank && (
-                  <span className="ml-1 text-[9px] text-gilded">{HAND_RANK_KO[winner.handRank]}</span>
-                )}
-              </span>
-              <span className="font-bold text-gilded">+{formatChips(winner.amount)}</span>
-            </li>
-          ))}
-        </ul>
       </div>
     </div>
   );
@@ -248,6 +415,8 @@ export default function HandHistoryModal({ isOpen, onClose }: HandHistoryModalPr
   const [loadingMore, setLoadingMore] = useState(false);
   const [selected, setSelected] = useState<HandDetail | null>(null);
   const [detailLoadingId, setDetailLoadingId] = useState<number | null>(null);
+  const inBB = useSettingsStore(s => s.historyBBView);
+  const toggleBB = useSettingsStore(s => s.toggleHistoryBBView);
 
   const fetchPage = useCallback(async (before?: number) => {
     const params = new URLSearchParams({ limit: '20' });
@@ -324,11 +493,14 @@ export default function HandHistoryModal({ isOpen, onClose }: HandHistoryModalPr
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={closeAndReset} title="핸드 히스토리">
+    <Modal isOpen={isOpen} onClose={closeAndReset} title="핸드 히스토리" maxWidthClass="max-w-xl">
       {selected ? (
         <HandDetailView hand={selected} onBack={() => setSelected(null)} />
       ) : (
         <div className="space-y-2">
+          <div className="flex items-center justify-end">
+            <SegmentToggle options={['칩', 'BB']} active={inBB ? 1 : 0} onToggle={toggleBB} />
+          </div>
           {error && <p className="text-xs text-blossom">{error}</p>}
           {items === null && !error && (
             <p className="py-6 text-center text-xs text-ink-dim">불러오는 중…</p>
@@ -342,7 +514,7 @@ export default function HandHistoryModal({ isOpen, onClose }: HandHistoryModalPr
             </div>
           )}
           {items?.map(item => (
-            <HandListRow key={item.id} item={item} onSelect={openDetail} />
+            <HandListRow key={item.id} item={item} inBB={inBB} onSelect={openDetail} />
           ))}
           {nextBefore !== null && (
             <button

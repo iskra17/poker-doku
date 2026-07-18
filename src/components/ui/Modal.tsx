@@ -9,9 +9,11 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: React.ReactNode;
+  /** 패널 최대 폭 클래스 (기본 max-w-md) — 넓은 콘텐츠(핸드 히스토리 컬럼 뷰 등)용 */
+  maxWidthClass?: string;
 }
 
-export default function Modal({ isOpen, onClose, title, children }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, maxWidthClass = 'max-w-md' }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -84,7 +86,7 @@ export default function Modal({ isOpen, onClose, title, children }: ModalProps) 
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
-              className="w-full max-w-md max-h-full pointer-events-auto"
+              className={`w-full ${maxWidthClass} max-h-full pointer-events-auto`}
             >
               {/* 패널 — 화면보다 길어지면 본문만 내부 스크롤 */}
               <div className="bg-panel border border-mystic/30 rounded-2xl shadow-2xl shadow-mystic/10 p-6 flex flex-col max-h-[calc(100dvh-2rem)]">
