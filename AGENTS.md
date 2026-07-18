@@ -154,6 +154,21 @@ npx tsc --noEmit
   스팸 가드: IP당 5건/10분 + 프로필당 10건/일. 운영자 열람은
   `GET /api/debug/feedback?token=$DEBUG_LOG_TOKEN` (`&limit=&before=` 커서) — 별도 어드민 UI 없음.
   회귀: `feedback-http.test.ts`.
+- **핸드 히스토리 (GGPoker PokerCraft 벤치마킹)**: 엔진이 핸드마다 진행 기록을 축적해
+  endHand에서 완성한다 (`getCompletedHandRecord()`, 타입은 `src/lib/poker/hand-history.ts`) —
+  블라인드 포스트 포함 액션 타임라인·스트리트별 보드·포지션·승자·수익·revealed.
+  **revealed 판정은 getPublicState와 동일 계약**(경합 쇼다운/올인 런아웃 생존자만) — 어긋나면
+  머킹 패가 히스토리로 유출된다. 원본 레코드는 전체 홀카드를 담으므로 브로드캐스트·로그 금지.
+  RoomManager `handleCompletedHand`가 정산 성공 여부와 무관하게 방·핸드당 1회
+  `options.handHistory.recordCompletedHand`(→ `HandHistoryService`) 호출, 참여 휴먼별
+  "히어로 관점"으로 마스킹(상대 홀카드는 revealed만, 아니면 null)해 SQLite `hand_history`
+  (마이그레이션 v21)에 영속 — 프로필당 최근 500핸드 보존, 초과분 자동 정리. 저장 실패는
+  삼켜서 다음 핸드 진행을 막지 않는다. 조회는 `GET /api/hands`(목록, `?limit=&before=` 커서)
+  / `GET /api/hands/:id`(상세, 본인 소유만 — 타인은 404로 존재 비노출), 프로필 쿠키 인증
+  + 30회/분 제한. UI는 LobbyHeader·TopBar ⟲ 아이콘 → `HandHistoryModal`(목록 → 스트리트별
+  액션 리플레이 상세). 마이그레이션 추가 시 `database.test.ts`의 최신 버전 상수도 함께 올릴 것.
+  회귀: `engine.handrecord.test.ts`, `hand-history-http.test.ts`,
+  `room-manager.hand-history.test.ts`.
 - **운영 HTTP/플레이 이벤트 로그 (버그 역추적)**: 커스텀 HTTP 서버가 `GET|HEAD /healthz`를
   Next 핸들러 없이 직접 처리한다. `src/server/event-log.ts`의 인메모리 링 버퍼(5000개)
   + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`

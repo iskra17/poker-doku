@@ -10,6 +10,7 @@ import Button from '@/components/ui/Button';
 import NeonText from '@/components/ui/NeonText';
 import SettingsModal from './SettingsModal';
 import HelpModal from '../help/HelpModal';
+import HandHistoryModal from '../history/HandHistoryModal';
 
 const STREET_LABELS: Record<string, string> = {
   preflop: '프리플랍',
@@ -28,6 +29,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const { muted, toggleMuted } = useSettingsStore();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const { copied, copy } = useInviteLink(currentRoomId);
 
   return (
@@ -69,6 +71,14 @@ export default function TopBar({ onLeave }: TopBarProps) {
           <SpeakerIcon muted={muted} />
         </button>
         <button
+          onClick={() => setHistoryOpen(true)}
+          aria-label="핸드 히스토리"
+          title="핸드 히스토리"
+          className="p-1 text-ink-dim hover:text-ink transition-colors"
+        >
+          <HistoryIcon />
+        </button>
+        <button
           onClick={() => setHelpOpen(true)}
           aria-label="게임 도움말"
           title="핸드 랭킹 · 용어"
@@ -90,7 +100,19 @@ export default function TopBar({ onLeave }: TopBarProps) {
       </div>
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
     </div>
+  );
+}
+
+/** 히스토리(시계 되감기) 아이콘 — 핸드 히스토리 */
+function HistoryIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 3v5h5" />
+      <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+      <path d="M12 7v5l4 2" />
+    </svg>
   );
 }
 

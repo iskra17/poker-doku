@@ -7,8 +7,11 @@ import {
   Player,
   ChatMessage,
   ActionType,
+  type GameMode,
+  type GameState,
   type PlayerPublicCosmetics,
 } from '../lib/poker/types';
+import type { CompletedHandRecord } from '../lib/poker/hand-history';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
@@ -35,6 +38,15 @@ const HAND_SETTLEMENT_RETRY_MS = 1_000;
 const SNG_FINALIZE_RETRY_MS = 1_000;
 const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
 
+export interface RoomHandHistoryHooks {
+  recordCompletedHand(input: {
+    roomId: string;
+    roomName: string;
+    gameMode: GameMode;
+    record: CompletedHandRecord;
+  }): void;
+}
+
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
   /** 올인 런아웃 스트리트 간 지연 (ms) — 테스트에서 짧게 줄이기 위한 옵션 */
@@ -42,6 +54,8 @@ export interface RoomManagerOptions {
   economy?: RoomEconomyHooks;
   progression?: RoomProgressionHooks;
   arena?: RoomArenaHooks;
+  /** 완료 핸드를 참여 휴먼별 핸드 히스토리로 영속하는 훅 (없으면 기록 생략) */
+  handHistory?: RoomHandHistoryHooks;
   roomRunIdFactory?: () => string;
   onRoomDisposed?: (
     roomId: string,
@@ -130,6 +144,8 @@ export class RoomManager {
   private settledTournamentRooms = new Set<string>();
   /** 칩 보유 좌석 부족(파산 정지) 안내를 정지 상태(handNumber)당 1회만 보내기 위한 커서 */
   private stallNoticeHands = new Map<string, number>();
+  /** 핸드 히스토리 기록 완료 커서 — 정산 재시도로 handleCompletedHand가 재진입해도 중복 저장 방지 */
+  private handHistoryRecordedHands = new Map<string, number>();
   private readonly usedRoomRunIds = new Set<string>();
   private readonly roomRunInstanceId = randomUUID().replaceAll('-', '_');
   private roomRunGeneration = 0;
@@ -283,6 +299,7 @@ export class RoomManager {
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
     this.stallNoticeHands.delete(roomId);
+    this.handHistoryRecordedHands.delete(roomId);
     this.options.progression?.disposeRoom(roomId);
     this.dialogue.disposeScope(roomId);
     if (notify) {
@@ -678,6 +695,8 @@ export class RoomManager {
     this.handSettlementStatus.delete(roomId);
     this.settledTournamentRooms.delete(roomId);
     this.stallNoticeHands.delete(roomId);
+    // 엔진 교체로 handNumber가 리셋되므로 기록 커서도 함께 비운다 (안 지우면 새 핸드가 스킵됨)
+    this.handHistoryRecordedHands.delete(roomId);
     this.options.progression?.disposeRoom(roomId);
   }
 
@@ -1956,6 +1975,9 @@ export class RoomManager {
     const previous = this.handSettlementStatus.get(roomId);
     if (previous?.handNumber === state.handNumber && previous.ok) return;
 
+    // 핸드 히스토리는 정산 성공 여부와 무관하게 엔진 확정 결과를 1회 기록한다
+    this.persistHandHistory(roomId, room, state);
+
     let paidTotal = (state.winners ?? []).reduce(
       (sum, winner) => sum + winner.amount,
       0,
@@ -2040,6 +2062,33 @@ export class RoomManager {
       return;
     }
     this.scheduleNextHand(roomId);
+  }
+
+  /**
+   * 완료 핸드를 히스토리로 기록. 저장 실패가 게임 진행(정산/다음 핸드 예약)을 막으면 안 되므로
+   * 예외는 삼킨다. 기록 커서를 먼저 옮겨 재시도 재진입에도 같은 핸드를 두 번 저장하지 않는다.
+   */
+  private persistHandHistory(
+    roomId: string,
+    room: { engine: PokerEngine; config: RoomConfig },
+    state: GameState,
+  ): void {
+    const hooks = this.options.handHistory;
+    if (!hooks) return;
+    if (this.handHistoryRecordedHands.get(roomId) === state.handNumber) return;
+    const record = room.engine.getCompletedHandRecord();
+    if (!record || record.handNumber !== state.handNumber) return;
+    this.handHistoryRecordedHands.set(roomId, state.handNumber);
+    try {
+      hooks.recordCompletedHand({
+        roomId,
+        roomName: room.config.name,
+        gameMode: (room.config.gameMode ?? 'cash') as GameMode,
+        record,
+      });
+    } catch {
+      // 히스토리 저장 실패는 게임에 치명적이지 않다 — 다음 핸드 진행을 우선한다
+    }
   }
 
   /**

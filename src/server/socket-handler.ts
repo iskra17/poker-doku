@@ -1,6 +1,6 @@
 import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'node:crypto';
-import { RoomManager } from './room-manager';
+import { RoomManager, type RoomHandHistoryHooks } from './room-manager';
 import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
@@ -74,6 +74,7 @@ export interface SocketRuntimeOptions {
   sngRetentionMs?: number;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
   progressionService?: ProgressionRuntimeService;
+  handHistory?: RoomHandHistoryHooks;
   arena?: {
     service: ArenaService;
     matchIdFactory?: () => string;
@@ -153,6 +154,7 @@ export function setupSocketHandlers(
     sngRetentionMs,
     economy,
     progressionService,
+    handHistory,
     arena,
   } = options;
   const sessions = new SessionManager();
@@ -285,6 +287,7 @@ export function setupSocketHandlers(
       sngRetentionMs,
       economy,
       progression,
+      handHistory,
       ...(arena
         ? {
           arena: {

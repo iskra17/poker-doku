@@ -4411,6 +4411,31 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'feedback content is immutable'); END;
     `,
   },
+  {
+    version: 21,
+    name: 'record_hand_history',
+    sql: `
+      CREATE TABLE hand_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL CHECK (length(room_id) BETWEEN 1 AND 100),
+        room_name TEXT NOT NULL CHECK (length(room_name) BETWEEN 1 AND 100),
+        game_mode TEXT NOT NULL CHECK (game_mode IN ('cash','sng')),
+        hand_number INTEGER NOT NULL CHECK (hand_number >= 1),
+        big_blind INTEGER NOT NULL CHECK (big_blind >= 1),
+        profit INTEGER NOT NULL,
+        hero_cards TEXT NOT NULL CHECK (length(hero_cards) <= 512),
+        board TEXT NOT NULL CHECK (length(board) <= 1024),
+        detail TEXT NOT NULL CHECK (length(detail) <= 131072),
+        played_at INTEGER NOT NULL CHECK (
+          played_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+
+      CREATE INDEX idx_hand_history_profile_id
+        ON hand_history(profile_id, id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

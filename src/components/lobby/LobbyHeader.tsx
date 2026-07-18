@@ -5,9 +5,10 @@
 import { useState } from 'react';
 import NeonText from '../ui/NeonText';
 
-export default function LobbyHeader({ onOpenSettings, onOpenFeedback }: {
+export default function LobbyHeader({ onOpenSettings, onOpenFeedback, onOpenHistory }: {
   onOpenSettings?: () => void;
   onOpenFeedback?: () => void;
+  onOpenHistory?: () => void;
 }) {
   const [logoError, setLogoError] = useState(false);
 
@@ -33,6 +34,21 @@ export default function LobbyHeader({ onOpenSettings, onOpenFeedback }: {
           />
         )}
       </div>
+      {onOpenHistory && (
+        <button
+          type="button"
+          onClick={onOpenHistory}
+          aria-label="핸드 히스토리"
+          className="absolute right-24 top-4 z-20 rounded-full border border-mystic/20 bg-panel/80 p-2 text-ink-dim transition-colors hover:text-ink"
+        >
+          {/* 히스토리(시계 되감기) 아이콘 */}
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M3 3v5h5" />
+            <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+            <path d="M12 7v5l4 2" />
+          </svg>
+        </button>
+      )}
       {onOpenFeedback && (
         <button
           type="button"

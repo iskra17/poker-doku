@@ -4,6 +4,11 @@ import {
   GameState, Player, PlayerAction, ActionType,
   Pot, WinResult, Card, RoomConfig,
 } from './types';
+import {
+  positionLabels,
+  type CompletedHandRecord,
+  type HandHistoryAction,
+} from './hand-history';
 import { SNG_PRIZE_SPLIT } from './blind-schedule';
 import { allocateRakeAcrossPots, computeCashRake } from '../economy/rake';
 
@@ -52,10 +57,27 @@ export function computeValidActions(
   return actions;
 }
 
+interface HandRecordDraft {
+  handNumber: number;
+  smallBlind: number;
+  bigBlind: number;
+  actions: HandHistoryAction[];
+  participantIds: Set<string>;
+  positions: Map<string, string>;
+}
+
 export class PokerEngine {
   private deck: Deck;
   private config: RoomConfig;
   state: GameState;
+  /** 진행 중 핸드의 히스토리 초안 — startHand가 열고 endHand가 완성한다 */
+  private handRecordDraft: HandRecordDraft | null = null;
+  /**
+   * 마지막으로 완료된 핸드의 히스토리 (다음 핸드 시작까지 유지).
+   * 전체 홀카드를 포함하므로 브로드캐스트·로그로 내보내지 말 것 — 히어로 관점 마스킹은
+   * 저장 계층(HandHistoryService) 책임.
+   */
+  private completedHandRecord: CompletedHandRecord | null = null;
 
   constructor(config: RoomConfig, roomId: string, deck: Deck = new Deck()) {
     this.deck = deck;
@@ -239,6 +261,12 @@ export class PokerEngine {
 
     // 올인 이탈자도 폴드 처리 — 기여금은 dead money로 rebuildPots가 팟에 남긴다
     player.status = 'folded';
+    this.handRecordDraft?.actions.push({
+      street: this.state.street,
+      playerId: player.id,
+      kind: 'fold',
+      amount: 0,
+    });
     this.rebuildPots();
     const { handComplete } = this.advanceAfterAction(wasTheirTurn);
     return { player, handComplete };
@@ -316,6 +344,9 @@ export class PokerEngine {
     // Move dealer button
     this.advanceDealerButton();
 
+    // 히스토리 초안 개시 — 딜러 확정 직후·블라인드 포스팅 직전 (포스트도 액션으로 기록)
+    this.beginHandRecord();
+
     // Post blinds
     this.postBlinds();
 
@@ -371,20 +402,20 @@ export class PokerEngine {
       const sbPlayer = this.state.players[dealerPos];
       const bbIdx = this.getNextActiveIndex(dealerPos);
       const bbPlayer = this.state.players[bbIdx];
-      this.postBlind(sbPlayer, this.config.smallBlind);
-      this.postBlind(bbPlayer, this.config.bigBlind);
+      this.postBlind(sbPlayer, this.config.smallBlind, 'post-sb');
+      this.postBlind(bbPlayer, this.config.bigBlind, 'post-bb');
     } else {
       const sbIdx = this.getNextActiveIndex(dealerPos);
       const bbIdx = this.getNextActiveIndex(sbIdx);
-      this.postBlind(this.state.players[sbIdx], this.config.smallBlind);
-      this.postBlind(this.state.players[bbIdx], this.config.bigBlind);
+      this.postBlind(this.state.players[sbIdx], this.config.smallBlind, 'post-sb');
+      this.postBlind(this.state.players[bbIdx], this.config.bigBlind, 'post-bb');
     }
 
     this.state.currentBet = this.config.bigBlind;
     this.rebuildPots();
   }
 
-  private postBlind(player: Player, amount: number): void {
+  private postBlind(player: Player, amount: number, kind: 'post-sb' | 'post-bb'): void {
     const actual = Math.min(amount, player.chips);
     player.chips -= actual;
     player.currentBet = actual;
@@ -392,6 +423,12 @@ export class PokerEngine {
     if (player.chips === 0) {
       player.status = 'all-in';
     }
+    this.handRecordDraft?.actions.push({
+      street: 'preflop',
+      playerId: player.id,
+      kind,
+      amount: actual,
+    });
   }
 
   /** 이 핸드에 딜인된 다음 좌석 (active/all-in) — 블라인드 올인자도 포지션 계산에 포함 */
@@ -442,6 +479,9 @@ export class PokerEngine {
     const validActions = this.getValidActions(player);
     if (!validActions.includes(action.type)) return { valid: false, handComplete: false };
 
+    // 히스토리용 액션 금액 — call은 추가 투입액, raise/all-in은 해당 스트리트 총 벳
+    let recordedAmount = 0;
+
     switch (action.type) {
       case 'fold':
         player.status = 'folded';
@@ -456,6 +496,7 @@ export class PokerEngine {
         player.currentBet += callAmount;
         player.totalContributed += callAmount;
         if (player.chips === 0) player.status = 'all-in';
+        recordedAmount = callAmount;
         break;
       }
 
@@ -475,6 +516,7 @@ export class PokerEngine {
         player.chips -= toAdd;
         player.currentBet = raiseTotal;
         player.totalContributed += toAdd;
+        recordedAmount = raiseTotal;
         const isFullRaise = raiseTotal >= minTotal;
         if (isFullRaise) this.state.minRaise = raiseTotal - this.state.currentBet;
         this.state.currentBet = raiseTotal;
@@ -510,9 +552,17 @@ export class PokerEngine {
         player.totalContributed += allInAmount;
         player.chips = 0;
         player.status = 'all-in';
+        recordedAmount = totalBet;
         break;
       }
     }
+
+    this.handRecordDraft?.actions.push({
+      street: this.state.street,
+      playerId: player.id,
+      kind: action.type,
+      amount: recordedAmount,
+    });
 
     player.hasActed = true;
     this.state.lastAction = action;
@@ -717,6 +767,7 @@ export class PokerEngine {
       }];
       this.assertSettlementInvariant(payoutPots);
       this.finalizeTournamentHand();
+      this.finalizeHandRecord();
       return;
     }
 
@@ -759,6 +810,98 @@ export class PokerEngine {
     this.state.winners = winners;
     this.assertSettlementInvariant(payoutPots);
     this.finalizeTournamentHand();
+    this.finalizeHandRecord();
+  }
+
+  /** 핸드 히스토리 초안 개시 — startHand에서 딜러 확정 직후·블라인드 포스팅 직전에 호출 */
+  private beginHandRecord(): void {
+    const n = this.state.players.length;
+    const dealtIn: Player[] = [];
+    for (let k = 0; k < n; k++) {
+      const p = this.state.players[(this.state.dealerIndex + k) % n];
+      if (p.status === 'active') dealtIn.push(p);
+    }
+    const labels = positionLabels(dealtIn.length);
+    this.handRecordDraft = {
+      handNumber: this.state.handNumber,
+      smallBlind: this.config.smallBlind,
+      bigBlind: this.config.bigBlind,
+      actions: [],
+      participantIds: new Set(dealtIn.map(p => p.id)),
+      positions: new Map(dealtIn.map((p, i) => [p.id, labels[i] ?? ''])),
+    };
+  }
+
+  /**
+   * endHand 마지막에 호출 — 초안을 CompletedHandRecord로 완성한다.
+   * revealed 판정은 getPublicState와 같은 계약(경합 쇼다운 생존자만)이어야 한다 —
+   * 어긋나면 게임에선 머킹된 패가 히스토리에 노출된다.
+   */
+  private finalizeHandRecord(): void {
+    const draft = this.handRecordDraft;
+    if (!draft) return;
+    this.handRecordDraft = null;
+
+    const survivors = this.state.players.filter(
+      p => p.status === 'active' || p.status === 'all-in',
+    );
+    const showdown = survivors.length >= 2;
+    const winners = this.state.winners ?? [];
+    const wonBy = new Map<string, number>();
+    for (const w of winners) {
+      wonBy.set(w.playerId, (wonBy.get(w.playerId) ?? 0) + w.amount);
+    }
+
+    const players = this.state.players
+      .filter(p => draft.participantIds.has(p.id))
+      .map(p => {
+        const revealed = showdown && (p.status === 'active' || p.status === 'all-in');
+        const evaluated =
+          revealed && p.holeCards.length === 2 && this.state.communityCards.length === 5
+            ? evaluateHand(p.holeCards, this.state.communityCards)
+            : null;
+        const won = wonBy.get(p.id) ?? 0;
+        return {
+          id: p.id,
+          name: p.name,
+          type: p.type,
+          seatIndex: p.seatIndex,
+          position: draft.positions.get(p.id) ?? '',
+          startingChips: p.handStartChips ?? 0,
+          holeCards: p.holeCards.map(c => ({ ...c })),
+          totalContributed: p.totalContributed,
+          won,
+          profit: won - p.totalContributed,
+          revealed,
+          finalStatus: p.status,
+          handRank: evaluated?.rank ?? null,
+          handDescription: evaluated?.description ?? null,
+        };
+      });
+
+    this.completedHandRecord = {
+      handNumber: draft.handNumber,
+      smallBlind: draft.smallBlind,
+      bigBlind: draft.bigBlind,
+      players,
+      actions: draft.actions,
+      board: this.state.communityCards.map(c => ({ ...c })),
+      winners: winners.map(w => ({
+        playerId: w.playerId,
+        amount: w.amount,
+        handRank: w.hand?.rank ?? null,
+        handDescription: w.hand?.description ?? null,
+        potIndex: w.potIndex,
+      })),
+      potTotal: this.state.players.reduce((s, p) => s + p.totalContributed, 0),
+      rake: this.state.handRake,
+      showdown,
+    };
+  }
+
+  /** 마지막으로 완료된 핸드의 전체 기록 (마스킹 전 — 저장 계층 전용, 브로드캐스트 금지) */
+  getCompletedHandRecord(): CompletedHandRecord | null {
+    return this.completedHandRecord;
   }
 
   private preparePayoutPots(): Pot[] {

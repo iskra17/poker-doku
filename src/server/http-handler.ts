@@ -7,6 +7,8 @@ import {
   createFeedbackHttpHandler,
   FeedbackRepository,
 } from './feedback-http';
+import { HandHistoryRepository } from './hand-history';
+import { createHandHistoryHttpHandler } from './hand-history-http';
 import type {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -136,6 +138,13 @@ export function createHttpRequestHandler(
         now: options.now,
       })
     : undefined;
+  const handHistoryHandler = options.profileManager && options.database
+    ? createHandHistoryHttpHandler({
+        manager: options.profileManager,
+        repository: new HandHistoryRepository(options.database),
+        rateLimiter: options.profileRateLimiter!,
+      })
+    : undefined;
   const arenaHandler = options.profileManager
     ? createArenaHttpHandler({
         enabled: options.arenaEnabled ?? (() => false),
@@ -182,6 +191,12 @@ export function createHttpRequestHandler(
       if (
         feedbackHandler
         && await feedbackHandler(req, res, parsedUrl.pathname, parsedUrl.query)
+      ) {
+        return;
+      }
+      if (
+        handHistoryHandler
+        && await handHistoryHandler(req, res, parsedUrl.pathname, parsedUrl.query)
       ) {
         return;
       }
