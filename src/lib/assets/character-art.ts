@@ -16,6 +16,17 @@ const ART_FOLDERS: Record<string, string> = {
   chloe: 'chloe',
   vivian: 'vivian',
   elena: 'elena',
+  // 2026-07 로스터 확장 (마스코트 7 + 인간 3)
+  mochi: 'mochi',
+  choco: 'choco',
+  luna: 'luna',
+  gumi: 'gumi',
+  paeng: 'paeng',
+  draco: 'draco',
+  kapi: 'kapi',
+  yuzuki: 'yuzuki',
+  lin: 'lin',
+  ingrid: 'ingrid',
 };
 
 // 보유 중인 표정 (MVP 3종 — thinking/confident/surprised는 확장 시 추가)
@@ -27,6 +38,16 @@ const AVAILABLE: Record<string, Expression[]> = {
   chloe: ['neutral', 'happy', 'sad'],
   vivian: ['neutral', 'happy', 'sad'],
   elena: ['neutral', 'happy', 'sad'],
+  mochi: ['neutral', 'happy', 'sad'],
+  choco: ['neutral', 'happy', 'sad'],
+  luna: ['neutral', 'happy', 'sad'],
+  gumi: ['neutral', 'happy', 'sad'],
+  paeng: ['neutral', 'happy', 'sad'],
+  draco: ['neutral', 'happy', 'sad'],
+  kapi: ['neutral', 'happy', 'sad'],
+  yuzuki: ['neutral', 'happy', 'sad'],
+  lin: ['neutral', 'happy', 'sad'],
+  ingrid: ['neutral', 'happy', 'sad'],
 };
 
 // 미보유 표정 → 유사 표정 강등
