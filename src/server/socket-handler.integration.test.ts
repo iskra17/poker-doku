@@ -1483,6 +1483,69 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.walletState(created.profile.id).balance).toBe(4_000);
   });
 
+  // 파산 후 다음 핸드는 몇 초 만에 시작된다 — '핸드 사이'에만 리바이를 허용하면 그 틈을
+  // 놓친 리바이가 room-joined는 성공하면서 칩은 0으로 남는다 (2026-07-21 완화의 회귀 가드).
+  it('grants a rebuy to a busted seat while other seats play a live hand', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);
+    const created = await harness.createProfile();
+    const client = await harness.connect('wallet-midhand-rebuy-token', {
+      profileCookie: created.cookie,
+    });
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    for (const [id, seat] of [['midhand-bot-1', 1], ['midhand-bot-2', 2]] as const) {
+      room.engine.addPlayer({
+        id,
+        name: id,
+        type: 'bot',
+        avatar: 'bot',
+        chips: 4_000,
+        seatIndex: seat,
+        holeCards: [],
+        currentBet: 0,
+        totalContributed: 0,
+        status: 'waiting',
+        hasActed: false,
+      });
+    }
+    // 핸드 1: 휴먼 파산으로 종료·정산 (칩 보존식 유지 — 잃은 4,000은 봇에게)
+    harness.economyRuntime.beforeHand(roomId, room.engine);
+    room.engine.startHand();
+    room.engine.state.players.find(player => player.id === created.profile.id)!.chips = 0;
+    room.engine.state.players.find(player => player.id === 'midhand-bot-1')!.chips = 8_000;
+    room.engine.state.players.find(player => player.id === 'midhand-bot-2')!.chips = 4_000;
+    room.engine.state.handRake = 0;
+    room.engine.state.isHandInProgress = false;
+    harness.economyRuntime.afterHand(roomId, room.engine);
+
+    // 핸드 2: 봇들끼리 진행 중 — startHand가 0칩 휴먼을 sitting-out으로 딜아웃한다
+    harness.economyRuntime.beforeHand(roomId, room.engine);
+    room.engine.startHand();
+    const seated = room.engine.state.players.find(player => player.id === created.profile.id)!;
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    expect(seated.status).toBe('sitting-out');
+
+    await expect(withAck(done => client.socket.emit('join-room', {
+      roomId,
+      buyIn: 2_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+    expect(seated.chips).toBe(2_000);
+    expect(seated.status).toBe('waiting');
+    expect(harness.walletState(created.profile.id)).toEqual({
+      balance: 4_000,
+      activeEscrow: 2_000,
+      activeRoomId: roomId,
+    });
+    // 진행 중이던 봇 핸드는 건드리지 않는다
+    expect(room.engine.state.isHandInProgress).toBe(true);
+  });
+
   it('retires a cashed-out pending wallet seat before fresh same-room admission', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);

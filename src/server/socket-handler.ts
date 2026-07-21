@@ -1141,12 +1141,18 @@ export function setupSocketHandlers(
               seated.status = 'waiting';
             }
           }
-          // 캐시 파산 좌석 복귀는 새 바이인으로 리바이 — 0칩 좌석에 고착되는 문제 방지
-          // 진행 중 핸드의 스택은 건드리지 않고, 핸드 사이 재입장에서만 지갑을 다시 예치한다.
+          // 캐시 파산 좌석 복귀는 새 바이인으로 리바이 — 0칩 좌석에 고착되는 문제 방지.
+          // 다른 좌석들이 핸드를 치는 중이어도 파산 좌석은 그 핸드에 없으므로(0칩 좌석은
+          // startHand가 sitting-out 처리) 즉시 리바이해 다음 핸드부터 딜인한다. 진행 중 핸드에
+          // 살아 있는 올인 0칩(status active/all-in — 팟 지분 보유)만 제외.
+          // (2026-07-21: '핸드 사이'로만 제한하던 조건 완화 — 파산 후 다음 핸드가 몇 초 만에
+          // 시작돼 그 사이를 놓친 리바이가 조용히 무시되던 문제. BustNotice 바로 리바이의 전제)
+          const inLiveHand = room.engine.state.isHandInProgress
+            && (seated.status === 'active' || seated.status === 'all-in');
           if (
             room.config.gameMode !== 'sng'
             && seated.chips <= 0
-            && !room.engine.state.isHandInProgress
+            && !inLiveHand
           ) {
             if (walletCash) {
               if (!economy) {
@@ -1173,6 +1179,10 @@ export function setupSocketHandlers(
               }
             }
             seated.chips = safeBuyIn;
+            // 리바이는 명시적 '다시 플레이' 선언 — 자리비움 마킹을 함께 해제해 다음 핸드부터 딜인
+            seated.sitOutNext = false;
+            seated.sitOutAuto = undefined;
+            seated.sitOutSinceHand = undefined;
             if (!seated.isDisconnected) {
               seated.status = 'waiting';
             }
