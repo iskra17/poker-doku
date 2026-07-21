@@ -4459,6 +4459,45 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE profiles ADD COLUMN connect_count INTEGER NOT NULL DEFAULT 0;
     `,
   },
+  {
+    version: 23,
+    name: 'table_hand_audit_records',
+    sql: `
+      -- 테이블 단위 정본 핸드 기록 — id가 사이트 전역 핸드 ID (핸드 감사/콜루전 역추적의 기준).
+      -- detail은 마스킹 전 전체 기록(모든 홀카드 포함)이므로 서버 전용:
+      -- 조회는 토큰 게이트 운영 API(/api/admin/hands*)만, 브로드캐스트·플레이어 API 노출 금지.
+      CREATE TABLE table_hand (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL CHECK (length(room_id) BETWEEN 1 AND 100),
+        room_name TEXT NOT NULL CHECK (length(room_name) BETWEEN 1 AND 100),
+        game_mode TEXT NOT NULL CHECK (game_mode IN ('cash','sng')),
+        hand_number INTEGER NOT NULL CHECK (hand_number >= 1),
+        big_blind INTEGER NOT NULL CHECK (big_blind >= 1),
+        pot_total INTEGER NOT NULL CHECK (pot_total >= 0),
+        rake INTEGER NOT NULL CHECK (rake >= 0),
+        showdown INTEGER NOT NULL CHECK (showdown IN (0, 1)),
+        player_count INTEGER NOT NULL CHECK (player_count BETWEEN 2 AND 9),
+        human_count INTEGER NOT NULL CHECK (human_count >= 0),
+        board TEXT NOT NULL CHECK (length(board) <= 1024),
+        winners TEXT NOT NULL CHECK (length(winners) <= 4096),
+        detail TEXT NOT NULL CHECK (length(detail) <= 131072),
+        played_at INTEGER NOT NULL CHECK (
+          played_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+
+      CREATE INDEX idx_table_hand_room_id ON table_hand(room_id, id);
+      CREATE INDEX idx_table_hand_played_at ON table_hand(played_at);
+
+      -- 감사 기록은 정정 불가 — 삭제(보존 상한 정리)만 허용
+      CREATE TRIGGER freeze_table_hand_update
+      BEFORE UPDATE ON table_hand
+      BEGIN SELECT RAISE(ABORT, 'table_hand is immutable'); END;
+
+      -- 개인(히어로 관점) 기록 → 정본 기록 링크 (기존 행은 NULL 유지)
+      ALTER TABLE hand_history ADD COLUMN table_hand_id INTEGER;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

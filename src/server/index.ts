@@ -21,7 +21,11 @@ import {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
 } from './http-rate-limit';
-import { HandHistoryRepository, HandHistoryService } from './hand-history';
+import {
+  HandHistoryRepository,
+  HandHistoryService,
+  TableHandRepository,
+} from './hand-history';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import {
   BackupManager,
@@ -139,7 +143,10 @@ function initializePersistenceAndRecover(): void {
   economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   progressionService = new ProgressionService(database, progressionRepository);
-  handHistoryService = new HandHistoryService(new HandHistoryRepository(database));
+  handHistoryService = new HandHistoryService(new HandHistoryRepository(database), {
+    // 테이블 정본 기록(전역 핸드 ID) — 백오피스 핸드 감사(/api/admin/hands*)의 데이터 소스
+    tableHands: new TableHandRepository(database),
+  });
   // 방/소켓을 만들기 전에 이전 프로세스의 cash checkpoint를 전부 void-refund한다.
   // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
   // Arena 복구보다 먼저 실행 — 시작 순서 계약:

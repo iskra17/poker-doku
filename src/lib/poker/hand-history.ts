@@ -72,6 +72,8 @@ export interface HandHistoryDetail extends CompletedHandRecord {
   roomName: string;
   gameMode: GameMode;
   playedAt: number;
+  /** 사이트 전역 핸드 ID (table_hand 정본 기록 링크 — 정본 저장 실패/구버전 기록은 없음) */
+  tableHandId?: number | null;
 }
 
 /** 목록 조회용 요약 한 줄 */
