@@ -26,7 +26,9 @@ interface TopBarProps {
 
 export default function TopBar({ onLeave }: TopBarProps) {
   const { gameState, connected, playerName, currentRoomId } = useGameStore();
-  const { muted, toggleMuted } = useSettingsStore();
+  // 스피커 버튼은 마스터 토글 — 효과음만 끄면 BGM이 계속 나와 "안 꺼진다"로 느껴진다 (로비 헤더와 동일 동작)
+  const { muted, musicMuted, toggleAllMuted } = useSettingsStore();
+  const allMuted = muted && musicMuted;
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -64,11 +66,12 @@ export default function TopBar({ onLeave }: TopBarProps) {
           {copied ? <span className="text-green-400 text-xs font-bold">✓</span> : <LinkIcon />}
         </button>
         <button
-          onClick={toggleMuted}
-          aria-label={muted ? '소리 켜기' : '소리 끄기'}
+          onClick={toggleAllMuted}
+          aria-label={allMuted ? '사운드 켜기' : '사운드 끄기'}
+          title={allMuted ? '사운드 켜기 (효과음+음악)' : '사운드 끄기 (효과음+음악)'}
           className="p-1 text-ink-dim hover:text-ink transition-colors"
         >
-          <SpeakerIcon muted={muted} />
+          <SpeakerIcon muted={allMuted} />
         </button>
         <button
           onClick={() => setHistoryOpen(true)}
