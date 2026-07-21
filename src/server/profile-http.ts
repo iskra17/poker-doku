@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PublicProfile } from '@/lib/profile/types';
+import { clientAddress } from './client-address';
 import {
   EconomyDomainError,
   type EconomyService,
@@ -251,8 +252,7 @@ function remoteAddress(
   options: ProfileHttpOptions,
 ): string {
   return options.remoteAddress?.(request)
-    ?? request.socket.remoteAddress
-    ?? 'unknown';
+    ?? clientAddress(request);
 }
 
 function allowOperation(

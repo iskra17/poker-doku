@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PublicProfile } from '@/lib/profile/types';
+import { clientAddress } from './client-address';
 import type { HandHistoryRepository } from './hand-history';
 import type { TransientHttpRateLimiter } from './http-rate-limit';
 import { readProfileCredentialCookie } from './profile-http';
@@ -38,7 +39,7 @@ export function createHandHistoryHttpHandler(options: HandHistoryHttpOptions): (
       return true;
     }
 
-    const remote = request.socket.remoteAddress ?? 'unknown';
+    const remote = clientAddress(request);
     if (!options.rateLimiter.allow('handHistory', remote)) {
       sendError(response, 429, 'HANDS_RATE_LIMITED', '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');
       return true;

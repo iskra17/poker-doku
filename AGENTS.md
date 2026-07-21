@@ -68,6 +68,11 @@ npx tsc --noEmit
   요청 제한은 소켓별 sliding window로 `player-action`+`toggle-sit-out` 합산 12회/2초, 입장 5회/10초, `resync`+`get-rooms` 합산
   10회/5초, 방 생성 1회/5초, 채팅 1회/700ms다. 소유권과 payload를 먼저 검증하고 로그·상태 변경 전에
   제한해, 거절 payload가 로그를 증폭하거나 상태를 바꾸지 않게 한다.
+  IP 단위 레이트리밋(HTTP API·소켓 profileAuth)의 클라이언트 키는 `client-address.ts`가 단일 소스 —
+  XFF **마지막 홉**(신뢰 프록시가 append, 위조 불가) → Fly-Client-IP → 소켓 주소 순. 프록시 뒤에서
+  `socket.remoteAddress`를 그대로 키로 쓰면 전 방문자가 버킷 하나를 공유해 트래픽 몰릴 때 전원이
+  429를 받는다 (2026-07-21 디시 유입 장애). XFF 첫 항목으로 바꾸면 위조로 리밋이 우회되니 금지.
+  회귀: `client-address.test.ts`.
 - **방 수명주기**: 방 삭제는 idempotent한 `RoomManager.disposeRoom()`만 사용한다. 이 경로가 봇·핸드
   시작·턴·자리비움·종료 SnG 타이머와 deadline, 채팅, 토너먼트 시계, bot epoch, 방별 AI 대사 상태를
   함께 지운다. persistent 기본 방은 마지막 휴먼이 완전히 나가 유효 좌석이 0개가 되면 삭제 대신 새 `PokerEngine`으로 교체해

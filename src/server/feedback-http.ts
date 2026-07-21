@@ -5,6 +5,7 @@ import {
   normalizeFeedbackMessage,
   type FeedbackCategory,
 } from '@/lib/feedback/rules';
+import { clientAddress } from './client-address';
 import type { TransientHttpRateLimiter } from './http-rate-limit';
 import type { PokerDatabase } from './persistence/database';
 import { readProfileCredentialCookie } from './profile-http';
@@ -138,7 +139,7 @@ async function handleSubmit(
   options: FeedbackHttpOptions,
   at: number,
 ): Promise<void> {
-  const remote = request.socket.remoteAddress ?? 'unknown';
+  const remote = clientAddress(request);
   if (!options.rateLimiter.allow('feedback', remote)) {
     drain(request);
     sendError(response, 429, 'FEEDBACK_RATE_LIMITED', '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.');

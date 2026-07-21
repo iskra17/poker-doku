@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PublicProfile } from '@/lib/profile/types';
+import { clientAddress } from './client-address';
 import {
   HttpConcurrencyLimitError,
   TransientHttpConcurrencyGate,
@@ -164,7 +165,7 @@ async function authenticate(
     invalidAuth(response, options.production);
     return null;
   }
-  const remote = request.socket.remoteAddress ?? 'unknown';
+  const remote = clientAddress(request);
   if (!options.rateLimiter.allow('profileAuth', remote)) {
     sendError(response, 429, 'PROFILE_RATE_LIMITED', '요청이 너무 많습니다.');
     return null;

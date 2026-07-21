@@ -5,6 +5,7 @@ import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
+import { clientAddressFromHeaders } from './client-address';
 import { eventLog, tokenHint } from './event-log';
 import type {
   ArenaQueueMetrics,
@@ -190,7 +191,10 @@ export function setupSocketHandlers(
       next(new Error('profile-required'));
       return;
     }
-    const address = socket.conn.remoteAddress ?? 'unknown';
+    const address = clientAddressFromHeaders(
+      socket.handshake.headers,
+      socket.conn.remoteAddress,
+    );
     let allowed = false;
     try {
       allowed = profileAuth.rateLimiter.allow('profileAuth', address);
