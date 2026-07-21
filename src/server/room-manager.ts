@@ -13,6 +13,7 @@ import {
 } from '../lib/poker/types';
 import type { CompletedHandRecord } from '../lib/poker/hand-history';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
+import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
 import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, BUST_RECLAIM_MS, shouldRemoveForMissedBlinds } from './sitout';
@@ -129,6 +130,8 @@ export class RoomManager {
   private turnDeadlines: Map<string, number> = new Map();
   /** 자리비움 후 방을 떠난 좌석의 최종 정리 타이머 — 키 `${roomId}:${playerId}` (복귀 시 취소) */
   private sitOutAbandonTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** 방별 휴먼 공격성 추적 — 봇의 상습 쇼버/레이저 대응용 (disposeRoom/엔진 교체 시 함께 정리) */
+  private aggroTrackers: Map<string, AggroTracker> = new Map();
   private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
@@ -297,6 +300,7 @@ export class RoomManager {
     this.chatHistory.delete(roomId);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
+    this.aggroTrackers.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
     this.economyLeaveBlockedPlayers.delete(roomId);
     this.economyLeaveBlockWasPreexisting.delete(roomId);
@@ -693,6 +697,7 @@ export class RoomManager {
     this.handSettlementRetryAttempts.delete(roomId);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
+    this.aggroTrackers.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
     this.economyLeaveBlockedPlayers.delete(roomId);
     this.economyLeaveBlockWasPreexisting.delete(roomId);
@@ -1613,7 +1618,12 @@ export class RoomManager {
         return;
       }
 
-      const { acted, action } = await processBotTurn(room.engine, isStale);
+      const { acted, action } = await processBotTurn(room.engine, isStale, aggressorId => {
+        // 상습 쇼버/레이저 대응은 휴먼 상대에게만 — 봇끼리는 기본 전략 유지
+        const aggressor = room.engine.state.players.find(p => p.id === aggressorId);
+        if (aggressor?.type !== 'human') return undefined;
+        return this.aggroTrackers.get(roomId)?.stats(aggressorId, room.engine.state.handNumber);
+      });
       if (isStale()) return; // 사고 지연 중 루프가 교체됨 — 새 루프가 진행을 소유
       if (acted && action) {
         // Bot chat based on action — 올인은 극적인 순간이라 AI 대사 시도, 나머지는 스크립트
@@ -1803,6 +1813,20 @@ export class RoomManager {
     // 시간 초과 자동 마킹은 본인 액션으로 즉시 해제 — 잠깐 자리를 비웠다 돌아온 사람이
     // [게임 복귀]를 따로 누르지 않아도 다음 핸드에서 빠지지 않는다 (명시적 자리비움은 유지)
     const actor = room.engine.state.players.find(p => p.id === playerId);
+
+    // 휴먼 공격 액션 기록 — 봇의 상습 쇼버/레이저 대응 재료 (aggro-tracker)
+    if (actor?.type === 'human' && (actionType === 'raise' || actionType === 'all-in')) {
+      let tracker = this.aggroTrackers.get(roomId);
+      if (!tracker) {
+        tracker = new AggroTracker();
+        this.aggroTrackers.set(roomId, tracker);
+      }
+      tracker.record(
+        playerId,
+        actionType === 'all-in' ? 'shove' : 'raise',
+        room.engine.state.handNumber,
+      );
+    }
     if (actor?.sitOutAuto) {
       actor.sitOutAuto = undefined;
       actor.sitOutNext = false;

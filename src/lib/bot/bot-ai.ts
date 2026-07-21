@@ -3,6 +3,16 @@ import { rankValue } from '../poker/deck';
 import { evaluateHand } from '../poker/evaluator';
 import { handPercentile } from './hand-rankings';
 import { BotPersonality, BOT_PERSONALITIES } from './personalities';
+import type { OpponentAggro } from './aggro-tracker';
+
+// --- 상습 쇼버/레이저 대응 임계값 (특별 케이스 익스플로잇 — aggro-tracker 참조) ---
+// 처음 한두 번의 쇼브는 기본 전략대로 접어주고, 트리거부터 맞선다.
+/** 최근 윈도우 쇼브 3회+ → 강한 핸드(티어3: JJ/TT/AQ+)로 큰 커밋 콜 */
+export const AGGRO_SHOVE_TRIGGER = 3;
+/** 최근 윈도우 쇼브 5회+ → 플레이어블(티어2: 99+/AT+/브로드웨이)까지 확대 */
+export const AGGRO_SHOVE_HEAVY = 5;
+/** 최근 윈도우 레이즈 6회+ → 3벳/컨티뉴 레인지 확대 + 폴드 성향 반감 */
+export const AGGRO_RAISE_TRIGGER = 6;
 
 /**
  * HUD 스탯 기반 봇 의사결정.
@@ -253,15 +263,17 @@ export function decideBotAction(
   gameState: GameState,
   validActions: ActionType[],
   rng: Rng = Math.random,
+  /** 현재 어그레서(lastAggressorId)의 최근 공격성 — 휴먼 상대일 때만 전달 (없으면 기본 전략) */
+  aggro?: OpponentAggro,
 ): BotDecision {
   const base = BOT_PERSONALITIES[player.personalityId || 'hana'] || BOT_PERSONALITIES['hana'];
   const personality = adjustForSkill(base, player.botSkill);
 
   if (gameState.street === 'preflop') {
-    return decidePreflopAction(player, gameState, validActions, personality, rng);
+    return decidePreflopAction(player, gameState, validActions, personality, rng, aggro);
   }
 
-  return decidePostflopAction(player, gameState, validActions, personality, rng);
+  return decidePostflopAction(player, gameState, validActions, personality, rng, aggro);
 }
 
 /** 빈도 스탯 독립시행 — rng() < stat% */
@@ -275,6 +287,7 @@ function decidePreflopAction(
   validActions: ActionType[],
   p: BotPersonality,
   rng: Rng,
+  aggro?: OpponentAggro,
 ): BotDecision {
   const tier = getPreflopTier(player.holeCards);
   const pct = handPercentile(player.holeCards); // 0=최강 ~ 1=최약
@@ -344,6 +357,13 @@ function decidePreflopAction(
   const deep = stackBB > 15;
   // 내가 이미 이 스트리트에 레이즈를 넣었는데 3벳/4벳으로 되돌아옴
   const reRaisedPreflop = player.currentBet > bb;
+  // 상습 쇼버 대응 — 한두 번은 접지만(트리거 미만) 반복되면 이 티어부터 큰 커밋에 맞선다
+  const fightBackTier = aggro === undefined ? null
+    : aggro.shoves >= AGGRO_SHOVE_HEAVY ? 2
+      : aggro.shoves >= AGGRO_SHOVE_TRIGGER ? 3
+        : null;
+  // 상습 레이저 대응 — 3벳/컨티뉴 레인지 확대 + 폴드 성향 반감
+  const vsSerialRaiser = (aggro?.raises ?? 0) >= AGGRO_RAISE_TRIGGER;
 
   if (tier === 4) {
     if (canRaise && rng() < 0.8) {
@@ -353,16 +373,21 @@ function decidePreflopAction(
     if (validActions.includes('all-in')) return { action: 'all-in', amount: 0 };
   }
 
-  // 딥스택에서 스택 40%+를 커밋하는 콜/레이즈는 프리미엄 전용 (올인 캐스케이드 차단 — 결정론)
+  // 딥스택에서 스택 40%+를 커밋하는 콜/레이즈는 프리미엄 전용 (올인 캐스케이드 차단 — 결정론).
+  // 예외: 상습 쇼버(fightBackTier)에겐 강한 핸드로 맞선다 — "올인만 하면 다 접는" 착취 차단
   if (deep && commitFrac >= 0.4) {
+    if (fightBackTier !== null && tier >= fightBackTier) {
+      if (canCall) return { action: 'call', amount: callAmount };
+      if (validActions.includes('all-in')) return { action: 'all-in', amount: 0 };
+    }
     if (canCheck) return { action: 'check', amount: 0 };
     return { action: 'fold', amount: 0 };
   }
 
-  // 내 오픈이 3벳을 맞음 — foldToThreeBet 시행 (상위 레인지는 계속)
+  // 내 오픈이 3벳을 맞음 — foldToThreeBet 시행 (상위 레인지는 계속, 상습 레이저에겐 반만 접음)
   if (reRaisedPreflop) {
     const continue3bet = pct <= (p.threeBet / 100) * 0.8; // 3벳 레인지 상위권만 4벳/콜 고려
-    if (!continue3bet && roll(rng, p.foldToThreeBet)) {
+    if (!continue3bet && roll(rng, p.foldToThreeBet * (vsSerialRaiser ? 0.5 : 1))) {
       if (canCheck) return { action: 'check', amount: 0 };
       return { action: 'fold', amount: 0 };
     }
@@ -371,18 +396,21 @@ function decidePreflopAction(
     return { action: 'fold', amount: 0 };
   }
 
-  // 3벳 레인지 — 상대 레이즈가 작을 때만 (레이즈 전쟁 금지)
-  if (pct <= p.threeBet / 100 && canRaise && raiseSizeBB <= 6 && tier >= 3) {
+  // 3벳 레인지 — 상대 레이즈가 작을 때만 (레이즈 전쟁 금지). 상습 레이저에겐 레인지·사이즈 확대
+  const threeBetRange = (p.threeBet / 100) * (vsSerialRaiser ? 1.5 : 1);
+  if (pct <= threeBetRange && canRaise && raiseSizeBB <= (vsSerialRaiser ? 8 : 6) && tier >= 3) {
     return raiseTo(gameState, player, gameState.currentBet * 3);
   }
 
-  // 콜드콜 레인지 (threeBet + coldCall = 컨티뉴 레인지)
-  const continueRange = (p.threeBet + p.coldCall) / 100;
+  // 콜드콜 레인지 (threeBet + coldCall = 컨티뉴 레인지) — 상습 레이저에겐 넓힌다
+  const continueRange = ((p.threeBet + p.coldCall) / 100) * (vsSerialRaiser ? 1.5 : 1);
   if (pct <= continueRange && canCall) {
-    // 가격 가드: 레이즈가 크면 상위 레인지만, 커밋 25% 이하
-    const affordable = commitFrac <= 0.25;
-    if (raiseSizeBB <= 4 && affordable) return { action: 'call', amount: callAmount };
-    if (raiseSizeBB <= 6 && affordable && pct <= continueRange * 0.5) {
+    // 가격 가드: 레이즈가 크면 상위 레인지만, 커밋 25% 이하 (상습 레이저에겐 30%)
+    const affordable = commitFrac <= (vsSerialRaiser ? 0.3 : 0.25);
+    if (raiseSizeBB <= (vsSerialRaiser ? 6 : 4) && affordable) {
+      return { action: 'call', amount: callAmount };
+    }
+    if (raiseSizeBB <= (vsSerialRaiser ? 9 : 6) && affordable && pct <= continueRange * 0.5) {
       return { action: 'call', amount: callAmount };
     }
   }
@@ -406,6 +434,7 @@ function decidePostflopAction(
   validActions: ActionType[],
   p: BotPersonality,
   rng: Rng,
+  aggro?: OpponentAggro,
 ): BotDecision {
   const { strength, draw } = analyzeHand(player, gameState.communityCards);
   const callAmount = gameState.currentBet - player.currentBet;
@@ -425,6 +454,9 @@ function decidePostflopAction(
   const reRaised = callAmount > 0 && player.currentBet > 0;
   // 내가 직전 어그레서인가 (c벳 스팟 판정)
   const isAggressor = gameState.lastAggressorId === player.id;
+  // 상습 쇼버/레이저의 벳 직면 — 블러프캐처(페어류) 콜 다운을 넓힌다 (특별 케이스 익스플로잇)
+  const aggroPressure = (aggro?.shoves ?? 0) >= AGGRO_SHOVE_TRIGGER
+    || (aggro?.raises ?? 0) >= AGGRO_RAISE_TRIGGER;
   // 스트리트별 사이징: 플랍은 작게(레인지 벳), 턴/리버는 표준
   const sizeMult = isFlop ? 0.8 : 1;
   const betFrac = p.betSizePot / 100;
@@ -475,15 +507,20 @@ function decidePostflopAction(
       }
       return { action: 'check', amount: 0 };
     }
-    // 딥스택에서 미들 페어로 스택 40%+ 커밋 금지 (결정론 — 콜링 스테이션 포함)
+    // 딥스택에서 미들 페어로 스택 40%+ 커밋 금지 (결정론 — 콜링 스테이션 포함).
+    // 예외: 상습 쇼버의 압박엔 톱페어급(0.5+)으로 맞선다 — 블러프캐처 다운 확대
     if (deep && commitFrac >= 0.4) {
+      if ((aggro?.shoves ?? 0) >= AGGRO_SHOVE_TRIGGER && strength >= 0.5 && canCall) {
+        return { action: 'call', amount: callAmount };
+      }
       if (canCheck) return { action: 'check', amount: 0 };
       return { action: 'fold', amount: 0 };
     }
     // 가격이 맞으면 콜 — wtsd(쇼다운 지향)가 높을수록 넓게, 큰 벳엔 foldToCbet 시행
+    // (상습 쇼버/레이저의 큰 벳엔 폴드 성향 반감 — 블러프 비중이 높다)
     const priceOk = potOdds <= 0.24 + (p.wtsd / 100) * 0.5;
     const bigBet = callAmount > pot * 0.8;
-    if (priceOk && !(bigBet && roll(rng, p.foldToCbet)) && canCall) {
+    if (priceOk && !(bigBet && roll(rng, p.foldToCbet * (aggroPressure ? 0.5 : 1))) && canCall) {
       return { action: 'call', amount: callAmount };
     }
     if (canCheck) return { action: 'check', amount: 0 };

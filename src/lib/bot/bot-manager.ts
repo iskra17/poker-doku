@@ -1,6 +1,7 @@
 import { GameState, Player, RoomDifficulty } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { BotDecision, decideBotAction } from './bot-ai';
+import type { OpponentAggro } from './aggro-tracker';
 import { getRandomBotCharacter } from '../characters';
 
 let botIdCounter = 0;
@@ -83,6 +84,8 @@ export async function processBotTurn(
   engine: PokerEngine,
   /** 사고 지연 중 루프가 교체됐는지 확인 — true면 액션 없이 중단 (stale 이중 액션 방지) */
   isCancelled?: () => boolean,
+  /** 상대 공격성 조회 (aggro-tracker) — 현재 어그레서의 최근 쇼브/레이즈 수. 휴먼만 반환할 것 */
+  aggroOf?: (playerId: string) => OpponentAggro | undefined,
 ): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
   const activePlayer = engine.state.players[engine.state.activePlayerIndex];
   if (!activePlayer || activePlayer.type !== 'bot') {
@@ -90,7 +93,11 @@ export async function processBotTurn(
   }
 
   const validActions = engine.getValidActions(activePlayer);
-  const decision = decideBotAction(activePlayer, engine.state, validActions);
+  const aggressorId = engine.state.lastAggressorId;
+  const aggro = aggressorId && aggressorId !== activePlayer.id
+    ? aggroOf?.(aggressorId)
+    : undefined;
+  const decision = decideBotAction(activePlayer, engine.state, validActions, Math.random, aggro);
 
   await new Promise(resolve => setTimeout(resolve, botThinkDelay(decision, activePlayer, engine.state)));
 
