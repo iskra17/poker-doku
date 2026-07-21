@@ -79,6 +79,11 @@ interface GameStore {
   clearPublicProfile: () => void;
   joinRoom: (roomId: string, buyIn: number, seatIndex: number, password?: string) => void;
   leaveRoom: (mode?: 'exit' | 'sitout') => Promise<boolean>;
+  /**
+   * 나가기 예약 설정/취소 (캐시 전용). 서버가 즉시 퇴장 조건으로 판정하면(status 'left')
+   * leaveRoom과 동일하게 방 상태를 정리하고 로비로 돌아간다.
+   */
+  reserveLeave: (kind: 'hand' | 'bb' | 'cancel') => Promise<boolean>;
   sendAction: (action: ActionType, amount?: number) => void;
   sendChat: (presetId: string) => void;
   toggleSitOut: () => void;
@@ -298,6 +303,38 @@ export const useGameStore = create<GameStore>((set, get) => ({
           joinError: null,
           tableNotice: null,
         });
+        resolve(true);
+      });
+    });
+  },
+
+  reserveLeave: kind => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(false);
+    const mode = kind === 'hand'
+      ? 'reserve-hand' as const
+      : kind === 'bb' ? 'reserve-bb' as const : 'reserve-cancel' as const;
+    return new Promise(resolve => {
+      socket.emit('leave-room', { mode }, ack => {
+        if (!ack.ok) {
+          set({ tableNotice: ack.message });
+          resolve(false);
+          return;
+        }
+        // 서버가 즉시 퇴장으로 처리한 경우(기다릴 핸드/블라인드 없음)만 방 상태 정리
+        if (ack.data?.status === 'left') {
+          clearJoinTimeout();
+          clearActionAckTimeout();
+          set({
+            currentRoomId: null,
+            pendingRoomId: null,
+            pendingAction: null,
+            gameState: null,
+            chatMessages: [],
+            joinError: null,
+            tableNotice: null,
+          });
+        }
         resolve(true);
       });
     });

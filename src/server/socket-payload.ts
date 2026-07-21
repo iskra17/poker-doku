@@ -149,8 +149,12 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
   };
 }
 
+const LEAVE_ROOM_MODES: ReadonlySet<LeaveRoomRequest['mode']> = new Set([
+  'exit', 'sitout', 'reserve-hand', 'reserve-bb', 'reserve-cancel',
+]);
+
 export function parseLeaveRoomRequest(input: unknown): ParseResult<LeaveRoomRequest> {
   if (input === undefined) return { ok: true, value: { mode: 'exit' } };
-  if (!isRecord(input) || (input.mode !== 'exit' && input.mode !== 'sitout')) return fail();
-  return { ok: true, value: { mode: input.mode } };
+  if (!isRecord(input) || !LEAVE_ROOM_MODES.has(input.mode as LeaveRoomRequest['mode'])) return fail();
+  return { ok: true, value: { mode: input.mode as LeaveRoomRequest['mode'] } };
 }

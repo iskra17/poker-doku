@@ -37,6 +37,13 @@ npx tsc --noEmit
   절대 `pots[].amount +=` 증분 방식으로 되돌리지 말 것 (멀티 스트리트 소실 버그의 원인이었음).
 - **핸드 중 이탈**: 진행 중엔 절대 splice 금지 — `pendingRemoval` 마킹 + 폴드, 다음 핸드 시작 시
   `removePendingPlayers()`가 일괄 제거 (dealerIndex 보정 포함).
+- **좌석 순서/버튼 궤도**: 포지션 로직(버튼 이동·SB/BB·액션 순서)은 전부 `players` **배열 순서**로
+  돈다 — 배열은 항상 seatIndex 오름차순을 유지해야 한다 (`addPlayer` 정렬 삽입, 핸드 중 입장은
+  꼬리 push 후 `startHand`의 `normalizeSeatOrder()`가 정렬). 이 불변식이 깨지면 버튼이 입장
+  순서로 널뛴다 (2026-07-21 유저 신고로 수정). 버튼 룰은 **무빙 버튼**: 다음 버튼 = 좌석 순서상
+  다음 딜인 좌석, 이탈/자리비움 좌석은 스킵. 버튼 좌석 본인이 떠나면 "이전 좌석 앵커"로 보정해
+  떠난 좌석의 다음 좌석이 버튼을 받는다 — `max(0, i-1)` 클램프로 되돌리면 인덱스 0의 버튼 이탈
+  시 한 좌석이 건너뛰어져 같은 사람이 BB를 연속 납부한다. 회귀: `engine.button.test.ts`.
 - **올인 런아웃 단계 연출**: 응수 가능한 플레이어가 1명 이하로 베팅이 닫히면 엔진이 보드를 즉시
   깔지 않고 `state.allInRunout` 모드로 전환한다(activePlayerIndex=-1, 핸드는 진행 중). 이때
   getPublicState가 생존자 핸드를 미리 공개(revealed)하고, RoomManager `scheduleRunoutStreet()`가
@@ -93,7 +100,15 @@ npx tsc --noEmit
   함께 지운다. persistent 기본 방은 마지막 휴먼이 완전히 나가 유효 좌석이 0개가 되면 삭제 대신 새 `PokerEngine`으로 교체해
   플레이어·채팅·`handNumber`/`actionSeq`·`lastAction`/`lastAggressorId` 등 이전 핸드 상태를 남기지 않는다.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
-  '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 정책은 `src/server/sitout.ts`
+  '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 캐시(비 SnG/아레나)는
+  **나가기 예약** 2종 추가 — '이번 핸드까지'(mode:'reserve-hand')와 '다음 빅블라인드 전'
+  (mode:'reserve-bb', GG/스타즈의 sit out next BB 관행). `RoomManager.setLeaveReservation`이
+  `Player.leaveReservation`을 세팅하고, 핸드 종료(정산 확정) 시 `processLeaveReservations`가
+  'hand'는 무조건·'bb'는 `predictNextBigBlindId()`(engine) 일치 좌석만 `leaveRoom` 실행 후
+  `onSeatReclaimed(message)`로 room-lost 안내한다. 기다릴 핸드/블라인드가 없으면 'leave-now'로
+  즉시 exit 처리(ack data.status='left' — 클라이언트는 이때만 방 상태 정리). 취소는
+  mode:'reserve-cancel', 예약 중엔 GameRoomView 배너에 [취소] 노출. SnG/아레나는 rejected.
+  회귀: `room-manager.leave-reserve.test.ts`. 정책은 `src/server/sitout.ts`
   + RoomManager. **공통 원칙**: 자리비움 좌석의 턴은 절대 기다리지 않는다 — 누른 순간이 본인 턴이면
   `toggleSitOut`이 즉시 `autoActFor`(체크 가능하면 체크, 아니면 폴드), 아니면 턴 도래 시
   `startPlayerLoop`의 autoAct가 1초 뒤 처리(`isDisconnected || sitOutNext`, 캐시/SnG 공통).

@@ -117,9 +117,13 @@ describe('Socket.IO payload runtime parsing', () => {
     expect(parseCreateRoomRequest({ ...base, economyMode: 1 }).ok).toBe(false);
   });
 
-  it('leave-room은 payload 생략과 두 모드만 허용한다', () => {
+  it('leave-room은 payload 생략과 정의된 모드만 허용한다', () => {
     expect(parseLeaveRoomRequest(undefined)).toEqual({ ok: true, value: { mode: 'exit' } });
     expect(parseLeaveRoomRequest({ mode: 'sitout' })).toEqual({ ok: true, value: { mode: 'sitout' } });
+    // 나가기 예약 모드 (이번 핸드 후 / 다음 BB 전 / 예약 취소)
+    expect(parseLeaveRoomRequest({ mode: 'reserve-hand' })).toEqual({ ok: true, value: { mode: 'reserve-hand' } });
+    expect(parseLeaveRoomRequest({ mode: 'reserve-bb' })).toEqual({ ok: true, value: { mode: 'reserve-bb' } });
+    expect(parseLeaveRoomRequest({ mode: 'reserve-cancel' })).toEqual({ ok: true, value: { mode: 'reserve-cancel' } });
     expect(parseLeaveRoomRequest({ mode: 'erase-everything' }).ok).toBe(false);
   });
 });

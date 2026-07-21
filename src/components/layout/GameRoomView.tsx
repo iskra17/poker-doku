@@ -27,7 +27,7 @@ interface GameRoomViewProps {
 
 /** 인룸 뷰 공용 컴포넌트 — page.tsx와 table/[id]/page.tsx가 공유 */
 export default function GameRoomView({ onLeave }: GameRoomViewProps) {
-  const { gameState, myPlayerId, connectionState, tableNotice } = useGameStore();
+  const { gameState, myPlayerId, connectionState, tableNotice, reserveLeave } = useGameStore();
   const isMobile = useIsMobile();
   const [leaveOpen, setLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
@@ -46,6 +46,9 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const busted = !!myPlayer && myPlayer.chips <= 0
     && !(gameState?.isHandInProgress && (myPlayer.status === 'active' || myPlayer.status === 'all-in'));
   const canSitOut = !!myPlayer && !busted && !myPlayer.finishPlace && !tournamentFinished;
+  // 나가기 예약은 캐시 전용 (SnG/아레나 제외 — 서버 setLeaveReservation과 같은 조건)
+  const canReserve = canSitOut && !gameState?.tournament && gameState?.economyMode !== 'arena';
+  const myReservation = myPlayer?.leaveReservation ?? null;
   const handleLeaveClick = () => {
     if (canSitOut) setLeaveOpen(true);
     else onLeave();
@@ -69,11 +72,30 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
           {visibleNotice}
         </div>
       )}
+      {/* 나가기 예약 배너 — 예약 중에만 노출, [취소]로 즉시 해제 */}
+      {myReservation && (
+        <div className="flex-none border-b border-gilded/30 bg-elevated/95 px-3 py-1.5 flex items-center justify-center gap-2 text-xs text-gilded">
+          <span>
+            {myReservation === 'hand'
+              ? '🕐 이번 핸드를 마치면 자동으로 나가요'
+              : '🕐 다음 빅블라인드 차례 전에 자동으로 나가요'}
+          </span>
+          <button
+            type="button"
+            onClick={() => reserveLeave('cancel')}
+            className="rounded-md border border-gilded/40 px-2 py-0.5 font-bold hover:bg-gilded/15 transition-colors"
+          >
+            취소
+          </button>
+        </div>
+      )}
       <LeaveRoomModal
         isOpen={leaveOpen}
         isSng={!!gameState?.tournament}
+        canReserve={canReserve}
         onClose={() => setLeaveOpen(false)}
         onSitOut={() => { setLeaveOpen(false); onLeave('sitout'); }}
+        onReserve={kind => { setLeaveOpen(false); reserveLeave(kind); }}
         onExit={() => { setLeaveOpen(false); onLeave(); }}
       />
 

@@ -80,7 +80,18 @@ export interface CreateRoomRequest {
 }
 
 export interface LeaveRoomRequest {
-  mode: 'exit' | 'sitout';
+  /**
+   * exit/sitout은 즉시 퇴장. reserve-*는 나가기 예약 (캐시 전용):
+   * reserve-hand=이번 핸드 종료 시, reserve-bb=다음 빅블라인드 직전, reserve-cancel=예약 취소.
+   * 예약이 즉시 실행 조건이면(핸드 미진행 등) 서버가 그 자리에서 exit로 처리하고
+   * ack data.status='left'로 알린다 — 클라이언트는 이때만 방 상태를 정리한다.
+   */
+  mode: 'exit' | 'sitout' | 'reserve-hand' | 'reserve-bb' | 'reserve-cancel';
+}
+
+/** leave-room reserve-* 요청의 ack data */
+export interface LeaveReserveAckData {
+  status: 'reserved' | 'cleared' | 'left';
 }
 
 export interface PlayerActionRequest {
@@ -155,7 +166,7 @@ export interface ClientToServerEvents {
   resync: (ack?: AckCallback) => void;
   'get-rooms': (ack?: AckCallback) => void;
   'join-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
-  'leave-room': (data?: unknown, ack?: AckCallback) => void;
+  'leave-room': (data?: unknown, ack?: AckCallback<LeaveReserveAckData>) => void;
   'player-action': (
     data: unknown,
     ack?: AckCallback<{ handNumber: number; actionSeq: number }>,

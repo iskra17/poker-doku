@@ -5,17 +5,23 @@ import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 
 interface LeaveRoomModalProps {
   isOpen: boolean;
-  /** Sit & Go 방 여부 — 자리비움/기권 문구가 달라진다 */
+  /** Sit & Go 방 여부 — 자리비움/기권 문구가 달라지고 나가기 예약이 숨는다 */
   isSng: boolean;
+  /** 나가기 예약 노출 여부 — 캐시 전용 (SnG/아레나 제외) */
+  canReserve: boolean;
   onClose: () => void;
   /** 좌석/칩 유지한 채 자리비움으로 나가기 */
   onSitOut: () => void;
+  /** 나가기 예약 — 'hand': 이번 핸드 후 / 'bb': 다음 빅블라인드 전 */
+  onReserve: (kind: 'hand' | 'bb') => void;
   /** 완전히 나가기 (캐시: 좌석 정리 / SnG: 기권) */
   onExit: () => void;
 }
 
-/** 나가기 확인 다이얼로그 — 게임을 끝낼지, 자리만 비울지 선택 */
-export default function LeaveRoomModal({ isOpen, isSng, onClose, onSitOut, onExit }: LeaveRoomModalProps) {
+/** 나가기 확인 다이얼로그 — 게임을 끝낼지, 자리만 비울지, 나가기를 예약할지 선택 */
+export default function LeaveRoomModal({
+  isOpen, isSng, canReserve, onClose, onSitOut, onReserve, onExit,
+}: LeaveRoomModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="테이블을 떠날까요?">
       <div className="space-y-3">
@@ -29,6 +35,22 @@ export default function LeaveRoomModal({ isOpen, isSng, onClose, onSitOut, onExi
           accent="mystic"
           onClick={onSitOut}
         />
+        {canReserve && (
+          <>
+            <ChoiceButton
+              title="이번 핸드까지 하고 나가기"
+              description="진행 중인 핸드를 마치면 자동으로 자리를 정리하고 로비로 돌아가요. 예약 후에도 [취소]로 되돌릴 수 있어요."
+              accent="gilded"
+              onClick={() => onReserve('hand')}
+            />
+            <ChoiceButton
+              title="다음 빅블라인드 전에 나가기"
+              description="블라인드를 새로 내기 직전까지만 플레이하고 자동으로 나가요 — 포커룸 표준 매너 퇴장이에요."
+              accent="gilded"
+              onClick={() => onReserve('bb')}
+            />
+          </>
+        )}
         <ChoiceButton
           title={isSng ? '기권하고 나가기' : '완전히 나가기'}
           description={
@@ -55,13 +77,15 @@ function ChoiceButton({
 }: {
   title: string;
   description: string;
-  accent: 'mystic' | 'danger';
+  accent: 'mystic' | 'gilded' | 'danger';
   onClick: () => void;
 }) {
   const styles = accent === 'mystic'
     ? 'border-mystic/40 hover:border-mystic bg-mystic/10 hover:bg-mystic/20'
-    : 'border-red-400/40 hover:border-red-400 bg-red-500/10 hover:bg-red-500/20';
-  const titleColor = accent === 'mystic' ? 'text-mystic' : 'text-red-300';
+    : accent === 'gilded'
+      ? 'border-gilded/40 hover:border-gilded bg-gilded/10 hover:bg-gilded/20'
+      : 'border-red-400/40 hover:border-red-400 bg-red-500/10 hover:bg-red-500/20';
+  const titleColor = accent === 'mystic' ? 'text-mystic' : accent === 'gilded' ? 'text-gilded' : 'text-red-300';
   return (
     <button onClick={onClick} className={`w-full text-left rounded-xl border p-4 transition-colors ${styles}`}>
       <div className={`text-sm font-bold mb-1 ${titleColor}`}>{title}</div>

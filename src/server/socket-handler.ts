@@ -315,9 +315,9 @@ export function setupSocketHandlers(
           },
         }
         : {}),
-      // 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB) 좌석 회수 —
+      // 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB)·나가기 예약 좌석 회수 —
       // 접속한 채 방에 남아 있는 클라이언트를 room-lost로 로비에 돌려보낸다
-      onSeatReclaimed: (roomId, playerId) => {
+      onSeatReclaimed: (roomId, playerId, message) => {
         const targetSession = sessions.getByPlayerId(playerId);
         if (!targetSession || targetSession.roomId !== roomId) return;
         targetSession.roomId = null;
@@ -327,7 +327,7 @@ export function setupSocketHandlers(
         if (targetSocket) {
           targetSocket.leave(roomId);
           targetSocket.emit('room-lost', {
-            message: '자리가 정리되어 로비로 돌아왔어요. 다시 입장할 수 있어요.',
+            message: message ?? '자리가 정리되어 로비로 돌아왔어요. 다시 입장할 수 있어요.',
           });
         }
         sessions.releaseIfIdle(targetSession);
@@ -1526,9 +1526,11 @@ export function setupSocketHandlers(
       }
     });
 
-    // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀)
+    // Leave room — mode 'sitout'이면 좌석/칩을 유지한 채 자리비움으로 떠남 (재입장 시 복귀).
+    // 'reserve-hand'/'reserve-bb'는 나가기 예약(방에 남음), 'reserve-cancel'은 예약 취소 —
+    // 예약이 즉시 실행 조건이면 setLeaveReservation이 'leave-now'를 돌려주고 exit로 이어진다.
     socket.on('leave-room', (...rawArgs: unknown[]) => {
-      const args = parseOptionalPayloadArgs(rawArgs);
+      const args = parseOptionalPayloadArgs<{ status: 'reserved' | 'cleared' | 'left' }>(rawArgs);
       if (!args.ok) {
         invalidPayload(args.ack);
         return;
@@ -1541,12 +1543,36 @@ export function setupSocketHandlers(
         return;
       }
       const data = parsed.value;
+      const isReserveMode = data.mode === 'reserve-hand'
+        || data.mode === 'reserve-bb'
+        || data.mode === 'reserve-cancel';
+      let reserveLeftNow = false;
       if (session.roomId) {
         const roomId = session.roomId;
         eventLog.log('leave-room', {
           roomId, playerId: session.playerId,
           data: { mode: data.mode, seats: seatSnapshot(roomId) },
         });
+        if (isReserveMode) {
+          const kind = data.mode === 'reserve-hand'
+            ? 'hand' as const
+            : data.mode === 'reserve-bb' ? 'bb' as const : null;
+          const result = roomManager.setLeaveReservation(roomId, session.playerId, kind);
+          if (result === 'rejected') {
+            ack?.({
+              ok: false,
+              code: 'action-rejected',
+              message: '이 테이블에서는 나가기 예약을 쓸 수 없어요.',
+            });
+            return;
+          }
+          if (result !== 'leave-now') {
+            ack?.({ ok: true, data: { status: result } });
+            return;
+          }
+          // 'leave-now': 기다릴 핸드/블라인드가 없다 — 아래 즉시 퇴장 경로로 처리
+          reserveLeftNow = true;
+        }
         if (data.mode === 'sitout') {
           socket.leave(roomId);
           roomManager.sitOutAndLeave(roomId, session.playerId);
@@ -1567,7 +1593,7 @@ export function setupSocketHandlers(
         session.roomId = null;
         broadcastRoomList();
       }
-      ack?.({ ok: true });
+      ack?.(reserveLeftNow ? { ok: true, data: { status: 'left' } } : { ok: true });
     });
 
     // Player action

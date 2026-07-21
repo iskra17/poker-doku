@@ -71,6 +71,12 @@ export interface Player {
    */
   sitOutAuto?: boolean;
   sitOutSinceHand?: number; // 캐시 자리비움 시작 시점의 handNumber — 경과 핸드로 미납 블라인드(≈오르빗) 산정
+  /**
+   * 나가기 예약 (캐시 전용): 'hand'=이번 핸드 종료 시, 'bb'=다음 빅블라인드 차례 직전에
+   * 서버가 자동 퇴장 처리 (RoomManager.processLeaveReservations — 핸드 종료 시 판정).
+   * 본인 클라이언트가 예약 배너/취소 버튼을 그리는 데도 쓴다.
+   */
+  leaveReservation?: 'hand' | 'bb';
   timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
   /** 다른 좌석에 공개해도 되는 최소 꾸미기 정보. */

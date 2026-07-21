@@ -65,10 +65,11 @@ export interface RoomManagerOptions {
     arenaMatchId?: string,
   ) => void;
   /**
-   * 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB)가 좌석을 회수했을 때 호출 —
-   * 접속 중인 클라이언트를 room-lost로 로비에 돌려보낸다 (없으면 다음 resync 때 정리).
+   * 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB)나 나가기 예약이 좌석을 회수했을 때
+   * 호출 — 접속 중인 클라이언트를 room-lost로 로비에 돌려보낸다 (없으면 다음 resync 때 정리).
+   * message를 주면 room-lost 안내 문구를 대체한다 (예: 나가기 예약 실행 안내).
    */
-  onSeatReclaimed?: (roomId: string, playerId: string) => void;
+  onSeatReclaimed?: (roomId: string, playerId: string, message?: string) => void;
 }
 
 export interface RoomArenaHooks {
@@ -1401,6 +1402,75 @@ export class RoomManager {
   }
 
   /**
+   * 나가기 예약 설정/취소 (leave-room mode:'reserve-*', 캐시 전용).
+   * - 'hand': 이번 핸드 종료 시 자동 퇴장. 진행 중 핸드에 딜인돼 있지 않으면(핸드 사이·
+   *   자리비움·이미 폴드) 기다릴 핸드가 없으므로 'leave-now' — 호출부가 즉시 exit 처리한다.
+   * - 'bb': 다음 빅블라인드를 낼 차례가 오기 직전 자동 퇴장 (핸드 종료 시마다
+   *   predictNextBigBlindId로 판정). 핸드 사이에 이미 다음 BB로 예측되면 'leave-now'.
+   * - null: 예약 취소.
+   * SnG/아레나는 기권·순위 규칙과 얽혀 예약을 지원하지 않는다 ('rejected').
+   */
+  setLeaveReservation(
+    roomId: string,
+    playerId: string,
+    kind: 'hand' | 'bb' | null,
+  ): 'reserved' | 'cleared' | 'leave-now' | 'rejected' {
+    const room = this.rooms.get(roomId);
+    const player = room?.engine.state.players.find(p => p.id === playerId);
+    if (!room || !player || player.pendingRemoval) return 'rejected';
+    if (kind === null) {
+      if (player.leaveReservation) {
+        player.leaveReservation = undefined;
+        this.onUpdate(roomId, room.engine);
+      }
+      return 'cleared';
+    }
+    if (room.config.gameMode === 'sng' || room.config.competitionMode) return 'rejected';
+
+    const st = room.engine.state;
+    const inCurrentHand = st.isHandInProgress
+      && (player.status === 'active' || player.status === 'all-in');
+    if (kind === 'hand' && !inCurrentHand) return 'leave-now';
+    if (
+      kind === 'bb'
+      && !st.isHandInProgress
+      && room.engine.predictNextBigBlindId() === playerId
+    ) {
+      return 'leave-now';
+    }
+    player.leaveReservation = kind;
+    this.onUpdate(roomId, room.engine);
+    return 'reserved';
+  }
+
+  /**
+   * 나가기 예약 실행 — 핸드 종료(정산 확정) 시점에 handleCompletedHand가 호출.
+   * 'hand'는 무조건, 'bb'는 다음 핸드 BB로 예측되는 좌석만 퇴장 처리한다.
+   * leaveRoom 실패(지갑 정산 실패로 방 잠금)면 예약을 유지해 다음 핸드 종료 때 재시도한다.
+   */
+  private processLeaveReservations(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.engine.state.isHandInProgress) return;
+    const due = room.engine.state.players.filter(p =>
+      p.type === 'human'
+      && !p.pendingRemoval
+      && p.leaveReservation !== undefined
+      && (p.leaveReservation === 'hand'
+        || room.engine.predictNextBigBlindId() === p.id));
+    for (const p of due) {
+      if (!this.rooms.has(roomId)) return; // 앞선 퇴장으로 방이 정리됐으면 종료
+      const reason = p.leaveReservation === 'hand' ? '핸드 종료' : '빅블라인드 순서';
+      if (this.leaveRoom(roomId, p.id)) {
+        this.options.onSeatReclaimed?.(
+          roomId,
+          p.id,
+          `예약하신 대로 ${reason}에 맞춰 테이블에서 나왔어요.`,
+        );
+      }
+    }
+  }
+
+  /**
    * 재접속 grace 만료 처리. 좌석을 유지하면 true.
    * - SnG: 무조건 좌석 보존 (자리비움 여부 무관) — 딜인 유지로 블라인드 소진 → 자연 탈락에 맡긴다.
    * - 캐시 자리비움: 유지하되, 핸드가 돌지 않는 방까지 위해 최종 정리 유예를 건다.
@@ -2200,6 +2270,11 @@ export class RoomManager {
       this.economyBlockedRooms.delete(roomId);
       this.unresolvedSettlementRooms.delete(roomId);
     }
+
+    // 나가기 예약('이번 핸드 후'/'다음 BB 전') 실행 — 정산 확정 후·다음 핸드 예약 전.
+    // 마지막 휴먼이 예약 퇴장하면 leaveRoom이 방을 정리하므로 남은 인원은 그 뒤에 다시 센다.
+    this.processLeaveReservations(roomId);
+    if (!this.rooms.has(roomId)) return;
 
     const remainingHumans = state.players.filter(
       player => player.type === 'human' && !player.pendingRemoval,
