@@ -59,14 +59,7 @@ export default function DealerCorner() {
   const dealer = DEALER_CHARACTER;
 
   return (
-    <div className="absolute top-1 right-1 z-30 pointer-events-none flex items-start justify-end gap-1.5">
-      {/* 말풍선 — 아바타 왼쪽으로 전개 */}
-      {showBubble && (
-        <AnimatePresence>
-          {line && <DealerBubble key={line} text={line} />}
-        </AnimatePresence>
-      )}
-
+    <div className="absolute top-1 right-1 z-30 pointer-events-none flex flex-col items-end gap-2.5">
       {/* 아바타 + 이름표 */}
       {showAvatar && (
         <motion.div
@@ -88,6 +81,13 @@ export default function DealerCorner() {
           </div>
         </motion.div>
       )}
+
+      {/* 말풍선 — 아바타 아래(우측 펠트 빈 공간)로 전개. 상단 중앙 좌석을 가리지 않는다 */}
+      {showBubble && (
+        <AnimatePresence>
+          {line && <DealerBubble key={line} text={line} />}
+        </AnimatePresence>
+      )}
     </div>
   );
 }
@@ -97,12 +97,12 @@ function DealerBubble({ text }: { text: string }) {
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: 8, scale: 0.9 }}
-      animate={{ opacity: 1, x: 0, scale: 1 }}
+      initial={{ opacity: 0, y: -6, scale: 0.9 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.9 }}
-      className="max-w-[240px] mt-1"
+      className="max-w-[200px]"
     >
-      <div className="bg-panel/95 backdrop-blur-sm rounded-xl rounded-tr-sm px-2.5 py-1.5 border border-gilded/40 shadow-lg">
+      <div className="bg-panel/70 backdrop-blur-[2px] rounded-xl rounded-tr-sm px-2.5 py-1.5 border border-gilded/30">
         <div className="text-[9px] font-bold mb-0.5 text-gilded" style={{ fontFamily: 'var(--font-display)' }}>
           딜러 (미야코)
         </div>

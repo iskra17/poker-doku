@@ -49,18 +49,16 @@ export default function HandEconomySummary() {
   }, [myPlayerId]);
 
   if (!summary || !isHandEconomySummaryForPlayer(summary, myPlayerId)) return null;
+  // 슬림 1줄 필 — 상단 좌석(y 15%)을 가리지 않게 최상단에 얇고 투명하게 (2026-07-22 가림 개선)
   return (
-    <div className="pointer-events-none absolute left-1/2 top-16 z-30 w-[min(90%,340px)]" style={{ transform: 'translateX(-50%)' }}>
-      <div className="rounded-xl border border-mystic/30 bg-panel/95 px-4 py-3 text-center shadow-xl backdrop-blur-sm">
-        {summary.economyMode === 'practice' ? (
-          <p className="text-sm font-bold text-mystic">연습 게임 · 레이크 없음</p>
-        ) : (
-          <p className="text-xs text-ink-dim">레이크 {summary.handRake.toLocaleString('ko-KR')}</p>
-        )}
-        <p className={`mt-1 text-lg font-bold ${summary.delta >= 0 ? 'text-gilded' : 'text-blossom'}`}>
+    <div className="pointer-events-none absolute left-1/2 top-1 z-30 max-w-[92%]" style={{ transform: 'translateX(-50%)' }}>
+      <div className="flex items-baseline gap-2 whitespace-nowrap rounded-full border border-white/10 bg-panel/45 px-3.5 py-1 backdrop-blur-[2px]">
+        <span className={`text-sm font-bold ${summary.delta >= 0 ? 'text-gilded' : 'text-blossom'}`}>
           이번 핸드 {formatChipDelta(summary.delta)}칩
-        </p>
-        <p className="text-[11px] text-ink-dim">종료 스택 {summary.endingStack.toLocaleString('ko-KR')}</p>
+        </span>
+        <span className="text-[10px] text-ink-dim">
+          레이크 {summary.handRake.toLocaleString('ko-KR')} · 스택 {summary.endingStack.toLocaleString('ko-KR')}
+        </span>
       </div>
     </div>
   );
