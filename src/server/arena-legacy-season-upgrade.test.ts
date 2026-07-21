@@ -157,7 +157,7 @@ describe('legacy Arena season catalog upgrades', () => {
     const repository = new ArenaRepository(openedDatabase);
     expect(openedDatabase.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 22 });
+    `).get()).toEqual({ version: 23 });
     expect(repository.listSeasonCatalog(SEASON_ID)).toEqual([]);
     return {
       database: openedDatabase,
