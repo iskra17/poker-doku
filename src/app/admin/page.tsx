@@ -47,6 +47,14 @@ interface OpsEvent {
   data: Record<string, unknown>;
 }
 
+interface FeedbackItem {
+  id: number;
+  alias: string;
+  category: 'bug' | 'idea' | 'other';
+  message: string;
+  createdAt: number;
+}
+
 function timeAgo(ms: number | null): string {
   if (!ms) return '—';
   const diff = Date.now() - ms;
@@ -74,6 +82,7 @@ export default function AdminPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [profiles, setProfiles] = useState<AdminProfile[]>([]);
   const [events, setEvents] = useState<OpsEvent[]>([]);
+  const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [eventType, setEventType] = useState('');
   const [lastError, setLastError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
@@ -85,10 +94,11 @@ export default function AdminPage() {
       const typeFilter = eventType
         ? `&type=${encodeURIComponent(eventType)}`
         : '';
-      const [overviewRes, profilesRes, eventsRes] = await Promise.all([
+      const [overviewRes, profilesRes, eventsRes, feedbackRes] = await Promise.all([
         fetch(`/api/admin/overview?${query}`),
         fetch(`/api/admin/profiles?${query}&limit=100`),
         fetch(`/api/admin/events?${query}&limit=100${typeFilter}`),
+        fetch(`/api/debug/feedback?${query}&limit=30`),
       ]);
       if (overviewRes.status === 403) {
         setAuthFailed(true);
@@ -100,6 +110,8 @@ export default function AdminPage() {
       setProfiles(profilesBody.profiles ?? []);
       const eventsBody = await eventsRes.json() as { events: OpsEvent[] };
       setEvents(eventsBody.events ?? []);
+      const feedbackBody = await feedbackRes.json() as { items: FeedbackItem[] };
+      setFeedback(feedbackBody.items ?? []);
       setLastError(null);
       setUpdatedAt(Date.now());
     } catch {
@@ -263,6 +275,35 @@ export default function AdminPage() {
                 )}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="mb-2 text-sm font-bold text-blossom">
+            문의/건의 (최근 {feedback.length})
+          </h2>
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-mystic/20 bg-panel/85">
+            {feedback.map(item => (
+              <div key={item.id} className="border-b border-white/5 p-3 text-xs">
+                <div className="mb-1 flex items-center gap-2 text-[10px] text-ink-dim">
+                  <span className={`rounded px-1.5 py-0.5 font-bold ${
+                    item.category === 'bug'
+                      ? 'bg-blossom/20 text-blossom'
+                      : item.category === 'idea'
+                        ? 'bg-cyber/20 text-cyber'
+                        : 'bg-white/10 text-ink-dim'
+                  }`}>
+                    {item.category === 'bug' ? '버그' : item.category === 'idea' ? '제안' : '기타'}
+                  </span>
+                  <span className="font-bold text-ink">{item.alias}</span>
+                  <span>{timeAgo(item.createdAt)}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-ink">{item.message}</p>
+              </div>
+            ))}
+            {feedback.length === 0 && (
+              <div className="p-3 text-xs text-ink-dim">문의 없음</div>
+            )}
           </div>
         </section>
 
