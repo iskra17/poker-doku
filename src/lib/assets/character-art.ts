@@ -69,3 +69,14 @@ export function getCharacterArt(characterId: string, expression: Expression = 'n
   if (!available.includes(resolved)) return null;
   return `/assets/characters/${folder}/${resolved}.webp`;
 }
+
+// 쇼케이스(상반신 포즈, 640x960 투명 webp) 보유 캐릭터 — 프로필 클릭 연출용.
+// 전 캐릭터 보유 (2026-07-22 생성). 새 캐릭터 추가 시 showcase.webp도 함께 생성할 것.
+const SHOWCASE_AVAILABLE: ReadonlySet<string> = new Set(Object.keys(AVAILABLE));
+
+/** 쇼케이스 일러스트 — 없으면 null (호출부는 버스트업 폴백) */
+export function getCharacterShowcaseArt(characterId: string): string | null {
+  const folder = ART_FOLDERS[characterId];
+  if (!folder || !SHOWCASE_AVAILABLE.has(folder)) return null;
+  return `/assets/characters/${folder}/showcase.webp`;
+}

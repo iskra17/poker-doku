@@ -8,6 +8,7 @@ import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterAvatar from '../characters/CharacterAvatar';
+import CharacterShowcaseModal from '../characters/CharacterShowcaseModal';
 import CardComponent from './Card';
 import TurnTimer from './TurnTimer';
 import SeatEmote from './SeatEmote';
@@ -92,6 +93,8 @@ export default function PlayerSeat({
   const expression = useSeatExpression(player?.id, isActive);
   const toggleChipDisplayMode = useSettingsStore(s => s.toggleChipDisplayMode);
   const formatChips = useChipFormatter();
+  // 아바타 탭 → 캐릭터 쇼케이스 (본인/봇 공통 — 캐릭터 일러스트 감상)
+  const [showcaseOpen, setShowcaseOpen] = useState(false);
 
   if (!player) {
     return (
@@ -159,8 +162,14 @@ export default function PlayerSeat({
       style={{ left: position.x, top: position.y, x: '-50%', y: '-50%' }}
     >
       <div className="relative flex flex-col items-center">
-        {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만 */}
-        <div className={`relative z-10 rounded-full transition-opacity ${frameClass} ${dimClass}`}>
+        {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만.
+            탭하면 캐릭터 쇼케이스(상반신 일러스트) 오픈 */}
+        <div
+          className={`relative z-10 rounded-full transition-opacity cursor-pointer ${frameClass} ${dimClass}`}
+          onClick={() => setShowcaseOpen(true)}
+          role="button"
+          aria-label={`${player.name} 캐릭터 보기`}
+        >
           <SeatEmote playerId={player.id} />
           <CharacterAvatar
             characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
@@ -266,6 +275,14 @@ export default function PlayerSeat({
           </div>
         )}
       </div>
+
+      {/* 캐릭터 쇼케이스 — 포탈 렌더라 transform 조상(framer) 영향 없음 */}
+      <CharacterShowcaseModal
+        characterId={showcaseOpen
+          ? (player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player'))
+          : null}
+        onClose={() => setShowcaseOpen(false)}
+      />
     </motion.div>
   );
 }

@@ -1,9 +1,11 @@
 'use client';
 
+import { useState } from 'react';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useGameStore } from '@/lib/store/game-store';
 import { getRescueStatusText } from '@/lib/economy/status-format';
 import CharacterImage from '@/components/characters/CharacterImage';
+import CharacterShowcaseModal from '@/components/characters/CharacterShowcaseModal';
 import Button from '@/components/ui/Button';
 import { getBalance, milliToUiUnits } from '@/lib/progression/balance';
 import { useProgressionStore } from '@/lib/store/progression-store';
@@ -25,6 +27,8 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
   const progression = useProgressionStore(state => state.snapshot);
   const progressionError = useProgressionStore(state => state.error);
   const arenaSnapshot = useArenaStore(state => state.snapshot);
+  // 프로필 아바타 탭 → 캐릭터 쇼케이스 (덕질 포인트)
+  const [showcaseOpen, setShowcaseOpen] = useState(false);
 
   if (!profile || !economy) return null;
   const busy = action === 'daily' || action === 'rescue';
@@ -43,14 +47,20 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
         {/* 한 줄 통합: 프로필 | 도장 레벨(우측 빈공간 활용) | 버튼. 좁은 화면에선 자연 줄바꿈 */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 items-center gap-3">
-            <span className="block h-11 w-11 shrink-0 overflow-hidden rounded-full border border-mystic/40">
+            <button
+              type="button"
+              onClick={() => setShowcaseOpen(true)}
+              aria-label="내 캐릭터 보기"
+              title="내 캐릭터 보기"
+              className="block h-11 w-11 shrink-0 overflow-hidden rounded-full border border-mystic/40 transition-transform hover:scale-105"
+            >
               <CharacterImage
                 characterId={progression?.profile.selectedCharacterId ?? profile.avatarId}
                 skinId={progression?.equipment.skin}
                 round
                 className="h-full w-full text-2xl"
               />
-            </span>
+            </button>
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-mystic">{profile.alias}</p>
               <p className="text-xs text-ink-dim">
@@ -120,6 +130,13 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
         {error && <p className="mt-2 text-center text-xs text-blossom">{error}</p>}
         {progressionError && <p className="mt-2 text-center text-xs text-blossom">{progressionError}</p>}
       </div>
+
+      <CharacterShowcaseModal
+        characterId={showcaseOpen
+          ? (progression?.profile.selectedCharacterId ?? profile.avatarId)
+          : null}
+        onClose={() => setShowcaseOpen(false)}
+      />
     </section>
   );
 }
