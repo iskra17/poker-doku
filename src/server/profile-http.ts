@@ -32,6 +32,7 @@ export type ProfileHttpManager = Pick<
   | 'recover'
   | 'rotateRecovery'
   | 'deleteProfile'
+  | 'changeAvatar'
 >;
 
 export type EconomyHttpService = Pick<
@@ -47,6 +48,8 @@ export interface ProfileHttpOptions {
   production: boolean;
   remoteAddress?: (request: IncomingMessage) => string;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  /** 아바타 해금 판정용 현재 도장 레벨 — 미주입 시 1(스타터만 선택 가능) */
+  dojoLevel?: (profileId: string) => number;
 }
 
 interface ErrorBody {
@@ -68,6 +71,7 @@ const PROFILE_ROUTES = new Map<string, string>([
   ['/api/profile/create', 'POST'],
   ['/api/profile/recover', 'POST'],
   ['/api/profile/recovery/rotate', 'POST'],
+  ['/api/profile/avatar', 'POST'],
   ['/api/profile', 'DELETE'],
   ['/api/economy/daily', 'POST'],
   ['/api/economy/rescue', 'POST'],
@@ -379,6 +383,9 @@ function sendDomainError(
     case 'INVALID_AVATAR':
       sendError(response, 400, error.code, '선택할 수 없는 아바타입니다.');
       return;
+    case 'AVATAR_LOCKED':
+      sendError(response, 403, error.code, '아직 해금되지 않은 캐릭터예요. 도장 레벨을 올려 주세요.');
+      return;
     case 'PROFILE_SECRET_CONFLICT':
       sendError(response, 409, error.code, '프로필 비밀 정보가 이미 변경되었습니다.');
       return;
@@ -449,6 +456,38 @@ async function handleCreate(
       { profile: created.profile, recoveryWords: created.recoveryWords },
       { 'set-cookie': issuedCookie(created.credential, options.production) },
     );
+  });
+}
+
+async function handleAvatarChange(
+  request: IncomingMessage,
+  response: ServerResponse,
+  options: ProfileHttpOptions,
+): Promise<void> {
+  const body = await readJson(request);
+  if (
+    !hasExactKeys(body, ['avatarId'])
+    || typeof body.avatarId !== 'string'
+  ) {
+    sendError(response, 400, 'BAD_REQUEST', '요청 본문이 올바르지 않습니다.');
+    return;
+  }
+  await runKdfRequest(options, async () => {
+    const profile = await authenticate(request, response, options);
+    if (!profile) return;
+    // 도장 레벨 조회 실패는 잠금 실패(스타터만)로 강등 — 아바타 변경이 진행도 장애에 좌우되지 않게
+    let dojoLevel = 1;
+    try {
+      dojoLevel = options.dojoLevel?.(profile.id) ?? 1;
+    } catch {
+      dojoLevel = 1;
+    }
+    const updated = options.manager.changeAvatar(
+      profile.id,
+      body.avatarId as string,
+      dojoLevel,
+    );
+    sendJson(response, 200, { profile: updated });
   });
 }
 
@@ -599,6 +638,9 @@ export function createProfileHttpHandler(options: ProfileHttpOptions): (
           break;
         case '/api/profile/recovery/rotate':
           await handleRotate(request, response, resolvedOptions);
+          break;
+        case '/api/profile/avatar':
+          await handleAvatarChange(request, response, resolvedOptions);
           break;
         case '/api/profile':
           await handleDelete(request, response, resolvedOptions);

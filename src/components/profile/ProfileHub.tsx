@@ -2,6 +2,7 @@
 
 import { useId, useRef, useState, type KeyboardEvent } from 'react';
 import AffinityTab from './AffinityTab';
+import CharacterTab from './CharacterTab';
 import InventoryTab from './InventoryTab';
 import ProgressionTab from './ProgressionTab';
 import RecordsTab from './RecordsTab';
@@ -22,7 +23,7 @@ export default function ProfileHub() {
   const error = useProgressionStore(state => state.error);
   return (
     <section aria-label="프로필 허브">
-      <div role="tablist" aria-label="프로필 메뉴" className="mb-4 grid grid-cols-5 gap-1">
+      <div role="tablist" aria-label="프로필 메뉴" className="mb-4 grid grid-cols-6 gap-1">
         {PROFILE_TABS.map((value, index) => (
           <button
             key={value}
@@ -53,7 +54,7 @@ export default function ProfileHub() {
         aria-labelledby={`${tabGroupId}-tab-${PROFILE_TABS.indexOf(tab)}`}
         tabIndex={0}
       >
-        {tab === '성장' ? <ProgressionTab /> : tab === '인연' ? <AffinityTab /> : tab === '보관함' ? <InventoryTab /> : tab === '기록' ? <RecordsTab /> : <RecoveryPanel />}
+        {tab === '성장' ? <ProgressionTab /> : tab === '캐릭터' ? <CharacterTab /> : tab === '인연' ? <AffinityTab /> : tab === '보관함' ? <InventoryTab /> : tab === '기록' ? <RecordsTab /> : <RecoveryPanel />}
       </div>
       {action && <p role="status" className="mt-3 text-center text-xs text-mystic">성장 정보를 처리하는 중…</p>}
       {error && <p role="alert" className="mt-3 text-center text-xs text-blossom">{error}</p>}

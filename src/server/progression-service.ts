@@ -151,7 +151,7 @@ export class ProgressionService {
     at = Date.now(),
   ): ProgressionSnapshot {
     assertBoundedId(profileId);
-    const fallback = assertCharacter(fallbackCharacterId);
+    const fallback = coerceSeedCharacter(fallbackCharacterId);
     assertTimestamp(at);
     return this.database.transaction(() => {
       let snapshot: ProgressionSnapshot;
@@ -180,7 +180,7 @@ export class ProgressionService {
     at = Date.now(),
   ): ProgressionView {
     assertBoundedId(profileId);
-    const characterId = assertCharacter(selectedCharacterId);
+    const characterId = coerceSeedCharacter(selectedCharacterId);
     assertTimestamp(at);
     return this.database.transaction(() => {
       let snapshot = this.repository.getOrCreateInTransaction(
@@ -1056,6 +1056,21 @@ function assertCharacter(value: string): PlayableCharacterId {
     throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
   }
   return value as PlayableCharacterId;
+}
+
+/**
+ * 진행도 시드/폴백 캐릭터 보정 — 프로필 아바타는 해금 캐릭터(마스코트 등)일 수 있지만
+ * 인연/선택 캐릭터 DB는 스타터 6명 제약이라, 시드로만 쓰이는 값은 sakura로 강등한다.
+ * (기존 진행도 프로필이 있으면 시드는 무시되므로 동작 변화 없음)
+ */
+function coerceSeedCharacter(value: string): PlayableCharacterId {
+  if (
+    typeof value === 'string'
+    && (PLAYABLE_CHARACTER_IDS as readonly string[]).includes(value)
+  ) {
+    return value as PlayableCharacterId;
+  }
+  return 'sakura';
 }
 
 function assertEquipmentSlot(value: string): EquipmentSlot {

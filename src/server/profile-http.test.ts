@@ -139,6 +139,39 @@ describe('profile HTTP lifecycle', () => {
     )).toBe('credential');
   });
 
+  it('changes avatar for unlocked characters and rejects locked ones with 403', async () => {
+    const server = await startServer();
+    const created = await createProfile(server);
+
+    // 스타터 변경은 즉시 반영
+    const toStarter = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: created.cookie },
+      body: JSON.stringify({ avatarId: 'elena' }),
+    });
+    expect(toStarter.status).toBe(200);
+    const starterBody = await toStarter.json() as { profile: PublicProfile };
+    expect(starterBody.profile.avatarId).toBe('elena');
+
+    // 진행도 서비스 미배선 → 도장 레벨 1 → 해금 캐릭터는 403 AVATAR_LOCKED
+    const toLocked = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: created.cookie },
+      body: JSON.stringify({ avatarId: 'gumi' }),
+    });
+    expect(toLocked.status).toBe(403);
+    const lockedBody = await toLocked.json() as { error: { code: string } };
+    expect(lockedBody.error.code).toBe('AVATAR_LOCKED');
+
+    // 미인증 요청은 401
+    const anonymous = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ avatarId: 'elena' }),
+    });
+    expect(anonymous.status).toBe(401);
+  });
+
   it('revokes realtime ownership after full recovery and delete only without changing committed responses', async () => {
     const onProfileRevoked = vi.fn(() => {
       throw new Error('realtime unavailable');
@@ -490,6 +523,7 @@ describe('profile HTTP lifecycle', () => {
         throw new ProfileDomainError('PROFILE_SECRET_CONFLICT');
       },
       deleteProfile: vi.fn(),
+      changeAvatar: vi.fn(),
     };
     const server = await startServer({ manager });
 
@@ -577,6 +611,7 @@ describe('profile HTTP lifecycle', () => {
       recover: vi.fn(),
       rotateRecovery: vi.fn(),
       deleteProfile: vi.fn(),
+      changeAvatar: vi.fn(),
     };
     const limiter = new TransientHttpRateLimiter({
       profileCreate: { limit: 20, windowMs: 60_000 },
@@ -850,6 +885,7 @@ describe('profile HTTP lifecycle', () => {
       recover: vi.fn(),
       rotateRecovery: vi.fn(),
       deleteProfile: vi.fn(),
+      changeAvatar: vi.fn(),
     };
     const economyService = {
       claimDaily: vi.fn(),
@@ -901,6 +937,7 @@ describe('profile HTTP lifecycle', () => {
       recover: vi.fn(),
       rotateRecovery: vi.fn(),
       deleteProfile: vi.fn(),
+      changeAvatar: vi.fn(),
     };
     const economyService = {
       claimDaily: vi.fn(),
@@ -974,6 +1011,7 @@ describe('profile HTTP lifecycle', () => {
       recover: vi.fn(),
       rotateRecovery: vi.fn(),
       deleteProfile: vi.fn(),
+      changeAvatar: vi.fn(),
     };
     const economyService = {
       claimDaily: vi.fn(() => {

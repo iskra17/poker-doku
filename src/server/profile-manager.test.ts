@@ -102,6 +102,44 @@ describe('ProfileManager', () => {
     });
   });
 
+  it('rejects unlockable avatars at creation — starters only in onboarding', async () => {
+    await expect(manager.create({
+      avatarId: 'mochi',
+      adultConfirmed: true,
+    })).rejects.toEqual(expect.objectContaining({ code: 'INVALID_AVATAR' }));
+  });
+
+  it('changes avatar only when the character is unlocked at the given dojo level', async () => {
+    const created = await manager.create({
+      avatarId: 'sakura',
+      adultConfirmed: true,
+    });
+
+    // 스타터는 도장 레벨 무관 변경 가능
+    const toStarter = manager.changeAvatar(created.profile.id, 'hana', 1);
+    expect(toStarter.avatarId).toBe('hana');
+
+    // 해금 전 신규 캐릭터는 잠금 (mochi = 도장 Lv.5)
+    expect(() => manager.changeAvatar(created.profile.id, 'mochi', 4))
+      .toThrowError(expect.objectContaining({ code: 'AVATAR_LOCKED' }));
+
+    // 해금 레벨 도달 시 변경 + 영속
+    const toMascot = manager.changeAvatar(created.profile.id, 'mochi', 5);
+    expect(toMascot.avatarId).toBe('mochi');
+    const row = database.db.prepare(
+      'SELECT avatar_id FROM profiles WHERE id = ?',
+    ).get(created.profile.id) as { avatar_id: string };
+    expect(row.avatar_id).toBe('mochi');
+
+    // 로스터에 없는 id는 레벨과 무관하게 거절
+    expect(() => manager.changeAvatar(created.profile.id, 'dealer', 50))
+      .toThrowError(expect.objectContaining({ code: 'INVALID_AVATAR' }));
+
+    // 존재하지 않는 프로필
+    expect(() => manager.changeAvatar('p_missing', 'hana', 1))
+      .toThrowError(expect.objectContaining({ code: 'PROFILE_NOT_FOUND' }));
+  });
+
   it('authenticates a valid credential and safely rejects invalid input or storage', async () => {
     const created = await manager.create({
       avatarId: 'elena',

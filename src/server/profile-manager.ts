@@ -7,6 +7,11 @@ import {
 } from 'node:crypto';
 import { generateMnemonic, validateMnemonic } from '@scure/bip39';
 import { wordlist as koreanWordlist } from '@scure/bip39/wordlists/korean.js';
+import {
+  STARTER_CHARACTER_IDS,
+  isCharacterUnlocked,
+  isSelectableCharacter,
+} from '@/lib/characters/unlocks';
 import type { PublicProfile } from '@/lib/profile/types';
 import type { ProfileRepository } from './profile-repository';
 
@@ -18,9 +23,9 @@ const ALIAS_ANIMALS = [
   '여우', '고양이', '토끼', '수달', '참새',
   '판다', '사슴', '늑대', '부엉이', '펭귄',
 ] as const;
-const PLAYABLE_AVATARS = new Set([
-  'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena',
-]);
+// 프로필 생성(온보딩)은 스타터 캐릭터만 — 나머지는 도장 레벨 해금 후 changeAvatar로
+// (해금 규칙 단일 소스: src/lib/characters/unlocks.ts)
+const PLAYABLE_AVATARS: ReadonlySet<string> = new Set(STARTER_CHARACTER_IDS);
 const MAX_RECOVERY_INPUT_LENGTH = 1_024;
 export const SCRYPT_V1_OPTIONS = {
   N: 16_384,
@@ -32,6 +37,7 @@ export const SCRYPT_V1_OPTIONS = {
 export type ProfileErrorCode =
   | 'ADULT_CONFIRMATION_REQUIRED'
   | 'INVALID_AVATAR'
+  | 'AVATAR_LOCKED'
   | 'ALIAS_GENERATION_EXHAUSTED'
   | 'PROFILE_SECRET_GENERATION_EXHAUSTED'
   | 'PROFILE_SECRET_CONFLICT'
@@ -257,6 +263,30 @@ export class ProfileManager {
     if (result === 'active-escrow') {
       throw new ProfileDomainError('PROFILE_HAS_ACTIVE_ESCROW');
     }
+  }
+
+  /**
+   * 좌석 아바타 변경 — 스타터는 항상, 신규 캐릭터는 도장 레벨 해금 후 허용.
+   * dojoLevel은 호출자(HTTP 레이어)가 진행도 서비스에서 조회해 전달한다.
+   */
+  changeAvatar(
+    profileId: string,
+    avatarId: string,
+    dojoLevel: number,
+  ): PublicProfile {
+    if (!isSelectableCharacter(avatarId)) {
+      throw new ProfileDomainError('INVALID_AVATAR');
+    }
+    if (!isCharacterUnlocked(avatarId, dojoLevel)) {
+      throw new ProfileDomainError('AVATAR_LOCKED');
+    }
+    const profile = this.repository.updateAvatar(
+      profileId,
+      avatarId,
+      this.now(),
+    );
+    if (!profile) throw new ProfileDomainError('PROFILE_NOT_FOUND');
+    return profile;
   }
 
   private createAlias(): string {

@@ -191,6 +191,22 @@ export class ProfileRepository {
     });
   }
 
+  /** 좌석 아바타 변경 — 해금 검증은 ProfileManager.changeAvatar가 담당 */
+  updateAvatar(
+    profileId: string,
+    avatarId: string,
+    updatedAt: number,
+  ): PublicProfile | null {
+    return this.database.transaction(() => {
+      const result = this.database.db.prepare(`
+        UPDATE profiles SET avatar_id = ?, updated_at = ? WHERE id = ?
+      `).run(avatarId, updatedAt, profileId);
+      return result.changes === 0
+        ? null
+        : this.requirePublicProfile(profileId);
+    });
+  }
+
   deleteProfile(profileId: string): ProfileDeletionResult {
     return this.database.transaction(() => {
       const activeEscrow = this.database.db.prepare(`

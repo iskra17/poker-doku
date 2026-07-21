@@ -115,6 +115,7 @@ export function createHttpRequestHandler(
   if (options.profileManager && !options.economyService) {
     throw new Error('ECONOMY_SERVICE_REQUIRED');
   }
+  const progressionServiceForUnlock = options.progressionService;
   const profileHandler = options.profileManager
     ? createProfileHttpHandler({
         manager: options.profileManager,
@@ -123,6 +124,12 @@ export function createHttpRequestHandler(
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
         onProfileRevoked: options.onProfileRevoked,
+        // 아바타 해금 판정용 도장 레벨 — 시드는 진행도 서비스가 스타터로 보정
+        dojoLevel: progressionServiceForUnlock
+          ? profileId => progressionServiceForUnlock
+              .getView(profileId, 'sakura', (options.now ?? Date.now)())
+              .progression.profile.dojoLevel
+          : undefined,
       })
     : undefined;
   const progressionHandler = options.profileManager && options.progressionService

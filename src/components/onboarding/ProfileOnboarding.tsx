@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { BOT_CHARACTERS } from '@/lib/characters';
+import { getCharacterUnlockLevel } from '@/lib/characters/unlocks';
 import { useProfileStore } from '@/lib/store/profile-store';
 import CharacterImage from '@/components/characters/CharacterImage';
 import RecoveryWordsCard from '@/components/profile/RecoveryWordsCard';
@@ -119,27 +120,38 @@ export default function ProfileOnboarding() {
             <p className="text-xs font-bold text-blossom">2 / 3 캐릭터 선택</p>
             <h2 className="mt-1 text-xl font-bold text-ink">함께할 캐릭터를 골라 주세요</h2>
             <p className="mt-1 text-xs text-ink-dim">별명은 개인정보 없이 서버가 자동으로 만들어요.</p>
+            <p className="mt-1 text-xs text-mystic">🔒 잠긴 캐릭터는 플레이로 도장 레벨을 올리면 해금돼요.</p>
           </div>
           <div className="grid grid-cols-3 gap-3">
-            {BOT_CHARACTERS.map(character => (
-              <button
-                type="button"
-                key={character.id}
-                onClick={() => setAvatarId(character.id)}
-                className={`rounded-xl border p-2 transition-colors ${
-                  avatarId === character.id
-                    ? 'border-blossom bg-blossom/10'
-                    : 'border-mystic/20 bg-elevated/50 hover:bg-elevated'
-                }`}
-              >
-                <span className="mx-auto block h-16 w-16 overflow-hidden rounded-full">
-                  <CharacterImage characterId={character.id} round className="h-full w-full text-3xl" />
-                </span>
-                <span className={`mt-1 block text-xs ${avatarId === character.id ? 'font-bold text-blossom' : 'text-ink-dim'}`}>
-                  {character.name}
-                </span>
-              </button>
-            ))}
+            {BOT_CHARACTERS.map(character => {
+              const unlockLevel = getCharacterUnlockLevel(character.id);
+              const locked = unlockLevel != null; // 온보딩 시점 도장 레벨 1 — 해금 캐릭터는 전부 잠금
+              return (
+                <button
+                  type="button"
+                  key={character.id}
+                  disabled={locked}
+                  onClick={() => setAvatarId(character.id)}
+                  className={`rounded-xl border p-2 transition-colors ${
+                    locked
+                      ? 'cursor-not-allowed border-white/10 bg-elevated/30'
+                      : avatarId === character.id
+                        ? 'border-blossom bg-blossom/10'
+                        : 'border-mystic/20 bg-elevated/50 hover:bg-elevated'
+                  }`}
+                >
+                  <span className={`mx-auto block h-16 w-16 overflow-hidden rounded-full ${locked ? 'opacity-40 grayscale' : ''}`}>
+                    <CharacterImage characterId={character.id} round className="h-full w-full text-3xl" />
+                  </span>
+                  <span className={`mt-1 block text-xs ${locked ? 'text-ink-dim/70' : avatarId === character.id ? 'font-bold text-blossom' : 'text-ink-dim'}`}>
+                    {character.name}
+                  </span>
+                  {locked && (
+                    <span className="block text-[10px] text-ink-dim/70">🔒 도장 Lv.{unlockLevel}</span>
+                  )}
+                </button>
+              );
+            })}
           </div>
           {error && <p className="text-center text-xs text-blossom">{error}</p>}
           <Button

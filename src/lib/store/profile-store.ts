@@ -17,6 +17,7 @@ export type ProfileAction =
   | 'deleting'
   | 'daily'
   | 'rescue'
+  | 'avatar'
   | null;
 
 interface PublicGameIdentity {
@@ -63,6 +64,8 @@ export interface ProfileStoreState {
   deleteProfile(confirmation: string): Promise<void>;
   claimDaily(): Promise<void>;
   claimRescue(): Promise<void>;
+  /** 좌석 아바타 변경 — 해금 검증은 서버(/api/profile/avatar)가 담당 */
+  changeAvatar(avatarId: string): Promise<void>;
   clearError(): void;
 }
 
@@ -341,6 +344,33 @@ export function createProfileStore(
       return { ...refreshed, recoveryWords };
     };
 
+    const runAvatarChange = async (avatarId: string): Promise<void> => {
+      if (get().phase !== 'ready' || get().action !== null) return;
+      const version = ++requestVersion;
+      set({ action: 'avatar', error: null });
+      try {
+        const payload = await requestJson(
+          dependencies,
+          '/api/profile/avatar',
+          postJson({ avatarId }),
+        );
+        if (version !== requestVersion) return;
+        if (!isRecord(payload)) throw new ProfileRequestError(DEFAULT_ERROR);
+        const profile = parseProfile(payload.profile);
+        if (!profile) throw new ProfileRequestError(DEFAULT_ERROR);
+        const economy = get().economy;
+        if (economy) {
+          publishReady(profile, economy, get().recoveryWarning);
+        } else {
+          set({ action: null, profile });
+        }
+      } catch (error) {
+        if (version === requestVersion) {
+          set({ action: null, error: requestErrorMessage(error) });
+        }
+      }
+    };
+
     const runClaim = async (kind: 'daily' | 'rescue'): Promise<void> => {
       if (get().phase !== 'ready' || get().action !== null) return;
       const version = ++requestVersion;
@@ -597,6 +627,7 @@ export function createProfileStore(
 
       claimDaily: () => runClaim('daily'),
       claimRescue: () => runClaim('rescue'),
+      changeAvatar: avatarId => runAvatarChange(avatarId),
       clearError: () => set({ error: null }),
     };
   });
