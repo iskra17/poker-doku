@@ -12,7 +12,7 @@ import {
   createFeedbackHttpHandler,
   FeedbackRepository,
 } from './feedback-http';
-import { HandHistoryRepository } from './hand-history';
+import { HandHistoryRepository, TableHandRepository } from './hand-history';
 import { createHandHistoryHttpHandler } from './hand-history-http';
 import type {
   TransientHttpConcurrencyGate,
@@ -157,6 +157,8 @@ export function createHttpRequestHandler(
     ? createAdminHttpHandler({
         database: options.database,
         opsEvents: options.opsEvents,
+        tableHands: new TableHandRepository(options.database),
+        handHistory: new HandHistoryRepository(options.database),
         runtime: options.adminRuntime ?? (() => null),
         debugToken,
         now: options.now,

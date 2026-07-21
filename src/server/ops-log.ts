@@ -113,6 +113,15 @@ export class OpsEventRepository {
     return row.n;
   }
 
+  /** since 이후 타입별 발생 건수 — 백오피스 보안/무결성 탭의 신호 요약 */
+  countByTypeSince(since: number): Record<string, number> {
+    const rows = this.database.db.prepare(`
+      SELECT type, COUNT(*) AS n FROM ops_event
+      WHERE at >= ? GROUP BY type ORDER BY n DESC
+    `).all(since) as Array<{ type: string; n: number }>;
+    return Object.fromEntries(rows.map(row => [row.type, row.n]));
+  }
+
   /** 최대 행 수 초과분을 오래된 것부터 정리 */
   prune(maxRows: number = MAX_ROWS): number {
     const excess = this.count() - maxRows;

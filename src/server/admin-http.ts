@@ -1,18 +1,23 @@
 import type { ServerResponse } from 'node:http';
 import type { UrlWithParsedQuery } from 'node:url';
 import { eventLog } from './event-log';
+import type { HandHistoryRepository, TableHandRepository } from './hand-history';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
 
 /**
  * 운영 백오피스 API — 토큰(`DEBUG_LOG_TOKEN`) 게이트, /admin 페이지가 짧은 주기로 폴링한다.
  *
- * - GET /api/admin/overview  — 접속자/방/프로세스/DB 집계 스냅샷
+ * - GET /api/admin/overview  — 접속자/방/프로세스/DB 집계 + 24h 핸드/레이크 + 최신 문의 커서
  * - GET /api/admin/profiles  — 익명 프로필 활동·칩 현황 (개인정보 없음 — 익명 별명뿐)
  * - GET /api/admin/events    — 영속 운영 이벤트 (ops_event, 커서 페이지네이션)
+ * - GET /api/admin/hands     — 테이블 정본 핸드 목록 (room=/profile=/limit=/before=)
+ * - GET /api/admin/hands/:id — 전역 핸드 ID로 정본 상세 (전체 홀카드 — 핸드 감사 전용)
+ * - GET /api/admin/security  — 최근 신호 이벤트 타입별 집계 (hours=, 기본 24)
  *
  * 커스텀 서버 직결 (debug/log와 동일) — Next 라우트로 옮기면 번들 경계에서
  * 링 버퍼/런타임 참조가 쪼개진다.
+ * 정본 핸드 상세는 머킹 패까지 담으므로 이 토큰 게이트 밖으로 노출 금지.
  */
 
 export interface AdminRoomSummary {
@@ -23,12 +28,24 @@ export interface AdminRoomSummary {
   economyMode: string;
   handNumber: number;
   handInProgress: boolean;
+  street: string | null;
   humans: number;
   bots: number;
   sittingOut: number;
   disconnected: number;
   potTotal: number;
   blinds: string;
+  seats: Array<{
+    seatIndex: number;
+    name: string;
+    type: string;
+    chips: number;
+    status: string;
+    currentBet: number;
+    sitOutNext: boolean;
+    disconnected: boolean;
+    pendingRemoval: boolean;
+  }>;
 }
 
 export interface AdminRuntimeSnapshot {
@@ -46,6 +63,10 @@ export interface AdminRuntimeSnapshot {
 export interface AdminHttpOptions {
   database: PokerDatabase;
   opsEvents: OpsEventRepository;
+  /** 테이블 정본 핸드 기록 — 핸드 감사 탭의 데이터 소스 */
+  tableHands?: TableHandRepository;
+  /** 개인(히어로 관점) 기록 — 프로필 드릴다운(profile= 필터)용 */
+  handHistory?: HandHistoryRepository;
   /** 늦은 바인딩 — 소켓 런타임은 HTTP 핸들러 생성 이후에 준비된다 */
   runtime: () => AdminRuntimeSnapshot | null;
   debugToken?: string;
@@ -85,6 +106,9 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
       const count = (table: string): number => (
         db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
       ).n;
+      const latestFeedbackId = (
+        db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM feedback').get() as { n: number }
+      ).n;
       send(res, 200, {
         at: now(),
         startedAt,
@@ -98,8 +122,14 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           profiles: count('profiles'),
           feedback: count('feedback'),
           handHistory: count('hand_history'),
+          tableHands: options.tableHands?.count() ?? 0,
           opsEvents: options.opsEvents.count(),
         },
+        // 문의 알림 커서 — feedback은 불변·미삭제라 (최신 id - 마지막 확인 id) = 새 문의 수
+        latestFeedbackId,
+        // 24h 재무 라이트 — 핸드 수/레이크/팟 (테이블 정본 집계)
+        handStats24h: options.tableHands?.statsSince(now() - 24 * 3_600_000)
+          ?? { hands: 0, rake: 0, potTotal: 0 },
       });
       return true;
     }
@@ -160,6 +190,60 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           limit: parseInt(one(query.limit) ?? '100', 10) || 100,
           before: before ? parseInt(before, 10) : undefined,
         }),
+      });
+      return true;
+    }
+
+    if (pathname === '/api/admin/hands') {
+      const limit = Math.min(
+        Math.max(parseInt(one(query.limit) ?? '50', 10) || 50, 1),
+        200,
+      );
+      const beforeRaw = one(query.before);
+      const beforeId = beforeRaw ? parseInt(beforeRaw, 10) : undefined;
+      const profileId = one(query.profile);
+      if (profileId) {
+        // 프로필 드릴다운 — 개인(히어로 관점) 기록 요약. 홀카드는 히어로 것만 담겨 있다.
+        send(res, 200, {
+          at: now(),
+          mode: 'profile',
+          hands: options.handHistory?.listByProfile(profileId, limit, beforeId) ?? [],
+        });
+        return true;
+      }
+      send(res, 200, {
+        at: now(),
+        mode: 'table',
+        hands: options.tableHands?.list({
+          roomId: one(query.room),
+          limit,
+          beforeId,
+        }) ?? [],
+      });
+      return true;
+    }
+
+    const handDetailMatch = pathname.match(/^\/api\/admin\/hands\/(\d{1,15})$/);
+    if (handDetailMatch) {
+      const detail = options.tableHands?.getDetail(parseInt(handDetailMatch[1], 10)) ?? null;
+      if (!detail) {
+        send(res, 404, { error: 'not-found' });
+        return true;
+      }
+      // 마스킹 전 정본(전체 홀카드) — 토큰 게이트 뒤 핸드 감사 전용, 재노출 금지
+      send(res, 200, { at: now(), hand: detail });
+      return true;
+    }
+
+    if (pathname === '/api/admin/security') {
+      const hours = Math.min(
+        Math.max(parseInt(one(query.hours) ?? '24', 10) || 24, 1),
+        24 * 7,
+      );
+      send(res, 200, {
+        at: now(),
+        windowHours: hours,
+        counts: options.opsEvents.countByTypeSince(now() - hours * 3_600_000),
       });
       return true;
     }

@@ -1,7 +1,10 @@
 import { createServer } from 'http';
 import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { CompletedHandRecord } from '@/lib/poker/hand-history';
+import { cards } from '@/lib/poker/test-helpers';
 import { createHttpRequestHandler } from './http-handler';
+import { TableHandRepository } from './hand-history';
 import { OpsEventRepository, shouldPersistOpsEvent } from './ops-log';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 
@@ -93,8 +96,13 @@ describe('/api/admin/* 백오피스 API', () => {
         rooms: [{
           id: 'room-1', name: '테스트 방', mode: 'cash', tableType: 'mixed',
           economyMode: 'practice', handNumber: 3, handInProgress: true,
-          humans: 1, bots: 2, sittingOut: 0, disconnected: 0, potTotal: 120,
-          blinds: '10/20',
+          street: 'flop', humans: 1, bots: 2, sittingOut: 0, disconnected: 0,
+          potTotal: 120, blinds: '10/20',
+          seats: [{
+            seatIndex: 0, name: '테스터', type: 'human', chips: 1000,
+            status: 'active', currentBet: 20, sitOutNext: false,
+            disconnected: false, pendingRemoval: false,
+          }],
         }],
         roomRuntime: { rooms: 1 },
       }),
@@ -169,5 +177,99 @@ describe('/api/admin/* 백오피스 API', () => {
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain('credential');
     expect(serialized).not.toContain('recovery');
+  });
+
+  it('hands는 정본 목록·방 필터·상세(전체 홀카드)를 반환한다', async () => {
+    const { baseUrl } = await start();
+    const tableHands = new TableHandRepository(database!);
+    const record: CompletedHandRecord = {
+      handNumber: 1,
+      smallBlind: 10,
+      bigBlind: 20,
+      players: [
+        {
+          id: 'p1', name: '휴먼', type: 'human', seatIndex: 0, position: 'BTN',
+          startingChips: 1000, holeCards: cards('As Kd'), totalContributed: 0,
+          won: 0, profit: 0, revealed: false, finalStatus: 'folded',
+          handRank: null, handDescription: null,
+        },
+        {
+          id: 'bot-1', name: '봇', type: 'bot', seatIndex: 1, position: 'SB',
+          startingChips: 1000, holeCards: cards('Qh Qd'), totalContributed: 30,
+          won: 30, profit: 0, revealed: false, finalStatus: 'active',
+          handRank: null, handDescription: null,
+        },
+      ],
+      actions: [],
+      board: [],
+      winners: [{
+        playerId: 'bot-1', amount: 30, handRank: null, handDescription: null, potIndex: 0,
+      }],
+      potTotal: 30,
+      rake: 3,
+      showdown: false,
+    };
+    const handId = tableHands.insert({
+      roomId: 'room-1', roomName: '테스트 방', gameMode: 'cash', record, playedAt: 2_000,
+    });
+
+    const listResponse = await fetch(`${baseUrl}/api/admin/hands?token=admin-secret&room=room-1`);
+    expect(listResponse.status).toBe(200);
+    const listBody = await listResponse.json() as {
+      mode: string;
+      hands: Array<{ id: number; potTotal: number; rake: number }>;
+    };
+    expect(listBody.mode).toBe('table');
+    expect(listBody.hands).toHaveLength(1);
+    expect(listBody.hands[0]).toMatchObject({ id: handId, potTotal: 30, rake: 3 });
+    // 목록에는 홀카드가 실리지 않는다
+    expect(JSON.stringify(listBody)).not.toContain('holeCards');
+
+    const emptyList = await fetch(`${baseUrl}/api/admin/hands?token=admin-secret&room=other`);
+    expect(((await emptyList.json()) as { hands: unknown[] }).hands).toHaveLength(0);
+
+    const detailResponse = await fetch(`${baseUrl}/api/admin/hands/${handId}?token=admin-secret`);
+    expect(detailResponse.status).toBe(200);
+    const detailBody = await detailResponse.json() as {
+      hand: { id: number; players: Array<{ holeCards: unknown }> };
+    };
+    expect(detailBody.hand.id).toBe(handId);
+    // 정본 상세는 폴드 좌석 홀카드까지 그대로 (핸드 감사 전용 계약)
+    expect(detailBody.hand.players[0].holeCards).toEqual(cards('As Kd'));
+
+    expect((await fetch(`${baseUrl}/api/admin/hands/999999?token=admin-secret`)).status).toBe(404);
+    expect((await fetch(`${baseUrl}/api/admin/hands/${handId}`)).status).toBe(403);
+  });
+
+  it('security는 기간 내 신호 이벤트 타입별 집계를 반환한다', async () => {
+    const { baseUrl } = await start();
+    const opsEvents = new OpsEventRepository(database!);
+    const at = Date.now();
+    opsEvents.record({ seq: 2, t: at - 3_000, type: 'http-reject', data: {} });
+    opsEvents.record({ seq: 3, t: at - 2_000, type: 'http-reject', data: {} });
+    opsEvents.record({ seq: 4, t: at - 1_000, type: 'grace-expired', data: {} });
+
+    const response = await fetch(`${baseUrl}/api/admin/security?token=admin-secret&hours=24`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      windowHours: number;
+      counts: Record<string, number>;
+    };
+    expect(body.windowHours).toBe(24);
+    expect(body.counts['http-reject']).toBe(2);
+    expect(body.counts['grace-expired']).toBe(1);
+  });
+
+  it('overview는 문의 알림 커서와 24h 핸드 집계를 포함한다', async () => {
+    const { baseUrl } = await start();
+    const response = await fetch(`${baseUrl}/api/admin/overview?token=admin-secret`);
+    const body = await response.json() as {
+      latestFeedbackId: number;
+      handStats24h: { hands: number; rake: number; potTotal: number };
+      db: { tableHands: number };
+    };
+    expect(body.latestFeedbackId).toBe(0);
+    expect(body.handStats24h).toEqual({ hands: 0, rake: 0, potTotal: 0 });
+    expect(body.db.tableHands).toBe(0);
   });
 });

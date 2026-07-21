@@ -214,6 +214,7 @@ interface SummaryRow {
   profit: unknown;
   hero_cards: unknown;
   board: unknown;
+  table_hand_id: unknown;
 }
 
 export class HandHistoryRepository {
@@ -278,13 +279,13 @@ export class HandHistoryRepository {
     const rows = (beforeId === undefined
       ? this.#database.db.prepare(`
           SELECT id, played_at, room_name, game_mode, big_blind,
-                 hand_number, profit, hero_cards, board
+                 hand_number, profit, hero_cards, board, table_hand_id
           FROM hand_history
           WHERE profile_id = ? ORDER BY id DESC LIMIT ?
         `).all(profileId, limit)
       : this.#database.db.prepare(`
           SELECT id, played_at, room_name, game_mode, big_blind,
-                 hand_number, profit, hero_cards, board
+                 hand_number, profit, hero_cards, board, table_hand_id
           FROM hand_history
           WHERE profile_id = ? AND id < ? ORDER BY id DESC LIMIT ?
         `).all(profileId, beforeId, limit)) as unknown as SummaryRow[];
@@ -298,6 +299,7 @@ export class HandHistoryRepository {
       profit: Number(row.profit),
       heroCards: JSON.parse(String(row.hero_cards)) as Card[],
       board: JSON.parse(String(row.board)) as Card[],
+      tableHandId: row.table_hand_id === null ? null : Number(row.table_hand_id),
     }));
   }
 

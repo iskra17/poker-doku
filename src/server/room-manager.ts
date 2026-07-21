@@ -223,7 +223,7 @@ export class RoomManager {
     return this.rooms.size;
   }
 
-  /** 백오피스용 전체 방 요약 — 로비 필터와 무관하게 모든 방 (비밀번호 등 비밀 없이 상태만) */
+  /** 백오피스용 전체 방 요약 — 로비 필터와 무관하게 모든 방 (비밀번호·홀카드 등 비밀 없이 상태만) */
   getAdminRoomSummaries(): Array<{
     id: string;
     name: string;
@@ -232,12 +232,24 @@ export class RoomManager {
     economyMode: string;
     handNumber: number;
     handInProgress: boolean;
+    street: string | null;
     humans: number;
     bots: number;
     sittingOut: number;
     disconnected: number;
     potTotal: number;
     blinds: string;
+    seats: Array<{
+      seatIndex: number;
+      name: string;
+      type: string;
+      chips: number;
+      status: string;
+      currentBet: number;
+      sitOutNext: boolean;
+      disconnected: boolean;
+      pendingRemoval: boolean;
+    }>;
   }> {
     return [...this.rooms.entries()].map(([id, room]) => {
       const st = room.engine.state;
@@ -250,12 +262,24 @@ export class RoomManager {
         economyMode: room.config.economyMode ?? 'practice',
         handNumber: st.handNumber,
         handInProgress: st.isHandInProgress,
+        street: st.isHandInProgress ? st.street : null,
         humans: humans.length,
         bots: st.players.length - humans.length,
         sittingOut: st.players.filter(p => p.status === 'sitting-out' || p.sitOutNext).length,
         disconnected: st.players.filter(p => p.isDisconnected).length,
         potTotal: st.pots.reduce((sum, pot) => sum + pot.amount, 0),
         blinds: `${st.smallBlind}/${st.bigBlind}`,
+        seats: st.players.map(p => ({
+          seatIndex: p.seatIndex,
+          name: p.name,
+          type: p.type,
+          chips: p.chips,
+          status: p.status,
+          currentBet: p.currentBet,
+          sitOutNext: p.sitOutNext ?? false,
+          disconnected: p.isDisconnected ?? false,
+          pendingRemoval: p.pendingRemoval ?? false,
+        })),
       };
     });
   }

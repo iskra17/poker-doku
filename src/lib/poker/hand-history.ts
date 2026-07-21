@@ -87,6 +87,8 @@ export interface HandHistorySummary {
   profit: number;
   heroCards: Card[];
   board: Card[];
+  /** 사이트 전역 핸드 ID (정본 링크 — 구버전 기록은 null) */
+  tableHandId?: number | null;
 }
 
 /** 딜러부터 시계방향 딜인 순서에 대한 포지션 라벨 (6-max 기준) */
