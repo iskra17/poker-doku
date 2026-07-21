@@ -58,7 +58,8 @@ describe('progression HTTP API', () => {
       },
       progressionService: service,
       profileRateLimiter: limiter,
-      profileConcurrencyGate: new TransientHttpConcurrencyGate(1),
+      // 대기열 0 — 즉시 거절 계약 검증 (운영 기본값은 대기열로 버스트 흡수)
+      profileConcurrencyGate: new TransientHttpConcurrencyGate(1, 0),
       production: false,
       now: () => Date.parse('2026-07-17T12:00:00+09:00'),
       onProgressionPublicCosmeticsChanged: publicCosmeticsChanged,

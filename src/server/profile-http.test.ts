@@ -637,7 +637,8 @@ describe('profile HTTP lifecycle', () => {
     const server = await startServer({
       manager,
       economyService,
-      gate: new TransientHttpConcurrencyGate(1),
+      // 대기열 0 — 즉시 거절 계약을 검증 (운영 기본값은 대기열로 버스트 흡수)
+      gate: new TransientHttpConcurrencyGate(1, 0),
     });
     const firstPromise = fetch(`${server.baseUrl}/api/profile/session`, {
       headers: { cookie: `${PROFILE_COOKIE}=${'a'.repeat(43)}` },

@@ -78,6 +78,14 @@ npx tsc --noEmit
   `socket.remoteAddress`를 그대로 키로 쓰면 전 방문자가 버킷 하나를 공유해 트래픽 몰릴 때 전원이
   429를 받는다 (2026-07-21 디시 유입 장애). XFF 첫 항목으로 바꾸면 위조로 리밋이 우회되니 금지.
   회귀: `client-address.test.ts`.
+  **인증 부하 방어 3종** (2026-07-21 2차 장애 — 방문 폭주 시 429 "처리 중인 요청이 많습니다"):
+  ①`ProfileManager` 검증 캐시 — 성공한 (lookup, verifier) 쌍은 scrypt 재실행 생략, verifier가
+  바뀌면 자연 미스(로테이션 안전), 실패는 캐시 안 함(무차별 대입은 여전히 KDF 비용).
+  ②`TransientHttpConcurrencyGate` 대기열(기본 64) — KDF 동시 4 초과분을 즉시 거절 대신 슬롯
+  승계 대기로 흡수, 대기열까지 차면 429. ③`profileAuth` 120회/분 — 한국 통신사 CGNAT는 여러
+  사용자가 한 IP를 공유한다. HTTP 429는 `http-reject` 이벤트로 종류당 10초 스로틀 로깅 (관측
+  사각지대 해소 — 그 전엔 거절이 로그에 전혀 안 남았다). 회귀: `profile-manager.test.ts`(캐시),
+  `http-rate-limit.test.ts`(대기열).
 - **방 수명주기**: 방 삭제는 idempotent한 `RoomManager.disposeRoom()`만 사용한다. 이 경로가 봇·핸드
   시작·턴·자리비움·종료 SnG 타이머와 deadline, 채팅, 토너먼트 시계, bot epoch, 방별 AI 대사 상태를
   함께 지운다. persistent 기본 방은 마지막 휴먼이 완전히 나가 유효 좌석이 0개가 되면 삭제 대신 새 `PokerEngine`으로 교체해

@@ -125,6 +125,52 @@ describe('ProfileManager', () => {
     ).resolves.toBeNull();
   });
 
+  it('반복 인증은 KDF를 재실행하지 않고, verifier가 바뀌면 캐시를 무시한다', async () => {
+    let deriveCalls = 0;
+    const countingKdf: ProfileKdf = {
+      derive: (secret, salt) => new Promise((resolve, reject) => {
+        deriveCalls += 1;
+        scrypt(secret, Buffer.from(salt), 32, SCRYPT_V1_OPTIONS, (error, key) => {
+          if (error) reject(error);
+          else resolve(key);
+        });
+      }),
+    };
+    const counting = new ProfileManager(
+      new ProfileRepository(database),
+      undefined,
+      undefined,
+      countingKdf,
+    );
+    const created = await counting.create({ avatarId: 'hana', adultConfirmed: true });
+    const afterCreate = deriveCalls;
+
+    // 최초 인증은 풀 KDF 검증
+    expect((await counting.authenticateCredential(created.credential))?.id)
+      .toBe(created.profile.id);
+    expect(deriveCalls).toBe(afterCreate + 1);
+
+    // 반복 인증은 캐시 히트 — KDF 재실행 없음 (세션/소켓/진행도 인증 폭주 대비)
+    expect((await counting.authenticateCredential(created.credential))?.id)
+      .toBe(created.profile.id);
+    expect((await counting.authenticateCredential(created.credential))?.id)
+      .toBe(created.profile.id);
+    expect(deriveCalls).toBe(afterCreate + 1);
+
+    // verifier가 바뀌면(로테이션/변조) 캐시를 무시하고 풀 검증 — 통과 못 하면 거부.
+    // salt/hash는 정규형 base64url이어야 KDF 단계까지 도달한다 (왕복 검사 통과)
+    const forgedSalt = Buffer.alloc(16, 3).toString('base64url');
+    const forgedHash = Buffer.alloc(32, 7).toString('base64url');
+    database.db.prepare(`
+      UPDATE profiles SET credential_hash = '$scrypt$v1$${forgedSalt}$${forgedHash}'
+      WHERE id = ?
+    `).run(created.profile.id);
+    await expect(
+      counting.authenticateCredential(created.credential),
+    ).resolves.toBeNull();
+    expect(deriveCalls).toBe(afterCreate + 2);
+  });
+
   it('retries a deterministic alias collision and then succeeds', async () => {
     const repository = new ProfileRepository(database);
     const first = await new ProfileManager(

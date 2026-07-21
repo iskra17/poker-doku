@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   HttpConcurrencyLimitError,
+  PROFILE_HTTP_RATE_POLICIES,
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
 } from './http-rate-limit';
@@ -71,7 +72,8 @@ describe('TransientHttpRateLimiter', () => {
     expect(limiter.allow('profileRecover', '192.0.2.1')).toBe(false);
 
     for (const operation of ['profileAuth', 'daily', 'rescue'] as const) {
-      for (let index = 0; index < 30; index += 1) {
+      const { limit } = PROFILE_HTTP_RATE_POLICIES[operation];
+      for (let index = 0; index < limit; index += 1) {
         expect(limiter.allow(operation, '192.0.2.1')).toBe(true);
       }
       expect(limiter.allow(operation, '192.0.2.1')).toBe(false);
@@ -81,8 +83,8 @@ describe('TransientHttpRateLimiter', () => {
 });
 
 describe('TransientHttpConcurrencyGate', () => {
-  it('rejects excess work and releases capacity after success', async () => {
-    const gate = new TransientHttpConcurrencyGate(1);
+  it('대기열이 없으면(maxQueue 0) 초과 작업을 즉시 거절하고, 해제 후 다시 받는다', async () => {
+    const gate = new TransientHttpConcurrencyGate(1, 0);
     let release!: () => void;
     const held = gate.run(() => new Promise<void>(resolve => {
       release = resolve;
@@ -95,6 +97,45 @@ describe('TransientHttpConcurrencyGate', () => {
     release();
     await held;
     await expect(gate.run(async () => 'ok')).resolves.toBe('ok');
+  });
+
+  it('초과 작업은 대기열에서 기다렸다가 슬롯을 승계받아 실행된다', async () => {
+    const gate = new TransientHttpConcurrencyGate(1, 8);
+    let release!: () => void;
+    const order: string[] = [];
+    const held = gate.run(() => new Promise<void>(resolve => {
+      release = resolve;
+    }).then(() => order.push('first')));
+    const queued = gate.run(async () => {
+      order.push('second');
+      return 'queued-ok';
+    });
+
+    // 대기 중 — 아직 실행되지 않아야 한다
+    await new Promise(resolve => setTimeout(resolve, 10));
+    expect(order).toEqual([]);
+
+    release();
+    await held;
+    await expect(queued).resolves.toBe('queued-ok');
+    expect(order).toEqual(['first', 'second']);
+  });
+
+  it('대기열 상한까지 차면 그때 거절한다', async () => {
+    const gate = new TransientHttpConcurrencyGate(1, 1);
+    let release!: () => void;
+    const held = gate.run(() => new Promise<void>(resolve => {
+      release = resolve;
+    }));
+    const queued = gate.run(async () => 'queued'); // 대기열 1/1
+
+    await expect(gate.run(async () => 'overflow')).rejects.toBeInstanceOf(
+      HttpConcurrencyLimitError,
+    );
+
+    release();
+    await held;
+    await expect(queued).resolves.toBe('queued');
   });
 
   it('releases capacity when work throws', async () => {

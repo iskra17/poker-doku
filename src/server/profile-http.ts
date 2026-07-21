@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { PublicProfile } from '@/lib/profile/types';
 import { clientAddress } from './client-address';
+import { eventLog } from './event-log';
 import {
   EconomyDomainError,
   type EconomyService,
@@ -255,6 +256,16 @@ function remoteAddress(
     ?? clientAddress(request);
 }
 
+// 429 관측 로그 스로틀 — 종류당 10초에 1건만 남긴다 (거절 폭주가 로그를 증폭하지 않게).
+// 2026-07-21 접속 장애가 로그에 전혀 안 남아 원인 추적이 어려웠던 사각지대 해소.
+const rejectLogAt = new Map<string, number>();
+function logHttpReject(kind: string, detail: Record<string, unknown>): void {
+  const now = Date.now();
+  if (now - (rejectLogAt.get(kind) ?? 0) < 10_000) return;
+  rejectLogAt.set(kind, now);
+  eventLog.log('http-reject', { data: { kind, ...detail } });
+}
+
 function allowOperation(
   request: IncomingMessage,
   response: ServerResponse,
@@ -266,9 +277,11 @@ function allowOperation(
     | 'daily'
     | 'rescue',
 ): boolean {
-  if (options.rateLimiter.allow(operation, remoteAddress(request, options))) {
+  const address = remoteAddress(request, options);
+  if (options.rateLimiter.allow(operation, address)) {
     return true;
   }
+  logHttpReject('rate-limited', { operation, address });
   drainRequest(request);
   sendError(
     response,
@@ -609,6 +622,7 @@ export function createProfileHttpHandler(options: ProfileHttpOptions): (
             : '요청 본문이 올바른 JSON이 아닙니다.',
         );
       } else if (error instanceof HttpConcurrencyLimitError) {
+        logHttpReject('kdf-busy', { path: request.url ?? '' });
         sendError(
           response,
           429,

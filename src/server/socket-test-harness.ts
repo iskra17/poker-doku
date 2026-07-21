@@ -174,8 +174,10 @@ export async function createSocketTestHarness(
       windowMs: 60_000,
     },
   });
+  // 대기열 0 — 게이트 초과가 즉시 거절되는 계약을 테스트에서 관찰할 수 있게 (운영 기본은 대기열 64)
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(
     options.profileConcurrency ?? 4,
+    0,
   );
   const httpServer = createServer();
   const io = new Server<

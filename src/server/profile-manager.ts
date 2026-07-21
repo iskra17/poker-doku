@@ -85,7 +85,18 @@ const asynchronousScrypt: ProfileKdf = {
   }),
 };
 
+const VERIFIED_CREDENTIAL_CACHE_MAX = 1_000;
+
 export class ProfileManager {
+  /**
+   * 검증에 성공한 (lookup 다이제스트 → verifier) 캐시 — 반복 인증의 scrypt 재실행 회피.
+   * 모든 인증 요청(세션/소켓/진행도)이 매번 KDF를 돌면 방문 폭주·재접속 폭풍에서 동시성
+   * 게이트가 넘쳐 429가 난다 (2026-07-21 접속 장애). 비밀 원문은 저장하지 않는다 — 둘 다
+   * DB에 이미 있는 값이고, verifier가 바뀌면(로테이션·삭제) 자연 미스 → 풀 검증.
+   * 실패는 캐시하지 않으므로 무차별 대입은 여전히 시도마다 KDF 비용을 문다.
+   */
+  private readonly verifiedCredentials = new Map<string, string>();
+
   constructor(
     private readonly repository: ProfileRepository,
     private readonly entropy: ProfileEntropy = secureEntropy,
@@ -119,10 +130,14 @@ export class ProfileManager {
     if (!isCanonicalCredential(credential)) return null;
     const credentialLookup = digestSecret(credential);
     const stored = this.repository.findByCredentialLookup(credentialLookup);
-    if (
-      !stored
-      || !await verifySecret(credential, stored.verifier, this.kdf)
-    ) {
+    if (!stored) return null;
+    // 이 (lookup, verifier) 쌍이 이전에 KDF 검증을 통과했으면 재실행 생략 —
+    // 저장된 verifier가 그대로인지는 방금 읽은 DB 값으로 확인했다
+    if (this.verifiedCredentials.get(credentialLookup) === stored.verifier) {
+      this.refreshVerifiedCredential(credentialLookup, stored.verifier);
+      return stored.profile;
+    }
+    if (!await verifySecret(credential, stored.verifier, this.kdf)) {
       return null;
     }
     const current = this.repository.findByCredentialLookup(credentialLookup);
@@ -133,7 +148,18 @@ export class ProfileManager {
     ) {
       return null;
     }
+    this.refreshVerifiedCredential(credentialLookup, current.verifier);
     return current.profile;
+  }
+
+  /** LRU 적재/갱신 — Map 삽입 순서를 최근성으로 사용, 상한 초과 시 가장 오래된 항목 축출 */
+  private refreshVerifiedCredential(lookup: string, verifier: string): void {
+    this.verifiedCredentials.delete(lookup);
+    this.verifiedCredentials.set(lookup, verifier);
+    if (this.verifiedCredentials.size > VERIFIED_CREDENTIAL_CACHE_MAX) {
+      const oldest = this.verifiedCredentials.keys().next().value;
+      if (oldest !== undefined) this.verifiedCredentials.delete(oldest);
+    }
   }
 
   isCredentialCurrent(profileId: string, credential: string): boolean {
