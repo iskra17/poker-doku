@@ -77,10 +77,12 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 /**
  * 좌석 — 프로필(캐릭터) 중심 레이아웃.
  * 아바타를 크게(모바일 64px/데스크탑 80px) 두고, 홀카드는 아바타 옆에 살짝 겹치는
- * 작은 배지로 처리: 히어로 xs 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 시 sm(z-30).
+ * 배지로 처리: 히어로 sm 팬 / 상대 카드백 2xs 팬 / 쇼다운 공개 시 sm(z-30).
  * cardSide로 좌우를 정한다 (우측 열 좌석은 왼쪽 — overflow-hidden 클리핑 방지).
  * 이름/칩 플레이트는 아바타 하단 겹침(z-20), 칩 부분 터치로 칩↔BB 표기 토글.
  * 폴드/탈락 디밍은 아바타·카드에만 — 이름/칩 플레이트는 가독 유지.
+ * 히어로는 폴드해도 자기 카드를 계속 본다 (무엇을 접었는지 확인) — 이때는 수트 색이
+ * 죽지 않게 grayscale 없이 투명도만 낮춘다. 상대 폴드 카드는 여전히 숨김.
  */
 export default function PlayerSeat({
   player, isCurrentPlayer, isActive, position, seatIndex, compact = false,
@@ -116,10 +118,15 @@ export default function PlayerSeat({
   const isBusted = player.chips <= 0 && !isAllIn;
   const isDimmed = isFolded || isSittingOut || isBusted;
   const avatarSize = compact ? 'lg' : 'xl';
-  const showCards = player.holeCards.length > 0 && !isFolded;
+  // 히어로는 폴드해도 자기 카드를 계속 확인할 수 있어야 한다 — 상대 폴드 카드만 숨김
+  const showCards = player.holeCards.length > 0 && (isCurrentPlayer || !isFolded);
   const revealed = !isCurrentPlayer && !!player.revealed;
+  // 히어로 폴드 디밍은 grayscale 없이 — 수트 색이 죽으면 접은 카드를 읽을 수 없다
+  const dimClass = isDimmed
+    ? (isCurrentPlayer && isFolded && !isBusted ? 'opacity-60' : 'opacity-40 grayscale')
+    : '';
 
-  // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 xs > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
+  // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 sm > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
   const cardOverlapPx = isCurrentPlayer ? 14 : revealed ? 12 : 10;
   const cardAnchorStyle = cardSide === 'left'
     ? { right: `calc(100% - ${cardOverlapPx}px)` }
@@ -153,7 +160,7 @@ export default function PlayerSeat({
     >
       <div className="relative flex flex-col items-center">
         {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만 */}
-        <div className={`relative z-10 rounded-full transition-opacity ${frameClass} ${isDimmed ? 'opacity-40 grayscale' : ''}`}>
+        <div className={`relative z-10 rounded-full transition-opacity ${frameClass} ${dimClass}`}>
           <SeatEmote playerId={player.id} />
           <CharacterAvatar
             characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
@@ -169,7 +176,7 @@ export default function PlayerSeat({
             />
           )}
 
-          {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 xs / 상대 카드백 2xs / 쇼다운 공개 sm */}
+          {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 sm / 상대 카드백 2xs / 쇼다운 공개 sm */}
           {showCards && (
             <div
               className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none ${revealed ? 'z-30' : 'z-20'}`}
@@ -180,7 +187,7 @@ export default function PlayerSeat({
                   key={i}
                   card={card}
                   hidden={!isCurrentPlayer && !player.revealed}
-                  size={isCurrentPlayer ? 'xs' : revealed ? 'sm' : '2xs'}
+                  size={isCurrentPlayer ? 'sm' : revealed ? 'sm' : '2xs'}
                   delay={i * 0.1}
                 />
               ))}
