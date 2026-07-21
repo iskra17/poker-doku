@@ -4436,6 +4436,29 @@ export const migrations: readonly Migration[] = [
         ON hand_history(profile_id, id);
     `,
   },
+  {
+    version: 22,
+    name: 'ops_events_and_profile_activity',
+    sql: `
+      -- 운영 이벤트 영속 로그 — 인메모리 링 버퍼(재시작 소멸)와 별개로, 장애/조치 역추적용
+      -- 신호 이벤트(http-reject·정산 실패·grace 만료·서버 시작 등)만 화이트리스트로 기록한다.
+      CREATE TABLE ops_event (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        at INTEGER NOT NULL CHECK (at BETWEEN 0 AND 253402300799999),
+        type TEXT NOT NULL CHECK (length(type) BETWEEN 1 AND 64),
+        room_id TEXT CHECK (room_id IS NULL OR length(room_id) <= 100),
+        player_id TEXT CHECK (player_id IS NULL OR length(player_id) <= 100),
+        data TEXT NOT NULL DEFAULT '{}' CHECK (length(data) <= 8192)
+      ) STRICT;
+
+      CREATE INDEX idx_ops_event_at ON ops_event(at);
+      CREATE INDEX idx_ops_event_type_at ON ops_event(type, at);
+
+      -- 익명 프로필 활동 지표 — 백오피스 관측용 (개인정보 아님: 접속 횟수/마지막 활동 시각)
+      ALTER TABLE profiles ADD COLUMN last_seen_at INTEGER;
+      ALTER TABLE profiles ADD COLUMN connect_count INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

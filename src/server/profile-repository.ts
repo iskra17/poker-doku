@@ -59,6 +59,15 @@ export class ProfileRepository {
     return row?.recovery_lookup ?? null;
   }
 
+  /** 소켓 접속 시 활동 지표 갱신 — 백오피스 관측용 (접속 횟수/마지막 활동 시각) */
+  recordConnect(profileId: string, at: number): void {
+    this.database.db.prepare(`
+      UPDATE profiles
+      SET connect_count = connect_count + 1, last_seen_at = ?
+      WHERE id = ?
+    `).run(at, profileId);
+  }
+
   createWithWallet(profile: StoredProfileCreation): PublicProfile {
     return this.database.transaction(() => {
       this.database.db.prepare(`

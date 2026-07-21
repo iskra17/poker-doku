@@ -86,6 +86,21 @@ export class SessionManager {
     return session ? this.releaseIfIdle(session) : false;
   }
 
+  /** 백오피스 관측용 세션 스냅샷 — 토큰 등 비밀 없이 접속/방 상태만 노출 */
+  snapshot(): Array<{
+    playerId: string;
+    connected: boolean;
+    roomId: string | null;
+    graceActive: boolean;
+  }> {
+    return [...this.byPlayerId.values()].map(session => ({
+      playerId: session.playerId,
+      connected: session.socketId !== null,
+      roomId: session.roomId,
+      graceActive: session.graceTimer !== null && session.graceTimer !== undefined,
+    }));
+  }
+
   stats(): { sessions: number; sockets: number; grace: number } {
     let grace = 0;
     for (const session of this.byPlayerId.values()) {

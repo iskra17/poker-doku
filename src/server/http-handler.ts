@@ -2,7 +2,12 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { randomBytes } from 'node:crypto';
 import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
+import {
+  createAdminHttpHandler,
+  type AdminRuntimeSnapshot,
+} from './admin-http';
 import { eventLog } from './event-log';
+import type { OpsEventRepository } from './ops-log';
 import {
   createFeedbackHttpHandler,
   FeedbackRepository,
@@ -50,6 +55,9 @@ interface HttpHandlerCommonOptions {
   arenaCursorSecret?: string;
   /** 시작 복구가 끝나기 전까지 /healthz를 503으로 유지한다. */
   ready?: () => boolean;
+  /** 운영 백오피스 (/api/admin/*) — 영속 이벤트 저장소 + 늦은 바인딩 런타임 스냅샷 */
+  opsEvents?: OpsEventRepository;
+  adminRuntime?: () => AdminRuntimeSnapshot | null;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -145,6 +153,15 @@ export function createHttpRequestHandler(
         rateLimiter: options.profileRateLimiter!,
       })
     : undefined;
+  const adminHandler = options.database && options.opsEvents
+    ? createAdminHttpHandler({
+        database: options.database,
+        opsEvents: options.opsEvents,
+        runtime: options.adminRuntime ?? (() => null),
+        debugToken,
+        now: options.now,
+      })
+    : undefined;
   const arenaHandler = options.profileManager
     ? createArenaHttpHandler({
         enabled: options.arenaEnabled ?? (() => false),
@@ -177,6 +194,13 @@ export function createHttpRequestHandler(
       }
       if (parsedUrl.pathname === '/api/debug/log') {
         handleDebugLog(parsedUrl, res, debugToken);
+        return;
+      }
+      if (
+        adminHandler
+        && parsedUrl.pathname
+        && adminHandler(res, parsedUrl.pathname, parsedUrl.query)
+      ) {
         return;
       }
       if (profileHandler && await profileHandler(req, res, parsedUrl.pathname)) {

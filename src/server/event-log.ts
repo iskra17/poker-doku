@@ -28,6 +28,15 @@ const MAX_EVENTS = 5000; // 6인 테이블 기준 수백 핸드 분량
 class EventLog {
   private buf: LogEvent[] = [];
   private seq = 0;
+  private persistentSink: ((event: LogEvent) => void) | null = null;
+
+  /**
+   * 영속 싱크 연결 (ops-log → SQLite). 싱크는 자체적으로 화이트리스트를 판정하고
+   * 실패를 삼켜야 한다 — 로그가 게임 진행을 막으면 안 된다.
+   */
+  setPersistentSink(sink: ((event: LogEvent) => void) | null): void {
+    this.persistentSink = sink;
+  }
 
   log(type: string, fields: { roomId?: string; playerId?: string; data?: Record<string, unknown> } = {}): void {
     const event: LogEvent = {
@@ -42,6 +51,11 @@ class EventLog {
     if (this.buf.length > MAX_EVENTS) this.buf.splice(0, this.buf.length - MAX_EVENTS);
     // fly logs 실시간 관찰용 — 한 줄 JSON (grep/jq 하기 쉽게)
     console.log(`[evt] ${JSON.stringify(event)}`);
+    try {
+      this.persistentSink?.(event);
+    } catch {
+      // 영속 실패는 링 버퍼/stdout 로그에 영향 없음
+    }
   }
 
   /** 최근 이벤트 조회 (필터는 AND). limit은 뒤에서부터 자른다 */

@@ -223,6 +223,43 @@ export class RoomManager {
     return this.rooms.size;
   }
 
+  /** 백오피스용 전체 방 요약 — 로비 필터와 무관하게 모든 방 (비밀번호 등 비밀 없이 상태만) */
+  getAdminRoomSummaries(): Array<{
+    id: string;
+    name: string;
+    mode: string;
+    tableType: string;
+    economyMode: string;
+    handNumber: number;
+    handInProgress: boolean;
+    humans: number;
+    bots: number;
+    sittingOut: number;
+    disconnected: number;
+    potTotal: number;
+    blinds: string;
+  }> {
+    return [...this.rooms.entries()].map(([id, room]) => {
+      const st = room.engine.state;
+      const humans = st.players.filter(p => p.type === 'human');
+      return {
+        id,
+        name: room.config.name,
+        mode: room.config.gameMode ?? 'cash',
+        tableType: room.config.tableType ?? 'mixed',
+        economyMode: room.config.economyMode ?? 'practice',
+        handNumber: st.handNumber,
+        handInProgress: st.isHandInProgress,
+        humans: humans.length,
+        bots: st.players.length - humans.length,
+        sittingOut: st.players.filter(p => p.status === 'sitting-out' || p.sitOutNext).length,
+        disconnected: st.players.filter(p => p.isDisconnected).length,
+        potTotal: st.pots.reduce((sum, pot) => sum + pot.amount, 0),
+        blinds: `${st.smallBlind}/${st.bigBlind}`,
+      };
+    });
+  }
+
   getRuntimeStats(): RoomManagerRuntimeStats {
     return {
       rooms: this.rooms.size,

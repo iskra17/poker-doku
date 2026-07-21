@@ -199,6 +199,18 @@ npx tsc --noEmit
   + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`
   (`&room=&player=&type=&limit=`) — 커스텀 서버(`server/index.ts`)가 직접 처리한다
   (Next 라우트로 옮기면 번들 경계에서 링 버퍼가 쪼개진다). `DEBUG_LOG_TOKEN` 미설정 시 403.
+  **운영 이벤트 영속화** (`src/server/ops-log.ts`, 마이그레이션 v22 `ops_event`): 신호 이벤트만
+  화이트리스트(`shouldPersistOpsEvent` — server-start·http-reject·join-room:reject·grace-expired·
+  정산 실패 hand-end)로 SQLite에 남긴다 (최대 5만 행 자동 정리, 저장 실패는 삼킴). 링 버퍼는
+  재시작에 소멸하므로 장애 역추적은 이 테이블이 기준. `server-start`가 재시작/배포 마커.
+- **운영 백오피스** (`/admin` → `src/app/admin/page.tsx`, API는 `src/server/admin-http.ts`):
+  `DEBUG_LOG_TOKEN` 토큰 게이트(localStorage 보관), 5초 폴링. `GET /api/admin/overview`(세션/방/
+  프로세스/DB 집계 — RoomManager.getAdminRoomSummaries·SessionManager.snapshot),
+  `GET /api/admin/profiles`(익명 프로필 활동·지갑·접속 상태 — 개인정보 없음, 자격증명/복구 컬럼
+  노출 금지), `GET /api/admin/events`(영속 운영 이벤트, 커서 페이지네이션). 프로필 활동 지표는
+  마이그레이션 v22의 `profiles.last_seen_at`/`connect_count` — 소켓 접속 시
+  `onProfileConnected` → `ProfileRepository.recordConnect`. 어드민 API도 debug/log처럼 커스텀
+  서버 직결 유지. 회귀: `ops-log.test.ts`.
   기록: connect(tokenHint로 세션 구분)·join-room(request/seated/reject+좌석 스냅샷)·leave-room·
   player-action(거부 시 액션 전 스냅샷+valid 목록 — 먹통 버튼 추적의 핵심)·disconnect·
   grace-expired·hand-start·hand-end(팟 불변식 potTotal/contributedTotal 검증).

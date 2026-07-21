@@ -73,6 +73,8 @@ export interface SocketRuntimeOptions {
   sweepIntervalMs?: number;
   graceMs?: number;
   sngRetentionMs?: number;
+  /** 인증된 소켓 접속 시 호출 — 프로필 활동 지표(접속 횟수/마지막 활동) 기록용. 실패는 무시 */
+  onProfileConnected?: (profileId: string) => void;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
@@ -589,6 +591,11 @@ export function setupSocketHandlers(
       socket.id,
       profileId,
     );
+    try {
+      options.onProfileConnected?.(profileId);
+    } catch {
+      // 활동 지표 기록 실패가 접속을 막으면 안 된다
+    }
     if (replacedSocketId) {
       const previousSocket = io.sockets.sockets.get(replacedSocketId);
       previousSocket?.emit('session-replaced', {
