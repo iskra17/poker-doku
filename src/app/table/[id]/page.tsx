@@ -32,7 +32,8 @@ export default function TablePage() {
 
   if (phase !== 'ready') {
     return (
-      <div className="min-h-dvh bg-abyss py-8">
+      // h-dvh + 내부 스크롤 — body는 문서 스크롤이 없다 (page.tsx 온보딩 래퍼와 같은 계약)
+      <div className="h-dvh overflow-y-auto bg-abyss py-8">
         <ProfileOnboarding />
       </div>
     );

@@ -99,7 +99,9 @@ export default function Home() {
 
   if (phase !== 'ready') {
     return (
-      <div className="min-h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
+      // h-dvh 고정 + 내부 스크롤 필수 — body가 position:fixed/overflow:hidden(당김 새로고침 방지)이라
+      // 문서 스크롤이 없다. min-h로 두면 캐릭터 그리드(봇 16명)가 넘칠 때 모바일에서 스크롤 불가
+      <div className="h-dvh overflow-y-auto pt-safe" style={LOBBY_BG_STYLE}>
         <LobbyHeader />
         <ProfileOnboarding />
       </div>
