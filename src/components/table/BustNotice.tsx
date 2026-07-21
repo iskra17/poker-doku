@@ -3,11 +3,13 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
+import { useCountdownTo } from '@/lib/hooks/use-countdown';
 import Button from '../ui/Button';
 
 /**
  * 캐시 게임 파산 안내 — 칩을 모두 잃은 직후(핸드 종료 시점) 1회 표시.
  * 리바이 자체는 미구현이라, "나가서 다시 앉으면 새로 바이인" 경로를 명시적으로 안내한다.
+ * 서버가 리바이 유예(bustReclaimDeadline, 30초)를 걸므로 남은 시간을 카운트다운으로 보여준다.
  * Sit & Go 탈락은 EliminationNotice가 담당하므로 여기선 캐시 게임만 다룬다.
  */
 export default function BustNotice({ onLeave }: { onLeave: () => void }) {
@@ -17,6 +19,7 @@ export default function BustNotice({ onLeave }: { onLeave: () => void }) {
   const tournament = gameState?.tournament;
   const isCash = !tournament || tournament.entrants === 0;
   const me = gameState?.players.find(p => p.id === myPlayerId);
+  const reclaimSeconds = useCountdownTo(me?.bustReclaimDeadline ?? 0);
 
   if (!gameState || !isCash || !me) return null;
   if (me.chips > 0) return null; // 아직 칩이 있으면 파산 아님
@@ -39,9 +42,15 @@ export default function BustNotice({ onLeave }: { onLeave: () => void }) {
         <h3 className="text-white font-bold text-lg mb-1">칩을 모두 잃었어요</h3>
         <p className="text-ink-dim text-[11px] mb-4">
           나가서 다시 앉으면 새 칩으로 바이인할 수 있어요.
-          <br />그대로 남아 다른 사람들의 승부를 지켜볼 수도 있어요.
-          {/* 서버 SITOUT_ABANDON_MS(5분)와 동기 — 파산 좌석 자동 회수 안내 */}
-          <br />리바이 없이 5분이 지나면 자리는 자동으로 정리돼요.
+          {/* 서버 BUST_RECLAIM_MS(30초)와 동기 — 파산 좌석 자동 회수 안내 */}
+          <br />
+          {reclaimSeconds !== null && reclaimSeconds > 0 ? (
+            <span className="font-bold text-blossom">
+              {reclaimSeconds}초 안에 리바이하지 않으면 자리가 자동으로 정리돼요.
+            </span>
+          ) : (
+            '리바이 없이 30초가 지나면 자리는 자동으로 정리돼요.'
+          )}
         </p>
         <div className="flex gap-2">
           <Button

@@ -1,14 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RoomManager } from './room-manager';
-import { SITOUT_ABANDON_MS } from './sitout';
+import { BUST_RECLAIM_MS } from './sitout';
 import { Player, RoomConfig } from '../lib/poker/types';
 
 /**
  * 캐시 파산(0칩) 좌석 회수 계약 (2026-07-21 운영 로그에서 확인된 방치 문제):
  * - 파산 좌석은 미납 BB 정리(trackMissedBlinds)가 chips<=0을 건너뛰어 대상이 아니다.
- *   핸드 종료 시점에 최종 정리 유예(SITOUT_ABANDON_MS)를 걸어 리바이 없이 방치되면 회수한다.
+ *   핸드 종료 시점에 리바이 유예(BUST_RECLAIM_MS, 30초)를 걸어 방치되면 회수한다 —
+ *   빠른 세션 회전을 위해 자리비움 방치(5분)보다 훨씬 짧다.
  * - 유예는 이후 핸드 종료마다 재무장하지 않는다 (재무장하면 영영 만료되지 않는다).
- * - 리바이 재입장(handleSeatRejoin)은 유예를 취소한다.
+ *   단, 파산 전에 걸린 더 긴 자리비움 유예(5분)는 30초로 교체된다.
+ * - 리바이 재입장(handleSeatRejoin)은 유예와 카운트다운(bustReclaimDeadline)을 해제한다.
  * - 접속 끊김 grace 만료 시 캐시 파산 좌석은 자리비움 상태라도 즉시 회수한다 (SnG는 무조건 보존).
  */
 
@@ -87,12 +89,13 @@ describe('캐시 파산 좌석 회수', () => {
     return roomId;
   }
 
-  it('파산 좌석은 핸드 종료 시 유예가 걸리고, 리바이 없이 SITOUT_ABANDON_MS가 지나면 회수된다', () => {
+  it('파산 좌석은 핸드 종료 시 30초 유예가 걸리고(카운트다운 노출), 리바이 없으면 회수된다', () => {
     const roomId = setupHeadsUp();
     const loser = bustLoserAndEndHand(manager, roomId);
     expect(manager.getRuntimeStats().sitOutTimers).toBe(1);
+    expect(loser.bustReclaimDeadline).toBe(Date.now() + BUST_RECLAIM_MS);
 
-    vi.advanceTimersByTime(SITOUT_ABANDON_MS + 1000);
+    vi.advanceTimersByTime(BUST_RECLAIM_MS + 1000);
     const st = manager.getRoom(roomId)!.engine.state;
     expect(st.players.some(p => p.id === loser.id)).toBe(false);
     expect(
@@ -100,7 +103,7 @@ describe('캐시 파산 좌석 회수', () => {
     ).toBe(true);
   });
 
-  it('유예 중 리바이 재입장(handleSeatRejoin)은 유예를 취소한다', () => {
+  it('유예 중 리바이 재입장(handleSeatRejoin)은 유예와 카운트다운을 해제한다', () => {
     const roomId = setupHeadsUp();
     const loser = bustLoserAndEndHand(manager, roomId);
     expect(manager.getRuntimeStats().sitOutTimers).toBe(1);
@@ -108,8 +111,9 @@ describe('캐시 파산 좌석 회수', () => {
     manager.handleSeatRejoin(roomId, loser.id);
     loser.chips = 2000; // 새 바이인 리바이
     expect(manager.getRuntimeStats().sitOutTimers).toBe(0);
+    expect(loser.bustReclaimDeadline).toBeUndefined();
 
-    vi.advanceTimersByTime(SITOUT_ABANDON_MS + 1000);
+    vi.advanceTimersByTime(BUST_RECLAIM_MS + 1000);
     const st = manager.getRoom(roomId)!.engine.state;
     expect(st.players.some(p => p.id === loser.id)).toBe(true);
   });
@@ -118,13 +122,28 @@ describe('캐시 파산 좌석 회수', () => {
     const roomId = setupHeadsUp();
     const loser = bustLoserAndEndHand(manager, roomId);
 
-    // 4분 뒤 다른 좌석의 핸드가 또 끝났다고 가정 — 유예가 리셋되면 안 된다
-    vi.advanceTimersByTime(4 * 60_000);
+    // 20초 뒤 다른 좌석의 핸드가 또 끝났다고 가정 — 유예가 리셋되면 안 된다
+    vi.advanceTimersByTime(20_000);
     (manager as unknown as BustReclaimAccess).scheduleBustReclaims(roomId);
 
-    // 최초 시점 기준 잔여 1분만 지나면 회수돼야 한다 (리셋됐다면 아직 남아 있음)
-    vi.advanceTimersByTime(60_000 + 1000);
+    // 최초 시점 기준 잔여 10초만 지나면 회수돼야 한다 (리셋됐다면 아직 남아 있음)
+    vi.advanceTimersByTime(10_000 + 1000);
     const st = manager.getRoom(roomId)!.engine.state;
+    expect(st.players.some(p => p.id === loser.id)).toBe(false);
+  });
+
+  it('파산과 자리비움 이탈이 겹쳐도 30초 유예가 유지된다 (5분 방치 유예가 덮어쓰지 않음)', () => {
+    const roomId = setupHeadsUp();
+    const st = manager.getRoom(roomId)!.engine.state;
+    const loser = st.players[st.activePlayerIndex];
+    loser.chips = 0; // 올인 패배 직전 상태
+    // 본인 턴에 '자리비움 하고 나가기' → 자동 폴드로 핸드 종료 → 파산 30초 유예 무장 →
+    // 이어지는 5분 방치 유예 예약이 30초 유예를 늘리면 안 된다
+    manager.sitOutAndLeave(roomId, loser.id);
+    expect(st.isHandInProgress).toBe(false);
+    expect(loser.chips).toBe(0);
+
+    vi.advanceTimersByTime(BUST_RECLAIM_MS + 1000);
     expect(st.players.some(p => p.id === loser.id)).toBe(false);
   });
 

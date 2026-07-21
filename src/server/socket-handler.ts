@@ -313,6 +313,23 @@ export function setupSocketHandlers(
           },
         }
         : {}),
+      // 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB) 좌석 회수 —
+      // 접속한 채 방에 남아 있는 클라이언트를 room-lost로 로비에 돌려보낸다
+      onSeatReclaimed: (roomId, playerId) => {
+        const targetSession = sessions.getByPlayerId(playerId);
+        if (!targetSession || targetSession.roomId !== roomId) return;
+        targetSession.roomId = null;
+        const targetSocket = targetSession.socketId
+          ? io.sockets.sockets.get(targetSession.socketId)
+          : undefined;
+        if (targetSocket) {
+          targetSocket.leave(roomId);
+          targetSocket.emit('room-lost', {
+            message: '자리가 정리되어 로비로 돌아왔어요. 다시 입장할 수 있어요.',
+          });
+        }
+        sessions.releaseIfIdle(targetSession);
+      },
       onRoomDisposed: (roomId, playerIds, reason, arenaMatchId) => {
         if (arenaMatchId) {
           arenaRuntime?.handleRoomDisposed(arenaMatchId, roomId);

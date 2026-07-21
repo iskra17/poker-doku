@@ -15,7 +15,7 @@ import type { CompletedHandRecord } from '../lib/poker/hand-history';
 import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
-import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, shouldRemoveForMissedBlinds } from './sitout';
+import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, BUST_RECLAIM_MS, shouldRemoveForMissedBlinds } from './sitout';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
 import { eventLog, handSettlementLogFields } from './event-log';
@@ -63,6 +63,11 @@ export interface RoomManagerOptions {
     reason: RoomDisposeReason,
     arenaMatchId?: string,
   ) => void;
+  /**
+   * 서버 타이머(파산 리바이 유예·자리비움 방치·미납 BB)가 좌석을 회수했을 때 호출 —
+   * 접속 중인 클라이언트를 room-lost로 로비에 돌려보낸다 (없으면 다음 resync 때 정리).
+   */
+  onSeatReclaimed?: (roomId: string, playerId: string) => void;
 }
 
 export interface RoomArenaHooks {
@@ -1100,6 +1105,7 @@ export class RoomManager {
     for (const p of toRemove) {
       if (this.leaveRoom(roomId, p.id)) {
         this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 걸러 자리에서 일어납니다.`);
+        this.options.onSeatReclaimed?.(roomId, p.id);
       }
     }
   }
@@ -1165,7 +1171,19 @@ export class RoomManager {
   }
 
   /** 자리비움 이탈·파산(0칩) 좌석에 최종 정리 유예를 건다 (캐시 전용 — SnG는 블라인드 소진에 맡김) */
-  private scheduleSitOutAbandon(roomId: string, playerId: string): void {
+  private scheduleSitOutAbandon(
+    roomId: string,
+    playerId: string,
+    delayMs: number = SITOUT_ABANDON_MS,
+  ): void {
+    // 파산 리바이 유예(BUST_RECLAIM_MS)가 이미 무장돼 있으면 더 긴 유예로 되돌리지 않는다 —
+    // 파산 직후 sitOutAndLeave가 5분 방치 유예를 덮어써 30초 유예가 풀리는 순서 하자 방지
+    const armed = this.rooms.get(roomId)?.engine.state.players
+      .find(p => p.id === playerId)?.bustReclaimDeadline;
+    if (armed !== undefined) {
+      const remaining = armed - Date.now();
+      if (remaining > 0 && delayMs > remaining) delayMs = remaining;
+    }
     const key = this.abandonKey(roomId, playerId);
     const existing = this.sitOutAbandonTimers.get(key);
     if (existing) clearTimeout(existing);
@@ -1187,27 +1205,34 @@ export class RoomManager {
               ? `${p.name}님이 리바이 없이 자리를 오래 비워 자리를 정리했어요.`
               : `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`,
           );
+          this.options.onSeatReclaimed?.(roomId, p.id);
         }
       }
-    }, SITOUT_ABANDON_MS);
+    }, delayMs);
     this.sitOutAbandonTimers.set(key, timer);
   }
 
   /**
-   * 캐시 파산(0칩) 휴먼 좌석에 최종 정리 유예를 건다 (핸드 종료 시점 호출).
+   * 캐시 파산(0칩) 휴먼 좌석에 리바이 유예(BUST_RECLAIM_MS, 30초)를 건다 (핸드 종료 시점 호출).
    * 파산 좌석은 trackMissedBlinds가 chips<=0을 건너뛰어 미납 BB 정리 대상이 아니므로,
-   * 접속을 유지한 채 방치되면 이 유예가 유일한 회수 경로다 (오프라인은 grace 만료가 즉시 회수).
-   * 이미 유예가 걸려 있으면 갱신하지 않는다 — 다른 좌석의 핸드가 끝날 때마다
-   * 재무장하면 유예가 영영 만료되지 않는다.
+   * 접속을 유지한 채 방치되면 이 유예가 유일한 회수 경로다 (오프라인도 이 유예가 30초 내 회수 —
+   * grace 만료는 그보다 빠를 때만 관여). 이미 무장된 유예(bustReclaimDeadline)는 갱신하지
+   * 않는다 — 다른 좌석의 핸드가 끝날 때마다 재무장하면 유예가 영영 만료되지 않는다.
+   * 단, 파산 전에 걸린 더 긴 자리비움 유예(5분)는 30초 유예로 교체한다.
    */
   private scheduleBustReclaims(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || room.config.gameMode === 'sng') return;
+    let armed = false;
     for (const p of room.engine.state.players) {
       if (p.type !== 'human' || p.pendingRemoval || p.chips > 0) continue;
-      if (this.sitOutAbandonTimers.has(this.abandonKey(roomId, p.id))) continue;
-      this.scheduleSitOutAbandon(roomId, p.id);
+      if (p.bustReclaimDeadline !== undefined) continue;
+      p.bustReclaimDeadline = Date.now() + BUST_RECLAIM_MS;
+      this.scheduleSitOutAbandon(roomId, p.id, BUST_RECLAIM_MS);
+      armed = true;
     }
+    // 카운트다운(bustReclaimDeadline)이 바로 화면에 실리도록 스냅샷을 다시 브로드캐스트
+    if (armed) this.onUpdate(roomId, room.engine);
   }
 
   /** 좌석 복귀/제거 시 최종 정리 타이머 취소 */
@@ -1347,6 +1372,10 @@ export class RoomManager {
    */
   handleSeatRejoin(roomId: string, playerId: string): void {
     this.cancelSitOutAbandon(roomId, playerId);
+    // 리바이 완료 — 파산 유예 카운트다운 해제
+    const player = this.rooms.get(roomId)?.engine.state.players
+      .find(p => p.id === playerId);
+    if (player) player.bustReclaimDeadline = undefined;
   }
 
   /**

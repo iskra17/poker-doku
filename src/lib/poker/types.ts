@@ -53,6 +53,11 @@ export interface Player {
    * SnG(좌석 무조건 보존)·자리비움 좌석에는 세팅하지 않는다.
    */
   disconnectGraceDeadline?: number;
+  /**
+   * 캐시 파산(0칩) 좌석의 리바이 유예 만료 시각 (epoch ms) — 유예 내 리바이가 없으면 좌석 회수.
+   * BustNotice가 카운트다운을 그리는 용도. 리바이 재입장(handleSeatRejoin) 시 해제.
+   */
+  bustReclaimDeadline?: number;
   revealed?: boolean; // 서버가 명시하는 홀카드 공개 여부 (쇼다운 생존자만 true)
   personalityId?: string; // for bots
   botSkill?: RoomDifficulty; // 봇 난이도 — 방 난이도에 따라 성향 수치를 변조 (기본 normal)

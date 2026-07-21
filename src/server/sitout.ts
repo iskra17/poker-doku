@@ -12,6 +12,8 @@
 export const SITOUT_MISSED_BB_LIMIT = 2;
 /** 자리비움 후 방을 떠난(로비 복귀) 좌석의 최종 정리 유예 — 핸드가 돌지 않는 방까지 확실히 회수 */
 export const SITOUT_ABANDON_MS = 5 * 60_000;
+/** 파산(0칩) 좌석의 리바이 유예 — 빠른 세션 회전을 위해 짧게 (2026-07-21 운영 결정: 30초) */
+export const BUST_RECLAIM_MS = 30_000;
 
 /**
  * 자리비움 좌석을 자동 정리할지. handsSatOut 핸드 동안 자리를 비웠고, 한 오르빗이 대략
