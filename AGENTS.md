@@ -86,7 +86,11 @@ npx tsc --noEmit
   (2026-07-15 수정). **캐시**: 자리비움은 다음 핸드부터 딜인 제외, 대략 2오르빗
   (`shouldRemoveForMissedBlinds`, 경과 핸드÷인원)을 넘기면 자동 정리. 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
   (방 자가진행 불가 시 누수 방지, 복귀 시 `handleSeatRejoin`이 취소). 재입장은 자리비움 유지 + '게임 복귀'
-  버튼(명시 복귀). **SnG**: 자리비움/끊김도 딜인·블라인드 유지 + 턴 자동 폴드(away)로 블라인드 소진 →
+  버튼(명시 복귀). **캐시 파산(0칩) 좌석 회수**: 미납 BB 정리가 chips<=0을 건너뛰므로 별도 경로 필수 —
+  핸드 종료 시 `scheduleBustReclaims`가 같은 5분 유예를 걸고(이후 핸드 종료마다 재무장 금지 — 재무장하면
+  영영 만료 안 됨), grace 만료 시엔 자리비움이라도 즉시 회수(지킬 칩이 없음. 진행 중 핸드의 올인 0칩은
+  팟 지분이 있어 제외). 리바이는 `handleSeatRejoin`이 유예 취소. 2026-07-21 운영 로그의 방치 좌석 실측 후
+  도입, 회귀: `room-manager.bust-reclaim.test.ts`. **SnG**: 자리비움/끊김도 딜인·블라인드 유지 + 턴 자동 폴드(away)로 블라인드 소진 →
   자연 탈락, 좌석은 토너먼트 종료까지 보존(grace 만료·`handleGraceExpired`에서 SnG는 무조건 keep). 회귀:
   `sitout.test.ts`(정리 판정), `room-manager.sitout-turn.test.ts`(턴 비점유). 로비 복귀 후 도착하는 game-update는 클라가 무시(currentRoomId null 가드).
   **로비 재입장 UX**: room-list는 소켓별 개인화 브로드캐스트(`getRoomList(forPlayerId)` →
@@ -255,7 +259,8 @@ npx tsc --noEmit
 
 ## 미구현 (알려진 범위 제외)
 
-- 비참가자 관전 모드(방에 안 앉고 구경), 리바이(칩 0이면 관전 상태로 고정 — SnG 탈락자 관전은 구현됨),
+- 비참가자 관전 모드(방에 안 앉고 구경), 리바이(칩 0이면 관전 — 단 5분 내 리바이 없으면 좌석 자동
+  회수, SnG 탈락자 관전은 토너먼트 종료까지 구현됨),
   멀티 테이블 동시 플레이(1세션 1테이블)
 - 멀티 테이블 토너먼트(MTT) — 시트앤고(단일 테이블)만 구현됨
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),

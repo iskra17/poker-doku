@@ -1164,7 +1164,7 @@ export class RoomManager {
     return `${roomId}:${playerId}`;
   }
 
-  /** 자리비움 상태로 자리를 떠난 좌석에 최종 정리 유예를 건다 (캐시 전용 — SnG는 블라인드 소진에 맡김) */
+  /** 자리비움 이탈·파산(0칩) 좌석에 최종 정리 유예를 건다 (캐시 전용 — SnG는 블라인드 소진에 맡김) */
   private scheduleSitOutAbandon(roomId: string, playerId: string): void {
     const key = this.abandonKey(roomId, playerId);
     const existing = this.sitOutAbandonTimers.get(key);
@@ -1173,13 +1173,41 @@ export class RoomManager {
       this.sitOutAbandonTimers.delete(key);
       const r = this.rooms.get(roomId);
       const p = r?.engine.state.players.find(pl => pl.id === playerId);
-      if (p && (p.sitOutNext || p.status === 'sitting-out')) {
+      if (!r || !p) return;
+      // 진행 중 핸드에 살아 있는 좌석(올인 0칩 포함 — 팟 지분 보유)은 건드리지 않는다
+      const inHandAlive = r.engine.state.isHandInProgress
+        && (p.status === 'active' || p.status === 'all-in');
+      if (inHandAlive) return;
+      const busted = p.chips <= 0;
+      if (busted || p.sitOutNext || p.status === 'sitting-out') {
         if (this.leaveRoom(roomId, p.id)) {
-          this.sendSystemChat(roomId, `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`);
+          this.sendSystemChat(
+            roomId,
+            busted
+              ? `${p.name}님이 리바이 없이 자리를 오래 비워 자리를 정리했어요.`
+              : `${p.name}님이 오랫동안 돌아오지 않아 자리를 정리했어요.`,
+          );
         }
       }
     }, SITOUT_ABANDON_MS);
     this.sitOutAbandonTimers.set(key, timer);
+  }
+
+  /**
+   * 캐시 파산(0칩) 휴먼 좌석에 최종 정리 유예를 건다 (핸드 종료 시점 호출).
+   * 파산 좌석은 trackMissedBlinds가 chips<=0을 건너뛰어 미납 BB 정리 대상이 아니므로,
+   * 접속을 유지한 채 방치되면 이 유예가 유일한 회수 경로다 (오프라인은 grace 만료가 즉시 회수).
+   * 이미 유예가 걸려 있으면 갱신하지 않는다 — 다른 좌석의 핸드가 끝날 때마다
+   * 재무장하면 유예가 영영 만료되지 않는다.
+   */
+  private scheduleBustReclaims(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.config.gameMode === 'sng') return;
+    for (const p of room.engine.state.players) {
+      if (p.type !== 'human' || p.pendingRemoval || p.chips > 0) continue;
+      if (this.sitOutAbandonTimers.has(this.abandonKey(roomId, p.id))) continue;
+      this.scheduleSitOutAbandon(roomId, p.id);
+    }
   }
 
   /** 좌석 복귀/제거 시 최종 정리 타이머 취소 */
@@ -1296,7 +1324,12 @@ export class RoomManager {
     }
     const isSng = room.config.gameMode === 'sng';
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
-    const keep = isSng || sittingOut;
+    // 캐시 파산(0칩) 좌석은 지킬 칩이 없다 — 자리비움이라도 유지하지 않고 즉시 회수
+    // (진행 중 핸드의 올인 0칩은 팟 지분이 살아 있으므로 파산이 아니다. 재입장은 새 바이인 리바이)
+    const inHandAlive = room.engine.state.isHandInProgress
+      && (player.status === 'active' || player.status === 'all-in');
+    const busted = player.chips <= 0 && !inHandAlive;
+    const keep = isSng || (sittingOut && !busted);
     if (!keep) {
       return !this.leaveRoom(roomId, playerId);
     }
@@ -2061,6 +2094,8 @@ export class RoomManager {
       this.cleanupEmptyRoom(roomId, true);
       return;
     }
+    // 이번 핸드로 파산한 캐시 휴먼 좌석에 리바이 유예를 건다 (방치 좌석 회수의 유일한 경로)
+    this.scheduleBustReclaims(roomId);
     this.scheduleNextHand(roomId);
   }
 

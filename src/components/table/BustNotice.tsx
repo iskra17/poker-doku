@@ -40,6 +40,8 @@ export default function BustNotice({ onLeave }: { onLeave: () => void }) {
         <p className="text-ink-dim text-[11px] mb-4">
           나가서 다시 앉으면 새 칩으로 바이인할 수 있어요.
           <br />그대로 남아 다른 사람들의 승부를 지켜볼 수도 있어요.
+          {/* 서버 SITOUT_ABANDON_MS(5분)와 동기 — 파산 좌석 자동 회수 안내 */}
+          <br />리바이 없이 5분이 지나면 자리는 자동으로 정리돼요.
         </p>
         <div className="flex gap-2">
           <Button
