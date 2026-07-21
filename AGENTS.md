@@ -26,6 +26,8 @@ npx tsc --noEmit
 ## 아키텍처
 
 - **서버 권위 모델**: 게임 상태는 서버의 `PokerEngine`만 소유. 클라이언트는 수신 전용.
+  덱 셔플은 CSPRNG(`deck.ts`의 `secureRandomInt` — crypto.getRandomValues + rejection sampling)
+  기반 Fisher-Yates — 딜링 경로에서 `Math.random` 금지(시드 추측형 덱 예측 공격 차단). 회귀: `deck.test.ts`.
   홀카드는 `getPublicState(forPlayerId)`가 본인 것 외 placeholder로 마스킹. `revealed` 플래그가
   쇼다운 공개 여부의 유일한 계약 (클라이언트가 status로 추측하지 말 것). 공개는 쇼다운
   **경합**(생존자 2인 이상) 또는 올인 런아웃일 때만 — endHand가 폴드 승리에도 street='showdown'을
@@ -194,6 +196,13 @@ npx tsc --noEmit
   액션 리플레이 상세). 마이그레이션 추가 시 `database.test.ts`의 최신 버전 상수도 함께 올릴 것.
   회귀: `engine.handrecord.test.ts`, `hand-history-http.test.ts`,
   `room-manager.hand-history.test.ts`.
+  **테이블 정본 기록 + 전역 핸드 ID** (마이그레이션 v23 `table_hand`, `TableHandRepository`):
+  서비스가 개인 기록보다 먼저 정본 1행을 남기고 autoincrement id를 **사이트 전역 핸드 ID**로
+  쓴다 (PokerStars Hand #N 관행 — CS 분쟁·콜루전 조사·버그 역추적의 조인 키). 봇만 남은
+  핸드도 정본에는 기록, 개인 `hand_history.table_hand_id`가 링크(정본 저장 실패 시 null로
+  개인 기록은 계속). 정본 detail은 **마스킹 전 전체 홀카드**라 조회는 토큰 게이트
+  `/api/admin/hands*` 전용 — 브로드캐스트·플레이어 API 노출 금지. UPDATE 금지 트리거로 불변,
+  전체 1만 핸드 보존(초과분 정리). 회귀: `table-hand.test.ts`.
 - **운영 HTTP/플레이 이벤트 로그 (버그 역추적)**: 커스텀 HTTP 서버가 `GET|HEAD /healthz`를
   Next 핸들러 없이 직접 처리한다. `src/server/event-log.ts`의 인메모리 링 버퍼(5000개)
   + stdout `[evt] {json}` 한 줄. 조회는 `GET /api/debug/log?token=$DEBUG_LOG_TOKEN`
@@ -204,11 +213,19 @@ npx tsc --noEmit
   정산 실패 hand-end)로 SQLite에 남긴다 (최대 5만 행 자동 정리, 저장 실패는 삼킴). 링 버퍼는
   재시작에 소멸하므로 장애 역추적은 이 테이블이 기준. `server-start`가 재시작/배포 마커.
 - **운영 백오피스** (`/admin` → `src/app/admin/page.tsx`, API는 `src/server/admin-http.ts`):
-  `DEBUG_LOG_TOKEN` 토큰 게이트(localStorage 보관), 5초 폴링. `GET /api/admin/overview`(세션/방/
-  프로세스/DB 집계 — RoomManager.getAdminRoomSummaries·SessionManager.snapshot),
+  `DEBUG_LOG_TOKEN` 토큰 게이트(localStorage 보관). 상용 포커룸 백오피스 구조를 축소한
+  **7탭 레이아웃** — 대시보드(지표+24h 핸드/레이크)/테이블(방+좌석 상세 확장)/플레이어(프로필+
+  최근 핸드 드릴다운)/핸드(핸드 감사 — 정본 목록·상세 뷰어)/문의·리포트/이벤트/보안·공정성
+  (신호 집계+아키텍처 체크리스트). 폴링은 overview 상시 + 활성 탭 데이터만 5초 주기.
+  API: `GET /api/admin/overview`(세션/방/프로세스/DB 집계 + `latestFeedbackId` + `handStats24h`),
   `GET /api/admin/profiles`(익명 프로필 활동·지갑·접속 상태 — 개인정보 없음, 자격증명/복구 컬럼
-  노출 금지), `GET /api/admin/events`(영속 운영 이벤트, 커서 페이지네이션). 프로필 활동 지표는
-  마이그레이션 v22의 `profiles.last_seen_at`/`connect_count` — 소켓 접속 시
+  노출 금지), `GET /api/admin/events`(영속 운영 이벤트, 커서 페이지네이션),
+  `GET /api/admin/hands`(정본 핸드 목록 — `room=`/`profile=` 필터·커서, 목록엔 홀카드 없음),
+  `GET /api/admin/hands/:id`(전역 핸드 ID로 정본 상세 — 전체 홀카드, 이 게이트 밖 재노출 금지),
+  `GET /api/admin/security`(`hours=` 윈도우 신호 이벤트 타입별 집계 — OpsEventRepository.countByTypeSince).
+  **문의 알림**: feedback은 불변·미삭제라 `latestFeedbackId - localStorage 확인 커서 = 새 문의 수` —
+  헤더 🔔 배지·탭 배지·브라우저 탭 제목 `(N)`으로 노출, 문의 탭 열람 시 자동 읽음.
+  프로필 활동 지표는 마이그레이션 v22의 `profiles.last_seen_at`/`connect_count` — 소켓 접속 시
   `onProfileConnected` → `ProfileRepository.recordConnect`. 어드민 API도 debug/log처럼 커스텀
   서버 직결 유지. 회귀: `ops-log.test.ts`.
   기록: connect(tokenHint로 세션 구분)·join-room(request/seated/reject+좌석 스냅샷)·leave-room·
