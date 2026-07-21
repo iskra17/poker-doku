@@ -1431,12 +1431,14 @@ export class RoomManager {
     const inCurrentHand = st.isHandInProgress
       && (player.status === 'active' || player.status === 'all-in');
     if (kind === 'hand' && !inCurrentHand) return 'leave-now';
-    if (
-      kind === 'bb'
-      && !st.isHandInProgress
-      && room.engine.predictNextBigBlindId() === playerId
-    ) {
-      return 'leave-now';
+    if (kind === 'bb' && !st.isHandInProgress) {
+      // 다음 핸드에 딜인되지 않는 좌석(자리비움/끊김/파산)은 더 낼 블라인드가 없다 — 즉시 퇴장
+      const willBeDealt = player.chips > 0
+        && !(player.isDisconnected || player.sitOutNext)
+        && player.status !== 'sitting-out';
+      if (!willBeDealt || room.engine.predictNextBigBlindId() === playerId) {
+        return 'leave-now';
+      }
     }
     player.leaveReservation = kind;
     this.onUpdate(roomId, room.engine);
@@ -1446,16 +1448,22 @@ export class RoomManager {
   /**
    * 나가기 예약 실행 — 핸드 종료(정산 확정) 시점에 handleCompletedHand가 호출.
    * 'hand'는 무조건, 'bb'는 다음 핸드 BB로 예측되는 좌석만 퇴장 처리한다.
+   * 단 'bb'라도 다음 핸드에 딜인되지 않는 좌석(자리비움/시간 초과 마킹/끊김/파산)은 더 낼
+   * 블라인드가 없으므로 즉시 이행한다 — 딜인 제외 좌석은 영영 BB로 예측되지 않아, 이 처리가
+   * 없으면 자리 뜬 예약자가 방치 타이머까지 좌석을 붙잡는다.
    * leaveRoom 실패(지갑 정산 실패로 방 잠금)면 예약을 유지해 다음 핸드 종료 때 재시도한다.
    */
   private processLeaveReservations(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
+    const willBeDealt = (p: Player): boolean =>
+      p.chips > 0 && !(p.isDisconnected || p.sitOutNext) && p.status !== 'sitting-out';
     const due = room.engine.state.players.filter(p =>
       p.type === 'human'
       && !p.pendingRemoval
       && p.leaveReservation !== undefined
       && (p.leaveReservation === 'hand'
+        || !willBeDealt(p)
         || room.engine.predictNextBigBlindId() === p.id));
     for (const p of due) {
       if (!this.rooms.has(roomId)) return; // 앞선 퇴장으로 방이 정리됐으면 종료

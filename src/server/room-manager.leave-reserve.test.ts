@@ -137,6 +137,32 @@ describe('나가기 예약 — setLeaveReservation/processLeaveReservations', ()
     expect(manager.setLeaveReservation(roomId, nextBb!, 'bb')).toBe('leave-now');
   });
 
+  it("'bb' 예약자가 자리비움 등으로 다음 핸드에 딜인되지 않으면 핸드 종료 시 즉시 이행한다", () => {
+    const roomId = setupCash(['p1', 'p2', 'p3']);
+    // 첫 핸드의 다음 BB는 p2가 아니게 되는 좌석을 골라 예약 (p3 — 다음 BB는 p2)
+    expect(manager.setLeaveReservation(roomId, 'p3', 'bb')).toBe('reserved');
+    // 진행 중 핸드에서 시간 초과/명시 자리비움 마킹 — 다음 핸드 딜인 제외 좌석이 된다
+    const p3 = manager.getRoom(roomId)!.engine.state.players.find(p => p.id === 'p3')!;
+    p3.sitOutNext = true;
+
+    foldOutHand(manager, roomId);
+    // BB 순서를 기다리지 않고 즉시 이행 — 딜인 제외 좌석은 영영 BB로 예측되지 않기 때문
+    expect(manager.getRoom(roomId)!.engine.state.players.some(p => p.id === 'p3')).toBe(false);
+    expect(reclaimed).toHaveLength(1);
+    expect(reclaimed[0].playerId).toBe('p3');
+  });
+
+  it("핸드 사이의 'bb' 예약도 자리비움 좌석이면 'leave-now'", () => {
+    const roomId = setupCash(['p1', 'p2', 'p3']);
+    foldOutHand(manager, roomId);
+    const st = manager.getRoom(roomId)!.engine.state;
+    const nextBb = manager.getRoom(roomId)!.engine.predictNextBigBlindId();
+    const idle = st.players.find(p => p.id !== nextBb)!;
+    idle.sitOutNext = true;
+    idle.status = 'sitting-out';
+    expect(manager.setLeaveReservation(roomId, idle.id, 'bb')).toBe('leave-now');
+  });
+
   it('예약 취소는 플래그를 지우고 좌석을 유지한다', () => {
     const roomId = setupCash(['p1', 'p2', 'p3']);
     expect(manager.setLeaveReservation(roomId, 'p1', 'hand')).toBe('reserved');
