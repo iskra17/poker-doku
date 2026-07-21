@@ -57,7 +57,8 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
                 지갑 <span className="font-bold text-gilded">{profile.wallet.balance.toLocaleString('ko-KR')}칩</span>
                 {activeSeatChips !== null && <> · 좌석 {activeSeatChips.toLocaleString('ko-KR')}칩</>}
                 {arenaSnapshot?.enabled && (
-                  <> · 경기권 <span className="font-bold text-mystic">{arenaSnapshot.profile.availableTickets}장</span></>
+                  <> · <span aria-label="아레나 경기권" title="아레나 경기권">경기권</span>{' '}
+                    <span className="font-bold text-mystic">{arenaSnapshot.profile.availableTickets}장</span></>
                 )}
               </p>
             </div>

@@ -218,7 +218,24 @@ export class PokerEngine {
     // 같은 id가 두 좌석을 잡으면 팟 회계(totalContributed 합산)와 턴 순서가 깨진다.
     // 호출부(join-room)가 멱등 경로로 먼저 걸러내지만, 여기서도 최종 방어한다.
     if (this.state.players.find(p => p.id === player.id)) return false;
-    this.state.players.push(player);
+
+    // 포지션(버튼/블라인드/액션 순서)은 전부 players 배열 순서로 돌기 때문에 배열은 항상
+    // seatIndex 오름차순을 유지해야 한다 — 끝에 push만 하면 중간 좌석(봇 양보석 등)에 앉은
+    // 플레이어가 배열 끝에 붙어 버튼이 테이블을 시계방향으로 돌지 않는다 (실제 신고된 찐빠).
+    // 핸드 진행 중엔 배열 삽입이 dealerIndex/activePlayerIndex를 밀어내므로 끝에 붙이고,
+    // startHand의 normalizeSeatOrder()가 다음 핸드 전에 정렬한다.
+    if (this.state.isHandInProgress) {
+      this.state.players.push(player);
+      return true;
+    }
+    const insertIdx = this.state.players.findIndex(p => p.seatIndex > player.seatIndex);
+    if (insertIdx === -1) {
+      this.state.players.push(player);
+    } else {
+      this.state.players.splice(insertIdx, 0, player);
+      // 버튼 앞에 끼어들면 버튼이 같은 사람을 가리키도록 한 칸 보정
+      if (insertIdx <= this.state.dealerIndex) this.state.dealerIndex++;
+    }
     return true;
   }
 
@@ -245,12 +262,16 @@ export class PokerEngine {
       this.state.players.splice(idx, 1);
       if (this.state.players.length === 0) {
         this.state.dealerIndex = 0;
-      } else {
-        if (idx <= this.state.dealerIndex) {
-          this.state.dealerIndex = Math.max(0, this.state.dealerIndex - 1);
-        }
-        this.state.dealerIndex %= this.state.players.length;
+      } else if (idx < this.state.dealerIndex) {
+        this.state.dealerIndex--;
+      } else if (idx === this.state.dealerIndex) {
+        // 버튼 좌석 본인이 떠나면 버튼은 "이전 좌석"이 기준이 되어야 다음 핸드의
+        // advanceDealerButton이 떠난 좌석의 다음 좌석으로 자연 이동한다.
+        // max(0, idx-1) 클램프는 인덱스 0의 버튼 이탈 시 0을 유지해 다음 좌석을 건너뛰었다
+        // (예: [A,B,C]에서 버튼 A 이탈 → C가 버튼, B는 BB 연속 납부). 랩어라운드로 보정한다.
+        this.state.dealerIndex = idx === 0 ? this.state.players.length - 1 : idx - 1;
       }
+      this.state.dealerIndex %= this.state.players.length;
       return { player, handComplete: false };
     }
 
@@ -272,20 +293,48 @@ export class PokerEngine {
     return { player, handComplete };
   }
 
-  /** 제거 예약된 플레이어를 일괄 splice (핸드 시작 전에만 호출). dealerIndex 보정 포함 */
+  /**
+   * 제거 예약된 플레이어를 일괄 제거 (핸드 시작 전에만 호출).
+   * 버튼 보정은 앵커 방식: dealerIndex에서 뒤로(랩어라운드) 걸어 제거되지 않는 첫 좌석을
+   * 새 버튼 기준으로 삼는다 — 버튼 본인이 떠나도 advanceDealerButton이 "떠난 좌석의 다음
+   * 좌석"으로 자연 이동한다. (이전의 max(0, i-1) 클램프는 인덱스 0의 버튼이 떠날 때
+   * 다음 좌석 하나를 건너뛰게 했다.)
+   */
   removePendingPlayers(): void {
-    for (let i = this.state.players.length - 1; i >= 0; i--) {
-      if (!this.state.players[i].pendingRemoval) continue;
-      this.state.players.splice(i, 1);
-      if (i <= this.state.dealerIndex) {
-        this.state.dealerIndex = Math.max(0, this.state.dealerIndex - 1);
+    const players = this.state.players;
+    const n = players.length;
+    if (n === 0 || !players.some(p => p.pendingRemoval)) {
+      if (n === 0) this.state.dealerIndex = 0;
+      return;
+    }
+    let anchorId: string | null = null;
+    for (let k = 0; k < n; k++) {
+      const idx = (this.state.dealerIndex - k + n) % n;
+      if (!players[idx]?.pendingRemoval) {
+        anchorId = players[idx].id;
+        break;
       }
     }
-    if (this.state.players.length > 0) {
-      this.state.dealerIndex %= this.state.players.length;
-    } else {
-      this.state.dealerIndex = 0;
-    }
+    this.state.players = players.filter(p => !p.pendingRemoval);
+    const anchorIdx = anchorId
+      ? this.state.players.findIndex(p => p.id === anchorId)
+      : -1;
+    this.state.dealerIndex = anchorIdx >= 0 ? anchorIdx : 0;
+  }
+
+  /**
+   * players 배열을 seatIndex 오름차순으로 정렬 (버튼은 같은 사람 유지).
+   * 포지션 로직이 전부 배열 순서를 따르므로, 핸드 중 입장(배열 끝 push)으로 어긋난 순서를
+   * 다음 핸드 시작 전에 복원한다 — 이 정렬이 없으면 버튼/블라인드가 좌석 순서가 아니라
+   * 입장 순서로 돈다. 핸드 진행 중 호출 금지 (activePlayerIndex가 밀린다).
+   */
+  private normalizeSeatOrder(): void {
+    const dealer = this.state.players[this.state.dealerIndex];
+    this.state.players.sort((a, b) => a.seatIndex - b.seatIndex);
+    const idx = dealer
+      ? this.state.players.findIndex(p => p.id === dealer.id)
+      : -1;
+    this.state.dealerIndex = idx >= 0 ? idx : 0;
   }
 
   getActivePlayers(): Player[] {
@@ -302,6 +351,9 @@ export class PokerEngine {
   }
 
   startHand(): void {
+    // 좌석 정렬 → 이탈자 제거 순서 — 정렬을 먼저 해야 removePendingPlayers의 버튼 앵커
+    // 역방향 탐색이 좌석 순서 기준으로 돈다 (핸드 중 입장자는 배열 끝에 붙어 있으므로)
+    this.normalizeSeatOrder();
     this.removePendingPlayers();
     if (this.state.tournament?.finished) return; // 토너먼트 종료 후 새 핸드 금지
     if (!this.canStartHand()) return;
@@ -465,6 +517,33 @@ export class PokerEngine {
       // Post-flop: first active player left of dealer
       this.state.activePlayerIndex = this.getNextActiveIndex(dealerPos);
     }
+  }
+
+  /**
+   * 다음 핸드에서 빅블라인드를 낼 것으로 예측되는 플레이어 id (딜인 2인 미만이면 null).
+   * '다음 빅블라인드 전에 나가기' 예약 판정용 — 핸드 사이(핸드 종료 직후) 호출 전제.
+   * 딜인 예측은 새 핸드 리셋 규칙을 미러링한다: 캐시는 칩 보유 + 접속 유지 + 비자리비움,
+   * SnG는 칩 보유 좌석 전부(자리비움도 딜인 유지). 실제 핸드 시작 전에 좌석 구성이 바뀌면
+   * 결과가 달라질 수 있는 예측치다. 회귀: engine.button.test.ts가 실제 BB 배정과 대조한다.
+   */
+  predictNextBigBlindId(): string | null {
+    const isSng = !!this.state.tournament;
+    const dealt = this.state.players
+      .filter(p =>
+        !p.pendingRemoval
+        && p.chips > 0
+        && (isSng || !(p.isDisconnected || p.sitOutNext)))
+      .sort((a, b) => a.seatIndex - b.seatIndex);
+    if (dealt.length < 2) return null;
+
+    // 다음 버튼 = 현재 버튼 좌석 기준 좌석 순서상 다음 딜인 좌석 (advanceDealerButton 미러 —
+    // 현재 버튼이 이탈 예약이어도 removePendingPlayers 앵커가 같은 좌석 기준을 유지한다)
+    const anchorSeat = this.state.players[this.state.dealerIndex]?.seatIndex ?? -1;
+    let btn = dealt.findIndex(p => p.seatIndex > anchorSeat);
+    if (btn === -1) btn = 0;
+    // 헤즈업은 버튼이 SB — 상대가 BB. 3인 이상은 버튼+2.
+    const bbOffset = dealt.length === 2 ? 1 : 2;
+    return dealt[(btn + bbOffset) % dealt.length].id;
   }
 
   processAction(action: PlayerAction): { valid: boolean; handComplete: boolean } {
