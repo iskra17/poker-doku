@@ -5,16 +5,15 @@ import type { Suit } from '@/lib/poker/types';
  * Card(렌더링)와 SettingsModal(미리보기/선택 UI)이 공유한다.
  */
 
-/** 앞면 스타일: 클래식(코너 인덱스 + 중앙 수트) / 빅랭크(GG풍 초대형 랭크) / 솔리드(수트색 배경 + 흰 글자) */
-export type DeckStyleId = 'classic' | 'big-rank' | 'solid';
+/** 앞면 스타일: 솔리드(수트색 배경 + 흰 글자, 기본) / 빅랭크(GG풍 초대형 랭크) */
+export type DeckStyleId = 'solid' | 'big-rank';
 
 /** 배색: 2컬러(♠♣검정 ♥♦빨강) / 4컬러(Mike Caro 표준: ♠검정 ♥빨강 ♦파랑 ♣초록) */
 export type DeckColorId = 'two' | 'four';
 
 export const DECK_STYLE_LABELS: Record<DeckStyleId, string> = {
-  classic: '클래식',
-  'big-rank': '빅랭크',
   solid: '솔리드',
+  'big-rank': '빅랭크',
 };
 
 export const DECK_COLOR_LABELS: Record<DeckColorId, string> = {
@@ -46,9 +45,4 @@ const TWO_COLOR: Record<Suit, string> = {
 
 export function getSuitColor(suit: Suit, colorId: DeckColorId): string {
   return (colorId === 'four' ? FOUR_COLOR : TWO_COLOR)[suit];
-}
-
-/** 클래식 스타일 배경용 은은한 수트 틴트 (흰 배경 위 그라디언트 끝점) */
-export function getSuitTint(suit: Suit, colorId: DeckColorId): string {
-  return `color-mix(in srgb, ${getSuitColor(suit, colorId)} 5%, transparent)`;
 }

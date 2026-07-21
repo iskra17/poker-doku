@@ -31,7 +31,7 @@ export const BET_POSITIONS: TablePos[] = [
 ];
 
 // 딜러 버튼 위치 — 좌석 옆 펠트 위, 베팅 칩보다 살짝 바깥.
-// 주의: y 41~49%(커뮤니티 카드 라인)와 x 16~84% 교차 지역은 보드와 겹치므로 피할 것
+// 주의: y 44~52%(커뮤니티 카드 라인)와 x 16~84% 교차 지역은 보드와 겹치므로 피할 것
 export const DEALER_BTN_POSITIONS: TablePos[] = [
   { x: '35%', y: '86%' },   // 0: 히어로 → 아바타 왼쪽
   { x: '31%', y: '68%' },   // 1: 좌하 → 베팅 칩 아래쪽
@@ -41,14 +41,17 @@ export const DEALER_BTN_POSITIONS: TablePos[] = [
   { x: '69%', y: '68%' },   // 5: 우하 → 베팅 칩 아래쪽
 ];
 
-// 팟 위치 — 보드 위쪽 (칩 수거/푸시 애니메이션의 목적지/출발지)
-export const POT_POS: TablePos = { x: '50%', y: '36%' };
+// 팟 위치 — 보드 위쪽 (칩 수거/푸시 애니메이션의 목적지/출발지).
+// 좌상/우상 좌석 박스가 y 28~40%를 차지하므로 팟 밴드(±3%)가 36% 아래에서 시작해야
+// 쇼다운 공개 카드·베팅 칩과 얽히지 않는다 (2026-07-21 QA — PokerTable top-[39%]와 동기).
+export const POT_POS: TablePos = { x: '50%', y: '39%' };
 
 // 덱(딜러) 위치 — 우상단 딜러 코너 근처. 딜링/폴드 카드 비행의 출발/도착점
 export const DECK_POS: TablePos = { x: '82%', y: '6%' };
 
-// 커뮤니티 카드 라인 (딜링 비행 목적지 근사)
-export const BOARD_POS: TablePos = { x: '50%', y: '45%' };
+// 커뮤니티 카드 라인 (딜링 비행 목적지 근사) — 카드 높이 ±4%라 y 44~52% 점유.
+// 상단 좌석 라인(~40%)·하단 베팅 라인(60%) 사이 중앙 (PokerTable top-[48%]와 동기)
+export const BOARD_POS: TablePos = { x: '50%', y: '48%' };
 
 export function getLayout() {
   return {

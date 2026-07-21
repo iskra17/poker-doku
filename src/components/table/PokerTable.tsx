@@ -91,13 +91,13 @@ export default function PokerTable() {
         {/* 딜러 미야코 코너 (아바타 + 진행 말풍선) */}
         <DealerCorner />
 
-        {/* Pot display — 보드 위 */}
-        <div className="absolute left-1/2 top-[36%] -translate-x-1/2 -translate-y-1/2 z-10">
+        {/* Pot display — 보드 위 (table-layout POT_POS와 동기) */}
+        <div className="absolute left-1/2 top-[39%] -translate-x-1/2 -translate-y-1/2 z-10">
           <PotDisplay pots={gameState.pots} compact={isMobile} />
         </div>
 
-        {/* Community cards */}
-        <div className="absolute left-1/2 top-[45%] -translate-x-1/2 -translate-y-1/2 z-10">
+        {/* Community cards (table-layout BOARD_POS와 동기) */}
+        <div className="absolute left-1/2 top-[48%] -translate-x-1/2 -translate-y-1/2 z-10">
           <CommunityCards
             cards={gameState.communityCards}
             winningCards={gameState.winners?.[0]?.hand?.cards}

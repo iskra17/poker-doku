@@ -232,7 +232,8 @@ npx tsc --noEmit
   situationKey는 자유 문자열('story:ch1:intro' 등) — 키만 추가하면 같은 캐시·생성
   파이프라인을 타고, 사전 작성 대사는 호출부 fallback으로 공급하면 된다.
 - `src/lib/store/settings-store.ts` — zustand persist 사용자 설정: 음소거, 덱 스타일
-  (클래식/빅랭크)×컬러(2/4컬러), 딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
+  (솔리드 기본/빅랭크 — 클래식은 2026-07-21 삭제, persist v3가 solid로 마이그레이션)×컬러(2/4컬러),
+  딜러 아바타/말풍선 토글. 진입점은 TopBar ⚙️ → SettingsModal.
 - 카드 수트 색은 `globals.css @theme`의 `suit-*` 토큰 + `card-theme.ts` 매핑이 단일 소스.
 - `public/assets/` — Codex(gpt-image)로 생성한 캐릭터 일러스트 17명×3표정(딜러 미야코+봇 16명),
   로고, 로비 배경

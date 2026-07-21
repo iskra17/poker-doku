@@ -23,7 +23,7 @@ interface SettingsStore {
   /** 배경음악(BGM) 음소거 — 효과음과 별개 */
   musicMuted: boolean;
   toggleMusicMuted: () => void;
-  /** 카드 앞면 스타일 — 클래식(코너 인덱스) / 빅랭크(GG풍) / 솔리드(수트색 배경+흰 글자) */
+  /** 카드 앞면 스타일 — 솔리드(수트색 배경+흰 글자, 기본) / 빅랭크(GG풍) */
   deckStyle: DeckStyleId;
   setDeckStyle: (style: DeckStyleId) => void;
   /** 수트 배색 — 2컬러(♠♣검정 ♥♦빨강) / 4컬러(Caro 표준) */
@@ -69,7 +69,7 @@ export const useSettingsStore = create<SettingsStore>()(
       setMuted: (muted) => set({ muted }),
       musicMuted: false,
       toggleMusicMuted: () => set(s => ({ musicMuted: !s.musicMuted })),
-      deckStyle: 'classic',
+      deckStyle: 'solid',
       setDeckStyle: (deckStyle) => set({ deckStyle }),
       deckColor: 'four',
       setDeckColor: (deckColor) => set({ deckColor }),
@@ -96,14 +96,18 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: 'poker-doku-settings',
-      version: 2,
+      version: 3,
       // v2: 캐릭터 로스터 개편 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
+      // v3: 카드 스타일 '클래식' 삭제 — 저장돼 있던 classic(및 미지 값)은 solid로
       migrate: (persisted) => {
         const s = persisted as Partial<SettingsStore> | undefined;
         if (!s) return persisted as SettingsStore;
         const idMap: Record<string, string> = { ryuka: 'ara', yuki: 'chloe', akira: 'vivian', reika: 'elena' };
         if (s.profileCharacter && idMap[s.profileCharacter]) {
           s.profileCharacter = idMap[s.profileCharacter];
+        }
+        if (s.deckStyle && !['solid', 'big-rank'].includes(s.deckStyle)) {
+          s.deckStyle = 'solid';
         }
         return s as SettingsStore;
       },
