@@ -3,6 +3,7 @@
 /* eslint-disable @next/next/no-img-element */
 
 import { useState } from 'react';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import NeonText from '../ui/NeonText';
 
 /**
@@ -19,6 +20,8 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
   onOpenHelp?: () => void;
 }) {
   const [logoError, setLogoError] = useState(false);
+  const { muted, musicMuted, toggleAllMuted } = useSettingsStore();
+  const allMuted = muted && musicMuted;
 
   if (!compact) {
     return (
@@ -62,6 +65,17 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
         />
       )}
       <div className="flex items-center gap-1.5">
+        <IconButton label={allMuted ? '사운드 켜기' : '사운드 끄기'} onClick={toggleAllMuted}>
+          <path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none" />
+          {allMuted ? (
+            <path d="M22 4 4 22" className="text-red-400" />
+          ) : (
+            <>
+              <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+              <path d="M18.5 5.5a9.5 9.5 0 0 1 0 13" />
+            </>
+          )}
+        </IconButton>
         {onOpenHelp && (
           <IconButton label="도움말" onClick={onOpenHelp}>
             <circle cx="12" cy="12" r="10" />

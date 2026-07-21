@@ -23,6 +23,8 @@ interface SettingsStore {
   /** 배경음악(BGM) 음소거 — 효과음과 별개 */
   musicMuted: boolean;
   toggleMusicMuted: () => void;
+  /** 마스터 음소거 — 효과음+BGM 동시 토글 (로비 헤더 스피커 버튼) */
+  toggleAllMuted: () => void;
   /** 카드 앞면 스타일 — 솔리드(수트색 배경+흰 글자, 기본) / 빅랭크(GG풍) */
   deckStyle: DeckStyleId;
   setDeckStyle: (style: DeckStyleId) => void;
@@ -69,6 +71,11 @@ export const useSettingsStore = create<SettingsStore>()(
       setMuted: (muted) => set({ muted }),
       musicMuted: false,
       toggleMusicMuted: () => set(s => ({ musicMuted: !s.musicMuted })),
+      // 하나라도 켜져 있으면 전체 음소거, 둘 다 꺼져 있으면 전체 해제
+      toggleAllMuted: () => set(s => {
+        const mute = !(s.muted && s.musicMuted);
+        return { muted: mute, musicMuted: mute };
+      }),
       deckStyle: 'solid',
       setDeckStyle: (deckStyle) => set({ deckStyle }),
       deckColor: 'four',
