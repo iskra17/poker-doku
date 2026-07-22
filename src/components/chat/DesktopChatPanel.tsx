@@ -17,11 +17,12 @@ export default function DesktopChatPanel() {
     }
   }, [chatMessages]);
 
+  // absolute 배치 — GameRoomView의 중앙 컨테이너(max-w) 안에 앉아 광폭 화면에서 테이블 곁에 붙는다
   return (
     <motion.div
       initial={{ x: 300 }}
       animate={{ x: 0 }}
-      className={`fixed right-0 top-0 bottom-0 z-20 flex flex-col bg-[#0d0818]/95 backdrop-blur-md border-l border-purple-500/20 transition-all duration-300 ${isCollapsed ? 'w-10' : 'w-72'}`}
+      className={`absolute right-0 top-0 bottom-0 z-20 flex flex-col rounded-l-xl bg-[#0d0818]/95 backdrop-blur-md border-l border-purple-500/20 transition-all duration-300 ${isCollapsed ? 'w-10' : 'w-72'}`}
     >
       <button
         onClick={() => setIsCollapsed(!isCollapsed)}

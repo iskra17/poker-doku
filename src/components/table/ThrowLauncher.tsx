@@ -19,8 +19,10 @@ import ThrowablePicker from './ThrowablePicker';
  * 내 턴 시작 시 조준을 강제 해제한다 (쇼케이스 모달의 my-turn 자동 닫힘과 같은 안전장치).
  */
 
-// 히어로 좌석({50%,88%})과 히어로 베팅 칩({50%,71%}) 사이 밴드 — table-layout 인접 좌표 근거
-const LAUNCHER_POS: TablePos = { x: '50%', y: '79%' };
+// 히어로 캐릭터 왼쪽 아래(닉네임 플레이트 왼쪽 위) — 머리 위 중앙(50%,79%)에 있으면 캐릭터에
+// 얹힌 듯 보인다는 피드백으로 이동 (2026-07-22). 히어로 홀카드는 오른쪽 부착이라 왼쪽이 비고,
+// 히어로 딜러 버튼(35%,86%)·이름 플레이트(중앙 min-w 92px)와 겹치지 않는 좌표.
+const LAUNCHER_POS: TablePos = { x: '33%', y: '91%' };
 const MIN_DRAG_PX = 28;
 const TRAJECTORY_TS = [0.22, 0.4, 0.58, 0.76, 0.9] as const;
 

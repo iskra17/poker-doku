@@ -94,6 +94,8 @@ export interface SocketRuntime {
     profileId: string,
     snapshot: import('../lib/progression/types').ProgressionSnapshot,
   ) => boolean;
+  /** 프로필 아바타 변경 전파 — 라이브 소켓의 인증 스냅샷과 앉아 있는 좌석 아바타를 함께 갱신 */
+  refreshAvatar: (profileId: string, avatarId: string) => void;
   startArena: () => void;
   close: () => Promise<ArenaMatchmakerCloseReport>;
 }
@@ -989,7 +991,8 @@ export function setupSocketHandlers(
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
       const playerName = profileAlias;
-      const avatar = profileAvatarId;
+      // socket.data에서 라이브로 읽는다 — 연결 후 아바타를 변경해도(refreshAvatar) 새 착석에 반영
+      const avatar = socket.data.profileAvatarId ?? profileAvatarId;
 
       const room = roomManager.getRoom(roomId);
       if (!room) {
@@ -2024,6 +2027,15 @@ export function setupSocketHandlers(
         profileId,
         buildPublicCosmetics(snapshot),
       );
+    },
+    refreshAvatar: (profileId, avatarId) => {
+      const session = sessions.getByPlayerId(profileId);
+      // 라이브 소켓의 인증 스냅샷 갱신 — 안 하면 다음 join-room이 옛 아바타로 착석한다
+      const socket = session?.socketId ? io.sockets.sockets.get(session.socketId) : undefined;
+      if (socket) socket.data.profileAvatarId = avatarId;
+      const roomId = session?.roomId
+        ?? roomManager.getRoomList(profileId).find(room => room.mySeat)?.id;
+      if (roomId) roomManager.refreshPlayerAvatar(roomId, profileId, avatarId);
     },
     revokeProfile: profileId => {
       const revoked = sessions.revokeProfile(profileId);

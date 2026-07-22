@@ -45,6 +45,7 @@ interface HttpHandlerCommonOptions {
   database?: PokerDatabase;
   production?: boolean;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  onAvatarChanged?: (profileId: string, avatarId: string) => void;
   now?: () => number;
   onProgressionPublicCosmeticsChanged?: (
     profileId: string,
@@ -124,6 +125,7 @@ export function createHttpRequestHandler(
         concurrencyGate: options.profileConcurrencyGate,
         production: options.production ?? process.env.NODE_ENV === 'production',
         onProfileRevoked: options.onProfileRevoked,
+        onAvatarChanged: options.onAvatarChanged,
         // 아바타 해금 판정용 도장 레벨 — 시드는 진행도 서비스가 스타터로 보정
         dojoLevel: progressionServiceForUnlock
           ? profileId => progressionServiceForUnlock

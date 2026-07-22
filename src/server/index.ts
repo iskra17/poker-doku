@@ -244,6 +244,7 @@ async function listen(): Promise<void> {
     profileConcurrencyGate,
     production: !dev,
     onProfileRevoked: profileId => runtime?.revokeProfile(profileId),
+    onAvatarChanged: (profileId, avatarId) => runtime?.refreshAvatar(profileId, avatarId),
     onProgressionPublicCosmeticsChanged: (profileId, snapshot) => {
       runtime?.refreshPublicCosmetics(profileId, snapshot);
     },

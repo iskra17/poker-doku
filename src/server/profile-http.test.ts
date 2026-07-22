@@ -56,6 +56,7 @@ async function startServer(options: {
   gate?: TransientHttpConcurrencyGate;
   nextHandler?: Mock<NextRequestHandler>;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  onAvatarChanged?: (profileId: string, avatarId: string) => void;
   economyClock?: () => number;
   economyService?: Pick<EconomyService, 'claimDaily' | 'claimRescue' | 'getStatus'>;
 } = {}): Promise<RunningServer & { nextHandler: Mock<NextRequestHandler> }> {
@@ -76,6 +77,7 @@ async function startServer(options: {
     profileRateLimiter: limiter,
     profileConcurrencyGate: options.gate,
     onProfileRevoked: options.onProfileRevoked,
+    onAvatarChanged: options.onAvatarChanged,
     production: options.production ?? false,
   }));
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -170,6 +172,34 @@ describe('profile HTTP lifecycle', () => {
       body: JSON.stringify({ avatarId: 'elena' }),
     });
     expect(anonymous.status).toBe(401);
+  });
+
+  it('notifies onAvatarChanged on success only, and hook failure does not break the response', async () => {
+    // 좌석/소켓 라이브 갱신 훅 — 없으면 설정에서 캐릭터를 바꿔도 테이블 좌석에 반영되지 않는다
+    const onAvatarChanged = vi.fn(() => {
+      throw new Error('realtime unavailable');
+    });
+    const server = await startServer({ onAvatarChanged });
+    const created = await createProfile(server);
+    const profileId = (created.body.profile as PublicProfile).id;
+
+    const toStarter = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: created.cookie },
+      body: JSON.stringify({ avatarId: 'hana' }),
+    });
+    expect(toStarter.status).toBe(200);
+    expect(onAvatarChanged).toHaveBeenCalledTimes(1);
+    expect(onAvatarChanged).toHaveBeenLastCalledWith(profileId, 'hana');
+
+    // 잠금 캐릭터 거절(403)에는 훅이 불리지 않는다
+    const toLocked = await fetch(`${server.baseUrl}/api/profile/avatar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', cookie: created.cookie },
+      body: JSON.stringify({ avatarId: 'gumi' }),
+    });
+    expect(toLocked.status).toBe(403);
+    expect(onAvatarChanged).toHaveBeenCalledTimes(1);
   });
 
   it('revokes realtime ownership after full recovery and delete only without changing committed responses', async () => {

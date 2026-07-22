@@ -668,6 +668,20 @@ export class RoomManager {
     return true;
   }
 
+  /** 좌석 아바타 라이브 갱신 — 설정 캐릭터 변경이 앉아 있는 좌석에 즉시 반영되게 (2026-07-22 유저 신고) */
+  refreshPlayerAvatar(roomId: string, playerId: string, avatarId: string): boolean {
+    const room = this.rooms.get(roomId);
+    const player = room?.engine.state.players.find(candidate => (
+      candidate.id === playerId
+      && candidate.type === 'human'
+      && !candidate.pendingRemoval
+    ));
+    if (!room || !player) return false;
+    player.avatar = avatarId;
+    this.onUpdate(roomId, room.engine);
+    return true;
+  }
+
   private clearFinishedRoomTimer(roomId: string): void {
     const timer = this.finishedRoomTimers.get(roomId);
     if (timer) clearTimeout(timer);

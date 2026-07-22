@@ -108,7 +108,14 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
       <div className="flex-1 relative overflow-hidden">
         {gameState ? (
           <>
-            <PokerTable />
+            {/* 데스크탑 광폭 화면에서 액션 로그(좌)/채팅(우)이 화면 양끝까지 벌어지지 않게
+                테이블 기준 중앙 컨테이너에 함께 묶는다 — 전체 화면을 덮어야 하는
+                오버레이(컷인·모달·백드롭)는 바깥에 남긴다 */}
+            <div className="relative mx-auto h-full w-full max-w-[1100px]">
+              <PokerTable />
+              <ActionLog />
+              <ChatPanel />
+            </div>
             <WinnerCutIn isMobile={isMobile} />
             <LoserCutIn isMobile={isMobile} />
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
@@ -116,8 +123,6 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <PartnerReactions />
             <Coachmarks />
             <BondSceneUnlockWatcher />
-            <ActionLog />
-            <ChatPanel />
             <SngWaitingOverlay />
             <EliminationNotice />
             <BustNotice onLeave={onLeave} />

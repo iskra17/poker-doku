@@ -48,6 +48,8 @@ export interface ProfileHttpOptions {
   production: boolean;
   remoteAddress?: (request: IncomingMessage) => string;
   onProfileRevoked?: (profileId: string) => void | Promise<void>;
+  /** 아바타 변경 전파 — 라이브 소켓/좌석 아바타 즉시 갱신용. 실패해도 프로필 갱신에는 영향 없음 */
+  onAvatarChanged?: (profileId: string, avatarId: string) => void;
   /** 아바타 해금 판정용 현재 도장 레벨 — 미주입 시 1(스타터만 선택 가능) */
   dojoLevel?: (profileId: string) => number;
 }
@@ -487,6 +489,11 @@ async function handleAvatarChange(
       body.avatarId as string,
       dojoLevel,
     );
+    try {
+      options.onAvatarChanged?.(profile.id, updated.avatarId);
+    } catch {
+      // 전파 실패는 프로필 갱신 성공에 영향을 주지 않는다
+    }
     sendJson(response, 200, { profile: updated });
   });
 }
