@@ -171,6 +171,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     showDealerAvatar, toggleDealerAvatar, showDealerBubble, toggleDealerBubble,
     betStepUnit, setBetStepUnit,
     stackedPot, toggleStackedPot,
+    throwablesEnabled, toggleThrowables,
     muted, toggleMuted,
     musicMuted, toggleMusicMuted,
   } = useSettingsStore();
@@ -224,6 +225,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <section>
               <SectionTitle>테이블</SectionTitle>
               <Toggle checked={stackedPot} onToggle={toggleStackedPot} label="팟 칩 권종별 쌓기" />
+              <Toggle checked={throwablesEnabled} onToggle={toggleThrowables} label="아이템 투척 표시" />
+              <p className="text-[11px] text-ink-dim leading-snug">
+                끄면 다른 플레이어가 던진 아이템 연출이 보이지 않고, 내 투척 버튼도 숨겨요.
+              </p>
             </section>
           </>
         )}
