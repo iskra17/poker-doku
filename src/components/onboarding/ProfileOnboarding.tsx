@@ -25,6 +25,7 @@ export default function ProfileOnboarding() {
   const [step, setStep] = useState<OnboardingStep>('adult');
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [avatarId, setAvatarId] = useState(BOT_CHARACTERS[0]?.id ?? 'sakura');
+  const [lockedNotice, setLockedNotice] = useState<string | null>(null);
   const [recoveryInput, setRecoveryInput] = useState('');
   const busy = phase === 'creating' || phase === 'recovering';
 
@@ -121,6 +122,9 @@ export default function ProfileOnboarding() {
             <h2 className="mt-1 text-xl font-bold text-ink">함께할 캐릭터를 골라 주세요</h2>
             <p className="mt-1 text-xs text-ink-dim">별명은 개인정보 없이 서버가 자동으로 만들어요.</p>
             <p className="mt-1 text-xs text-mystic">🔒 잠긴 캐릭터는 플레이로 도장 레벨을 올리면 해금돼요.</p>
+            {lockedNotice && (
+              <p aria-live="polite" className="mt-1 text-xs text-blossom">{lockedNotice}</p>
+            )}
           </div>
           <div className="grid grid-cols-3 gap-3">
             {BOT_CHARACTERS.map(character => {
@@ -130,8 +134,16 @@ export default function ProfileOnboarding() {
                 <button
                   type="button"
                   key={character.id}
-                  disabled={locked}
-                  onClick={() => setAvatarId(character.id)}
+                  aria-disabled={locked}
+                  onClick={() => {
+                    // 잠금 캐릭터도 탭 피드백은 준다 — 무반응이면 버그로 오인 (2026-07-22 QA)
+                    if (locked) {
+                      setLockedNotice(`🔒 ${character.name} — 도장 Lv.${unlockLevel}에 해금돼요. 지금은 밝게 표시된 캐릭터 중에서 골라 주세요.`);
+                      return;
+                    }
+                    setLockedNotice(null);
+                    setAvatarId(character.id);
+                  }}
                   className={`rounded-xl border p-2 transition-colors ${
                     locked
                       ? 'cursor-not-allowed border-white/10 bg-elevated/30'

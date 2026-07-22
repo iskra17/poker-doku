@@ -186,9 +186,10 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
               />
             </div>
             <div className={`mt-1 max-w-[92vw] font-bold text-gilded tabular ${isMobile ? 'text-sm' : 'text-lg'}`}>
+              {/* 채팅 로그의 "팟 N 획득"(총액)과 숫자가 달라 혼동되지 않게 순수익임을 명시 */}
               {display.winners.map(w => (
                 w.netAmount !== null
-                  ? `${w.name} ${w.netAmount >= 0 ? '+' : ''}${formatChips(w.netAmount)} 획득`
+                  ? `${w.name} 순수익 ${w.netAmount >= 0 ? '+' : ''}${formatChips(w.netAmount)}`
                   : `${w.name} +${formatChips(w.amount)}`
               )).join('  ·  ')}
             </div>

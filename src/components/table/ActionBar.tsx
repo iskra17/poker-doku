@@ -76,8 +76,11 @@ export default function ActionBar() {
     : null;
   const isMyTurn = !!myPlayer && activePlayer?.id === myPlayerId;
 
+  // 딜인된 상태(active/all-in)에서만 — 자리비움/대기 좌석은 직전 핸드 홀카드가 남아
+  // 뱃지가 "지난 패"를 현재 패처럼 보여준다 (2026-07-22 QA)
   const showBadge = !!myPlayer && gameState.isHandInProgress
-    && myPlayer.holeCards.length === 2 && myPlayer.status !== 'folded';
+    && myPlayer.holeCards.length === 2
+    && (myPlayer.status === 'active' || myPlayer.status === 'all-in');
 
   const dockClass = 'flex-none relative bg-panel/95 backdrop-blur-md border-t border-mystic/20 z-30 pb-safe';
   const sittingOut = !!myPlayer && (myPlayer.sitOutNext || myPlayer.status === 'sitting-out');

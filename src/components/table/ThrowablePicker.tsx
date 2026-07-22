@@ -105,7 +105,7 @@ export default function ThrowablePicker({ selectedId, onSelect, onShowGuide }: T
             <p className="text-[11px] leading-snug text-ink-dim">
               {infoItem.unlock.kind === 'coin-shop'
                 ? '도장 코인은 게임을 즐기다 보면 모이는 보상이에요. 상점과 함께 곧 열릴 예정!'
-                : '조건을 달성하면 자동으로 해금될 예정이에요. 조금만 기다려 주세요!'}
+                : '미션 달성 추적은 다음 업데이트에서 열려요 — 지금은 미리 보기예요. 열리면 조건 달성 시 자동으로 해금돼요!'}
             </p>
           </div>
         )}

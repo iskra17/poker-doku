@@ -37,9 +37,14 @@ export function initSessionRecap(): void {
     if (currentRoomId !== trackedRoomId) resetSessionRecap(currentRoomId);
 
     switch (event.type) {
-      case 'hand-start':
-        recap.hands += 1;
+      case 'hand-start': {
+        // 딜인된 핸드만 센다 — 자리비움 관전 핸드까지 "플레이한 핸드"로 집계되던 문제 (2026-07-22 QA).
+        // 스토어는 emit 전에 새 핸드 상태를 반영하므로 여기서 내 좌석 상태를 읽으면 현재 핸드 기준이다.
+        const { myPlayerId, gameState } = useGameStore.getState();
+        const hero = gameState?.players.find(p => p.id === myPlayerId);
+        if (hero && (hero.status === 'active' || hero.status === 'all-in')) recap.hands += 1;
         break;
+      }
       case 'winners': {
         const myPlayerId = useGameStore.getState().myPlayerId;
         if (!myPlayerId) break;

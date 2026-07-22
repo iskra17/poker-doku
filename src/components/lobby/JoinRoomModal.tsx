@@ -136,6 +136,20 @@ export default function JoinRoomModal({ room, onClose }: JoinRoomModalProps) {
           </div>
         )}
 
+        {/* 경제 모드 안내 — 연습 테이블 바이인이 지갑 차감처럼 보이던 혼란 방지 (2026-07-22 QA) */}
+        {!isSng && (
+          entryAvailability.walletRequired ? (
+            <p className="text-[11px] text-gray-500">
+              💰 지갑 칩 테이블 — 바이인이 지갑에서 예치되고, 떠날 때 남은 칩이 지갑으로 돌아와요.
+              {profileBalance !== null && ` (보유 ${profileBalance.toLocaleString()})`}
+            </p>
+          ) : (
+            <p className="text-[11px] text-gray-500">
+              🎓 연습 테이블 — 지갑 칩과 무관해요. 여기서의 승패는 지갑에 반영되지 않아요.
+            </p>
+          )
+        )}
+
         {!isSng && entryAvailability.insufficient && (
           <p className="rounded-lg border border-blossom/30 bg-blossom/10 px-3 py-2 text-xs text-blossom">
             보유한 무료 칩보다 바이인이 큽니다. 바이인을 낮춰 주세요.
