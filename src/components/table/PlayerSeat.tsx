@@ -196,7 +196,8 @@ export default function PlayerSeat({
                   key={i}
                   card={card}
                   hidden={!isCurrentPlayer && !player.revealed}
-                  size={isCurrentPlayer ? 'sm' : revealed ? 'sm' : '2xs'}
+                  // 히어로 확대(sm)는 데스크톱만 — 360px급(S24) 화면에선 xs 유지 (2026-07-22 유저 피드백: 모바일 짤림)
+                  size={isCurrentPlayer ? (compact ? 'xs' : 'sm') : revealed ? 'sm' : '2xs'}
                   delay={i * 0.1}
                 />
               ))}
