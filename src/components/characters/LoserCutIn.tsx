@@ -9,8 +9,8 @@ import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
 
 /**
- * 패배 리액션 컷인 — 쇼다운에서 진 봇 캐릭터가 화면 왼쪽에서 슬라이드인 (sad 표정 + loseQuote).
- * WinnerCutIn(우측)과 짝을 이루며 살짝 늦게 등장해 승/패 대비를 연출한다.
+ * 패배 리액션 컷인 — 쇼다운에서 진 봇 캐릭터가 왼쪽에서 슬라이드인 (sad 표정 + loseQuote).
+ * WinnerCutIn(같은 왼쪽, top 38%)과 세로 스택(여긴 top 62%)으로 짝을 이루며 살짝 늦게 등장.
  */
 
 interface CutInData {

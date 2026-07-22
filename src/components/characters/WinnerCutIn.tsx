@@ -13,6 +13,7 @@ import { useProgressionStore } from '@/lib/store/progression-store';
 /**
  * 갸루게식 승리 컷인 — winners 이벤트 1.6초 후 슬라이드인, ~3.4초에 아웃.
  * 봇 승자: 해당 캐릭터 버스트업 + winQuote / 휴먼 승자: 미야코의 축하.
+ * 데스크탑은 왼쪽(액션 로그 아래) 슬라이드인 — LoserCutIn과 세로 스택 (38%/62%).
  */
 
 interface CutInData {
@@ -100,13 +101,14 @@ function stripeBg(color: string): string {
 function DesktopCutIn({ data }: { data: CutInData }) {
   const { display } = useTypewriter(data.quote, 28);
   const formatChips = useChipFormatter();
+  // 왼쪽(액션 로그 아래)에서 슬라이드인 — 패배 컷인(top-[62%])과 세로 스택으로 짝을 이룬다
   return (
     <motion.div
-      initial={{ x: '110%', opacity: 0 }}
+      initial={{ x: '-110%', opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
-      exit={{ x: '110%', opacity: 0 }}
+      exit={{ x: '-110%', opacity: 0 }}
       transition={{ type: 'spring', stiffness: 240, damping: 26 }}
-      className={`absolute right-0 top-1/2 z-40 w-[340px] overflow-hidden rounded-l-2xl border-l-4 shadow-2xl pointer-events-none ${data.cutinId ? 'ring-2 ring-gilded/60' : ''}`}
+      className={`absolute left-0 top-[38%] z-40 w-[320px] overflow-hidden rounded-r-2xl border-r-4 shadow-2xl pointer-events-none ${data.cutinId ? 'ring-2 ring-gilded/60' : ''}`}
       style={{ borderColor: data.color, background: stripeBg(data.color), y: '-50%' }}
     >
       <div className="flex items-center gap-3 p-3">
