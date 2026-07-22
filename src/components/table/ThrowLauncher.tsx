@@ -53,13 +53,22 @@ export default function ThrowLauncher() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const rectRef = useRef<DOMRect | null>(null);
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
+  // aim 상태의 ref 미러 — 포인터 이벤트가 한 배치로 몰리면(React 배칭) pointerup이
+  // 이전 렌더의 stale aim(null)을 읽어 발사가 유실된다. 판정은 항상 ref로.
+  const aimRef = useRef<AimState | null>(null);
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const applyAim = (next: AimState | null) => {
+    aimRef.current = next;
+    setAim(next);
+  };
 
   // 내 턴 시작 시 조준/피커 강제 해제 — 8초 턴 타이머 중 시야 점유 방지
   useEffect(() => {
     const unsubscribe = onGameEvent(event => {
       if (event.type !== 'my-turn-start') return;
       dragStartRef.current = null;
+      aimRef.current = null;
       setAim(null);
       setPickerOpen(false);
     });
@@ -110,7 +119,7 @@ export default function ThrowLauncher() {
     const curY = clientY - rect.top;
     const dragDist = Math.hypot(curX - start.x, curY - start.y);
     if (dragDist < MIN_DRAG_PX) {
-      setAim(null); // 취소 존 — 되돌리면 조준 해제
+      applyAim(null); // 취소 존 — 되돌리면 조준 해제
       return;
     }
 
@@ -136,7 +145,7 @@ export default function ThrowLauncher() {
       if (!best || angle < best.angle) best = { playerId: p.id, pos, px: seatPx, angle };
     }
 
-    setAim({
+    applyAim({
       pointerX: curX,
       pointerY: curY,
       anchorX: anchor.x,
@@ -146,16 +155,6 @@ export default function ThrowLauncher() {
       targetX: best?.px.x ?? anchor.x,
       targetY: best?.px.y ?? anchor.y,
     });
-  };
-
-  const endDrag = (release: boolean) => {
-    const wasAim = aim;
-    dragStartRef.current = null;
-    setAim(null);
-    if (!release) return;
-    if (wasAim?.targetPlayerId) {
-      throwItem(selectedDef.id, wasAim.targetPlayerId, startCooldown);
-    }
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -173,24 +172,27 @@ export default function ThrowLauncher() {
 
   const handlePointerUp = (e: React.PointerEvent) => {
     try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* noop */ }
-    if (!dragStartRef.current) return;
-    if (!aim) {
-      // 짧은 탭 (또는 취소 존에서 놓음) — 조준 이력이 없으면 피커 토글
-      const rect = rectRef.current;
-      const start = dragStartRef.current;
-      const dist = rect && start
-        ? Math.hypot(e.clientX - rect.left - start.x, e.clientY - rect.top - start.y)
-        : 0;
-      dragStartRef.current = null;
-      if (dist < MIN_DRAG_PX) setPickerOpen(open => !open);
+    const start = dragStartRef.current;
+    if (!start) return;
+    // 판정은 stale 가능성이 있는 state가 아니라 ref로 (배칭 대비)
+    const finalAim = aimRef.current;
+    dragStartRef.current = null;
+    applyAim(null);
+    if (finalAim?.targetPlayerId) {
+      throwItem(selectedDef.id, finalAim.targetPlayerId, startCooldown);
       return;
     }
-    endDrag(true);
+    // 짧은 탭 (취소 존에서 놓은 경우 포함 판정) — 이동량이 작을 때만 피커 토글
+    const rect = rectRef.current;
+    const dist = rect
+      ? Math.hypot(e.clientX - rect.left - start.x, e.clientY - rect.top - start.y)
+      : 0;
+    if (dist < MIN_DRAG_PX) setPickerOpen(open => !open);
   };
 
   const handlePointerCancel = () => {
     dragStartRef.current = null;
-    setAim(null);
+    applyAim(null);
   };
 
   const aiming = !!aim;
