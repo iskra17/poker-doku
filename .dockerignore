@@ -7,3 +7,8 @@ deploy
 test-results
 .eslintcache
 npm-debug.log*
+# 로컬 도구/QA 산출물 — 빌드 컨텍스트에 올리면 배포마다 수백 MB 업로드 (2026-07-22: .claude 836MB)
+.claude
+qa-tmp
+data
+*.sqlite*
