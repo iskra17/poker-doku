@@ -272,4 +272,23 @@ describe('/api/admin/* 백오피스 API', () => {
     expect(body.handStats24h).toEqual({ hands: 0, rake: 0, potTotal: 0 });
     expect(body.db.tableHands).toBe(0);
   });
+
+  it('overview는 same-install 리텐션 블록(일일 활성/코호트/활성화)을 포함한다', async () => {
+    const { baseUrl } = await start();
+    const response = await fetch(`${baseUrl}/api/admin/overview?token=admin-secret`);
+    const body = await response.json() as {
+      retention: {
+        daily: unknown[];
+        cohorts: unknown[];
+        activation: { totalProfiles: number; playedOneHand: number; playedTenHands: number };
+      };
+    };
+    expect(Array.isArray(body.retention.daily)).toBe(true);
+    expect(Array.isArray(body.retention.cohorts)).toBe(true);
+    expect(body.retention.activation).toEqual({
+      totalProfiles: 0,
+      playedOneHand: 0,
+      playedTenHands: 0,
+    });
+  });
 });

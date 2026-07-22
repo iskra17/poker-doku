@@ -109,6 +109,50 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
       const latestFeedbackId = (
         db.prepare('SELECT COALESCE(MAX(id), 0) AS n FROM feedback').get() as { n: number }
       ).n;
+      // same-install 리텐션 — 익명 로컬 프로필 특성상 "사람"이 아니라 동일 설치본 기준.
+      // 일일 활동은 streak_daily_progress(핸드 완료마다 갱신되는 프로필×KST일자)를 재사용 —
+      // 별도 계측 테이블 없이 D1/W1(7일 내 복귀)·활성화 퍼널을 계산한다 (2026-07-22 레드팀 반영).
+      const windowMs = 14 * 24 * 3_600_000;
+      const cutoffEpoch = now() - windowMs;
+      const cutoffDay = new Date(cutoffEpoch + 9 * 3_600_000).toISOString().slice(0, 10);
+      const retention = {
+        daily: db.prepare(`
+          SELECT kst_date AS day,
+                 COUNT(DISTINCT profile_id) AS actives,
+                 COALESCE(SUM(hands), 0) AS hands
+          FROM streak_daily_progress
+          WHERE kst_date >= ?
+          GROUP BY kst_date
+          ORDER BY kst_date
+        `).all(cutoffDay),
+        cohorts: db.prepare(`
+          SELECT cohort.day AS day,
+                 COUNT(*) AS cohortSize,
+                 COALESCE(SUM(EXISTS(
+                   SELECT 1 FROM streak_daily_progress s
+                   WHERE s.profile_id = cohort.id AND s.kst_date = date(cohort.day, '+1 day')
+                 )), 0) AS returnedD1,
+                 COALESCE(SUM(EXISTS(
+                   SELECT 1 FROM streak_daily_progress s
+                   WHERE s.profile_id = cohort.id
+                     AND s.kst_date > cohort.day
+                     AND s.kst_date <= date(cohort.day, '+7 day')
+                 )), 0) AS returnedW1
+          FROM (
+            SELECT id, date(created_at / 1000, 'unixepoch', '+9 hours') AS day
+            FROM profiles WHERE created_at >= ?
+          ) AS cohort
+          GROUP BY cohort.day
+          ORDER BY cohort.day
+        `).all(cutoffEpoch),
+        activation: db.prepare(`
+          SELECT COUNT(*) AS totalProfiles,
+                 COALESCE(SUM(CASE WHEN pp.completed_hands >= 1 THEN 1 ELSE 0 END), 0) AS playedOneHand,
+                 COALESCE(SUM(CASE WHEN pp.completed_hands >= 10 THEN 1 ELSE 0 END), 0) AS playedTenHands
+          FROM profiles p
+          LEFT JOIN progression_profiles pp ON pp.profile_id = p.id
+        `).get(),
+      };
       send(res, 200, {
         at: now(),
         startedAt,
@@ -130,6 +174,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         // 24h 재무 라이트 — 핸드 수/레이크/팟 (테이블 정본 집계)
         handStats24h: options.tableHands?.statsSince(now() - 24 * 3_600_000)
           ?? { hands: 0, rake: 0, potTotal: 0 },
+        retention,
       });
       return true;
     }

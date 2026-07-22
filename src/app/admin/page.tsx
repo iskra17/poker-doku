@@ -50,6 +50,11 @@ interface Overview {
   };
   latestFeedbackId: number;
   handStats24h: { hands: number; rake: number; potTotal: number };
+  retention?: {
+    daily: Array<{ day: string; actives: number; hands: number }>;
+    cohorts: Array<{ day: string; cohortSize: number; returnedD1: number; returnedW1: number }>;
+    activation: { totalProfiles: number; playedOneHand: number; playedTenHands: number };
+  };
 }
 
 interface AdminProfile {
@@ -616,6 +621,46 @@ function DashboardTab({ overview, profiles, events }: {
           <div className="text-[10px] text-ink-dim">접속 중 프로필</div>
         </div>
       </section>
+
+      {/* same-install 리텐션 — 익명 로컬 프로필이라 사람 단위가 아닌 동일 설치본 기준 (레드팀 명명) */}
+      {overview?.retention && (
+        <section className="grid gap-2 md:grid-cols-2">
+          <SectionBox className="p-3">
+            <h2 className="mb-2 text-xs font-bold text-blossom">
+              일일 활성 (14일, same-install)
+              <span className="ml-2 font-normal text-ink-dim">
+                활성화: 1핸드+ {overview.retention.activation.playedOneHand}
+                /{overview.retention.activation.totalProfiles} ·
+                10핸드+ {overview.retention.activation.playedTenHands}
+              </span>
+            </h2>
+            <div className="space-y-0.5 font-mono text-[10px] leading-relaxed">
+              {overview.retention.daily.length === 0 && <div className="text-ink-dim">기록 없음</div>}
+              {overview.retention.daily.map(row => (
+                <div key={row.day} className="flex justify-between">
+                  <span className="text-ink-dim">{row.day}</span>
+                  <span className="tabular">활성 {row.actives} · 핸드 {row.hands.toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </SectionBox>
+          <SectionBox className="p-3">
+            <h2 className="mb-2 text-xs font-bold text-blossom">신규 코호트 D1 / W1 복귀</h2>
+            <div className="space-y-0.5 font-mono text-[10px] leading-relaxed">
+              {overview.retention.cohorts.length === 0 && <div className="text-ink-dim">신규 프로필 없음</div>}
+              {overview.retention.cohorts.map(row => (
+                <div key={row.day} className="flex justify-between">
+                  <span className="text-ink-dim">{row.day} (n={row.cohortSize})</span>
+                  <span className="tabular">
+                    D1 {row.cohortSize ? Math.round(row.returnedD1 / row.cohortSize * 100) : 0}% ·
+                    W1 {row.cohortSize ? Math.round(row.returnedW1 / row.cohortSize * 100) : 0}%
+                  </span>
+                </div>
+              ))}
+            </div>
+          </SectionBox>
+        </section>
+      )}
 
       <section className="grid gap-2 md:grid-cols-2">
         <SectionBox className="p-3">
