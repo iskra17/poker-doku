@@ -7,6 +7,8 @@ interface LeaveRoomModalProps {
   isOpen: boolean;
   /** Sit & Go 방 여부 — 자리비움/기권 문구가 달라지고 나가기 예약이 숨는다 */
   isSng: boolean;
+  /** 연습 경제 여부 — 완전히 나가기 문구가 달라진다 (지갑 정산 없음) */
+  isPractice: boolean;
   /** 나가기 예약 노출 여부 — 캐시 전용 (SnG/아레나 제외) */
   canReserve: boolean;
   onClose: () => void;
@@ -20,7 +22,7 @@ interface LeaveRoomModalProps {
 
 /** 나가기 확인 다이얼로그 — 게임을 끝낼지, 자리만 비울지, 나가기를 예약할지 선택 */
 export default function LeaveRoomModal({
-  isOpen, isSng, canReserve, onClose, onSitOut, onReserve, onExit,
+  isOpen, isSng, isPractice, canReserve, onClose, onSitOut, onReserve, onExit,
 }: LeaveRoomModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="테이블을 떠날까요?">
@@ -56,7 +58,9 @@ export default function LeaveRoomModal({
           description={
             isSng
               ? '토너먼트에서 기권해요 — 현재 순위로 탈락 처리되고 되돌릴 수 없어요.'
-              : '좌석을 정리하고 떠나요 — 남은 칩은 사라져요.'
+              : isPractice
+                ? '좌석을 정리하고 떠나요 — 연습 게임이라 지갑 칩에는 영향이 없어요.'
+                : '좌석을 정리하고 떠나요 — 남은 칩은 지갑으로 정산돼요.'
           }
           accent="danger"
           onClick={onExit}

@@ -1,7 +1,8 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
+import { onGameEvent } from '@/lib/events/game-events';
 import {
   AnimatePresence,
   motion,
@@ -30,6 +31,15 @@ const noopSubscribe = () => () => {};
 export default function CharacterShowcaseModal({ characterId, onClose }: CharacterShowcaseModalProps) {
   // SSR 가드 — 서버 스냅샷 false, 클라이언트 true (effect 없이 하이드레이션 안전)
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
+
+  // 내 턴이 오면 자동으로 닫는다 — 연출 감상 중 턴 타임아웃(자동 폴드+자리비움)을 막는 안전장치.
+  // 로비에서는 게임 이벤트가 발생하지 않으므로 no-op.
+  useEffect(() => {
+    if (!characterId) return;
+    return onGameEvent(event => {
+      if (event.type === 'my-turn-start') onClose();
+    });
+  }, [characterId, onClose]);
 
   // 포인터 패럴랙스 — -1..1 정규화 좌표를 스프링으로 부드럽게 추종
   const pointerX = useMotionValue(0);

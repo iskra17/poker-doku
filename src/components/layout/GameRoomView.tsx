@@ -92,6 +92,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
       <LeaveRoomModal
         isOpen={leaveOpen}
         isSng={!!gameState?.tournament}
+        isPractice={gameState?.economyMode === 'practice'}
         canReserve={canReserve}
         onClose={() => setLeaveOpen(false)}
         onSitOut={() => { setLeaveOpen(false); onLeave('sitout'); }}
