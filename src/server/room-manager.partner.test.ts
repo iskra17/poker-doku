@@ -94,11 +94,15 @@ describe('ensurePartnerBot — 파트너 우선 착석', () => {
       manager.ensurePartnerBot(roomId, filler);
     }
     expect(room.engine.state.players.length).toBe(6);
-    expect(seatedCharacters(manager, roomId)).not.toContain('sakura');
+    // 자동 충원은 랜덤 캐릭터라 특정 캐릭터 부재를 단정할 수 없다 — 봇 5석이므로
+    // 스타터 6명 중 최소 1명은 반드시 비어 있고, 그 캐릭터를 파트너로 쓴다 (flaky 방지)
+    const partner = ['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena']
+      .find(id => !seatedCharacters(manager, roomId).includes(id))!;
+    expect(seatedCharacters(manager, roomId)).not.toContain(partner);
 
-    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(true);
+    expect(manager.ensurePartnerBot(roomId, partner)).toBe(true);
     expect(room.engine.state.players.length).toBe(6);
-    expect(seatedCharacters(manager, roomId)).toContain('sakura');
+    expect(seatedCharacters(manager, roomId)).toContain(partner);
     // 휴먼 좌석은 그대로
     expect(room.engine.state.players.some(p => p.id === 'p1')).toBe(true);
   });
