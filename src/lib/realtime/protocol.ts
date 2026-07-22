@@ -107,6 +107,28 @@ export interface GameUpdatePayload {
   state: GameState;
 }
 
+/** throw-item 요청 payload — 서버가 itemId를 THROWABLE_MAP으로 재검증한다 */
+export interface ThrowItemRequest {
+  itemId: string;
+  targetPlayerId: string;
+}
+
+/**
+ * 투척 브로드캐스트. 게임 상태와 무관한 즉발 연출 이벤트라 game-update와 분리.
+ * roomId envelope는 game-update와 같은 계약 — 클라이언트는 currentRoomId 일치를 검증한다.
+ * seatIndex는 emit 시점 스냅샷이라 수신 시 store 상태와 어긋나도 연출은 그대로 가능.
+ */
+export interface ThrowableThrownPayload {
+  roomId: string;
+  /** 연출 dedup/react key용 서버 발급 id */
+  throwId: string;
+  itemId: string;
+  fromPlayerId: string;
+  fromSeatIndex: number;
+  targetPlayerId: string;
+  targetSeatIndex: number;
+}
+
 export interface RoomJoinedPayload {
   roomId: string;
   gameState: GameState;
@@ -149,6 +171,7 @@ export interface ServerToClientEvents {
   'game-update': (data: GameUpdatePayload) => void;
   'game-update-public': (data: GameUpdatePayload) => void;
   'chat-message': (message: ChatMessage) => void;
+  'throwable-thrown': (data: ThrowableThrownPayload) => void;
   'progression-update': (snapshot: ProgressionSnapshot) => void;
   'reward-summary': (summary: ProgressionRewardSummary) => void;
   'arena-queue-update': (data: ArenaQueueState) => void;
@@ -174,6 +197,7 @@ export interface ClientToServerEvents {
   'toggle-sit-out': (ack?: AckCallback) => void;
   'use-time-bank': (ack?: AckCallback) => void;
   'send-chat': (data: unknown, ack?: AckCallback) => void;
+  'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;
   'create-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
   'sng-fill-bots': (ack?: AckCallback) => void;
   'arena-queue-join': (ack?: AckCallback) => void;

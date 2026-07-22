@@ -61,6 +61,15 @@ interface SettingsStore {
   /** 핸드 히스토리에서 닉네임을 지우고 포지션만 표시 (GGPoker 방식) */
   historyHideNames: boolean;
   toggleHistoryHideNames: () => void;
+  /**
+   * 아이템 투척 표시 — 끄면 수신 연출(비행/스플랫/표정/사운드) 전부와
+   * 내 발사대 UI가 함께 꺼진다 (단일 토글, 포커스타즈 'distracting' 논란의 교훈)
+   */
+  throwablesEnabled: boolean;
+  toggleThrowables: () => void;
+  /** 발사대에 장전된 투척 아이템 (throwables/catalog.ts id) */
+  selectedThrowableId: string;
+  setSelectedThrowable: (id: string) => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -100,6 +109,10 @@ export const useSettingsStore = create<SettingsStore>()(
       toggleHistoryBBView: () => set(s => ({ historyBBView: !s.historyBBView })),
       historyHideNames: false,
       toggleHistoryHideNames: () => set(s => ({ historyHideNames: !s.historyHideNames })),
+      throwablesEnabled: true,
+      toggleThrowables: () => set(s => ({ throwablesEnabled: !s.throwablesEnabled })),
+      selectedThrowableId: 'tomato',
+      setSelectedThrowable: (selectedThrowableId) => set({ selectedThrowableId }),
     }),
     {
       name: 'poker-doku-settings',
