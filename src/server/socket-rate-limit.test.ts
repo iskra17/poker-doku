@@ -17,6 +17,7 @@ describe('소켓 sliding-window 제한', () => {
       joinRoom: { limit: 5, windowMs: 10_000 },
       roomSync: { limit: 10, windowMs: 5_000 },
       throwItem: { limit: 3, windowMs: 10_000 },
+      setThrowables: { limit: 4, windowMs: 5_000 },
       createRoom: { limit: 1, windowMs: 5_000 },
       chat: { limit: 1, windowMs: 700 },
     });

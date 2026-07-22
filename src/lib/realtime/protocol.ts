@@ -198,6 +198,8 @@ export interface ClientToServerEvents {
   'use-time-bank': (ack?: AckCallback) => void;
   'send-chat': (data: unknown, ack?: AckCallback) => void;
   'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;
+  /** 투척 참여 on/off 동기화 — payload { enabled: boolean }. 끄면 던질 수도 맞을 수도 없다. */
+  'set-throwables': (data: unknown, ack?: AckCallback) => void;
   'create-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
   'sng-fill-bots': (ack?: AckCallback) => void;
   'arena-queue-join': (ack?: AckCallback) => void;

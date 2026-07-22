@@ -55,6 +55,18 @@ function samePendingAction(a: PendingAction | null, b: PendingAction): boolean {
   return a?.handNumber === b.handNumber && a.actionSeq === b.actionSeq;
 }
 
+// 설정의 투척 토글 변경 → 서버 동기화 (모듈 싱글턴 — connect 재호출에도 구독 1개 유지)
+let throwablesSyncInstalled = false;
+function ensureThrowablesSettingSync(get: () => { socket: PokerClientSocket | null }): void {
+  if (throwablesSyncInstalled) return;
+  throwablesSyncInstalled = true;
+  useSettingsStore.subscribe((state, prev) => {
+    if (state.throwablesEnabled === prev.throwablesEnabled) return;
+    const socket = get().socket;
+    if (socket?.connected) socket.emit('set-throwables', { enabled: state.throwablesEnabled });
+  });
+}
+
 interface GameStore {
   socket: PokerClientSocket | null;
   connected: boolean;
@@ -131,7 +143,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.on('connect', () => {
       set({ connected: true, connectionState: 'connected' });
       if (get().currentRoomId) socket.emit('resync');
+      // 투척 참여 상태 동기화 — 서버 세션이 단일 소스라 (재)연결마다 현재 설정을 밀어준다
+      socket.emit('set-throwables', { enabled: useSettingsStore.getState().throwablesEnabled });
     });
+    ensureThrowablesSettingSync(get);
 
     socket.on('disconnect', () => {
       clearActionAckTimeout();

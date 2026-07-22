@@ -11,6 +11,8 @@ export interface Session {
   socketId: string | null;
   roomId: string | null;
   graceTimer: NodeJS.Timeout | null;
+  /** 투척 참여 opt-out — 좌석 생성 시 Player.throwablesOptOut으로 복사된다 (로비에서 꺼도 유지) */
+  throwablesOptOut?: boolean;
 }
 
 export interface SessionResolution {

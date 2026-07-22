@@ -81,6 +81,12 @@ export interface Player {
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
   /** 다른 좌석에 공개해도 되는 최소 꾸미기 정보. */
   publicCosmetics?: PlayerPublicCosmetics;
+  /**
+   * 아이템 투척 참여 opt-out (Zynga gift 모델). true면 이 좌석은 던질 수도, 맞을 수도 없다 —
+   * 서버가 throw-item에서 발신/수신 양쪽을 거부하고, 클라이언트 조준 스냅 후보에서도 제외된다.
+   * getPublicState 스프레드로 전 좌석에 공개된다 (조준 UI가 알아야 하는 정보).
+   */
+  throwablesOptOut?: boolean;
 }
 
 export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';

@@ -62,8 +62,9 @@ interface SettingsStore {
   historyHideNames: boolean;
   toggleHistoryHideNames: () => void;
   /**
-   * 아이템 투척 표시 — 끄면 수신 연출(비행/스플랫/표정/사운드) 전부와
-   * 내 발사대 UI가 함께 꺼진다 (단일 토글, 포커스타즈 'distracting' 논란의 교훈)
+   * 아이템 투척 참여 (Zynga gift 모델의 opt-out) — 끄면 ①내 발사대 숨김 ②서버가 나를 향한
+   * 투척을 거부(맞지 않음, 조준 후보에서도 제외) ③수신 연출(비행/스플랫/표정/사운드) 미표시.
+   * 서버 동기화는 game-store가 set-throwables로 처리 (연결 시 + 토글 변경 시).
    */
   throwablesEnabled: boolean;
   toggleThrowables: () => void;

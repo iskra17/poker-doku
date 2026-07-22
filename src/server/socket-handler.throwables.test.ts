@@ -143,4 +143,49 @@ describe('throw-item 소켓 핸들러', () => {
     const finalAck = await throwItem(alice, 'tomato', bob.playerId);
     expect(finalAck.ok).toBe(true);
   });
+
+  it('참여를 끈 좌석은 던질 수도 맞을 수도 없고, 상태가 스냅샷으로 공개된다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(HUMAN_ROOM);
+    const alice = await harness.connect('alice-token');
+    const bob = await harness.connect('bob-token');
+    expect((await joinRoom(alice, roomId, 0)).ok).toBe(true);
+    expect((await joinRoom(bob, roomId, 1)).ok).toBe(true);
+
+    // 밥이 참여 off → 좌석 플래그가 브로드캐스트되어 조준 UI가 후보에서 제외할 수 있다
+    expect(await withAck(done => bob.socket.emit('set-throwables', { enabled: false }, done)))
+      .toEqual({ ok: true });
+    await wait(50);
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    const bobSeat = room.engine.getPublicState().players.find(p => p.id === bob.playerId);
+    expect(bobSeat?.throwablesOptOut).toBe(true);
+
+    // 밥을 향한 투척은 거부 (밥이 맞지 않음 — 서버 면제)
+    expect(await throwItem(alice, 'tomato', bob.playerId))
+      .toMatchObject({ ok: false, code: 'action-rejected', message: expect.stringContaining('꺼두') });
+    // 밥 본인도 던질 수 없음
+    expect(await throwItem(bob, 'tomato', alice.playerId))
+      .toMatchObject({ ok: false, code: 'action-rejected' });
+
+    // 다시 켜면 즉시 정상 참여
+    expect(await withAck(done => bob.socket.emit('set-throwables', { enabled: true }, done)))
+      .toEqual({ ok: true });
+    expect((await throwItem(alice, 'tomato', bob.playerId)).ok).toBe(true);
+    expect((await throwItem(bob, 'tissue', alice.playerId)).ok).toBe(true);
+  });
+
+  it('로비에서 끈 opt-out이 좌석 착석 시 반영된다 (세션이 단일 소스)', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom(HUMAN_ROOM);
+    const alice = await harness.connect('alice-token');
+    const carol = await harness.connect('carol-token');
+    // 캐롤이 로비(미착석)에서 참여 off
+    expect(await withAck(done => carol.socket.emit('set-throwables', { enabled: false }, done)))
+      .toEqual({ ok: true });
+    expect((await joinRoom(alice, roomId, 0)).ok).toBe(true);
+    expect((await joinRoom(carol, roomId, 1)).ok).toBe(true);
+
+    expect(await throwItem(alice, 'tomato', carol.playerId))
+      .toMatchObject({ ok: false, code: 'action-rejected' });
+  });
 });

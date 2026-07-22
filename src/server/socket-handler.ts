@@ -1340,6 +1340,8 @@ export function setupSocketHandlers(
         hasActed: false,
         timeBankChips: 1, // 입장 시 기본 타임칩 1개
         ...(publicCosmetics ? { publicCosmetics } : {}),
+        // 로비에서 미리 꺼둔 투척 opt-out을 좌석에 반영 (세션이 단일 소스)
+        ...(session.throwablesOptOut ? { throwablesOptOut: true } : {}),
       };
 
       let admissionOpened: 'cash' | 'sng' | null = null;
@@ -1821,9 +1823,18 @@ export function setupSocketHandlers(
         ack?.({ ok: false, code: 'action-rejected', message: '관전 중에는 아이템을 던질 수 없어요.' });
         return;
       }
+      // 참여 opt-out(Zynga gift 모델): 끈 사람은 던질 수도, 맞을 수도 없다 — 서버가 강제
+      if (thrower.throwablesOptOut) {
+        ack?.({ ok: false, code: 'action-rejected', message: '설정에서 아이템 투척을 켜야 던질 수 있어요.' });
+        return;
+      }
       const target = state.players.find(p => p.id === input.targetPlayerId);
       if (!target || target.id === thrower.id) {
         ack?.({ ok: false, code: 'action-rejected', message: '던질 상대를 찾을 수 없어요.' });
+        return;
+      }
+      if (target.throwablesOptOut) {
+        ack?.({ ok: false, code: 'action-rejected', message: '상대가 아이템 투척을 꺼두었어요.' });
         return;
       }
       // 해금 검증 — MVP는 스타터만 존재. 2차(도장 레벨/미션) 추가 시 progression 스냅샷에서
@@ -1850,6 +1861,28 @@ export function setupSocketHandlers(
         roomManager.reactToThrowableHit(session.roomId, target.id, thrower.name, def.name);
       }
       ack?.({ ok: true, data: { cooldownMs: THROW_COOLDOWN_MS } });
+    });
+
+    // 투척 참여 on/off 동기화 — 클라이언트 설정 토글이 세션(로비 포함)과 현재 좌석에 반영된다.
+    // 좌석 반영은 스냅샷 브로드캐스트를 타므로 다른 클라이언트의 조준 후보에서 즉시 빠진다.
+    socket.on('set-throwables', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(input) || typeof input.enabled !== 'boolean') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('setThrowables', '설정 변경이 너무 빨라요.', ack)) return;
+      session.throwablesOptOut = !input.enabled || undefined;
+      if (session.roomId) {
+        roomManager.setThrowablesOptOut(session.roomId, session.playerId, !input.enabled);
+      }
+      ack?.({ ok: true });
     });
 
     // Create room
