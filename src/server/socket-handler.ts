@@ -1513,6 +1513,18 @@ export function setupSocketHandlers(
           });
           return;
         }
+        // 파트너 우선 착석 — 혼자 연습(bots) 방이면 인연 파트너 캐릭터를 테이블에 보장.
+        // 진행도 조회 실패는 착석에 영향 없음 (랜덤 봇 구성 그대로 진행)
+        if ((room.config.tableType ?? 'mixed') === 'bots' && progression) {
+          try {
+            const partnerId = progression
+              .getSnapshot(session.playerId, avatar)
+              .profile.selectedCharacterId;
+            roomManager.ensurePartnerBot(roomId, partnerId);
+          } catch {
+            // best-effort 연출 — 실패해도 입장은 유효
+          }
+        }
         socket.emit('room-joined', {
           roomId,
           gameState: room.engine.getPublicState(session.playerId),

@@ -30,7 +30,9 @@ export default function MissionPanel() {
                   <div>
                     <h3 className="text-xs font-bold text-ink">{definition?.label ?? mission.missionId}</h3>
                     <p className="mt-1 text-[10px] text-ink-dim">
-                      {completed ? '완료 · 보상 자동 수령' : `${mission.progress}/${mission.target}`}
+                      {completed
+                        ? '완료 · 수련 XP +100 수령'
+                        : <>{mission.progress}/{mission.target} · <span className="font-bold text-mystic">수련 XP +100</span></>}
                     </p>
                   </div>
                   {!completed && !rerollUsed && (

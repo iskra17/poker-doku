@@ -2,17 +2,20 @@ import { GameState, Player, RoomDifficulty } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { BotDecision, decideBotAction } from './bot-ai';
 import type { OpponentAggro } from './aggro-tracker';
-import { getRandomBotCharacter } from '../characters';
+import {
+  getCharacterById,
+  getRandomBotCharacter,
+  type CharacterProfile,
+} from '../characters';
 
 let botIdCounter = 0;
 
-export function createBot(
+function buildBot(
+  character: CharacterProfile,
   seatIndex: number,
   buyIn: number,
-  excludeCharacterIds: string[] = [],
   skill?: RoomDifficulty,
 ): Player {
-  const character = getRandomBotCharacter(excludeCharacterIds);
   botIdCounter++;
   return {
     id: `bot-${character.id}-${botIdCounter}`,
@@ -29,6 +32,27 @@ export function createBot(
     personalityId: character.id,
     botSkill: skill,
   };
+}
+
+export function createBot(
+  seatIndex: number,
+  buyIn: number,
+  excludeCharacterIds: string[] = [],
+  skill?: RoomDifficulty,
+): Player {
+  return buildBot(getRandomBotCharacter(excludeCharacterIds), seatIndex, buyIn, skill);
+}
+
+/** 특정 캐릭터로 봇 생성 — 파트너 우선 착석용. 로스터에 없거나 딜러면 null */
+export function createBotWithCharacter(
+  seatIndex: number,
+  buyIn: number,
+  characterId: string,
+  skill?: RoomDifficulty,
+): Player | null {
+  const character = getCharacterById(characterId);
+  if (!character || character.id === 'dealer') return null;
+  return buildBot(character, seatIndex, buyIn, skill);
 }
 
 export function getUsedCharacterIds(engine: PokerEngine): string[] {

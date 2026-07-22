@@ -10,6 +10,9 @@ import CreateRoomModal from '@/components/lobby/CreateRoomModal';
 import JoinRoomModal from '@/components/lobby/JoinRoomModal';
 import EconomyBar from '@/components/lobby/EconomyBar';
 import MissionPanel from '@/components/lobby/MissionPanel';
+import PartnerCard from '@/components/lobby/PartnerCard';
+import SessionRecapModal from '@/components/lobby/SessionRecapModal';
+import { getSessionRecap, type SessionRecapData } from '@/lib/session-recap';
 import GameRoomView from '@/components/layout/GameRoomView';
 import SettingsModal from '@/components/layout/SettingsModal';
 import FeedbackModal from '@/components/lobby/FeedbackModal';
@@ -37,6 +40,7 @@ export default function Home() {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [lobbyView, setLobbyView] = useState<'games' | 'arena' | 'missions'>('games');
+  const [sessionRecap, setSessionRecap] = useState<SessionRecapData | null>(null);
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
   );
@@ -89,10 +93,14 @@ export default function Home() {
   };
 
   const handleLeave = (mode?: 'exit' | 'sitout') => {
+    // 리캡 스냅샷은 leaveRoom 전에 — 방을 떠나면 집계가 리셋된다
+    const recap = getSessionRecap();
     void leaveRoom(mode).then(left => {
       if (left) {
         useArenaStore.getState().resetAfterResult();
         void refresh();
+        // 한 핸드라도 쳤으면 세션 리캡 + 파트너 작별 인사 (피크엔드)
+        if (recap.hands > 0) setSessionRecap(recap);
       }
     });
   };
@@ -154,6 +162,7 @@ export default function Home() {
         )}
         {lobbyView === 'games' && (
           <div className="flex h-full min-h-0 flex-col pt-1">
+            <div className="flex-none"><PartnerCard /></div>
             {(joinError || pendingRoomId || inviteNotFound || inviteRoom?.locked) && (
               <div className="flex-none">
                 {joinError && <p className="mb-2 text-center text-xs text-blossom">{joinError}</p>}
@@ -182,6 +191,7 @@ export default function Home() {
       {activeJoinTarget && (
         <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
       )}
+      <SessionRecapModal recap={sessionRecap} onClose={() => setSessionRecap(null)} />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { initSoundSystem } from '@/lib/sound/sound-manager';
 import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
+import { initSessionRecap } from '@/lib/session-recap';
 import PokerTable from '@/components/table/PokerTable';
 import ActionBar from '@/components/table/ActionBar';
 import ActionLog from '@/components/table/ActionLog';
@@ -18,6 +19,8 @@ import WinnerCutIn from '@/components/characters/WinnerCutIn';
 import LoserCutIn from '@/components/characters/LoserCutIn';
 import HandEconomySummary from '@/components/table/HandEconomySummary';
 import ProgressionSummary from '@/components/table/ProgressionSummary';
+import PartnerReactions from '@/components/table/PartnerReactions';
+import Coachmarks from '@/components/table/Coachmarks';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
@@ -57,6 +60,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   useEffect(() => {
     initSoundSystem();
     initMusicSystem();
+    initSessionRecap();
   }, []);
 
   // 장면 BGM: 입장 시 테이블, SnG 종료 시 승리 테마 (이탈 시 로비 복귀는 page.tsx가 처리)
@@ -108,6 +112,8 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <LoserCutIn isMobile={isMobile} />
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ProgressionSummary />
+            <PartnerReactions />
+            <Coachmarks />
             <ActionLog />
             <ChatPanel />
             <SngWaitingOverlay />

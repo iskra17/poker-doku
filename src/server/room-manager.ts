@@ -12,7 +12,7 @@ import {
   type PlayerPublicCosmetics,
 } from '../lib/poker/types';
 import type { CompletedHandRecord } from '../lib/poker/hand-history';
-import { fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
+import { createBotWithCharacter, fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
 import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
@@ -841,6 +841,45 @@ export class RoomManager {
     if (bots < targetBots) {
       fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
     }
+  }
+
+  /**
+   * 파트너 우선 착석 — 혼자 연습(bots) 방 전용. 휴먼의 인연 파트너 캐릭터가 테이블에 없으면
+   * 핸드 사이에 봇 하나를 파트너로 교체(빈 좌석이 있으면 추가)한다.
+   * bots 방은 휴먼 1명 제한이라 다른 유저의 테이블 구성에 영향이 없다.
+   * 핸드 진행 중이면 조용히 무시 — 다음 입장에서 다시 시도되는 best-effort 연출이다.
+   */
+  ensurePartnerBot(roomId: string, characterId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    if ((room.config.tableType ?? 'mixed') !== 'bots') return false;
+    if (room.engine.state.isHandInProgress) return false;
+    const st = room.engine.state;
+    if (st.players.some(
+      p => p.type === 'bot' && (p.personalityId || p.avatar) === characterId,
+    )) {
+      return true; // 이미 앉아 있음
+    }
+
+    // 빈 좌석 우선, 없으면 봇 하나가 자리를 양보
+    const occupied = new Set(st.players.map(p => p.seatIndex));
+    let seatIndex = -1;
+    for (let seat = 0; seat < room.config.maxPlayers; seat++) {
+      if (!occupied.has(seat)) { seatIndex = seat; break; }
+    }
+    if (seatIndex < 0) {
+      const yielding = st.players.find(p => p.type === 'bot' && !p.pendingRemoval);
+      if (!yielding) return false;
+      room.engine.processLeave(yielding.id);
+      seatIndex = yielding.seatIndex;
+    }
+    const bot = createBotWithCharacter(
+      seatIndex, st.bigBlind * 100, characterId, room.config.difficulty,
+    );
+    if (!bot || !room.engine.addPlayer(bot)) return false;
+    this.sendSystemChat(roomId, `${bot.name}님이 파트너로 합류했어요.`);
+    this.onUpdate(roomId, room.engine);
+    return true;
   }
 
   /**
