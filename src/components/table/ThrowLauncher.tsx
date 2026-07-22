@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Modal from '@/components/ui/Modal';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
@@ -48,7 +49,9 @@ export default function ThrowLauncher() {
 
   const [aim, setAim] = useState<AimState | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [cooldownRemaining, setCooldownRemaining] = useState(0); // 초 단위 카운트다운
+  const markThrowablesGuideSeen = useSettingsStore(s => s.markThrowablesGuideSeen);
 
   const wrapperRef = useRef<HTMLDivElement>(null);
   const rectRef = useRef<DOMRect | null>(null);
@@ -71,6 +74,7 @@ export default function ThrowLauncher() {
       aimRef.current = null;
       setAim(null);
       setPickerOpen(false);
+      setGuideOpen(false);
     });
     return () => {
       unsubscribe();
@@ -182,12 +186,20 @@ export default function ThrowLauncher() {
       throwItem(selectedDef.id, finalAim.targetPlayerId, startCooldown);
       return;
     }
-    // 짧은 탭 (취소 존에서 놓은 경우 포함 판정) — 이동량이 작을 때만 피커 토글
+    // 짧은 탭 (취소 존에서 놓은 경우 포함 판정) — 이동량이 작을 때만 피커 토글.
+    // 첫 사용이면 피커 대신 사용법 가이드를 먼저 보여준다 (확인 시 피커로 이어짐).
     const rect = rectRef.current;
     const dist = rect
       ? Math.hypot(e.clientX - rect.left - start.x, e.clientY - rect.top - start.y)
       : 0;
-    if (dist < MIN_DRAG_PX) setPickerOpen(open => !open);
+    if (dist >= MIN_DRAG_PX) return;
+    if (pickerOpen) {
+      setPickerOpen(false);
+    } else if (!useSettingsStore.getState().throwablesGuideSeen) {
+      setGuideOpen(true);
+    } else {
+      setPickerOpen(true);
+    }
   };
 
   const handlePointerCancel = () => {
@@ -296,9 +308,46 @@ export default function ThrowLauncher() {
               setSelectedThrowable(id);
               setPickerOpen(false);
             }}
+            onShowGuide={() => setGuideOpen(true)}
           />
         </div>
       )}
+
+      {/* 첫 사용 가이드 — 이후엔 피커 ❓로 재열람 */}
+      <Modal
+        isOpen={guideOpen}
+        onClose={() => {
+          markThrowablesGuideSeen();
+          setGuideOpen(false);
+        }}
+        title="아이템 던지기"
+        maxWidthClass="max-w-xs"
+      >
+        <div className="space-y-2.5 pb-1">
+          {[
+            ['🏹', '아이템을 누른 채 뒤로 쭉 당기면 조준이 시작돼요.'],
+            ['🎯', '당긴 반대 방향의 상대가 자동으로 조준돼요. 손을 떼면 발사!'],
+            ['↩️', '당기다가 아이콘 근처로 되돌리면 취소돼요.'],
+            ['😆', '게임 승패에는 영향이 없는 장난이에요. 10초에 한 번 던질 수 있어요.'],
+          ].map(([icon, text]) => (
+            <div key={icon} className="flex items-start gap-2.5">
+              <span className="text-lg leading-none">{icon}</span>
+              <p className="text-sm leading-snug text-ink">{text}</p>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => {
+              markThrowablesGuideSeen();
+              setGuideOpen(false);
+              setPickerOpen(true);
+            }}
+            className="mt-1 w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white"
+          >
+            알겠어요, 던져볼래요!
+          </button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -72,6 +72,9 @@ interface SettingsStore {
   /** 발사대에 장전된 투척 아이템 (throwables/catalog.ts id) */
   selectedThrowableId: string;
   setSelectedThrowable: (id: string) => void;
+  /** 투척 사용법 가이드를 본 적 있는지 — 첫 발사대 탭에서 1회 노출 (피커 ❓로 재열람 가능) */
+  throwablesGuideSeen: boolean;
+  markThrowablesGuideSeen: () => void;
 }
 
 export const useSettingsStore = create<SettingsStore>()(
@@ -115,6 +118,8 @@ export const useSettingsStore = create<SettingsStore>()(
       toggleThrowables: () => set(s => ({ throwablesEnabled: !s.throwablesEnabled })),
       selectedThrowableId: 'tomato',
       setSelectedThrowable: (selectedThrowableId) => set({ selectedThrowableId }),
+      throwablesGuideSeen: false,
+      markThrowablesGuideSeen: () => set({ throwablesGuideSeen: true }),
     }),
     {
       name: 'poker-doku-settings',
