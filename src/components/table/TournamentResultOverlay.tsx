@@ -36,7 +36,7 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
           <button
             type="button"
             aria-label="결과 확인을 건너뛰고 로비로 돌아가기"
-            onClick={onLeave}
+            onClick={() => onLeave()}
             className="mt-5 w-full rounded-xl border border-mystic/50 bg-mystic/10 px-4 py-3 text-sm font-bold text-mystic"
           >
             결과 없이 로비로 돌아가기
@@ -62,7 +62,7 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
           <ArenaResultSummary result={arenaResult} />
           <button
             type="button"
-            onClick={onLeave}
+            onClick={() => onLeave()}
             className="mt-4 w-full rounded-xl border border-blossom/50 bg-blossom/15 px-4 py-3 text-sm font-bold text-blossom"
           >
             로비로 돌아가기

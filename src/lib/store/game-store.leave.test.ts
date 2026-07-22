@@ -132,4 +132,20 @@ describe('game store leave acknowledgement', () => {
       tableNotice: null,
     });
   });
+
+  it('coerces a non-literal mode (leaked click event) to exit before emitting', async () => {
+    // onClick={onLeave}류 실수로 React 이벤트 객체가 mode 인자로 새면, 순환 참조 payload가
+    // socket.io hasBinary 무한 재귀를 일으켜 emit이 죽는다 (2026-07-22 SnG 종료 모달 먹통).
+    const { socket, emit } = socketRespondingWith({ ok: true });
+    useGameStore.setState({ socket, connected: true, currentRoomId: 'room-1' });
+
+    const eventLike: Record<string, unknown> = { type: 'click' };
+    eventLike.view = eventLike; // 실제 이벤트처럼 순환 참조
+    const left = await useGameStore.getState().leaveRoom(
+      eventLike as unknown as 'exit',
+    );
+
+    expect(left).toBe(true);
+    expect(emit).toHaveBeenCalledWith('leave-room', { mode: 'exit' }, expect.any(Function));
+  });
 });

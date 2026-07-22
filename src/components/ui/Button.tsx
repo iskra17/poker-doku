@@ -27,11 +27,14 @@ const sizes = {
 export default function Button({
   children, onClick, variant = 'primary', size = 'md', disabled = false, className = '',
 }: ButtonProps) {
+  // onClick에 클릭 이벤트 객체를 전달하지 않는다 — 계약은 () => void. 이벤트가 새면 옵셔널 인자
+  // 핸들러(onLeave(mode?) 등)를 거쳐 소켓 payload에 순환 참조가 실려 hasBinary 무한 재귀로
+  // emit이 죽는다 (2026-07-22 SnG 종료 모달 먹통 버그).
   return (
     <motion.button
       whileHover={disabled ? {} : { scale: 1.05 }}
       whileTap={disabled ? {} : { scale: 0.95 }}
-      onClick={onClick}
+      onClick={onClick ? () => onClick() : undefined}
       disabled={disabled}
       className={`
         rounded-xl font-bold transition-all duration-200

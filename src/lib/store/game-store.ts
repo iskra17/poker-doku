@@ -305,8 +305,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
   leaveRoom: (mode = 'exit') => {
     const { socket } = get();
     if (!socket?.connected) return Promise.resolve(false);
+    // emit 경계 방어 — onClick 등에서 이벤트 객체가 인자로 새어 들어오면 순환 참조 payload가
+    // socket.io hasBinary 무한 재귀를 일으켜 emit 자체가 죽는다. 리터럴 외 값은 'exit'로 강제.
+    const safeMode = mode === 'sitout' ? 'sitout' : 'exit';
     return new Promise(resolve => {
-      socket.emit('leave-room', { mode }, ack => {
+      socket.emit('leave-room', { mode: safeMode }, ack => {
         if (!ack.ok) {
           set({ tableNotice: ack.message });
           resolve(false);
