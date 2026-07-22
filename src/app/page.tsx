@@ -33,7 +33,9 @@ export default function Home() {
   const phase = useProfileStore(state => state.phase);
   const bootstrap = useProfileStore(state => state.bootstrap);
   const refresh = useProfileStore(state => state.refresh);
-  const { leaveRoom, currentRoomId, pendingRoomId, joinError, rooms } = useGameStore();
+  const {
+    leaveRoom, currentRoomId, pendingRoomId, joinError, rooms, createdRoomId, clearCreatedRoom,
+  } = useGameStore();
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -92,13 +94,17 @@ export default function Home() {
 
   const inviteRoom = inviteRoomId ? rooms.find(room => room.id === inviteRoomId) ?? null : null;
   const inviteNotFound = !!inviteRoomId && rooms.length > 0 && !inviteRoom;
+  // 방금 만든 방은 로비 목록(브로드캐스트)에 잡히는 즉시 바이인 모달을 자동으로 띄운다
+  const createdRoom = createdRoomId ? rooms.find(room => room.id === createdRoomId) ?? null : null;
   const activeJoinTarget = joinTarget
+    ?? createdRoom
     ?? (phase === 'ready' && inviteRoom && !inviteRoom.locked && !canFastRejoin(inviteRoom)
       ? inviteRoom
       : null);
 
   const closeJoinModal = () => {
     setJoinTarget(null);
+    clearCreatedRoom();
     if (inviteRoomId) {
       setInviteRoomId(null);
       window.history.replaceState(null, '', window.location.pathname);

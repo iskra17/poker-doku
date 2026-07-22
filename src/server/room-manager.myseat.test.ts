@@ -102,9 +102,13 @@ describe('getRoomList mySeat — 보존 좌석의 로비 노출', () => {
     expect(roomsChanged).toBe(0);
 
     vi.advanceTimersByTime(SITOUT_ABANDON_MS + 1000);
-    // 마지막 휴먼이 정리되면 비영속 방 자체가 삭제된다
-    expect(manager.getRoomList('p1').find(r => r.id === roomId)).toBeUndefined();
+    // 좌석은 회수되지만 캐시 유저 방은 즉시 삭제하지 않고 보존된다 (재입장/초대 링크 여지)
+    expect(manager.getRoomList('p1').find(r => r.id === roomId)?.mySeat).toBeUndefined();
     expect(roomsChanged).toBeGreaterThan(0);
+
+    // 보존 시간(10분)까지 재입장이 없으면 그때 방이 삭제된다
+    vi.advanceTimersByTime(10 * 60_000 + 1000);
+    expect(manager.getRoomList('p1').find(r => r.id === roomId)).toBeUndefined();
   });
 
   it('pendingRemoval(정리 예약) 좌석은 mySeat으로 치지 않는다', () => {

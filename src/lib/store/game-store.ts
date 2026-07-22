@@ -73,6 +73,8 @@ interface GameStore {
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
   showCreateRoom: boolean;
+  /** 방금 만든 방 id — 로비가 바이인 모달을 자동으로 띄우는 데 쓰고, 입장/닫기 시 소거 */
+  createdRoomId: string | null;
 
   connect: () => void;
   disconnect: () => void;
@@ -95,6 +97,7 @@ interface GameStore {
   sngFillBots: () => void;
   createRoom: (config: CreateRoomConfig) => void;
   setShowCreateRoom: (show: boolean) => void;
+  clearCreatedRoom: () => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -114,6 +117,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   chatMessages: [],
   rooms: [],
   showCreateRoom: false,
+  createdRoomId: null,
 
   connect: () => {
     const existing = get().socket;
@@ -279,7 +283,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
   joinRoom: (roomId, buyIn, seatIndex, password) => {
     const { socket } = get();
     if (!socket?.connected) return;
-    set({ pendingRoomId: roomId, joinError: null });
+    // 입장을 시도했으면 생성 방 자동 오픈은 소비된 것 — 로비 복귀 시 모달이 다시 뜨지 않게
+    set({ pendingRoomId: roomId, joinError: null, createdRoomId: null });
     clearJoinTimeout();
     joinTimeoutTimer = setTimeout(() => {
       joinTimeoutTimer = null;
@@ -461,7 +466,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
       password: config.password,
     }, ack => {
       if (ack.ok) {
-        set({ showCreateRoom: false, joinError: null });
+        // 방금 만든 방의 바이인 모달을 로비가 바로 띄우도록 id를 남긴다
+        set({ showCreateRoom: false, joinError: null, createdRoomId: ack.data?.roomId ?? null });
       } else {
         set({ joinError: ack.message });
       }
@@ -469,4 +475,6 @@ export const useGameStore = create<GameStore>((set, get) => ({
   },
 
   setShowCreateRoom: showCreateRoom => set({ showCreateRoom }),
+
+  clearCreatedRoom: () => set({ createdRoomId: null }),
 }));

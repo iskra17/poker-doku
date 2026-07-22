@@ -1968,7 +1968,11 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     seated.socket.disconnect();
     await wait(80);
 
-    expect(harness.runtime.roomManager.getRoom(roomId)).toBeUndefined();
+    // 좌석은 grace 만료로 회수되고 세션도 반환된다 — 캐시 유저 방 자체는 10분 보존
+    // (즉시 삭제하지 않는 계약은 room-manager.lifecycle.test.ts가 검증)
+    const retained = harness.runtime.roomManager.getRoom(roomId);
+    expect(retained).toBeDefined();
+    expect(retained!.engine.state.players.filter(p => p.type === 'human')).toEqual([]);
     expect(harness.runtime.sessions.stats()).toEqual({ sessions: 0, sockets: 0, grace: 0 });
   });
 

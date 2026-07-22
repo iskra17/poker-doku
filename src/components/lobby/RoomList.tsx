@@ -273,7 +273,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
             <p className="text-4xl mb-3">🔍</p>
             <p className="text-sm">조건에 맞는 테이블이 없어요.</p>
             <button
-              onClick={() => { setModeFilter('all'); setJoinableOnly(false); }}
+              onClick={() => {
+                setModeFilter('all');
+                setTypeFilter('all');
+                setJoinableOnly(false);
+                setSort('default');
+              }}
               className="mt-2 text-xs text-mystic underline underline-offset-2 hover:text-blossom"
             >
               필터 초기화

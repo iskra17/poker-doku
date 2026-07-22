@@ -99,6 +99,9 @@ npx tsc --noEmit
   시작·턴·자리비움·종료 SnG 타이머와 deadline, 채팅, 토너먼트 시계, bot epoch, 방별 AI 대사 상태를
   함께 지운다. persistent 기본 방은 마지막 휴먼이 완전히 나가 유효 좌석이 0개가 되면 삭제 대신 새 `PokerEngine`으로 교체해
   플레이어·채팅·`handNumber`/`actionSeq`·`lastAction`/`lastAggressorId` 등 이전 핸드 상태를 남기지 않는다.
+  캐시 유저 방도 같은 대기 리셋 후 `EMPTY_USER_ROOM_RETENTION_MS`(10분) 보존 — 재입장(joinRoom)이
+  타이머를 취소해 초대 링크/재입장 여지를 유지한다 (2026-07-22 QA: 즉시 삭제로 재입장 불가였음).
+  SnG는 기존 계약 유지(모든 휴먼 퇴장 시 즉시 정리). 회귀: `room-manager.lifecycle.test.ts`.
 - **자리비움/나가기**: 나가기(TopBar ←)는 지킬 좌석이 있으면(칩>0 또는 올인, 미탈락) LeaveRoomModal로
   '자리비움 하고 나가기'(leave-room mode:'sitout')와 '완전히 나가기'를 물어본다. 캐시(비 SnG/아레나)는
   **나가기 예약** 2종 추가 — '이번 핸드까지'(mode:'reserve-hand')와 '다음 빅블라인드 전'
@@ -114,7 +117,9 @@ npx tsc --noEmit
   `startPlayerLoop`의 autoAct가 1초 뒤 처리(`isDisconnected || sitOutNext`, 캐시/SnG 공통).
   이 가드를 SnG로 한정하면 캐시에서 턴 타이머(8초)+타임뱅크(30초)가 소진될 때까지 테이블이 멈춘다
   (2026-07-15 수정). **캐시**: 자리비움은 다음 핸드부터 딜인 제외, 대략 2오르빗
-  (`shouldRemoveForMissedBlinds`, 경과 핸드÷인원)을 넘기면 자동 정리. 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
+  (`shouldRemoveForMissedBlinds`, 경과 핸드÷인원)을 넘기면 자동 정리 — 단 벽시계 하한
+  `SITOUT_MIN_WALL_MS`(120초, `Player.sitOutSinceMs` 기준)와 AND 결합. 봇만 남은 테이블은
+  핸드가 3~5초에 돌아 2오르빗이 20~40초로 축소되던 문제 방지 (2026-07-22 QA). 자리 떠난 좌석은 5분 `SITOUT_ABANDON_MS` 타이머로 확실히 회수
   (방 자가진행 불가 시 누수 방지, 복귀 시 `handleSeatRejoin`이 취소). 재입장은 자리비움 유지 + '게임 복귀'
   버튼(명시 복귀). **캐시 파산(0칩) 좌석 회수**: 미납 BB 정리가 chips<=0을 건너뛰므로 별도 경로 필수 —
   핸드 종료 시 `scheduleBustReclaims`가 `BUST_RECLAIM_MS`(30초 — 빠른 세션 회전용, 5분 방치 유예와 별개) 리바이

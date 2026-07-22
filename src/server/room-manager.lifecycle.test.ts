@@ -129,6 +129,26 @@ describe('RoomManager 메모리 수명주기', () => {
     expect(reset.lastAggressorId).toBeUndefined();
   });
 
+  it('캐시 유저 방은 마지막 휴먼이 떠나도 보존되고, 재입장이 없으면 10분 뒤 정리된다', () => {
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1'));
+    manager.leaveRoom(roomId, 'p1');
+
+    // 즉시 삭제되지 않는다 — 초대 링크/재입장 여지 (2026-07-22 QA)
+    expect(manager.getRoom(roomId)).toBeDefined();
+
+    // 보존 중 재입장하면 타이머가 취소되어 방이 유지된다
+    manager.joinRoom(roomId, makeHuman('p2'));
+    vi.advanceTimersByTime(11 * 60_000);
+    expect(manager.getRoom(roomId)).toBeDefined();
+
+    // 다시 비면 보존 시간 경과 후 정리된다
+    manager.leaveRoom(roomId, 'p2');
+    expect(manager.getRoom(roomId)).toBeDefined();
+    vi.advanceTimersByTime(10 * 60_000);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+  });
+
   it('disposeRoom은 방별 상태와 모든 예약 타이머를 지우며 반복 호출에도 안전하다', () => {
     const disposed: Array<{ roomId: string; playerIds: string[]; reason: string }> = [];
     manager.shutdown();

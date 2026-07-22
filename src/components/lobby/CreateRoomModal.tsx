@@ -44,7 +44,7 @@ const TABLE_TYPES: Array<{ id: TableType; label: string; desc: string; hint: str
   {
     id: 'mixed',
     label: '봇+사람',
-    desc: '봇 2명 + 자유 입장',
+    desc: '봇 1~5명 + 자유 입장',
     hint: '봇이 자리를 지키다가 사람이 오면 양보해요. 남는 좌석은 항상 사람 몫!',
   },
   {
@@ -81,6 +81,7 @@ export default function CreateRoomModal() {
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
   const [turnTime, setTurnTime] = useState(8);
   const [tableType, setTableType] = useState<TableType>('mixed');
+  const [botCount, setBotCount] = useState(2);
   const [sngEntryMode, setSngEntryMode] = useState<SngEntryMode>('practice');
 
   const blind = BLIND_LEVELS[blindIndex];
@@ -100,7 +101,7 @@ export default function CreateRoomModal() {
       difficulty,
       turnTime,
       tableType: mode === 'cash' ? tableType : 'mixed', // SnG는 방장 봇 채우기가 있는 혼합 고정
-      botCount: tableType === 'humans' ? 0 : tableType === 'bots' ? 5 : 2,
+      botCount: tableType === 'humans' ? 0 : tableType === 'bots' ? 5 : botCount,
       economyMode: mode === 'sng' ? sngEntryMode : undefined,
     });
     setName('');
@@ -168,6 +169,31 @@ export default function CreateRoomModal() {
             </div>
             <p className="text-[11px] text-gray-500 mt-1">
               {TABLE_TYPES.find(t => t.id === tableType)!.hint}
+            </p>
+          </div>
+        )}
+
+        {/* 봇 수 (봇+사람 전용 — 혼자 연습=5, 사람만=0 고정) */}
+        {mode === 'cash' && tableType === 'mixed' && (
+          <div>
+            <label className="text-gray-400 text-sm block mb-2">봇 수</label>
+            <div className="grid grid-cols-5 gap-2">
+              {[1, 2, 3, 4, 5].map(n => (
+                <button
+                  key={n}
+                  onClick={() => setBotCount(n)}
+                  className={`py-2 rounded-lg text-sm font-bold transition-all ${
+                    botCount === n
+                      ? 'bg-purple-600 text-white border border-purple-400'
+                      : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                  }`}
+                >
+                  {n}명
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-gray-500 mt-1">
+              봇은 자리를 지키다 사람이 오면 양보해요 — 남는 좌석은 항상 사람 몫이에요.
             </p>
           </div>
         )}

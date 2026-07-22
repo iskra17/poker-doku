@@ -34,6 +34,8 @@ const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리
 const RUNOUT_STREET_DELAY_MS = 1_600; // 올인 런아웃 스트리트 간 시간차 (핸드 공개 → 플랍 → 턴 → 리버 → 쇼다운)
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
 const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
+/** 마지막 휴먼이 떠난 캐시 유저 방의 보존 시간 — 그 사이 재입장하면 방이 유지된다 (SnG는 즉시 정리 유지) */
+const EMPTY_USER_ROOM_RETENTION_MS = 10 * 60_000;
 const PRE_HAND_RETRY_MS = 1_000;
 const MAX_PRE_HAND_RETRIES = 3;
 const HAND_SETTLEMENT_RETRY_MS = 1_000;
@@ -143,6 +145,8 @@ export class RoomManager {
   /** 방별 휴먼 공격성 추적 — 봇의 상습 쇼버/레이저 대응용 (disposeRoom/엔진 교체 시 함께 정리) */
   private aggroTrackers: Map<string, AggroTracker> = new Map();
   private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** 마지막 휴먼이 떠난 캐시 유저 방의 보존 타이머 — 재입장/초대 링크 여지를 위해 즉시 삭제하지 않는다 */
+  private emptyRoomTimers: Map<string, NodeJS.Timeout> = new Map();
   /** 시트앤고 진행 시계 — 블라인드 레벨 산정 기준 + 탈락 공지 커서 */
   private tournamentClocks: Map<string, { startedAt: number; announcedResults: number; finishedAnnounced: boolean }> = new Map();
   /** 영속 정산 실패 방은 현재 엔진 스냅샷을 보존한 채 다음 핸드를 시작하지 않는다. */
@@ -361,6 +365,7 @@ export class RoomManager {
     this.handSettlementRetryAttempts.delete(roomId);
     this.clearTurnTimer(roomId);
     this.clearFinishedRoomTimer(roomId);
+    this.clearEmptyRoomTimer(roomId);
     for (const [key, timer] of this.sitOutAbandonTimers) {
       if (!key.startsWith(`${roomId}:`)) continue;
       clearTimeout(timer);
@@ -503,6 +508,8 @@ export class RoomManager {
     }
     const success = room.engine.addPlayer(player);
     if (success) {
+      // 빈 방 보존 타이머가 걸려 있었다면 재입장으로 취소 — 방이 다시 살아난다
+      if (player.type === 'human') this.clearEmptyRoomTimer(roomId);
       this.sendSystemChat(roomId, `${player.name}님이 테이블에 앉았습니다.`);
       this.tryStartGame(roomId);
     }
@@ -736,9 +743,28 @@ export class RoomManager {
       // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
       this.resetRoomToIdle(roomId);
       if (roomsChanged) this.onRoomsChanged?.();
-    } else {
+    } else if (room.config.gameMode === 'sng') {
+      // SnG는 모든 휴먼이 떠나면 즉시 정리 (결과 보존 계약은 finishedRoomTimers가 별도 담당)
       this.disposeRoom(roomId, 'empty');
+    } else {
+      // 캐시 유저 방은 즉시 삭제하지 않고 영속 방처럼 대기 리셋 후 보존 — 초대 링크/재입장
+      // 여지를 유지한다 (2026-07-22 QA: 마지막 휴먼 퇴장 즉시 소멸로 재입장 불가).
+      // 휴먼이 다시 앉으면 joinRoom이 보존 타이머를 취소한다.
+      this.resetRoomToIdle(roomId);
+      if (roomsChanged) this.onRoomsChanged?.();
+      this.clearEmptyRoomTimer(roomId);
+      const timer = setTimeout(() => {
+        this.emptyRoomTimers.delete(roomId);
+        this.disposeRoom(roomId, 'empty');
+      }, EMPTY_USER_ROOM_RETENTION_MS);
+      this.emptyRoomTimers.set(roomId, timer);
     }
+  }
+
+  private clearEmptyRoomTimer(roomId: string): void {
+    const timer = this.emptyRoomTimers.get(roomId);
+    if (timer) clearTimeout(timer);
+    this.emptyRoomTimers.delete(roomId);
   }
 
   /**
@@ -1986,6 +2012,8 @@ export class RoomManager {
     }
     for (const timer of this.finishedRoomTimers.values()) clearTimeout(timer);
     this.finishedRoomTimers.clear();
+    for (const timer of this.emptyRoomTimers.values()) clearTimeout(timer);
+    this.emptyRoomTimers.clear();
     this.dialogue.shutdown();
   }
 
