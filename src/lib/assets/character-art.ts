@@ -29,15 +29,16 @@ const ART_FOLDERS: Record<string, string> = {
   ingrid: 'ingrid',
 };
 
-// 보유 중인 표정 (MVP 3종 — thinking/confident/surprised는 확장 시 추가)
+// 보유 중인 표정 — 스타터 6명은 6종 풀세트(2026-07-22 확장), 나머지는 3종
+// (thinking/confident/surprised 미보유 캐릭터는 EXPRESSION_FALLBACK으로 강등)
 const AVAILABLE: Record<string, Expression[]> = {
   miyako: ['neutral', 'happy', 'sad'],
-  sakura: ['neutral', 'happy', 'sad'],
-  ara: ['neutral', 'happy', 'sad'],
-  hana: ['neutral', 'happy', 'sad'],
-  chloe: ['neutral', 'happy', 'sad'],
-  vivian: ['neutral', 'happy', 'sad'],
-  elena: ['neutral', 'happy', 'sad'],
+  sakura: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
+  ara: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
+  hana: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
+  chloe: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
+  vivian: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
+  elena: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
   mochi: ['neutral', 'happy', 'sad'],
   choco: ['neutral', 'happy', 'sad'],
   luna: ['neutral', 'happy', 'sad'],
