@@ -515,7 +515,7 @@ export function setupSocketHandlers(
       minBuyIn: 50 * MIN_BUYIN_BB,
       maxBuyIn: 50 * MAX_BUYIN_BB,
       maxPlayers: 6,
-      turnTime: 8,
+      turnTime: 15,
       difficulty: 'normal',
       botCount: 5,
       tableType: 'mixed',
@@ -529,7 +529,7 @@ export function setupSocketHandlers(
       minBuyIn: 100 * MIN_BUYIN_BB,
       maxBuyIn: 100 * MAX_BUYIN_BB,
       maxPlayers: 6,
-      turnTime: 8,
+      turnTime: 15,
       difficulty: 'hard',
       botCount: 5,
       tableType: 'mixed',
@@ -1890,7 +1890,7 @@ export function setupSocketHandlers(
       const safeConfig: RoomConfig = {
         ...config,
         maxPlayers: 6,
-        turnTime: Math.min(Math.max(Number(config.turnTime) || 8, 5), 60),
+        turnTime: Math.min(Math.max(Number(config.turnTime) || 15, 5), 60),
         difficulty: VALID_DIFFICULTIES.includes(config.difficulty as RoomDifficulty)
           ? config.difficulty
           : 'normal',

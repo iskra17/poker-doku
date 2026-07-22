@@ -27,8 +27,8 @@ const DIFFICULTIES: Array<{ id: Difficulty; label: string; desc: string }> = [
 ];
 
 const TURN_TIMES = [
-  { seconds: 8, label: '8초', desc: '표준' },
-  { seconds: 15, label: '15초', desc: '여유' },
+  { seconds: 8, label: '8초', desc: '스피드' },
+  { seconds: 15, label: '15초', desc: '표준' },
   { seconds: 30, label: '30초', desc: '초보 추천' },
 ];
 
@@ -79,7 +79,7 @@ export default function CreateRoomModal() {
   const [blindIndex, setBlindIndex] = useState(1);
   const [password, setPassword] = useState('');
   const [difficulty, setDifficulty] = useState<Difficulty>('normal');
-  const [turnTime, setTurnTime] = useState(8);
+  const [turnTime, setTurnTime] = useState(15);
   const [tableType, setTableType] = useState<TableType>('mixed');
   const [botCount, setBotCount] = useState(2);
   const [sngEntryMode, setSngEntryMode] = useState<SngEntryMode>('practice');

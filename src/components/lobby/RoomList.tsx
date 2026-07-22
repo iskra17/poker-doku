@@ -227,7 +227,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
                   <span>블라인드 <span className="text-gilded">{room.blinds}</span></span>
-                  {(room.turnTime ?? 8) > 8 && (
+                  {(room.turnTime ?? 15) !== 15 && (
                     <span>턴 <span className="text-cyber">{room.turnTime}초</span></span>
                   )}
                   <span>

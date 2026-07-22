@@ -311,7 +311,7 @@ export class ArenaRuntime {
         maxBuyIn: ARENA_CONFIG_V1.startingStack,
         maxPlayers: 6,
         economyMode: 'arena',
-        turnTime: 8,
+        turnTime: 15,
         gameMode: 'sng',
         startingStack: ARENA_CONFIG_V1.startingStack,
         difficulty: 'hard',

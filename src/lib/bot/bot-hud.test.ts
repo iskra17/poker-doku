@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideBotAction } from './bot-ai';
+import { decideBotAction, loosenPreflopRange } from './bot-ai';
 import { BOT_PERSONALITIES } from './personalities';
 import { handPercentile } from './hand-rankings';
 import { makePlayer, cards } from '../poker/test-helpers';
@@ -62,10 +62,11 @@ describe('핸드 백분위 테이블 (hand-rankings)', () => {
 
 describe('레인지 스탯 — vpip가 참여 여부를 가른다', () => {
   it('같은 마지널 핸드: 루즈(chloe)는 림프, 타이트(sakura)는 폴드', () => {
-    const hole = cards('Qh 9d'); // 마지널(Q9o ≈ 39%) — 두 봇의 vpip 사이에 위치해야 유효한 테스트
+    // 폴드 완화 계층(loosenPreflopRange) 적용 후의 두 봇 vpip 레인지 사이에 있어야 유효한 테스트
+    const hole = cards('Qh 4d'); // Q4o ≈ 72%
     const pct = handPercentile(hole);
-    expect(pct).toBeGreaterThan(BOT_PERSONALITIES['sakura'].vpip / 100);
-    expect(pct).toBeLessThanOrEqual(BOT_PERSONALITIES['chloe'].vpip / 100);
+    expect(pct).toBeGreaterThan(loosenPreflopRange(BOT_PERSONALITIES['sakura'].vpip / 100));
+    expect(pct).toBeLessThanOrEqual(loosenPreflopRange(BOT_PERSONALITIES['chloe'].vpip / 100));
 
     const st = state(); // 언오픈 팟, 림프 비용 = 1BB
     const loose = makePlayer('bot', 2000, 0, { type: 'bot', personalityId: 'chloe', holeCards: hole });
@@ -76,7 +77,7 @@ describe('레인지 스탯 — vpip가 참여 여부를 가른다', () => {
   });
 
   it('vpip 수치만 바꾸면 같은 봇의 행동이 바뀐다 (수치 = 스타일)', () => {
-    const hole = cards('Qh 9h');
+    const hole = cards('Qh 4d'); // Q4o ≈ 72% — 완화된 tight(55%)와 loose(85%) 레인지 사이
     const base = BOT_PERSONALITIES['hana'];
     BOT_PERSONALITIES['test-tight'] = { ...base, id: 'test-tight', vpip: 10, pfr: 5 };
     BOT_PERSONALITIES['test-loose'] = { ...base, id: 'test-loose', vpip: 70, pfr: 5, limp: 100 };

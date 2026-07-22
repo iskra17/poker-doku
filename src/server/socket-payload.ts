@@ -114,7 +114,7 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
   if (!isRecord(input)) return fail();
   const name = cleanText(input.name, 40);
   const bigBlind = input.bigBlind === undefined ? 20 : finiteNumber(input.bigBlind);
-  const turnTime = input.turnTime === undefined ? 8 : finiteNumber(input.turnTime);
+  const turnTime = input.turnTime === undefined ? 15 : finiteNumber(input.turnTime);
   const botCount = input.botCount === undefined ? 2 : finiteNumber(input.botCount);
   const gameMode = input.gameMode === undefined ? 'cash' : input.gameMode;
   const difficulty = input.difficulty === undefined ? 'normal' : input.difficulty;

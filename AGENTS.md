@@ -115,7 +115,7 @@ npx tsc --noEmit
   + RoomManager. **공통 원칙**: 자리비움 좌석의 턴은 절대 기다리지 않는다 — 누른 순간이 본인 턴이면
   `toggleSitOut`이 즉시 `autoActFor`(체크 가능하면 체크, 아니면 폴드), 아니면 턴 도래 시
   `startPlayerLoop`의 autoAct가 1초 뒤 처리(`isDisconnected || sitOutNext`, 캐시/SnG 공통).
-  이 가드를 SnG로 한정하면 캐시에서 턴 타이머(8초)+타임뱅크(30초)가 소진될 때까지 테이블이 멈춘다
+  이 가드를 SnG로 한정하면 캐시에서 턴 타이머+타임뱅크(30초)가 소진될 때까지 테이블이 멈춘다
   (2026-07-15 수정). **캐시**: 자리비움은 다음 핸드부터 딜인 제외, 대략 2오르빗
   (`shouldRemoveForMissedBlinds`, 경과 핸드÷인원)을 넘기면 자동 정리 — 단 벽시계 하한
   `SITOUT_MIN_WALL_MS`(120초, `Player.sitOutSinceMs` 기준)와 AND 결합. 봇만 남은 테이블은
@@ -138,7 +138,8 @@ npx tsc --noEmit
   자동 정리(미납 BB/방치 회수)도 `onRoomsChanged` 콜백으로 로비에 즉시 반영. 다른 방에 앉으면
   기존 보존 좌석은 회수되므로(JoinRoomModal이 경고) 주의. 회귀: `room-manager.myseat.test.ts`.
 - **턴 타이머**: 서버가 deadline 관리. `startPlayerLoop()`를 `onUpdate()`보다 먼저 호출해야
-  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 8초 — 초과 시 즉시 자동
+  스냅샷에 `turnTimeRemaining`이 실린다 (순서 주의). 기본 턴 시간 15초 (2026-07-23 피드백으로
+  8→15 상향 — 방 생성 옵션 8/15/30 중 15가 '표준') — 초과 시 즉시 자동
   체크/폴드 + `sitOutNext` 자리비움 마킹. 단 시간 초과 마킹은 `sitOutAuto`(자동)로 구분:
   **같은 핸드의 남은 스트리트에서는 매번 기본 턴 시간을 그대로 주고**(1초 즉시 처리는 명시적
   자리비움·접속 끊김만), 본인이 액션하면 마킹째 자동 해제, 핸드가 끝나면 일반 자리비움으로
@@ -267,6 +268,10 @@ npx tsc --noEmit
   `hand-rankings.ts`(Chen formula 169핸드 콤보 가중 백분위)와 비교한 "상위 X% 레인지",
   **빈도 스탯**(cbet 등)은 매 상황 독립시행(`rng() < stat/100`). `bot-ai.ts`의
   `decideBotAction(..., rng)`은 rng 주입으로 테스트 결정론화 (`bot-hud.test.ts`).
+  **프리플랍 폴드 완화 계층**: `PREFLOP_FOLD_CUT`(0.5) — vpip/컨티뉴 레인지·림프 빈도·
+  foldToThreeBet의 폴드 구간을 일괄 절반으로 줄여(`loosenPreflopRange`) 참여를 늘린다
+  (2026-07-23 유저 피드백 "봇이 너무 접는다" — HUD 수치는 상대 스타일 기준으로 유지,
+  수위 조절은 이 상수 하나로. 결정론 가드(숏스택 쇼브·딥스택 커밋·가격 가드)엔 미적용).
   c벳 스팟 판정은 `GameState.lastAggressorId`(엔진이 벳/레이즈마다 갱신). 숏스택(≤10BB)
   푸시/폴드 레이어와 딥스택 커밋 가드는 스탯 무관 결정론 — 테스트가 의존하므로 유지할 것.
   **상습 쇼버/레이저 대응** (`aggro-tracker.ts`, 특별 케이스 익스플로잇): RoomManager가 방별로

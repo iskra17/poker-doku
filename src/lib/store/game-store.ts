@@ -457,7 +457,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.emit('create-room', {
       name: config.name,
       bigBlind: config.bigBlind,
-      turnTime: config.turnTime ?? 8,
+      turnTime: config.turnTime ?? 15,
       gameMode: config.gameMode ?? 'cash',
       difficulty: config.difficulty ?? 'normal',
       tableType: config.tableType ?? 'mixed',

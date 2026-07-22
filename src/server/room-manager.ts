@@ -29,7 +29,7 @@ import type {
 import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
 import type { ArenaOfficialSummary } from './arena-service';
 
-const DEFAULT_TURN_TIMEOUT_S = 8; // config.turnTime 미설정 시 폴백 (초) — 연장은 수동 타임칩 사용만
+const DEFAULT_TURN_TIMEOUT_S = 15; // config.turnTime 미설정 시 폴백 (초) — 연장은 수동 타임칩 사용만 (2026-07-23 피드백: 8→15)
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
 const RUNOUT_STREET_DELAY_MS = 1_600; // 올인 런아웃 스트리트 간 시간차 (핸드 공개 → 플랍 → 턴 → 리버 → 쇼다운)
 const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간

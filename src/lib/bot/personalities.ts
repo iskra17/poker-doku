@@ -6,7 +6,9 @@
  * 해석 규약 (bot-ai.ts와의 계약):
  * - 레인지 스탯 (vpip/pfr/threeBet/coldCall/foldToThreeBet): "상위 X% 핸드" —
  *   hand-rankings.ts의 콤보 가중 백분위와 비교해 참여 레인지를 정한다.
- *   (vpip 24 = 상위 24% 핸드로 팟 참여 → 장기적으로 HUD vpip ≈ 24가 된다)
+ *   ※ 실전에선 bot-ai.ts의 프리플랍 폴드 완화 계층(PREFLOP_FOLD_CUT)이 참여 레인지를
+ *   일괄 확장한다 (폴드 빈도 절반 — 2026-07-23 유저 피드백, 엔터테인먼트 지향).
+ *   따라서 여기 수치는 절대 HUD 값이 아니라 캐릭터 간 상대 스타일 기준이다.
  * - 빈도 스탯 (limp/steal/cbetFlop/cbetTurn/checkRaise/donkBet/riverBluff/slowPlay/
  *   semiBluff/foldToCbet/aggression): 매 상황 독립시행 — rng() < stat/100 이면 실행.
  * - 사이징 (openRaiseBB/betSizePot): 금액 산출 기준.

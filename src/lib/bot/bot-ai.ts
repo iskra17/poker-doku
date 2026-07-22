@@ -29,6 +29,25 @@ export const AGGRO_RAISE_TRIGGER = 6;
 
 export type Rng = () => number;
 
+/**
+ * 프리플랍 폴드 완화 계층 (2026-07-23 유저 피드백: 봇이 프리플랍을 너무 접어 재미없다).
+ * 폴드로 이어지는 레인지 바깥 구간/폴드 확률을 이 배수로 줄인다 (0.5 = 폴드 빈도 절반).
+ * HUD 레인지 스탯(personalities.ts)은 캐릭터 간 상대 스타일 기준으로 유지하고, 실제 참여
+ * 레인지는 loosenPreflopRange가 확장한다 — 전체 수위 조절은 이 상수 하나로.
+ * 결정론 가드(숏스택 푸시/폴드, 딥스택 커밋 가드, 가격 가드)에는 적용하지 않는다.
+ */
+export const PREFLOP_FOLD_CUT = 0.5;
+
+/** 레인지(0~1) 바깥의 폴드 구간을 PREFLOP_FOLD_CUT 배로 줄인 유효 레인지 */
+export function loosenPreflopRange(range: number): number {
+  return 1 - (1 - Math.min(range, 1)) * PREFLOP_FOLD_CUT;
+}
+
+/** 빈도 스탯(0~100)의 실패(폴드행) 확률을 같은 비율로 줄인 유효 빈도 */
+function loosenPreflopFreq(stat: number): number {
+  return 100 - (100 - Math.min(stat, 100)) * PREFLOP_FOLD_CUT;
+}
+
 // --- 숏스택 푸시/폴드 티어 (결정론 레이어 전용 — 백분위와 별도로 유지) ---
 const PREMIUM_HANDS = ['AA', 'KK', 'QQ', 'AKs', 'AKo'];
 const STRONG_HANDS = ['JJ', 'TT', 'AQs', 'AQo', 'AJs', 'KQs'];
@@ -339,10 +358,11 @@ function decidePreflopAction(
       if (canCall) return { action: 'call', amount: callAmount };
     }
 
-    if (pct <= p.vpip / 100) {
+    const vpipRange = loosenPreflopRange(p.vpip / 100);
+    if (pct <= vpipRange) {
       // vpip-pfr 갭 레인지: 림프 성향 시행 — 갭 상위권은 롤 실패해도 림프 (참여율 보전)
       if (canCheck) return { action: 'check', amount: 0 };
-      if (canCall && callAmount <= bb && (roll(rng, p.limp) || pct <= (p.vpip / 100) * 0.6)) {
+      if (canCall && callAmount <= bb && (roll(rng, loosenPreflopFreq(p.limp)) || pct <= vpipRange * 0.6)) {
         return { action: 'call', amount: callAmount }; // 림프/SB 컴플리트
       }
     }
@@ -387,7 +407,7 @@ function decidePreflopAction(
   // 내 오픈이 3벳을 맞음 — foldToThreeBet 시행 (상위 레인지는 계속, 상습 레이저에겐 반만 접음)
   if (reRaisedPreflop) {
     const continue3bet = pct <= (p.threeBet / 100) * 0.8; // 3벳 레인지 상위권만 4벳/콜 고려
-    if (!continue3bet && roll(rng, p.foldToThreeBet * (vsSerialRaiser ? 0.5 : 1))) {
+    if (!continue3bet && roll(rng, p.foldToThreeBet * PREFLOP_FOLD_CUT * (vsSerialRaiser ? 0.5 : 1))) {
       if (canCheck) return { action: 'check', amount: 0 };
       return { action: 'fold', amount: 0 };
     }
@@ -402,8 +422,8 @@ function decidePreflopAction(
     return raiseTo(gameState, player, gameState.currentBet * 3);
   }
 
-  // 콜드콜 레인지 (threeBet + coldCall = 컨티뉴 레인지) — 상습 레이저에겐 넓힌다
-  const continueRange = ((p.threeBet + p.coldCall) / 100) * (vsSerialRaiser ? 1.5 : 1);
+  // 콜드콜 레인지 (threeBet + coldCall = 컨티뉴 레인지, 완화 계층 적용) — 상습 레이저에겐 넓힌다
+  const continueRange = loosenPreflopRange((p.threeBet + p.coldCall) / 100) * (vsSerialRaiser ? 1.5 : 1);
   if (pct <= continueRange && canCall) {
     // 가격 가드: 레이즈가 크면 상위 레인지만, 커밋 25% 이하 (상습 레이저에겐 30%)
     const affordable = commitFrac <= (vsSerialRaiser ? 0.3 : 0.25);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { decideBotAction, AGGRO_SHOVE_TRIGGER, AGGRO_SHOVE_HEAVY, AGGRO_RAISE_TRIGGER } from './bot-ai';
+import { decideBotAction, loosenPreflopRange, AGGRO_SHOVE_TRIGGER, AGGRO_SHOVE_HEAVY, AGGRO_RAISE_TRIGGER } from './bot-ai';
 import { AggroTracker, AGGRO_WINDOW_HANDS } from './aggro-tracker';
 import { BOT_PERSONALITIES } from './personalities';
 import { handPercentile } from './hand-rankings';
@@ -105,11 +105,13 @@ describe('프리플랍 — 상습 레이저에 컨티뉴 레인지 확대', () =
     const base = BOT_PERSONALITIES['hana'];
     BOT_PERSONALITIES['test-aggro'] = { ...base, id: 'test-aggro', threeBet: 2, coldCall: 3, wtsd: 0 };
     try {
-      // 컨티뉴 레인지 5% — KJs(≈6%)가 기본 밖·확대 레인지(7.5%) 안에 있어야 유효
-      const hole = cards('Kh Jh');
+      // 컨티뉴 레인지 5% → 폴드 완화 계층 적용 52.5% — Q4o(≈72%)가 기본 밖·
+      // 상습 레이저 확대 레인지(×1.5 = 78.75%) 안에 있어야 유효
+      const hole = cards('Qh 4d');
       const pct = handPercentile(hole);
-      expect(pct).toBeGreaterThan(0.05);
-      expect(pct).toBeLessThanOrEqual(0.075);
+      const baseRange = loosenPreflopRange((2 + 3) / 100);
+      expect(pct).toBeGreaterThan(baseRange);
+      expect(pct).toBeLessThanOrEqual(baseRange * 1.5);
 
       const st = state({ currentBet: 60, pots: [{ amount: 90, eligiblePlayerIds: [] }] }); // 3BB 오픈
       const bot = makePlayer('bot', 2000, 0, {
