@@ -86,7 +86,8 @@ export default function PartnerCard() {
 
   return (
     <section className="mx-auto mb-2 w-full max-w-4xl px-3 md:px-4" aria-label="파트너">
-      <div className="flex items-center gap-3 rounded-2xl border border-blossom/25 bg-panel/85 p-3 backdrop-blur-sm">
+      <div className="rounded-2xl border border-blossom/25 bg-panel/85 p-3 backdrop-blur-sm">
+        <div className="flex items-center gap-3">
         {/* 파트너 일러스트 — 탭하면 말을 건다(대사 순환), 길게 보고 싶으면 쇼케이스 */}
         <motion.button
           type="button"
@@ -118,16 +119,6 @@ export default function PartnerCard() {
               <span className="rounded-full bg-gilded/15 px-1.5 py-px text-[9px] font-bold text-gilded">단짝</span>
             )}
           </p>
-          {speech && (
-            <motion.p
-              key={speech}
-              initial={{ opacity: 0, y: 3 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-1 truncate text-xs leading-relaxed text-ink md:whitespace-normal"
-            >
-              “{speech}”
-            </motion.p>
-          )}
         </div>
 
         <button
@@ -144,6 +135,20 @@ export default function PartnerCard() {
                 ? '첫 수련 시작'
                 : '수련 시작'}
         </button>
+        </div>
+
+        {/* 대사 — 카드 전체 폭 사용 (좁은 화면에서 1줄 말줄임되던 문제: 행 분리로 폭 2배 확보,
+            자연 줄바꿈 + 극단 케이스만 3줄 클램프) */}
+        {speech && (
+          <motion.p
+            key={speech}
+            initial={{ opacity: 0, y: 3 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mt-2 line-clamp-3 text-xs leading-relaxed text-ink"
+          >
+            “{speech}”
+          </motion.p>
+        )}
       </div>
 
       <CharacterShowcaseModal

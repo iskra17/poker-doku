@@ -21,6 +21,7 @@ import HandEconomySummary from '@/components/table/HandEconomySummary';
 import ProgressionSummary from '@/components/table/ProgressionSummary';
 import PartnerReactions from '@/components/table/PartnerReactions';
 import Coachmarks from '@/components/table/Coachmarks';
+import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatcher';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
@@ -114,6 +115,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <ProgressionSummary />
             <PartnerReactions />
             <Coachmarks />
+            <BondSceneUnlockWatcher />
             <ActionLog />
             <ChatPanel />
             <SngWaitingOverlay />

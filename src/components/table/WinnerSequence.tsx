@@ -18,6 +18,8 @@ import Confetti from '../effects/Confetti';
 interface WinnerInfo {
   name: string;
   amount: number;
+  /** 히어로 전용 순획득(팟 − 내 기여) — 남에겐 null (2026-07-22 유저 피드백) */
+  netAmount: number | null;
   seatPos: TablePos;
 }
 
@@ -63,13 +65,22 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
       const storeState = useGameStore.getState();
       const mySeat = event.players.find(p => p.id === storeState.myPlayerId)?.seatIndex ?? -1;
 
-      const winners: WinnerInfo[] = event.winners
-        .map(w => {
-          const player = event.players.find(p => p.id === w.playerId);
+      // 같은 플레이어가 메인팟+사이드팟으로 여러 번 등장할 수 있어 플레이어 단위로 합산.
+      // 히어로는 "얻은 칩"(팟 − 이번 핸드 내 기여)을 표시 — 총팟 표기는 내 베팅이 섞여
+      // 체감 획득보다 커 보인다는 유저 피드백 반영. 상대는 관례대로 팟 획득액 그대로.
+      const winTotals = new Map<string, number>();
+      for (const w of event.winners) {
+        winTotals.set(w.playerId, (winTotals.get(w.playerId) ?? 0) + w.amount);
+      }
+      const winners: WinnerInfo[] = [...winTotals.entries()]
+        .map(([playerId, amount]) => {
+          const player = event.players.find(p => p.id === playerId);
           if (!player) return null;
+          const isHero = playerId === storeState.myPlayerId;
           return {
             name: player.name,
-            amount: w.amount,
+            amount,
+            netAmount: isHero ? amount - (player.totalContributed ?? 0) : null,
             seatPos: layout.seats[toDisplayIndex(player.seatIndex, mySeat)],
           };
         })
@@ -174,8 +185,12 @@ export default function WinnerSequence({ isMobile }: WinnerSequenceProps) {
                 style={{ animation: 'shine-sweep 1.1s ease-out 0.15s 1 both' }}
               />
             </div>
-            <div className={`mt-1 font-bold text-gilded tabular ${isMobile ? 'text-sm' : 'text-lg'}`}>
-              {display.winners.map(w => `${w.name} +${formatChips(w.amount)}`).join('  ·  ')}
+            <div className={`mt-1 max-w-[92vw] font-bold text-gilded tabular ${isMobile ? 'text-sm' : 'text-lg'}`}>
+              {display.winners.map(w => (
+                w.netAmount !== null
+                  ? `${w.name} ${w.netAmount >= 0 ? '+' : ''}${formatChips(w.netAmount)} 획득`
+                  : `${w.name} +${formatChips(w.amount)}`
+              )).join('  ·  ')}
             </div>
           </motion.div>
         )}
