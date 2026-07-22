@@ -21,7 +21,9 @@ export type SoundName =
   | 'win'         // 일반 승리 아르페지오
   | 'big-win'     // 빅윈 팡파레
   | 'ui-click'    // 버튼 블립
-  | 'chat';       // 채팅 수신 팝
+  | 'chat'        // 채팅 수신 팝
+  | 'throw'       // 투척물 발사 휘익
+  | 'splat';      // 투척물 명중 철퍼덕
 
 function chipClack(delayMs: number, gain = 0.14) {
   playTone(2400, 45, { type: 'sine', gain, delayMs });
@@ -109,6 +111,19 @@ export function playEffect(name: SoundName): void {
 
     case 'chat':
       playTone(1320, 60, { type: 'sine', gain: 0.04, freqEnd: 1560 });
+      break;
+
+    case 'throw':
+      // 휘익 — 노이즈 필터 상승 스윕 + 짧은 상승 톤
+      playNoise(200, 800, { gain: 0.08, filterEnd: 3200 });
+      playTone(320, 170, { type: 'sine', gain: 0.05, freqEnd: 760 });
+      break;
+
+    case 'splat':
+      // 철퍼덕 — 저역 임팩트 + 습식 노이즈 버스트
+      playTone(140, 90, { type: 'sine', gain: 0.2, freqEnd: 60 });
+      playNoise(120, 700, { gain: 0.12, filterType: 'lowpass', filterEnd: 260 });
+      playNoise(45, 2400, { gain: 0.06, delayMs: 8 });
       break;
   }
 }

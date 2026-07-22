@@ -45,6 +45,11 @@ export default function SeatEmote({ playerId }: { playerId: string }) {
           }
           break;
         }
+        case 'throwable-impact':
+          if (event.targetPlayerId === playerId) {
+            show('😵', 2000); // 투척물 명중 — 머리 위 별
+          }
+          break;
         case 'hand-start':
           if (timerRef.current) clearTimeout(timerRef.current);
           setEmote(null);

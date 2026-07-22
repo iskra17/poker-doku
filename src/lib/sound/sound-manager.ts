@@ -94,6 +94,14 @@ export function initSoundSystem(): void {
       case 'hand-end':
         clearTurnTick();
         break;
+
+      case 'throwable-thrown':
+        playEffect('throw');
+        break;
+
+      case 'throwable-impact':
+        playEffect('splat');
+        break;
     }
   });
 }

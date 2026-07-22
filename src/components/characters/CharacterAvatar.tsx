@@ -20,11 +20,13 @@ const sizeMap = {
   xl: 'w-20 h-20 text-3xl',
 };
 
-// 표정 전환 시 1회 재생되는 리액션 모션 — 승리(happy)는 바운스, 패배(sad)는 흔들림
+// 표정 전환 시 1회 재생되는 리액션 모션 — 승리(happy)는 바운스, 패배(sad)는 흔들림,
+// 피격(surprised)은 강한 좌우 흔들림 (투척물 명중)
 const REACTION_MOTION: Partial<Record<string, { animate: Record<string, number[]>; duration: number }>> = {
   happy: { animate: { y: [0, -9, 0, -5, 0], scale: [1, 1.08, 1, 1.04, 1] }, duration: 0.9 },
   confident: { animate: { y: [0, -6, 0], scale: [1, 1.06, 1] }, duration: 0.5 },
   sad: { animate: { x: [0, -3, 3, -3, 3, 0], rotate: [0, -3, 3, -2, 0] }, duration: 0.6 },
+  surprised: { animate: { x: [0, -5, 5, -4, 4, 0], rotate: [0, -5, 5, -3, 0] }, duration: 0.55 },
 };
 
 export default function CharacterAvatar({

@@ -46,6 +46,10 @@ export function useSeatExpression(playerId: string | undefined, isActive: boolea
           break;
         }
 
+        case 'throwable-impact':
+          if (event.targetPlayerId === playerId) setTemporary('surprised', 2500);
+          break;
+
         case 'hand-start':
           if (timerRef.current) clearTimeout(timerRef.current);
           setExpression('neutral');

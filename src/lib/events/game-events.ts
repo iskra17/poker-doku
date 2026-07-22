@@ -7,6 +7,10 @@ import { Card, GameState, ActionType, Street, WinResult, Player } from '../poker
  * 서버는 game-update로 전체 스냅샷만 push하므로, prev/next를 diff해서
  * 사운드/애니메이션/액션로그/캐릭터 표정이 구독할 이벤트 스트림을 만든다.
  * React 상태를 거치지 않는 경량 pub/sub — 리렌더 비용 없음.
+ *
+ * throwable-* 는 diff 파생이 아니라 주입 이벤트: thrown은 소켓 수신 시 game-store가,
+ * impact는 비행 종료 시점에 ThrowableLayer(단일 코디네이터)가 발행한다 —
+ * 스플랫/표정/이모트/사운드가 각자 지연을 계산하지 않고 impact 하나를 구독한다.
  */
 
 export type GameEvent =
@@ -26,7 +30,17 @@ export type GameEvent =
       handRake: number;
       economyMode: GameState['economyMode'];
     }
-  | { type: 'hand-end' };
+  | { type: 'hand-end' }
+  | {
+      type: 'throwable-thrown';
+      throwId: string;
+      itemId: string;
+      fromPlayerId: string;
+      fromSeatIndex: number;
+      targetPlayerId: string;
+      targetSeatIndex: number;
+    }
+  | { type: 'throwable-impact'; throwId: string; itemId: string; targetPlayerId: string; targetSeatIndex: number };
 
 type Listener = (event: GameEvent) => void;
 

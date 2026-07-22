@@ -9,6 +9,7 @@ import CommunityCards from './CommunityCards';
 import PotDisplay from './PotDisplay';
 import ChipStack from './ChipStack';
 import AnimationLayer from './AnimationLayer';
+import ThrowableLayer from './ThrowableLayer';
 import WinnerSequence from './WinnerSequence';
 import SeatSpeechBubbles from '../characters/SeatSpeechBubble';
 import DealerCorner from '../characters/DealerCorner';
@@ -165,6 +166,7 @@ export default function PokerTable() {
 
         {/* 칩/카드 비행 오버레이 */}
         <AnimationLayer isMobile={isMobile} />
+        <ThrowableLayer isMobile={isMobile} />
 
         {/* 봇 좌석 말풍선 */}
         <SeatSpeechBubbles isMobile={isMobile} />

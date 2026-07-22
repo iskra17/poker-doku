@@ -5,6 +5,8 @@ import { io } from 'socket.io-client';
 import type { ActionType, ChatMessage, GameState } from '../poker/types';
 import type { PokerClientSocket, RoomListItem } from '../realtime/protocol';
 import { diffGameState, emitGameEvent } from '../events/game-events';
+import { THROWABLE_MAP, THROW_COOLDOWN_MS } from '../throwables/catalog';
+import { useSettingsStore } from './settings-store';
 import { actionFailureMessage, canSendAction, shouldApplyGameUpdate } from './realtime-state';
 import { getBrowserTransportToken } from './transport-token';
 
@@ -86,6 +88,8 @@ interface GameStore {
   reserveLeave: (kind: 'hand' | 'bb' | 'cancel') => Promise<boolean>;
   sendAction: (action: ActionType, amount?: number) => void;
   sendChat: (presetId: string) => void;
+  /** 아이템 투척 — 성공 ack 시 onAck(cooldownMs)로 발사대 쿨다운 표시 갱신 */
+  throwItem: (itemId: string, targetPlayerId: string, onAck?: (cooldownMs: number) => void) => void;
   toggleSitOut: () => void;
   useTimeBank: () => void;
   sngFillBots: () => void;
@@ -190,6 +194,22 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set(state => ({
         chatMessages: [...state.chatMessages.slice(-99), message],
       }));
+    });
+
+    socket.on('throwable-thrown', payload => {
+      if (payload.roomId !== get().currentRoomId) return; // envelope 검증 (game-update와 동일)
+      // 수신자 끄기 설정의 단일 게이트 — 여기서 끊으면 비행/스플랫/표정/사운드 전부 미표시
+      if (!useSettingsStore.getState().throwablesEnabled) return;
+      if (!THROWABLE_MAP[payload.itemId]) return; // 미지 id 방어
+      emitGameEvent({
+        type: 'throwable-thrown',
+        throwId: payload.throwId,
+        itemId: payload.itemId,
+        fromPlayerId: payload.fromPlayerId,
+        fromSeatIndex: payload.fromSeatIndex,
+        targetPlayerId: payload.targetPlayerId,
+        targetSeatIndex: payload.targetSeatIndex,
+      });
     });
 
     socket.on('room-created', () => {
@@ -387,6 +407,16 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket, currentRoomId } = get();
     if (!socket?.connected || !currentRoomId) return;
     socket.emit('send-chat', { presetId });
+  },
+
+  throwItem: (itemId, targetPlayerId, onAck) => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    // 연출은 낙관적 실행 없이 서버 에코(throwable-thrown)로만 — 쿨다운 거절 시 유령 연출 방지
+    socket.emit('throw-item', { itemId, targetPlayerId }, ack => {
+      if (ack.ok) onAck?.(ack.data?.cooldownMs ?? THROW_COOLDOWN_MS);
+      else set({ tableNotice: ack.message });
+    });
   },
 
   toggleSitOut: () => {
