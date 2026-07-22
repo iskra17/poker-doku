@@ -42,9 +42,19 @@ export default function ThrowablePicker({ selectedId, onSelect }: ThrowablePicke
                     : 'border-gray-800/40 bg-gray-800/30 text-gray-500'
               }`}
             >
-              <span className={`text-lg leading-none ${unlocked ? '' : 'grayscale opacity-60'}`}>
-                {item.emoji}
-              </span>
+              {item.sprite ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={item.sprite}
+                  alt={item.name}
+                  draggable={false}
+                  className={`h-6 w-6 shrink-0 ${unlocked ? '' : 'grayscale opacity-60'}`}
+                />
+              ) : (
+                <span className={`text-lg leading-none ${unlocked ? '' : 'grayscale opacity-60'}`}>
+                  {item.emoji}
+                </span>
+              )}
               <span className="flex flex-col items-start leading-tight">
                 <span className="text-[11px] font-bold">
                   {unlocked ? item.name : `🔒 ${item.name}`}

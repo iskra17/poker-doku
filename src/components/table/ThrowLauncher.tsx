@@ -262,7 +262,17 @@ export default function ThrowLauncher() {
           touchAction: 'none',
         }}
       >
-        <span className={cooldownRemaining > 0 ? 'opacity-40' : ''}>{selectedDef.emoji}</span>
+        {selectedDef.sprite ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={selectedDef.sprite}
+            alt={selectedDef.name}
+            draggable={false}
+            className={`h-7 w-7 ${cooldownRemaining > 0 ? 'opacity-40' : ''}`}
+          />
+        ) : (
+          <span className={cooldownRemaining > 0 ? 'opacity-40' : ''}>{selectedDef.emoji}</span>
+        )}
         {cooldownRemaining > 0 && (
           <span className="absolute inset-0 flex items-center justify-center text-[11px] font-bold text-white">
             {cooldownRemaining}
