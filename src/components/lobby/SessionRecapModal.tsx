@@ -72,7 +72,7 @@ export default function SessionRecapModal({ recap, onClose }: SessionRecapModalP
           onClick={onClose}
           className="w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white"
         >
-          내일 또 만나요
+          다음에 또 만나요
         </button>
       </div>
     </Modal>

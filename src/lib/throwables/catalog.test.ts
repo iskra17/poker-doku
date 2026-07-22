@@ -35,14 +35,23 @@ describe('throwable catalog', () => {
     }
   });
 
-  it('dojo-level items respect the threshold boundary', () => {
-    for (const item of THROWABLES) {
-      if (item.unlock.kind !== 'dojo-level') continue;
-      const { level } = item.unlock;
-      expect(isThrowableUnlocked(item.id, { dojoLevel: level - 1 })).toBe(false);
-      expect(isThrowableUnlocked(item.id, { dojoLevel: level })).toBe(true);
-      expect(getThrowableUnlockHint(item.id, { dojoLevel: level - 1 })).toContain(`Lv.${level}`);
+  it('coin-shop items require the purchase marker and show the price hint', () => {
+    const coinItems = THROWABLES.filter(item => item.unlock.kind === 'coin-shop');
+    expect(coinItems.length).toBeGreaterThanOrEqual(4); // 유저 확정: 미션 2종 외 나머지는 코인 구매
+    for (const item of coinItems) {
+      if (item.unlock.kind !== 'coin-shop') continue;
+      const { inventoryItemId, price } = item.unlock;
+      expect(price).toBeGreaterThan(0);
+      expect(isThrowableUnlocked(item.id, { dojoLevel: 50 })).toBe(false);
+      expect(
+        isThrowableUnlocked(item.id, { dojoLevel: 1, inventoryItemIds: new Set([inventoryItemId]) }),
+      ).toBe(true);
+      expect(getThrowableUnlockHint(item.id, { dojoLevel: 50 })).toContain(`${price}`);
     }
+  });
+
+  it('mission unlocks are exactly two (유저 확정 기획)', () => {
+    expect(THROWABLES.filter(item => item.unlock.kind === 'mission')).toHaveLength(2);
   });
 
   it('mission items require the inventory marker', () => {

@@ -6,22 +6,26 @@
  * (send-chat의 presetId→문구 원칙과 동일). 미지 id는 해금 판정에서도 항상 false.
  */
 
-export type ThrowableItemId = 'tomato' | 'tissue';
+export type ThrowableItemId =
+  | 'tomato' | 'tissue'
+  | 'egg' | 'balloon' | 'bouquet' | 'snowball'
+  | 'gold-tomato' | 'fish';
 
 /** 명중 스플랫 연출 스타일 — ThrowableLayer가 아이템별 이펙트를 분기하는 키 */
 export type ThrowableSplatStyle = 'burst' | 'wrap';
 
 /**
- * 해금 규칙.
- * - starter: 기본 제공 (MVP 2종)
- * - dojo-level: 도장 레벨 달성 시 해금 (characters/unlocks.ts와 같은 축)
- * - mission: 행동 미션 달성 → progression 인벤토리에 마커 아이템 보유로 판정
- *   (2차 확장: 핸드 종료 훅이 조건 감지 시 inventoryItemId를 grant)
+ * 해금 규칙 (2026-07-22 유저 확정: 미션 2종 + 나머지는 도장 코인 구매).
+ * - starter: 기본 제공 2종
+ * - mission: 행동 미션 달성 → progression 인벤토리 마커 보유로 판정
+ *   (해금 파이프라인 구현 전까지는 잠금 노출만 — 핸드 종료 훅이 조건 감지 시 grant 예정)
+ * - coin-shop: 도장 코인으로 구매 → 구매 시 인벤토리 마커 grant로 해금
+ *   (도장 코인 재화·상점은 미구현 — 플레이·인연 레벨 보상으로 적립, 추후 캐시 구매 확장 기획)
  */
 export type ThrowableUnlockRule =
   | { kind: 'starter' }
-  | { kind: 'dojo-level'; level: number }
-  | { kind: 'mission'; inventoryItemId: string; hint: string };
+  | { kind: 'mission'; inventoryItemId: string; hint: string }
+  | { kind: 'coin-shop'; price: number; inventoryItemId: string };
 
 export interface ThrowableDefinition {
   id: ThrowableItemId;
@@ -57,13 +61,71 @@ export const THROWABLES: readonly ThrowableDefinition[] = [
     splatEmoji: '🧻',
     unlock: { kind: 'starter' },
   },
-  // 2차 확장 예약 (기획 확정분 — 추가 시 ThrowableItemId union에도 함께):
-  //   egg      🥚 crack   dojo-level 3
-  //   balloon  💧 burst   dojo-level 6
-  //   bouquet  💐 petals  dojo-level 9  (포지티브 — 축하용)
-  //   snowball ❄️ burst   dojo-level 12
-  //   goldTomato ✨🍅 burst mission 'throwable-mission-premium-loss' (AA/KK로 패배)
-  //   fish     🐟 slap    mission 'throwable-mission-river-suckout' (리버 역전승)
+  // ── 이하 잠금 아이템 — 해금 파이프라인(미션 감지·도장 코인 상점) 구현 전까지 피커에
+  //    잠금+힌트로만 노출된다. 서버 throw-item도 starter 외 거부라 던질 수 없음.
+  //    스플랫은 해금 시점에 아이템별 전용 스타일(crack/petals/slap 등)로 확장 예정.
+  {
+    id: 'egg',
+    name: '날계란',
+    emoji: '🥚',
+    sprite: '/assets/throwables/egg.webp',
+    splat: 'burst',
+    splatEmoji: '🍳',
+    unlock: { kind: 'coin-shop', price: 300, inventoryItemId: 'throwable-egg' },
+  },
+  {
+    id: 'balloon',
+    name: '물풍선',
+    emoji: '💧',
+    sprite: '/assets/throwables/balloon.webp',
+    splat: 'burst',
+    splatEmoji: '💦',
+    unlock: { kind: 'coin-shop', price: 300, inventoryItemId: 'throwable-balloon' },
+  },
+  {
+    id: 'snowball',
+    name: '눈뭉치',
+    emoji: '❄️',
+    sprite: '/assets/throwables/snowball.webp',
+    splat: 'burst',
+    splatEmoji: '❄️',
+    unlock: { kind: 'coin-shop', price: 300, inventoryItemId: 'throwable-snowball' },
+  },
+  {
+    id: 'bouquet',
+    name: '꽃다발',
+    emoji: '💐',
+    sprite: '/assets/throwables/bouquet.webp',
+    splat: 'burst',
+    splatEmoji: '🌸',
+    unlock: { kind: 'coin-shop', price: 500, inventoryItemId: 'throwable-bouquet' },
+  },
+  {
+    id: 'gold-tomato',
+    name: '황금 토마토',
+    emoji: '🍅',
+    sprite: '/assets/throwables/gold-tomato.webp',
+    splat: 'burst',
+    splatEmoji: '✨',
+    unlock: {
+      kind: 'mission',
+      inventoryItemId: 'throwable-gold-tomato',
+      hint: '미션: 프리미엄 핸드(AA/KK)로 패배',
+    },
+  },
+  {
+    id: 'fish',
+    name: '물고기',
+    emoji: '🐟',
+    sprite: '/assets/throwables/fish.webp',
+    splat: 'burst',
+    splatEmoji: '💦',
+    unlock: {
+      kind: 'mission',
+      inventoryItemId: 'throwable-fish',
+      hint: '미션: 리버 역전승',
+    },
+  },
 ];
 
 /** 서버 검증·수신 방어용 id → 정의 조회. 미지 id는 undefined. */
@@ -90,9 +152,9 @@ export function isThrowableUnlocked(itemId: string, ctx: ThrowableUnlockContext)
   switch (def.unlock.kind) {
     case 'starter':
       return true;
-    case 'dojo-level':
-      return Number.isFinite(ctx.dojoLevel) && ctx.dojoLevel >= def.unlock.level;
     case 'mission':
+    case 'coin-shop':
+      // 미션 달성/상점 구매 모두 인벤토리 마커 grant로 해금된다
       return ctx.inventoryItemIds?.has(def.unlock.inventoryItemId) ?? false;
   }
 }
@@ -104,9 +166,9 @@ export function getThrowableUnlockHint(itemId: string, ctx: ThrowableUnlockConte
   switch (def.unlock.kind) {
     case 'starter':
       return null;
-    case 'dojo-level':
-      return `도장 Lv.${def.unlock.level} 달성`;
     case 'mission':
       return def.unlock.hint;
+    case 'coin-shop':
+      return `🪙 도장 코인 ${def.unlock.price} (상점 준비 중)`;
   }
 }
