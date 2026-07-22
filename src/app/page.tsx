@@ -64,6 +64,19 @@ export default function Home() {
     if (!currentRoomId) setMusicScene('lobby');
   }, [currentRoomId]);
 
+  // 로비 복귀의 단일 지점 — 수동 나가기뿐 아니라 room-lost(미납 BB/파산/방치 회수, 서버 재시작)와
+  // 나가기 예약 즉시 퇴장까지 모든 경로에서 지갑 표시를 갱신하고 세션 리캡을 띄운다.
+  // (강제 회수 후 로비가 정산 전 지갑 잔액을 보여주던 문제 — 2026-07-22 QA)
+  useEffect(() => {
+    return useGameStore.subscribe((state, prevState) => {
+      if (prevState.currentRoomId === null || state.currentRoomId !== null) return;
+      void refresh();
+      // 리캡 스냅샷은 복귀 직후 즉시 — 집계는 다음 게임 이벤트 전까지 유지된다
+      const recap = getSessionRecap();
+      if (recap.hands > 0) setSessionRecap(recap);
+    });
+  }, [refresh]);
+
   const canFastRejoin = (room: RoomInfo) =>
     !!room.mySeat && (room.mode === 'sng' || room.mySeat.chips > 0);
 
@@ -93,15 +106,9 @@ export default function Home() {
   };
 
   const handleLeave = (mode?: 'exit' | 'sitout') => {
-    // 리캡 스냅샷은 leaveRoom 전에 — 방을 떠나면 집계가 리셋된다
-    const recap = getSessionRecap();
+    // 지갑 갱신·세션 리캡은 로비 복귀 구독(위 effect)이 공통 처리한다
     void leaveRoom(mode).then(left => {
-      if (left) {
-        useArenaStore.getState().resetAfterResult();
-        void refresh();
-        // 한 핸드라도 쳤으면 세션 리캡 + 파트너 작별 인사 (피크엔드)
-        if (recap.hands > 0) setSessionRecap(recap);
-      }
+      if (left) useArenaStore.getState().resetAfterResult();
     });
   };
 
