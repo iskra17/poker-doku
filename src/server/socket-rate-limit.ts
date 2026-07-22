@@ -11,8 +11,6 @@ export const SOCKET_RATE_LIMITS = {
   chat: { limit: 1, windowMs: 700 },
   // 소켓별 1차 스팸 가드 — 개인 쿨다운(playerId 키, socket-handler의 공유 리미터)과 별개
   throwItem: { limit: 3, windowMs: 10_000 },
-  // 설정 토글 동기화 — 연타해도 상태 변경뿐이지만 브로드캐스트 증폭 방지
-  setThrowables: { limit: 4, windowMs: 5_000 },
 } as const satisfies Record<string, SocketRateLimitRule>;
 
 export class SocketRateLimiter {

@@ -62,9 +62,10 @@ interface SettingsStore {
   historyHideNames: boolean;
   toggleHistoryHideNames: () => void;
   /**
-   * 아이템 투척 참여 (Zynga gift 모델의 opt-out) — 끄면 ①내 발사대 숨김 ②서버가 나를 향한
-   * 투척을 거부(맞지 않음, 조준 후보에서도 제외) ③수신 연출(비행/스플랫/표정/사운드) 미표시.
-   * 서버 동기화는 game-store가 set-throwables로 처리 (연결 시 + 토글 변경 시).
+   * 아이템 투척 표시 — 로컬 필터 (포커스타즈/하스스톤 등 업계 다수 방식, 2026-07-22 확정).
+   * 끄면 수신 연출(비행/스플랫/표정/사운드) 전부와 내 발사대 UI가 함께 꺼진다.
+   * 서버는 관여하지 않는다: 상대는 여전히 나를 조준할 수 있고 다른 사람 화면에선 내가
+   * 맞는 연출이 보이며, 내 설정은 상대에게 노출되지 않는다.
    */
   throwablesEnabled: boolean;
   toggleThrowables: () => void;

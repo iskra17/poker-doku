@@ -2372,18 +2372,6 @@ export class RoomManager {
   }
 
   /**
-   * 좌석의 투척 참여 opt-out 갱신 — 값이 바뀌면 스냅샷을 브로드캐스트해
-   * 다른 클라이언트의 조준 후보에서 즉시 제외/복귀시킨다.
-   */
-  setThrowablesOptOut(roomId: string, playerId: string, optOut: boolean): void {
-    const room = this.rooms.get(roomId);
-    const player = room?.engine.state.players.find(p => p.id === playerId);
-    if (!room || !player || !!player.throwablesOptOut === optOut) return;
-    player.throwablesOptOut = optOut || undefined;
-    this.onUpdate(roomId, room.engine);
-  }
-
-  /**
    * 봇이 투척 아이템에 맞았을 때 리액션 대사. 클라이언트 비행 연출이 끝난 시점(명중)에
    * 말풍선이 뜨도록 지연한다. botQuip이 방/좌석 소멸을 재검증하므로 dispose 이후에도 안전.
    */

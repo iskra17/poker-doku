@@ -134,7 +134,6 @@ export default function ThrowLauncher() {
     let best: { playerId: string; pos: TablePos; px: { x: number; y: number }; angle: number } | null = null;
     for (const p of state?.players ?? []) {
       if (p.id === myPlayerId) continue;
-      if (p.throwablesOptOut) continue; // 참여를 끈 좌석은 조준 불가 (서버도 거부)
       const pos = layout.seats[toDisplayIndex(p.seatIndex, mySeatIndex)];
       if (!pos) continue;
       const seatPx = toContainerPx(pos, rect);

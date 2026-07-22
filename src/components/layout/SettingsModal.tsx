@@ -225,10 +225,9 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <section>
               <SectionTitle>테이블</SectionTitle>
               <Toggle checked={stackedPot} onToggle={toggleStackedPot} label="팟 칩 권종별 쌓기" />
-              <Toggle checked={throwablesEnabled} onToggle={toggleThrowables} label="아이템 투척 참여" />
+              <Toggle checked={throwablesEnabled} onToggle={toggleThrowables} label="아이템 투척 표시" />
               <p className="text-[11px] text-ink-dim leading-snug">
-                끄면 아이템을 던질 수 없고, 다른 플레이어도 나에게 던질 수 없어요.
-                테이블의 투척 연출도 보이지 않아요.
+                끄면 다른 플레이어가 던진 아이템 연출이 내 화면에 보이지 않고, 내 투척 버튼도 숨겨요.
               </p>
             </section>
           </>
