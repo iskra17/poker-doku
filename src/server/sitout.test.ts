@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldRemoveForMissedBlinds, SITOUT_MISSED_BB_LIMIT } from './sitout';
+import { shouldRemoveForMissedBlinds, SITOUT_MISSED_BB_LIMIT, SITOUT_MIN_WALL_MS } from './sitout';
 
 describe('shouldRemoveForMissedBlinds — 자리비움 자동 정리 판정', () => {
   it('한도 미만이면 유지, 도달하면 정리한다 (6인 테이블 = 오르빗 6핸드)', () => {
@@ -26,5 +26,19 @@ describe('shouldRemoveForMissedBlinds — 자리비움 자동 정리 판정', ()
 
   it('한도 상수는 2 (미납 빅블라인드 2회)', () => {
     expect(SITOUT_MISSED_BB_LIMIT).toBe(2);
+  });
+
+  it('오르빗 한도를 넘겨도 벽시계 하한 전에는 정리하지 않는다 (봇 폴드-페스트 방어)', () => {
+    // 봇만 남은 3인 테이블: 6핸드가 20~40초 만에 지나간다 — 2026-07-22 QA에서 좌석 소멸 8회
+    expect(shouldRemoveForMissedBlinds(6, 3, SITOUT_MIN_WALL_MS - 1)).toBe(false);
+    expect(shouldRemoveForMissedBlinds(6, 3, SITOUT_MIN_WALL_MS)).toBe(true);
+  });
+
+  it('벽시계만 지나고 오르빗 한도 미달이면 정리하지 않는다', () => {
+    expect(shouldRemoveForMissedBlinds(5, 3, SITOUT_MIN_WALL_MS * 10)).toBe(false);
+  });
+
+  it('타임스탬프 미지정(구 상태)이면 오르빗 조건 단독으로 판정한다', () => {
+    expect(shouldRemoveForMissedBlinds(12, 6)).toBe(true);
   });
 });

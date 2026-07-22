@@ -71,6 +71,7 @@ export interface Player {
    */
   sitOutAuto?: boolean;
   sitOutSinceHand?: number; // 캐시 자리비움 시작 시점의 handNumber — 경과 핸드로 미납 블라인드(≈오르빗) 산정
+  sitOutSinceMs?: number; // 캐시 자리비움 시작 시각(epoch ms) — 봇 속도로 오르빗이 수십 초로 축소돼도 벽시계 하한을 보장
   /**
    * 나가기 예약 (캐시 전용): 'hand'=이번 핸드 종료 시, 'bb'=다음 빅블라인드 차례 직전에
    * 서버가 자동 퇴장 처리 (RoomManager.processLeaveReservations — 핸드 종료 시 판정).

@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
+import { onGameEvent } from '@/lib/events/game-events';
 
 const SEEN_KEY = 'poker-doku-coachmarks-v1';
 
@@ -16,7 +17,8 @@ function alreadySeen(): boolean {
 /**
  * 첫 테이블 코치마크 — 90초 온보딩의 일부. 처음 테이블에 들어온 유저에게
  * ①내 차례 표시 ②액션 버튼 ③칩 정산 3가지만 짚어주고 비켜선다.
- * 탭 한 번으로 닫히고 다시는 안 나온다 (localStorage 1회).
+ * 탭 한 번으로 닫히면 다시는 안 나온다 (localStorage 1회). 내 턴이 시작되면 마킹 없이
+ * 자동으로 비켜서고(첫 턴 타임아웃 방지), 이 경우 다음 입장 때 다시 보여준다.
  */
 export default function Coachmarks() {
   const [visible, setVisible] = useState(() =>
@@ -31,6 +33,15 @@ export default function Coachmarks() {
       // 저장 실패 시 이번 세션만 숨김
     }
   };
+
+  // 내 턴이 시작되면 마킹 없이 비켜선다 — 읽는 사이 첫 턴이 타임아웃(자동 폴드+자리비움)되는 것 방지.
+  // 탭으로 닫은 게 아니므로 SEEN_KEY를 남기지 않아 다음 테이블 입장 때 다시 보여준다.
+  useEffect(() => {
+    if (!visible) return;
+    return onGameEvent(event => {
+      if (event.type === 'my-turn-start') setVisible(false);
+    });
+  }, [visible]);
 
   return (
     <AnimatePresence>

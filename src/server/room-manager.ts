@@ -1101,11 +1101,15 @@ export class RoomManager {
       if (p.chips > 0) {
         const out = !isSng && (p.isDisconnected || p.sitOutNext);
         p.status = out ? 'sitting-out' : 'waiting';
-        // 캐시 자리비움 시작 시점 기록 (미납 오르빗 산정 기준). 복귀하면 clear.
+        // 캐시 자리비움 시작 시점 기록 (미납 오르빗 + 벽시계 하한 산정 기준). 복귀하면 clear.
         if (out) {
-          if (p.sitOutSinceHand === undefined) p.sitOutSinceHand = room.engine.state.handNumber;
+          if (p.sitOutSinceHand === undefined) {
+            p.sitOutSinceHand = room.engine.state.handNumber;
+            p.sitOutSinceMs = Date.now();
+          }
         } else {
           p.sitOutSinceHand = undefined;
+          p.sitOutSinceMs = undefined;
         }
       }
     }
@@ -1215,7 +1219,9 @@ export class RoomManager {
       if (p.type !== 'human' || p.pendingRemoval || p.chips <= 0) continue;
       if (p.status !== 'sitting-out' || p.sitOutSinceHand === undefined) continue;
       const handsSatOut = st.handNumber - p.sitOutSinceHand;
-      if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize)) toRemove.push(p);
+      // 타임스탬프가 없으면(구 상태) 벽시계 조건은 통과한 것으로 본다 — 오르빗 조건 단독 판정
+      const satOutMs = p.sitOutSinceMs === undefined ? Infinity : Date.now() - p.sitOutSinceMs;
+      if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize, satOutMs)) toRemove.push(p);
     }
     for (const p of toRemove) {
       if (this.leaveRoom(roomId, p.id)) {
@@ -1379,6 +1385,7 @@ export class RoomManager {
       player.sitOutNext = false;
       player.sitOutAuto = undefined;
       player.sitOutSinceHand = undefined;
+      player.sitOutSinceMs = undefined;
       this.cancelSitOutAbandon(roomId, playerId);
       if (player.status === 'sitting-out' && player.chips > 0 && !player.isDisconnected) {
         player.status = 'waiting';
@@ -2018,6 +2025,7 @@ export class RoomManager {
       actor.sitOutAuto = undefined;
       actor.sitOutNext = false;
       actor.sitOutSinceHand = undefined;
+      actor.sitOutSinceMs = undefined;
       this.sendSystemChat(roomId, `${actor.name}님이 게임에 복귀했습니다.`);
     }
 

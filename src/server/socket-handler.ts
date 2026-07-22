@@ -1194,6 +1194,7 @@ export function setupSocketHandlers(
             seated.sitOutNext = false;
             seated.sitOutAuto = undefined;
             seated.sitOutSinceHand = undefined;
+            seated.sitOutSinceMs = undefined;
             if (!seated.isDisconnected) {
               seated.status = 'waiting';
             }
