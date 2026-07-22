@@ -17,6 +17,7 @@ import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
 import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, BUST_RECLAIM_MS, shouldRemoveForMissedBlinds } from './sitout';
+import { THROW_FLIGHT_MS } from '../lib/throwables/catalog';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
 import { eventLog, handSettlementLogFields } from './event-log';
@@ -38,6 +39,14 @@ const MAX_PRE_HAND_RETRIES = 3;
 const HAND_SETTLEMENT_RETRY_MS = 1_000;
 const SNG_FINALIZE_RETRY_MS = 1_000;
 const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
+
+// 봇 피격 리액션 AI 생성 실패 시 폴백 대사 (캐릭터 중립 톤 — 2차에서 캐릭터별 대사 확장 가능)
+const THROWABLE_HIT_FALLBACKS = [
+  '야! 지금 뭐 던진 거야?!',
+  '으악! 정통으로 맞았잖아…!',
+  '이게 무슨 짓이야! 두고 봐!',
+  '아잇… 카드에 집중 좀 하자?',
+] as const;
 
 export interface RoomHandHistoryHooks {
   recordCompletedHand(input: {
@@ -2360,6 +2369,22 @@ export class RoomManager {
     } catch {
       // 히스토리 저장 실패는 게임에 치명적이지 않다 — 다음 핸드 진행을 우선한다
     }
+  }
+
+  /**
+   * 봇이 투척 아이템에 맞았을 때 리액션 대사. 클라이언트 비행 연출이 끝난 시점(명중)에
+   * 말풍선이 뜨도록 지연한다. botQuip이 방/좌석 소멸을 재검증하므로 dispose 이후에도 안전.
+   */
+  reactToThrowableHit(roomId: string, targetPlayerId: string, throwerName: string, itemName: string): void {
+    if (Math.random() > 0.6) return; // 확률 게이팅 — 연속 투척 시 대사 도배 방지
+    setTimeout(() => {
+      const room = this.rooms.get(roomId);
+      const player = room?.engine.state.players.find(p => p.id === targetPlayerId);
+      if (!player || player.type !== 'bot') return;
+      const fallback = THROWABLE_HIT_FALLBACKS[Math.floor(Math.random() * THROWABLE_HIT_FALLBACKS.length)];
+      const situation = `${throwerName}이(가) 테이블 너머로 던진 ${itemName}에 정통으로 맞았다. 놀람과 장난 섞인 짧은 반발 한마디.`;
+      void this.botQuip(roomId, player, 'throwable-hit', situation, fallback);
+    }, THROW_FLIGHT_MS + 250);
   }
 
   /**

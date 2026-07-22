@@ -4,6 +4,7 @@ import { RoomManager, type RoomHandHistoryHooks } from './room-manager';
 import { SessionManager, GRACE_MS, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
+import { THROWABLE_MAP, THROW_COOLDOWN_MS } from '../lib/throwables/catalog';
 import { SNG_BLIND_SCHEDULE, SNG_STARTING_STACK } from '../lib/poker/blind-schedule';
 import { clientAddressFromHeaders } from './client-address';
 import { eventLog, tokenHint } from './event-log';
@@ -161,6 +162,9 @@ export function setupSocketHandlers(
     arena,
   } = options;
   const sessions = new SessionManager();
+  // 투척 개인 쿨다운 — playerId 키의 공유 인스턴스라 재접속/탭 교체로 우회 불가.
+  // (소켓별 rateLimiter는 커넥션 수명이라 쿨다운 저장소로 부적합)
+  const throwCooldowns = new SocketRateLimiter();
   let arenaRuntime: ArenaRuntime | undefined;
   let arenaMatchmaker: ArenaMatchmaker | undefined;
   const progression = progressionService
@@ -1772,6 +1776,80 @@ export function setupSocketHandlers(
       // 클라이언트가 보낸 텍스트는 신뢰하지 않고 서버 테이블에서 id→문구를 조회한다.
       roomManager.addChatMessage(session.roomId, session.playerId, player.name, text);
       ack?.({ ok: true });
+    });
+
+    // 아이템 투척 — 게임 상태와 무관한 즉발 연출이라 엔진을 건드리지 않고 방 브로드캐스트만.
+    // 이벤트 로그는 남기지 않는다 (거절 payload가 로그를 증폭하지 않게 — send-chat과 동일 정책).
+    socket.on('throw-item', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ cooldownMs: number }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload: input, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(input) || typeof input.itemId !== 'string' || typeof input.targetPlayerId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      // 클라이언트 문자열을 신뢰하지 않는다 — 카탈로그 조회가 유일한 판정
+      const def = THROWABLE_MAP[input.itemId];
+      if (!def) {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('throwItem', '아이템 투척이 너무 빨라요.', ack)) return;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
+      const room = roomManager.getRoom(session.roomId);
+      if (!room) {
+        ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
+        return;
+      }
+      const state = room.engine.state;
+      const thrower = state.players.find(p => p.id === session.playerId);
+      if (!thrower) {
+        ack?.({ ok: false, code: 'action-rejected', message: '좌석에 앉아 있을 때만 던질 수 있어요.' });
+        return;
+      }
+      // 관전 상태 차단 — GameRoomView busted 판정과 동일 계약 (파산 리바이 유예/SnG 탈락)
+      const busted = thrower.chips <= 0
+        && !(state.isHandInProgress && (thrower.status === 'active' || thrower.status === 'all-in'));
+      if (busted || thrower.finishPlace) {
+        ack?.({ ok: false, code: 'action-rejected', message: '관전 중에는 아이템을 던질 수 없어요.' });
+        return;
+      }
+      const target = state.players.find(p => p.id === input.targetPlayerId);
+      if (!target || target.id === thrower.id) {
+        ack?.({ ok: false, code: 'action-rejected', message: '던질 상대를 찾을 수 없어요.' });
+        return;
+      }
+      // 해금 검증 — MVP는 스타터만 존재. 2차(도장 레벨/미션) 추가 시 progression 스냅샷에서
+      // dojoLevel/inventory를 뽑아 isThrowableUnlocked(input.itemId, ctx)로 교체할 것.
+      if (def.unlock.kind !== 'starter') {
+        ack?.({ ok: false, code: 'action-rejected', message: '아직 해금하지 않은 아이템이에요.' });
+        return;
+      }
+      // 개인 쿨다운 (핸드 진행 여부는 보지 않는다 — 언제든 던질 수 있음)
+      if (!throwCooldowns.allow(`throw:${session.playerId}`, { limit: 1, windowMs: THROW_COOLDOWN_MS })) {
+        ack?.({ ok: false, code: 'rate-limited', message: '아이템은 잠시 후에 다시 던질 수 있어요.' });
+        return;
+      }
+      io.to(session.roomId).emit('throwable-thrown', {
+        roomId: session.roomId,
+        throwId: randomUUID(),
+        itemId: def.id,
+        fromPlayerId: thrower.id,
+        fromSeatIndex: thrower.seatIndex,
+        targetPlayerId: target.id,
+        targetSeatIndex: target.seatIndex,
+      });
+      if (target.type === 'bot') {
+        roomManager.reactToThrowableHit(session.roomId, target.id, thrower.name, def.name);
+      }
+      ack?.({ ok: true, data: { cooldownMs: THROW_COOLDOWN_MS } });
     });
 
     // Create room

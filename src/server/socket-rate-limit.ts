@@ -9,6 +9,8 @@ export const SOCKET_RATE_LIMITS = {
   roomSync: { limit: 10, windowMs: 5_000 },
   createRoom: { limit: 1, windowMs: 5_000 },
   chat: { limit: 1, windowMs: 700 },
+  // 소켓별 1차 스팸 가드 — 개인 쿨다운(playerId 키, socket-handler의 공유 리미터)과 별개
+  throwItem: { limit: 3, windowMs: 10_000 },
 } as const satisfies Record<string, SocketRateLimitRule>;
 
 export class SocketRateLimiter {
