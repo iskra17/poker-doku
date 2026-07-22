@@ -101,9 +101,11 @@ export default function ActionBar() {
   );
 
   // ---- 대기 상태 ----
+  // 독 배경은 전체 폭, 내용물(자리비움 버튼 포함)은 게임 영역 중앙 컨테이너(1100px)에 정렬
   if (!isMyTurn || !myPlayer || pendingAction) {
     return (
       <div className={dockClass}>
+        <div className="relative mx-auto w-full max-w-[1100px]">
         {sitOutButton}
         <div
           className="flex flex-col items-center justify-center gap-2 px-3"
@@ -125,6 +127,7 @@ export default function ActionBar() {
                 ? `${activePlayer.name}님이 생각 중...`
                 : '다음 핸드를 기다리는 중...'}
           </p>
+        </div>
         </div>
       </div>
     );
@@ -211,6 +214,7 @@ export default function ActionBar() {
 
   return (
     <div className={dockClass}>
+      <div className="relative mx-auto w-full max-w-[1100px]">
       {sitOutButton}
       <div
         className="flex items-stretch gap-2.5 px-3 w-full max-w-md mx-auto"
@@ -378,6 +382,7 @@ export default function ActionBar() {
             />
           </div>
         )}
+      </div>
       </div>
     </div>
   );

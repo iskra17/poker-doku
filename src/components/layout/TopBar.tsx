@@ -35,7 +35,10 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const { copied, copy } = useInviteLink(currentRoomId);
 
   return (
-    <div className="flex items-center justify-between px-3 py-1.5 md:px-4 md:py-2 bg-panel/80 border-b border-mystic/20 z-30 pt-safe">
+    // 바 배경은 전체 폭, 내용물은 게임 영역 중앙 컨테이너(1100px — GameRoomView와 동일)에 정렬:
+    // 광폭 화면에서 로고/블라인드/아이콘이 화면 양끝까지 벌어지지 않게 (2026-07-22 유저 피드백)
+    <div className="bg-panel/80 border-b border-mystic/20 z-30 pt-safe">
+      <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between px-3 py-1.5 md:px-4 md:py-2">
       <div className="flex items-center gap-2 md:gap-3">
         <Button variant="secondary" size="sm" onClick={onLeave}>
           ←
@@ -100,6 +103,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
           <span className="text-ink-dim/70 text-[10px] md:text-xs hidden md:inline">{playerName}</span>
         </div>
+      </div>
       </div>
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
