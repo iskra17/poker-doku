@@ -964,6 +964,16 @@ export class TournamentManager {
       return this.roomManager.getRoom(roomId) ? 'hold' : 'gone';
     }
 
+    const enteringH4h = (
+      !t.h4h.active
+      && t.tables.size > 1
+      && t.remaining === paidPlaces(t.seatedCount) + 1
+    );
+    // 파이널 전환이 아니면 테이블 브레이크/밸런싱을 먼저 확정한 뒤 다음 H4H를 무장한다.
+    // H4H 진입 경계에서는 방금 끝난 테이블이 숏이어도 전역 최다 테이블에서 이동할 수 있다.
+    const balance = this.balanceAfterHand(t, roomId, enteringH4h);
+    if (balance === 'gone') return 'gone';
+
     // 버블(입상 1명 전) 도달 → hand-for-hand 발동 (테이블 2개 이상일 때만 의미)
     if (!t.h4h.active && t.tables.size > 1 && t.remaining === paidPlaces(t.seatedCount) + 1) {
       this.activateH4h(t);
@@ -971,10 +981,6 @@ export class TournamentManager {
       this.tryReleaseH4h(t);
       return 'hold';
     }
-
-    // 밸런싱/테이블 브레이크 — 이 테이블은 방금 핸드를 끝냈으므로 이동/해체 안전 구간
-    const balance = this.balanceAfterHand(t, roomId);
-    if (balance === 'gone') return 'gone';
 
     // 브레이크 — 시계가 휴식 구간이면 전 테이블이 핸드를 끝내는 대로 정지
     if (this.clockPos(t).onBreak) {
@@ -1060,6 +1066,11 @@ export class TournamentManager {
     t.stage = 'complete';
     t.stageEndsAt = undefined;
     t.finishedAt = Date.now();
+    t.pausedAt = null;
+    t.h4h.active = false;
+    t.h4h.armed.clear();
+    t.h4h.busts = [];
+    t.holds.clear();
     if (t.finalIntroTimer) {
       clearTimeout(t.finalIntroTimer);
       t.finalIntroTimer = null;
@@ -1214,10 +1225,11 @@ export class TournamentManager {
     this.hooks.onTournamentsChanged?.();
 
     if (t.finalIntroTimer) clearTimeout(t.finalIntroTimer);
+    const introDelay = Math.max(0, (t.stageEndsAt ?? Date.now()) - Date.now());
     t.finalIntroTimer = setTimeout(() => {
       t.finalIntroTimer = null;
       this.finishFinalIntro(t);
-    }, 4_500);
+    }, introDelay);
     return true;
   }
 
@@ -1262,7 +1274,11 @@ export class TournamentManager {
     return counts;
   }
 
-  private balanceAfterHand(t: TournamentRuntime, roomId: string): 'kept' | 'gone' {
+  private balanceAfterHand(
+    t: TournamentRuntime,
+    roomId: string,
+    useGlobalExtremes = false,
+  ): 'kept' | 'gone' {
     let counts = this.aliveCounts(t);
     const totalAlive = [...counts.values()].reduce((s, v) => s + v, 0);
     const target = Math.max(1, Math.ceil(totalAlive / t.config.tableSize));
@@ -1281,17 +1297,25 @@ export class TournamentManager {
       counts = this.aliveCounts(t);
     }
 
-    // 개별 이동 — 이 테이블이 최다이고 최소 테이블과 격차 > 1이면 다음 BB 좌석을 이동
+    // 개별 이동 — 평상시는 기존처럼 방금 끝난 테이블에서만 이동한다.
+    // H4H 진입 경계는 1대4처럼 숏 테이블에서 탈락해도 전역 최다→최소로 먼저 맞춘다.
     counts = this.aliveCounts(t);
-    const myCount = counts.get(roomId) ?? 0;
     let minRoom: string | null = null;
     let minCount = Infinity;
+    let maxRoom: string | null = useGlobalExtremes ? null : roomId;
+    let maxCount = useGlobalExtremes ? -1 : (counts.get(roomId) ?? 0);
     for (const [rid, count] of counts) {
-      if (rid === roomId) continue;
+      if (!useGlobalExtremes && rid === roomId) continue;
       if (count < minCount) { minCount = count; minRoom = rid; }
+      if (useGlobalExtremes && count > maxCount) { maxCount = count; maxRoom = rid; }
     }
-    if (minRoom && myCount - minCount > 1) {
-      this.moveOnePlayer(t, roomId, minRoom);
+    const maxEngine = maxRoom ? this.roomManager.getRoom(maxRoom)?.engine : undefined;
+    if (
+      minRoom && maxRoom && minRoom !== maxRoom
+      && maxCount - minCount > 1
+      && maxEngine && !maxEngine.state.isHandInProgress
+    ) {
+      this.moveOnePlayer(t, maxRoom, minRoom);
     }
 
     return 'kept';

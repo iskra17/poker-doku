@@ -258,4 +258,35 @@ describe('MTT break resume', () => {
     tm.roomHooks.onHandStarted(t1, engine(t1).state.handNumber);
     expect(tm.roomHooks.isHeld(t1)).toBe(true);
   });
+
+  it('balances a 4-max 1-versus-4 bubble before arming H4H', () => {
+    const { tables: [shortRoomId, fullRoomId] } = prepareH4hBubble(tm, rm);
+    const short = rm.getRoom(shortRoomId)!.engine;
+    const full = rm.getRoom(fullRoomId)!.engine;
+    short.removePendingPlayers();
+    full.removePendingPlayers();
+
+    // remaining 6을 의도적으로 2대4로 만든 뒤 숏 테이블에서 한 명이 탈락해 1대4 버블이 된다.
+    const mover = short.state.players.find(p => p.chips > 0)!;
+    const occupied = new Set(full.state.players.map(p => p.seatIndex));
+    const emptySeat = [0, 1, 2, 3].find(seat => !occupied.has(seat));
+    if (emptySeat === undefined) throw new Error('missing destination seat');
+    expect(rm.transferMttSeat(shortRoomId, fullRoomId, mover.id, emptySeat)).toBe(true);
+
+    const bubble = short.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(shortRoomId)).toBe('hold');
+
+    const counts = [shortRoomId, fullRoomId]
+      .map(roomId => rm.getRoom(roomId)!.engine.state.players.filter(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      ).length)
+      .sort((a, b) => a - b);
+    expect(counts).toEqual([2, 3]);
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(false);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
+  });
 });

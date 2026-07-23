@@ -391,6 +391,71 @@ describe('TournamentManager', () => {
     expect(resume).toHaveBeenCalledWith(roomId);
   });
 
+  it('clears lower-priority holds when the tournament completes during final intro', () => {
+    const created = h.manager.createTournament({
+      name: '인트로 중 완료',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 5; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [roomId] = mttTableIds(h.roomManager);
+    const engine = engineOf(h.roomManager, roomId);
+    expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(engine.state.tournament?.holdReasons).toEqual(['director-pause', 'final-intro']);
+
+    aliveIds(engine).slice(0, 4).forEach((playerId, i) => bust(engine, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('hold');
+
+    expect(engine.state.tournament?.finished).toBe(true);
+    expect(engine.state.tournament?.stage).toBe('complete');
+    expect(engine.state.tournament?.holdReasons).toEqual([]);
+    expect(engine.state.tournament?.stageEndsAt).toBeUndefined();
+    expect(h.manager.getDetail(created.tournamentId)?.holdReasons).toEqual([]);
+    expect(h.manager.listTournaments()[0].holdReasons).toEqual([]);
+  });
+
+  it('arms final intro for only the time remaining on its published deadline', () => {
+    let shiftedClock = false;
+    h = createHarness({
+      onTournamentUpdate: tournamentId => {
+        if (!shiftedClock && h.manager.getDetail(tournamentId)?.stage === 'final-intro') {
+          shiftedClock = true;
+          vi.setSystemTime(Date.now() + 1_000);
+        }
+      },
+    });
+    const { tables } = start12(h);
+    const [t1, t2] = tables;
+    const e1 = engineOf(h.roomManager, t1);
+    const e2 = engineOf(h.roomManager, t2);
+
+    aliveIds(e1).slice(0, 5).forEach((playerId, i) => bust(e1, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('continue');
+    aliveIds(e2).slice(0, 2).forEach((playerId, i) => bust(e2, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(t2)).toBe('hold');
+
+    const [finalRoomId] = mttTableIds(h.roomManager);
+    const finalEngine = engineOf(h.roomManager, finalRoomId);
+    expect(shiftedClock).toBe(true);
+    expect(finalEngine.state.tournament?.stageEndsAt).toBe(Date.now() + 3_500);
+
+    vi.advanceTimersByTime(3_499);
+    expect(finalEngine.state.tournament?.stage).toBe('final-intro');
+    vi.advanceTimersByTime(1);
+    expect(finalEngine.state.tournament?.stage).toBe('final-playing');
+  });
+
   it('completes the tournament and pays the ladder exactly', () => {
     const { tables } = start12(h);
     const [t1, t2] = tables;
