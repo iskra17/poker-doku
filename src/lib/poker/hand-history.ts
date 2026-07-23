@@ -9,8 +9,8 @@ import type {
  * 원본 레코드는 엔진 밖(브로드캐스트·로그)으로 절대 내보내지 말 것 — 머킹된 패가 노출된다.
  */
 
-/** 블라인드 포스팅도 액션 타임라인에 포함해 리플레이를 완결시킨다 */
-export type HandHistoryActionKind = ActionType | 'post-sb' | 'post-bb';
+/** 블라인드/앤티 포스팅도 액션 타임라인에 포함해 리플레이를 완결시킨다 */
+export type HandHistoryActionKind = ActionType | 'post-sb' | 'post-bb' | 'post-ante';
 
 export interface HandHistoryAction {
   street: Street;
@@ -91,13 +91,16 @@ export interface HandHistorySummary {
   tableHandId?: number | null;
 }
 
-/** 딜러부터 시계방향 딜인 순서에 대한 포지션 라벨 (6-max 기준) */
+/** 딜러부터 시계방향 딜인 순서에 대한 포지션 라벨 (2~9인) */
 export function positionLabels(count: number): string[] {
   switch (count) {
     case 2: return ['BTN/SB', 'BB'];
     case 3: return ['BTN', 'SB', 'BB'];
     case 4: return ['BTN', 'SB', 'BB', 'UTG'];
     case 5: return ['BTN', 'SB', 'BB', 'UTG', 'CO'];
-    default: return ['BTN', 'SB', 'BB', 'UTG', 'HJ', 'CO'];
+    case 6: return ['BTN', 'SB', 'BB', 'UTG', 'HJ', 'CO'];
+    case 7: return ['BTN', 'SB', 'BB', 'UTG', 'MP', 'HJ', 'CO'];
+    case 8: return ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'HJ', 'CO'];
+    default: return ['BTN', 'SB', 'BB', 'UTG', 'UTG+1', 'MP', 'LJ', 'HJ', 'CO'];
   }
 }

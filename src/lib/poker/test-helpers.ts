@@ -82,20 +82,34 @@ export interface TableSetup {
   initialTotal: number;
 }
 
+export interface TableSetupOptions {
+  maxPlayers?: number; // 기본 6 — MTT 가변 정원 테스트용
+  gameMode?: 'cash' | 'sng' | 'mtt';
+  ante?: number; // BB 앤티 (MTT)
+  smallBlind?: number;
+  bigBlind?: number;
+}
+
 /**
  * 표준 테스트 테이블: 블라인드 10/20.
  * dealerIndex를 조작해 startHand 후 딜러가 players[0]이 되도록 한다.
  * (advanceDealerButton이 시작 시 딜러를 한 칸 전진시키므로 마지막 인덱스로 설정)
  */
-export function setupTable(chipCounts: number[], riggedCodes?: string): TableSetup {
+export function setupTable(
+  chipCounts: number[],
+  riggedCodes?: string,
+  options: TableSetupOptions = {},
+): TableSetup {
   const config = {
     name: 'Test Table',
-    smallBlind: 10,
-    bigBlind: 20,
+    smallBlind: options.smallBlind ?? 10,
+    bigBlind: options.bigBlind ?? 20,
     minBuyIn: 100,
     maxBuyIn: 10000,
-    maxPlayers: 6 as const,
+    maxPlayers: options.maxPlayers ?? 6,
     turnTime: 30,
+    ...(options.gameMode ? { gameMode: options.gameMode } : {}),
+    ...(options.ante !== undefined ? { ante: options.ante } : {}),
   };
   const deck = riggedCodes ? new RiggedDeck(riggedCodes) : new Deck();
   const engine = new PokerEngine(config, 'test-room', deck);

@@ -119,12 +119,13 @@ export class PokerEngine {
       handNumber: 0,
       actionSeq: 0,
       hostId: config.hostId,
-      ...(config.gameMode === 'sng'
+      ...(config.gameMode === 'sng' || config.gameMode === 'mtt'
         ? {
             tournament: {
               level: 1,
               smallBlind: config.smallBlind,
               bigBlind: config.bigBlind,
+              ante: config.ante ?? 0,
               nextSmallBlind: null,
               nextBigBlind: null,
               levelEndsAt: 0,
@@ -141,12 +142,21 @@ export class PokerEngine {
   // --- 시트앤고 토너먼트 ---
 
   /**
+   * MTT 테이블 여부. MTT에서는 테이블 로컬 우승 판정·상금 풀 산정·순위 부여를 전부
+   * TournamentManager가 소유한다 — 엔진의 SnG 로컬 판정(startTournament/checkTournamentEnd/
+   * assignFinishPlaces/이탈 즉시 순위)은 "이 테이블 = 토너먼트 전체" 전제라 MTT에선 오동작한다.
+   */
+  private isMtt(): boolean {
+    return this.config.gameMode === 'mtt';
+  }
+
+  /**
    * 토너먼트 개시 — 첫 핸드 시작 직전에 호출.
-   * 참가 인원/상금 풀(총 칩 × 배분율)을 확정한다.
+   * 참가 인원/상금 풀(총 칩 × 배분율)을 확정한다. (SnG 전용 — MTT는 매니저가 주입)
    */
   startTournament(levelEndsAt: number, nextSmallBlind: number | null, nextBigBlind: number | null): void {
     const t = this.state.tournament;
-    if (!t || t.entrants > 0) return;
+    if (!t || t.entrants > 0 || this.isMtt()) return;
     t.entrants = this.state.players.length;
     if (this.config.competitionMode) {
       t.prizes = [];
@@ -170,16 +180,19 @@ export class PokerEngine {
     nextSmallBlind: number | null,
     nextBigBlind: number | null,
     levelEndsAt: number,
+    ante = 0,
   ): void {
     const t = this.state.tournament;
     if (!t) return;
     this.config.smallBlind = smallBlind;
     this.config.bigBlind = bigBlind;
+    this.config.ante = ante;
     this.state.smallBlind = smallBlind;
     this.state.bigBlind = bigBlind;
     t.level = level;
     t.smallBlind = smallBlind;
     t.bigBlind = bigBlind;
+    t.ante = ante;
     t.nextSmallBlind = nextSmallBlind;
     t.nextBigBlind = nextBigBlind;
     t.levelEndsAt = levelEndsAt;
@@ -266,8 +279,9 @@ export class PokerEngine {
     const player = this.state.players[idx];
 
     // 시트앤고 진행 중 이탈 = 현재 순위로 탈락 확정 (기록은 results에 남아 splice와 무관)
+    // MTT 제외 — 테이블 이동(transferSeat)도 이 경로를 타므로 이탈≠탈락이고, 순위는 매니저 소유.
     const t = this.state.tournament;
-    if (t && t.entrants > 0 && !t.finished && !player.finishPlace) {
+    if (t && !this.isMtt() && t.entrants > 0 && !t.finished && !player.finishPlace) {
       const alivePlace = this.state.players.filter(p => !p.finishPlace && !p.pendingRemoval).length;
       this.recordFinish(player, alivePlace);
       // 이탈자는 finishPlace가 생겨 alive 계산에서 빠짐 — 1명만 남으면 즉시 우승 확정
@@ -391,6 +405,7 @@ export class PokerEngine {
     // Reset players
     for (const player of this.state.players) {
       player.totalContributed = 0;
+      player.deadContributed = 0;
       player.handStartChips = player.chips; // 동시 탈락 순위 판정용 스냅샷
       if (player.chips > 0 && player.status !== 'sitting-out') {
         player.status = 'active';
@@ -470,6 +485,7 @@ export class PokerEngine {
       const sbPlayer = this.state.players[dealerPos];
       const bbIdx = this.getNextActiveIndex(dealerPos);
       const bbPlayer = this.state.players[bbIdx];
+      this.postAnte(bbPlayer);
       this.postBlind(sbPlayer, this.config.smallBlind, 'post-sb');
       this.postBlind(bbPlayer, this.config.bigBlind, 'post-bb');
       this.state.smallBlindId = sbPlayer.id;
@@ -477,6 +493,7 @@ export class PokerEngine {
     } else {
       const sbIdx = this.getNextActiveIndex(dealerPos);
       const bbIdx = this.getNextActiveIndex(sbIdx);
+      this.postAnte(this.state.players[bbIdx]);
       this.postBlind(this.state.players[sbIdx], this.config.smallBlind, 'post-sb');
       this.postBlind(this.state.players[bbIdx], this.config.bigBlind, 'post-bb');
       this.state.smallBlindId = this.state.players[sbIdx].id;
@@ -485,6 +502,29 @@ export class PokerEngine {
 
     this.state.currentBet = this.config.bigBlind;
     this.rebuildPots();
+  }
+
+  /**
+   * 빅블라인드 앤티 — BB 좌석 한 명이 테이블 몫을 일괄 납부하는 현대 표준 (통상 1BB).
+   * TDA 순서대로 블라인드보다 먼저 공제하고, currentBet에는 포함하지 않는 dead money다
+   * (totalContributed에만 더해 rebuildPots가 팟·올인 캡에 자연 반영). 스택이 부족하면
+   * 앤티가 우선이라 낼 수 있는 만큼만 내고 올인된다.
+   */
+  private postAnte(player: Player): void {
+    const ante = this.config.ante ?? 0;
+    if (ante <= 0 || !player) return;
+    const actual = Math.min(ante, player.chips);
+    if (actual <= 0) return;
+    player.chips -= actual;
+    player.totalContributed += actual;
+    player.deadContributed = (player.deadContributed ?? 0) + actual;
+    if (player.chips === 0) player.status = 'all-in';
+    this.handRecordDraft?.actions.push({
+      street: 'preflop',
+      playerId: player.id,
+      kind: 'post-ante',
+      amount: actual,
+    });
   }
 
   private postBlind(player: Player, amount: number, kind: 'post-sb' | 'post-bb'): void {
@@ -736,23 +776,32 @@ export class PokerEngine {
       return;
     }
 
-    // 올인 컨텐더의 기여 레벨에서만 팟을 자른다 + 상위 전체를 담는 마지막 계층
+    // 앤티(deadContributed)는 베팅 매칭 대상이 아니다 — 팟 계층은 라이브 기여금에서만
+    // 자르고 dead 총액은 첫 팟에 귀속한다. totalContributed로 캡을 자르면 숏스택 BB의
+    // 앤티가 올인 캡을 부풀려 "상대가 매칭 못 한 금액"이 그 팟에 섞인다.
+    const live = (p: Player) => p.totalContributed - (p.deadContributed ?? 0);
+    const deadTotal = contributors.reduce((s, p) => s + (p.deadContributed ?? 0), 0);
+
+    // 올인 컨텐더의 라이브 기여 레벨에서만 팟을 자른다 + 상위 전체를 담는 마지막 계층.
+    // 앤티만 내고 올인된 좌석은 live 0 레벨을 만들어 dead 팟(첫 팟)의 자격만 갖는다.
     const allInLevels = [
-      ...new Set(contenders.filter(p => p.status === 'all-in').map(p => p.totalContributed)),
+      ...new Set(contenders.filter(p => p.status === 'all-in').map(live)),
     ].sort((a, b) => a - b);
     const levels: number[] = [...allInLevels, Infinity];
 
     const pots: Pot[] = [];
     let prev = 0;
+    let deadRemaining = deadTotal;
     for (const level of levels) {
-      const amount = contributors.reduce(
-        (s, p) => s + Math.max(0, Math.min(p.totalContributed, level) - prev), 0);
+      const liveAmount = contributors.reduce(
+        (s, p) => s + Math.max(0, Math.min(live(p), level) - prev), 0);
+      const amount = liveAmount + deadRemaining;
       if (amount <= 0) {
         prev = level;
         continue;
       }
       const eligible = contenders.filter(p =>
-        level === Infinity ? p.totalContributed > prev || allInLevels.length === 0 : p.totalContributed >= level,
+        level === Infinity ? live(p) > prev || allInLevels.length === 0 : live(p) >= level,
       );
       if (eligible.length === 0 && pots.length > 0) {
         // 자격자 없는 잔여분(예: 올인 캡 초과 dead money)은 직전 팟에 귀속
@@ -763,6 +812,7 @@ export class PokerEngine {
           eligiblePlayerIds: (eligible.length > 0 ? eligible : contenders).map(p => p.id),
         });
       }
+      deadRemaining = 0;
       prev = level;
     }
 
@@ -1099,11 +1149,43 @@ export class PokerEngine {
     }
   }
 
-  /** 핸드 종료 후 시트앤고 탈락/종료 판정 */
+  /**
+   * 핸드 종료 후 시트앤고 탈락/종료 판정.
+   * MTT는 전역 순위(잔존 필드 수 기준)와 종료 판정을 TournamentManager가 소유하므로 스킵 —
+   * 매니저가 handleCompletedHand 훅에서 버스트를 수집해 applyTournamentEliminations로 주입한다.
+   */
   private finalizeTournamentHand(): void {
     if (!this.state.tournament || this.state.tournament.finished) return;
+    if (this.isMtt()) return;
     this.assignFinishPlaces();
     this.checkTournamentEnd();
+  }
+
+  /**
+   * MTT 전용 — 매니저가 확정한 전역 순위/상금을 이 테이블 플레이어에게 주입한다.
+   * 동시 탈락 정렬(handStartChips)·전역 잔존 수 계산은 매니저 책임. 핸드 사이 호출 전제.
+   */
+  applyTournamentEliminations(
+    eliminations: readonly { playerId: string; place: number; prize: number }[],
+  ): void {
+    const t = this.state.tournament;
+    if (!t || !this.isMtt()) return;
+    for (const { playerId, place, prize } of eliminations) {
+      const player = this.state.players.find(p => p.id === playerId);
+      if (!player || player.finishPlace) continue;
+      player.finishPlace = place;
+      t.results.push({ playerId, name: player.name, place, prize });
+    }
+    t.results.sort((a, b) => a.place - b.place);
+  }
+
+  /** MTT 전용 — 매니저가 전체 필드 정보(표시용 미러)를 주입한다 */
+  setTournamentField(entrants: number, prizes: number[], finished: boolean): void {
+    const t = this.state.tournament;
+    if (!t || !this.isMtt()) return;
+    t.entrants = entrants;
+    t.prizes = prizes;
+    t.finished = finished;
   }
 
   getPublicState(forPlayerId?: string): GameState {
