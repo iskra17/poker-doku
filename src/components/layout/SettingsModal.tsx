@@ -171,6 +171,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     showDealerAvatar, toggleDealerAvatar, showDealerBubble, toggleDealerBubble,
     betStepUnit, setBetStepUnit,
     stackedPot, toggleStackedPot,
+    showBlindButtons, toggleBlindButtons,
     throwablesEnabled, toggleThrowables,
     muted, toggleMuted,
     musicMuted, toggleMusicMuted,
@@ -225,6 +226,10 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             <section>
               <SectionTitle>테이블</SectionTitle>
               <Toggle checked={stackedPot} onToggle={toggleStackedPot} label="팟 칩 권종별 쌓기" />
+              <Toggle checked={showBlindButtons} onToggle={toggleBlindButtons} label="SB/BB 포지션 버튼 표시" />
+              <p className="text-[11px] text-ink-dim leading-snug">
+                딜러 버튼처럼 스몰/빅 블라인드 자리도 버튼으로 표시해요. (딜러 버튼은 항상 표시)
+              </p>
               <Toggle checked={throwablesEnabled} onToggle={toggleThrowables} label="아이템 투척 표시" />
               <p className="text-[11px] text-ink-dim leading-snug">
                 끄면 다른 플레이어가 던진 아이템 연출이 내 화면에 보이지 않고, 내 투척 버튼도 숨겨요.

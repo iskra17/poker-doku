@@ -1,6 +1,7 @@
 'use client';
 
 import { useGameStore } from '@/lib/store/game-store';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useSeatActions } from '@/lib/hooks/use-seat-actions';
 import { motion } from 'framer-motion';
@@ -18,6 +19,7 @@ import { getLayout, toDisplayIndex } from './table-layout';
 
 export default function PokerTable() {
   const { gameState, myPlayerId } = useGameStore();
+  const showBlindButtons = useSettingsStore(s => s.showBlindButtons);
   const isMobile = useIsMobile();
   const seatActions = useSeatActions();
 
@@ -33,9 +35,39 @@ export default function PokerTable() {
 
   // dealerIndex는 players 배열 인덱스 — 좌석 번호로 변환해서 사용해야 한다
   const dealerSeatIndex = gameState.players[gameState.dealerIndex]?.seatIndex ?? -1;
-  const dealerBtnPos = dealerSeatIndex >= 0 && gameState.players.length >= 2
-    ? dealerBtnPositions[toDisplayIndex(dealerSeatIndex, mySeatIndex)]
-    : null;
+  // SB/BB는 엔진이 postBlinds에서 기록한 플레이어 id 기준 (핸드 사이 좌석 변동에 안전)
+  const seatIndexOf = (playerId?: string | null) =>
+    playerId ? gameState.players.find(p => p.id === playerId)?.seatIndex ?? -1 : -1;
+  const sbSeatIndex = seatIndexOf(gameState.smallBlindId);
+  const bbSeatIndex = seatIndexOf(gameState.bigBlindId);
+  // 포지션 버튼 3종 — 크기/모양 동일, 색만 구분 (업계 관행: D 골드/화이트, SB 블루, BB 레드 계열).
+  // 헤즈업(딜러=SB)은 표준대로 D만 표시. SB/BB는 설정(showBlindButtons)으로 숨김 가능.
+  const positionButtons = [
+    {
+      label: 'D',
+      title: '딜러 버튼',
+      seatIndex: dealerSeatIndex,
+      show: dealerSeatIndex >= 0 && gameState.players.length >= 2,
+      color: 'from-yellow-100 to-gilded border-yellow-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(255,215,106,0.45)]',
+      textSize: isMobile ? 'text-[11px]' : 'text-[13px]',
+    },
+    {
+      label: 'SB',
+      title: '스몰 블라인드',
+      seatIndex: sbSeatIndex,
+      show: showBlindButtons && sbSeatIndex >= 0 && sbSeatIndex !== dealerSeatIndex,
+      color: 'from-cyan-100 to-cyber border-cyan-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(107,228,255,0.45)]',
+      textSize: isMobile ? 'text-[8px]' : 'text-[10px]',
+    },
+    {
+      label: 'BB',
+      title: '빅 블라인드',
+      seatIndex: bbSeatIndex,
+      show: showBlindButtons && bbSeatIndex >= 0 && bbSeatIndex !== dealerSeatIndex,
+      color: 'from-pink-100 to-blossom border-pink-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(255,126,182,0.45)]',
+      textSize: isMobile ? 'text-[8px]' : 'text-[10px]',
+    },
+  ];
 
   return (
     <div className="relative w-full h-full">
@@ -129,25 +161,29 @@ export default function PokerTable() {
           );
         })}
 
-        {/* 딜러 버튼 — 좌석 옆 펠트 위에 크게. 핸드마다 이동 애니메이션 */}
-        {dealerBtnPos && (
-          <motion.div
-            className="absolute z-20 pointer-events-none"
-            style={{ x: '-50%', y: '-50%' }}
-            initial={false}
-            animate={{ left: dealerBtnPos.x, top: dealerBtnPos.y }}
-            transition={{ type: 'spring', stiffness: 300, damping: 26 }}
-          >
-            <div
-              className={`rounded-full bg-gradient-to-b from-yellow-100 to-gilded text-black font-black flex items-center justify-center
-                border-2 border-yellow-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(255,215,106,0.45)]
-                ${isMobile ? 'w-6 h-6 text-[11px]' : 'w-7 h-7 text-[13px]'}`}
-              title="딜러 버튼"
+        {/* 포지션 버튼 (D/SB/BB) — 좌석 옆 펠트 위에 크게. 핸드마다 이동 애니메이션 */}
+        {positionButtons.map(btn => {
+          if (!btn.show) return null;
+          const pos = dealerBtnPositions[toDisplayIndex(btn.seatIndex, mySeatIndex)];
+          return (
+            <motion.div
+              key={`pos-btn-${btn.label}`}
+              className="absolute z-20 pointer-events-none"
+              style={{ x: '-50%', y: '-50%' }}
+              initial={false}
+              animate={{ left: pos.x, top: pos.y }}
+              transition={{ type: 'spring', stiffness: 300, damping: 26 }}
             >
-              D
-            </div>
-          </motion.div>
-        )}
+              <div
+                className={`rounded-full bg-gradient-to-b text-black font-black flex items-center justify-center border-2
+                  ${btn.color} ${isMobile ? 'w-6 h-6' : 'w-7 h-7'} ${btn.textSize}`}
+                title={btn.title}
+              >
+                {btn.label}
+              </div>
+            </motion.div>
+          );
+        })}
 
         {/* Bet chips - 테이블 중앙 방향에 배치 (좌석과 같은 회전 적용) */}
         {betPositions.map((_, i) => {

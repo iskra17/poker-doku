@@ -456,11 +456,15 @@ export class PokerEngine {
       const bbPlayer = this.state.players[bbIdx];
       this.postBlind(sbPlayer, this.config.smallBlind, 'post-sb');
       this.postBlind(bbPlayer, this.config.bigBlind, 'post-bb');
+      this.state.smallBlindId = sbPlayer.id;
+      this.state.bigBlindId = bbPlayer.id;
     } else {
       const sbIdx = this.getNextActiveIndex(dealerPos);
       const bbIdx = this.getNextActiveIndex(sbIdx);
       this.postBlind(this.state.players[sbIdx], this.config.smallBlind, 'post-sb');
       this.postBlind(this.state.players[bbIdx], this.config.bigBlind, 'post-bb');
+      this.state.smallBlindId = this.state.players[sbIdx].id;
+      this.state.bigBlindId = this.state.players[bbIdx].id;
     }
 
     this.state.currentBet = this.config.bigBlind;

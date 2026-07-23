@@ -113,6 +113,13 @@ export interface GameState {
   bigBlind: number;
   isHandInProgress: boolean;
   /**
+   * 이번 핸드 SB/BB 좌석의 플레이어 id — 클라 포지션 버튼(SB/BB) 표시용.
+   * postBlinds가 갱신하고 다음 핸드까지 유지된다 (dealerIndex와 같은 수명).
+   * 배열 인덱스가 아닌 id라 핸드 사이 좌석 제거(splice)에도 안전하다. 헤즈업은 딜러=SB.
+   */
+  smallBlindId?: string | null;
+  bigBlindId?: string | null;
+  /**
    * 단계별 올인 런아웃 진행 중 — 응수 가능한 플레이어가 없어(전원 올인 등) 베팅이 닫혔고,
    * RoomManager가 dealRunoutStreet()를 시간차로 호출해 스트리트를 순차 공개한다.
    * 이 동안 생존자의 홀카드는 getPublicState가 공개(revealed)한다 (표준 룰: 올인 확정 시 핸드 오픈).

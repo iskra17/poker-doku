@@ -52,6 +52,9 @@ interface SettingsStore {
   /** 팟 칩을 권종별로 쌓아 올리는 연출 */
   stackedPot: boolean;
   toggleStackedPot: () => void;
+  /** SB/BB 포지션 버튼 표시 — 딜러 버튼과 같은 문법의 블라인드 위치 마커 (D는 항상 표시) */
+  showBlindButtons: boolean;
+  toggleBlindButtons: () => void;
   /** 좌석 칩 스택 표기 (칩 부분 터치로 토글) */
   chipDisplayMode: ChipDisplayMode;
   toggleChipDisplayMode: () => void;
@@ -108,6 +111,8 @@ export const useSettingsStore = create<SettingsStore>()(
       setPostflopPresets: (values) => set({ postflopPresets: sanitizePostflopPresets(values) }),
       stackedPot: true,
       toggleStackedPot: () => set(s => ({ stackedPot: !s.stackedPot })),
+      showBlindButtons: true,
+      toggleBlindButtons: () => set(s => ({ showBlindButtons: !s.showBlindButtons })),
       chipDisplayMode: 'chips',
       toggleChipDisplayMode: () => set(s => ({ chipDisplayMode: s.chipDisplayMode === 'chips' ? 'bb' : 'chips' })),
       historyBBView: false,

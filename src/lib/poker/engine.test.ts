@@ -116,6 +116,48 @@ describe('hand rake state', () => {
   });
 });
 
+describe('blind position ids (SB/BB 포지션 버튼용)', () => {
+  it('3인 이상: 딜러 다음 좌석이 SB, 그 다음이 BB — 포스팅 금액과 일치', () => {
+    const { engine } = setupTable([1000, 1000, 1000]); // startHand 후 딜러 = p1
+    engine.startHand();
+
+    const st = engine.state;
+    expect(st.smallBlindId).toBe('p2');
+    expect(st.bigBlindId).toBe('p3');
+    expect(st.players.find(p => p.id === st.smallBlindId)!.currentBet).toBe(10);
+    expect(st.players.find(p => p.id === st.bigBlindId)!.currentBet).toBe(20);
+  });
+
+  it('헤즈업: 딜러가 SB를 겸한다 (클라는 이때 D만 표시)', () => {
+    const { engine } = setupTable([1000, 1000]);
+    engine.startHand();
+
+    const st = engine.state;
+    expect(st.smallBlindId).toBe(st.players[st.dealerIndex].id);
+    expect(st.bigBlindId).not.toBe(st.smallBlindId);
+  });
+
+  it('getPublicState에 그대로 실린다', () => {
+    const { engine } = setupTable([1000, 1000, 1000]);
+    engine.startHand();
+
+    const publicState = engine.getPublicState('p1');
+    expect(publicState.smallBlindId).toBe(engine.state.smallBlindId);
+    expect(publicState.bigBlindId).toBe(engine.state.bigBlindId);
+  });
+
+  it('다음 핸드에서 버튼과 함께 한 좌석씩 전진한다', () => {
+    const { engine } = setupTable([1000, 1000, 1000]);
+    engine.startHand();
+    act(engine, 'fold'); // UTG(p1) 폴드
+    act(engine, 'fold'); // SB(p2) 폴드 → p3 폴드 승리로 핸드 종료
+
+    engine.startHand(); // 딜러 p1→p2
+    expect(engine.state.smallBlindId).toBe('p3');
+    expect(engine.state.bigBlindId).toBe('p1');
+  });
+});
+
 describe('wallet cash rake settlement', () => {
   it('does not rake a fold before the flop', () => {
     const { engine, initialTotal } = setupEconomyTable([1000, 1000]);

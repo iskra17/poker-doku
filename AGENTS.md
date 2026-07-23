@@ -297,7 +297,11 @@ npx tsc --noEmit
 - `src/lib/assets/character-art.ts` — 일러스트 매니페스트 (이미지 없으면 이모지 fallback)
 - `src/components/table/` — 테이블 UI. **세로형 단일 레이아웃** — 모든 화면에서 세로 타원 컬럼
   (`max-w-[min(440px,60dvh)]`) 하나를 중앙 렌더. 좌석/베팅/팟/딜러버튼 좌표는 `table-layout.ts`가
-  단일 소스 (`getLayout()` 무인자). ActionBar는 fixed 오버레이가 아니라 GameRoomView flex 컬럼의
+  단일 소스 (`getLayout()` 무인자). 포지션 버튼은 D/SB/BB 3종(PokerTable) — 같은 크기·모양에
+  색만 구분(D 골드/SB 시안/BB 핑크, 업계 관행 매핑), SB/BB 좌석은 엔진이 postBlinds에서 기록한
+  `GameState.smallBlindId`/`bigBlindId`(id 기준 — 좌석 splice에 안전)로 판정하고 헤즈업(딜러=SB)은
+  D만 표시, SB/BB는 설정 `showBlindButtons`로 숨김 가능 (회귀: engine.test.ts 'blind position ids').
+  ActionBar는 fixed 오버레이가 아니라 GameRoomView flex 컬럼의
   고정 높이 하단 독(`ACTION_DOCK_HEIGHT`) — 턴 여부와 무관하게 높이 상수라 테이블 % 좌표가 흔들리지
   않음. 베팅 컨트롤은 포커룸 표준 문법: 좌측 [금액/프리셋+스테퍼/액션 버튼] 3행 + 우측 세로 벳
   슬라이더(`ui/VerticalSlider` — 아래=최소, 포인터 드래그 + 휠, 커스텀 구현).
