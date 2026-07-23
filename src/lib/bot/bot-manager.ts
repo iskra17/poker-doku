@@ -110,6 +110,8 @@ export async function processBotTurn(
   isCancelled?: () => boolean,
   /** 상대 공격성 조회 (aggro-tracker) — 현재 어그레서의 최근 쇼브/레이즈 수. 휴먼만 반환할 것 */
   aggroOf?: (playerId: string) => OpponentAggro | undefined,
+  /** 사고 시간 배율 (서버 런타임 설정 주입, 1 = 기본) — 결정 난이도별 형태는 유지, 전체 속도만 조절 */
+  thinkDelayScale = 1,
 ): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
   const activePlayer = engine.state.players[engine.state.activePlayerIndex];
   if (!activePlayer || activePlayer.type !== 'bot') {
@@ -123,7 +125,10 @@ export async function processBotTurn(
     : undefined;
   const decision = decideBotAction(activePlayer, engine.state, validActions, Math.random, aggro);
 
-  await new Promise(resolve => setTimeout(resolve, botThinkDelay(decision, activePlayer, engine.state)));
+  await new Promise(resolve => setTimeout(
+    resolve,
+    Math.max(0, Math.round(botThinkDelay(decision, activePlayer, engine.state) * thinkDelayScale)),
+  ));
 
   if (isCancelled?.()) return { acted: false };
 

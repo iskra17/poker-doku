@@ -24,13 +24,19 @@ export const SITOUT_MIN_WALL_MS = 120_000;
 /**
  * 자리비움 좌석을 자동 정리할지. handsSatOut 핸드 동안 자리를 비웠고, 한 오르빗이 대략
  * orbitSize 핸드라면, 미납 빅블라인드 ≈ handsSatOut / orbitSize. 이것이 한도 이상이고
- * 벽시계로도 SITOUT_MIN_WALL_MS 이상 지났을 때만 정리.
+ * 벽시계로도 minWallMs 이상 지났을 때만 정리.
+ *
+ * limits는 서버 런타임 설정(핫 컨피그) 주입용 — 이 파일은 클라이언트 안내 문구
+ * (RoomList/LeaveRoomModal)와 공유되므로 서버 설정을 직접 import하지 않는다.
  */
 export function shouldRemoveForMissedBlinds(
   handsSatOut: number,
   orbitSize: number,
   satOutMs: number = Infinity,
+  limits: { missedBbLimit?: number; minWallMs?: number } = {},
 ): boolean {
+  const missedBbLimit = limits.missedBbLimit ?? SITOUT_MISSED_BB_LIMIT;
+  const minWallMs = limits.minWallMs ?? SITOUT_MIN_WALL_MS;
   const orbit = Math.max(2, orbitSize); // 헤즈업 하한
-  return handsSatOut >= SITOUT_MISSED_BB_LIMIT * orbit && satOutMs >= SITOUT_MIN_WALL_MS;
+  return handsSatOut >= missedBbLimit * orbit && satOutMs >= minWallMs;
 }

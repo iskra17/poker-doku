@@ -1,5 +1,6 @@
 import { getCharacterById } from '../lib/characters';
 import { BOT_PERSONALITIES } from '../lib/bot/personalities';
+import { cfg } from './game-config/live';
 
 /**
  * AI 상황 대사 생성기 — 캐릭터 페르소나 기반으로 게임 상황에 맞는 한 마디를 생성한다.
@@ -19,11 +20,11 @@ import { BOT_PERSONALITIES } from '../lib/bot/personalities';
  */
 
 const MODEL = process.env.AI_DIALOGUE_MODEL || 'gemini-2.5-flash-lite';
-const DAILY_MAX = Number(process.env.AI_DIALOGUE_DAILY_MAX) || 200;
-const COOLDOWN_MS = Number(process.env.AI_DIALOGUE_COOLDOWN_MS) || 20_000;
-const CHANCE = process.env.AI_DIALOGUE_CHANCE !== undefined
-  ? Math.min(1, Math.max(0, Number(process.env.AI_DIALOGUE_CHANCE)))
-  : 0.6;
+// 일일 상한/쿨다운/확률은 핫 컨피그 — env(AI_DIALOGUE_*)는 game-config 부팅 기본값으로 흡수되고
+// (registry.resolveEnvConfigDefaults), DB 오버라이드가 있으면 그것이 이긴다. 매 게이팅마다 읽는다.
+const dailyMax = () => cfg('ops.aiDialogueDailyMax');
+const cooldownMs = () => cfg('ops.aiDialogueCooldownMs');
+const chance = () => cfg('ops.aiDialogueChanceBps') / 10_000;
 const REQUEST_TIMEOUT_MS = 6_000;
 const MAX_RECENT_LINES = 5; // 캐릭터별 반복 방지 버퍼
 
@@ -39,7 +40,7 @@ export class AIDialogue {
   constructor() {
     this.apiKey = process.env.GEMINI_API_KEY || null;
     if (this.apiKey) {
-      console.log(`[ai-dialogue] enabled — model=${MODEL} dailyMax=${DAILY_MAX} cooldown=${COOLDOWN_MS}ms chance=${CHANCE}`);
+      console.log(`[ai-dialogue] enabled — model=${MODEL} dailyMax=${dailyMax()} cooldown=${cooldownMs()}ms chance=${chance()}`);
     } else {
       console.log('[ai-dialogue] disabled — GEMINI_API_KEY 미설정, 스크립트 대사만 사용');
     }
@@ -77,18 +78,19 @@ export class AIDialogue {
       this.dailyDate = today;
       this.dailyCount = 0;
     }
-    if (this.dailyCount >= DAILY_MAX) {
-      if (this.dailyCount === DAILY_MAX) {
+    const max = dailyMax();
+    if (this.dailyCount >= max) {
+      if (this.dailyCount === max) {
         this.dailyCount++; // 로그 1회만
-        console.log(`[ai-dialogue] 일일 상한(${DAILY_MAX}회) 도달 — 오늘은 스크립트 대사로 폴백`);
+        console.log(`[ai-dialogue] 일일 상한(${max}회) 도달 — 오늘은 스크립트 대사로 폴백`);
       }
       return false;
     }
 
     const last = this.lastCallByRoom.get(roomId) ?? 0;
-    if (Date.now() - last < COOLDOWN_MS) return false;
+    if (Date.now() - last < cooldownMs()) return false;
 
-    if (Math.random() > CHANCE) return false;
+    if (Math.random() > chance()) return false;
 
     this.lastCallByRoom.set(roomId, Date.now());
     this.dailyCount++;
@@ -143,7 +145,7 @@ export class AIDialogue {
         const errBody = await res.text();
         // 무료 티어 일일 쿼터 소진 — 재시도 무의미, 오늘은 호출을 멈춘다 (fight club korea 패턴)
         if (res.status === 429 && /PerDay/i.test(errBody)) {
-          this.dailyCount = Math.max(this.dailyCount, DAILY_MAX);
+          this.dailyCount = Math.max(this.dailyCount, dailyMax());
           console.warn('[ai-dialogue] Gemini 일일 쿼터 소진 — 오늘은 스크립트 대사로 폴백');
           return null;
         }

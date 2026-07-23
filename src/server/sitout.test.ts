@@ -38,6 +38,15 @@ describe('shouldRemoveForMissedBlinds — 자리비움 자동 정리 판정', ()
     expect(shouldRemoveForMissedBlinds(5, 3, SITOUT_MIN_WALL_MS * 10)).toBe(false);
   });
 
+  it('핫 컨피그 주입 한도가 기본 상수를 대체한다', () => {
+    // 한도를 3오르빗으로 상향 — 기본(2)이면 정리됐을 6핸드/3인이 아직 아님
+    expect(shouldRemoveForMissedBlinds(6, 3, SITOUT_MIN_WALL_MS, { missedBbLimit: 3 })).toBe(false);
+    expect(shouldRemoveForMissedBlinds(9, 3, SITOUT_MIN_WALL_MS, { missedBbLimit: 3 })).toBe(true);
+    // 벽시계 하한 상향 — 기본(120초)이면 통과했을 시간이 아직 아님
+    expect(shouldRemoveForMissedBlinds(6, 3, SITOUT_MIN_WALL_MS, { minWallMs: SITOUT_MIN_WALL_MS * 2 }))
+      .toBe(false);
+  });
+
   it('타임스탬프 미지정(구 상태)이면 오르빗 조건 단독으로 판정한다', () => {
     expect(shouldRemoveForMissedBlinds(12, 6)).toBe(true);
   });

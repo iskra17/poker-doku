@@ -1,7 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import { randomUUID } from 'node:crypto';
 import { RoomManager, type RoomHandHistoryHooks } from './room-manager';
-import { SessionManager, GRACE_MS, type Session } from './session-manager';
+import { cfg } from './game-config/live';
+import { SessionManager, type Session } from './session-manager';
 import { RoomConfig, Player, ActionType, RoomDifficulty, TableType } from '../lib/poker/types';
 import { CHAT_PRESET_MAP } from '../lib/chat/presets';
 import { THROWABLE_MAP, THROW_COOLDOWN_MS } from '../lib/throwables/catalog';
@@ -57,7 +58,7 @@ import type { ArenaService } from './arena-service';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
-const MAX_ROOMS = 30; // 운영 가드: 동시 존재 가능한 방 수 상한
+// 방 수 상한은 핫 컨피그 cfg('table.maxRooms') — 하향해도 기존 방은 유지, 생성만 차단
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
 
@@ -156,7 +157,6 @@ export function setupSocketHandlers(
     profileAuth,
     createDefaultRooms = true,
     sweepIntervalMs = 60_000,
-    graceMs = GRACE_MS,
     sngRetentionMs,
     economy,
     progressionService,
@@ -567,6 +567,8 @@ export function setupSocketHandlers(
       return;
     }
     const roomId = session.roomId;
+    // 유예 시간은 끊기는 시점마다 읽는다 — 핫 컨피그 변경이 이후의 끊김부터 적용 (테스트 오버라이드 우선)
+    const graceMs = options.graceMs ?? cfg('timer.graceMs');
     // grace 만료로 좌석이 제거되는 경우 클라이언트가 회수 카운트다운 타임바를 그릴 수 있게 만료 시각 전달
     roomManager.handleDisconnect(roomId, session.playerId, Date.now() + graceMs);
     sessions.startGrace(session, graceMs, () => {
@@ -1873,7 +1875,7 @@ export function setupSocketHandlers(
       if (!ensureRateLimit('createRoom', '방 생성은 잠시 후 다시 시도해 주세요.', ack)) return;
       const config = parsed.value;
       // 운영 가드: 방 수 상한
-      if (roomManager.getRoomCount() >= MAX_ROOMS) {
+      if (roomManager.getRoomCount() >= cfg('table.maxRooms')) {
         ack?.({ ok: false, code: 'server-error', message: '방이 너무 많아요. 잠시 후 다시 시도해 주세요.' });
         return;
       }

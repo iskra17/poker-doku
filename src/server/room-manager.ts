@@ -17,7 +17,7 @@ import { createBotWithCharacter, fillEmptySeats, processBotTurn } from '../lib/b
 import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
-import { SITOUT_MISSED_BB_LIMIT, SITOUT_ABANDON_MS, BUST_RECLAIM_MS, shouldRemoveForMissedBlinds } from './sitout';
+import { shouldRemoveForMissedBlinds } from './sitout';
 import { THROW_FLIGHT_MS } from '../lib/throwables/catalog';
 import { AIDialogue } from './ai-dialogue';
 import { DialogueManager } from './dialogue-manager';
@@ -38,10 +38,8 @@ const ENGINE_RUNTIME_HOOKS: EngineRuntimeHooks = {
   }),
 };
 
-const DEFAULT_TURN_TIMEOUT_S = 15; // config.turnTime 미설정 시 폴백 (초) — 연장은 수동 타임칩 사용만 (2026-07-23 피드백: 8→15)
-const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
-const RUNOUT_STREET_DELAY_MS = 1_600; // 올인 런아웃 스트리트 간 시간차 (핸드 공개 → 플랍 → 턴 → 리버 → 쇼다운)
-const TIME_BANK_EXTEND_MS = 30_000; // 타임칩 1개당 연장 시간
+// 턴 타임 폴백·자동 처리 지연·런아웃 간격·타임칩 연장은 핫 컨피그로 이동 —
+// cfg('timer.*')를 사용 시점마다 읽는다 (기본값 정의는 game-config/registry.ts)
 const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
 /** 마지막 휴먼이 떠난 캐시 유저 방의 보존 시간 — 그 사이 재입장하면 방이 유지된다 (SnG는 즉시 정리 유지) */
 const EMPTY_USER_ROOM_RETENTION_MS = 10 * 60_000;
@@ -481,7 +479,8 @@ export class RoomManager {
         // 봇 좌석은 만석 판정에서 제외 — 휴먼이 오면 봇이 자리를 양보한다
         humanCount: room.engine.state.players.filter(p => p.type === 'human').length,
         // 인원 구성 — 명시 설정이 없는 구방은 botCount로 유도 (0=사람만, 그 외=봇+사람)
-        tableType: room.config.tableType ?? ((room.config.botCount ?? 2) === 0 ? 'humans' : 'mixed'),
+        tableType: room.config.tableType
+          ?? ((room.config.botCount ?? cfg('bot.defaultBotCount')) === 0 ? 'humans' : 'mixed'),
         ...(seat
           ? {
               mySeat: {
@@ -905,7 +904,10 @@ export class RoomManager {
 
     const humans = room.engine.state.players.filter(p => p.type === 'human').length;
     const bots = room.engine.state.players.length - humans;
-    const targetBots = Math.min(room.config.botCount ?? 2, room.config.maxPlayers - humans);
+    const targetBots = Math.min(
+      room.config.botCount ?? cfg('bot.defaultBotCount'),
+      room.config.maxPlayers - humans,
+    );
     if (bots < targetBots) {
       fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
     }
@@ -1280,11 +1282,14 @@ export class RoomManager {
       const handsSatOut = st.handNumber - p.sitOutSinceHand;
       // 타임스탬프가 없으면(구 상태) 벽시계 조건은 통과한 것으로 본다 — 오르빗 조건 단독 판정
       const satOutMs = p.sitOutSinceMs === undefined ? Infinity : Date.now() - p.sitOutSinceMs;
-      if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize, satOutMs)) toRemove.push(p);
+      if (shouldRemoveForMissedBlinds(handsSatOut, orbitSize, satOutMs, {
+        missedBbLimit: cfg('table.sitoutMissedBbLimit'),
+        minWallMs: cfg('table.sitoutMinWallMs'),
+      })) toRemove.push(p);
     }
     for (const p of toRemove) {
       if (this.leaveRoom(roomId, p.id)) {
-        this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 걸러 자리에서 일어납니다.`);
+        this.sendSystemChat(roomId, `${p.name}님이 빅블라인드를 ${cfg('table.sitoutMissedBbLimit')}번 걸러 자리에서 일어납니다.`);
         this.options.onSeatReclaimed?.(roomId, p.id);
       }
     }
@@ -1310,7 +1315,8 @@ export class RoomManager {
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer || activePlayer.type !== 'human') return;
 
-    const timeoutMs = overrideMs ?? (room.config.turnTime || DEFAULT_TURN_TIMEOUT_S) * 1000;
+    const timeoutMs = overrideMs
+      ?? (room.config.turnTime || cfg('timer.turnTimeDefault')) * 1000;
     const deadline = Date.now() + timeoutMs;
     this.turnDeadlines.set(roomId, deadline);
 
@@ -1354,7 +1360,7 @@ export class RoomManager {
   private scheduleSitOutAbandon(
     roomId: string,
     playerId: string,
-    delayMs: number = SITOUT_ABANDON_MS,
+    delayMs: number = cfg('table.sitoutAbandonMs'),
   ): void {
     // 파산 리바이 유예(BUST_RECLAIM_MS)가 이미 무장돼 있으면 더 긴 유예로 되돌리지 않는다 —
     // 파산 직후 sitOutAndLeave가 5분 방치 유예를 덮어써 30초 유예가 풀리는 순서 하자 방지
@@ -1407,8 +1413,9 @@ export class RoomManager {
     for (const p of room.engine.state.players) {
       if (p.type !== 'human' || p.pendingRemoval || p.chips > 0) continue;
       if (p.bustReclaimDeadline !== undefined) continue;
-      p.bustReclaimDeadline = Date.now() + BUST_RECLAIM_MS;
-      this.scheduleSitOutAbandon(roomId, p.id, BUST_RECLAIM_MS);
+      const bustReclaimMs = cfg('table.bustReclaimMs');
+      p.bustReclaimDeadline = Date.now() + bustReclaimMs;
+      this.scheduleSitOutAbandon(roomId, p.id, bustReclaimMs);
       armed = true;
     }
     // 카운트다운(bustReclaimDeadline)이 바로 화면에 실리도록 스냅샷을 다시 브로드캐스트
@@ -1471,7 +1478,7 @@ export class RoomManager {
       roomId,
       isSng
         ? `${player.name}님이 자리를 비웁니다 — 돌아올 때까지 자동 폴드돼요 (블라인드는 계속 차감).`
-        : `${player.name}님이 자리를 비웁니다 — 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 일어나요.`,
+        : `${player.name}님이 자리를 비웁니다 — 빅블라인드를 ${cfg('table.sitoutMissedBbLimit')}번 거르면 자동으로 일어나요.`,
     );
     // 지금이 본인 턴이면 즉시 자동 처리 — 자리에 없는 사람을 테이블이 기다리지 않게 (캐시/SnG 공통).
     // 이게 없으면 턴 타이머 + 타임뱅크가 모두 소진될 때까지(최대 38초) 게임이 멈춘다.
@@ -1701,9 +1708,10 @@ export class RoomManager {
     if ((activePlayer.timeBankChips ?? 0) <= 0) return false;
 
     activePlayer.timeBankChips = (activePlayer.timeBankChips ?? 0) - 1;
+    const extendMs = cfg('timer.timeBankExtendMs');
     const remaining = this.getTurnTimeRemaining(roomId);
-    this.startTurnTimer(roomId, remaining + TIME_BANK_EXTEND_MS);
-    this.sendSystemChat(roomId, `${activePlayer.name}님이 타임칩을 사용했습니다 (+${TIME_BANK_EXTEND_MS / 1000}초).`);
+    this.startTurnTimer(roomId, remaining + extendMs);
+    this.sendSystemChat(roomId, `${activePlayer.name}님이 타임칩을 사용했습니다 (+${extendMs / 1000}초).`);
     this.onUpdate(roomId, room.engine);
     return true;
   }
@@ -1824,7 +1832,7 @@ export class RoomManager {
       const timer = setTimeout(() => {
         this.turnTimers.delete(roomId);
         this.autoActFor(roomId, activePlayer.id, reason);
-      }, DISCONNECTED_AUTO_ACT_MS);
+      }, cfg('timer.disconnectedAutoActMs'));
       this.turnTimers.set(roomId, timer);
     } else {
       // 휴먼 턴 → 타이머 시작
@@ -1850,7 +1858,7 @@ export class RoomManager {
         this.onUpdate(roomId, room.engine);
         this.scheduleRunoutStreet(roomId);
       }
-    }, this.options.runoutStreetDelayMs ?? RUNOUT_STREET_DELAY_MS);
+    }, this.options.runoutStreetDelayMs ?? cfg('timer.runoutStreetDelayMs'));
     this.turnTimers.set(roomId, timer);
   }
 
@@ -1876,7 +1884,7 @@ export class RoomManager {
         const aggressor = room.engine.state.players.find(p => p.id === aggressorId);
         if (aggressor?.type !== 'human') return undefined;
         return this.aggroTrackers.get(roomId)?.stats(aggressorId, room.engine.state.handNumber);
-      });
+      }, cfg('bot.thinkDelayPct') / 100);
       if (isStale()) return; // 사고 지연 중 루프가 교체됨 — 새 루프가 진행을 소유
       if (acted && action) {
         // Bot chat based on action — 올인은 극적인 순간이라 AI 대사 시도, 나머지는 스크립트
