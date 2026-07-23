@@ -174,6 +174,8 @@ export type RoomDisposeReason =
 export interface MttRoomHooks {
   /** 핸드 사이 블라인드 레벨 적용 — 토너먼트 공용 시계 기준 (TDA Rule 23: 다음 핸드부터) */
   applyLevel(roomId: string, engine: PokerEngine): void;
+  /** startHand 성공 후 handNumber가 증가했을 때만 호출 — H4H permit 소비 시점 */
+  onHandStarted(roomId: string, handNumber: number): void;
   /**
    * 핸드 종료 훅 — 탈락 수집/밸런싱/브레이크/H4H 처리 후 진행 지시를 반환.
    * 'continue'=다음 핸드 예약, 'hold'=보류(매니저가 나중에 resumeRoom), 'gone'=테이블 해체됨.
@@ -1560,6 +1562,9 @@ export class RoomManager {
     }
 
     if (room.engine.state.handNumber > prevHandNumber) {
+      if (this.isMttRoom(room)) {
+        this.mttHooks?.onHandStarted(roomId, room.engine.state.handNumber);
+      }
       this.preHandStartRetryAttempts.delete(roomId);
       if (tracksProgression) {
         this.options.progression?.confirmHandStart(roomId, room.runId, nextHandNumber);
