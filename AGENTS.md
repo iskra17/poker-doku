@@ -173,6 +173,37 @@ npx tsc --noEmit
   상태로 관전(EliminationNotice가 순위 안내). 종료된 방은 결과 확인을 위해 10분 보존한 뒤
   `disposeRoom()`으로 정리하며, 연결된 참가자마다 `room-lost`를 한 번 보내고 모든 참가 세션의
   `roomId`를 비운다. 그 전에 모든 휴먼이 완전히 나가면 즉시 정리한다.
+- **멀티테이블 토너먼트(MTT)**: `gameMode: 'mtt'` — **1토너 = 방 N개**를
+  `src/server/tournament-manager.ts`(TournamentManager)가 오케스트레이션한다 (아레나 패턴 확장).
+  v1은 practice 전용 프리즈아웃, 개설은 누구나(로비 🏆 패널), 8~48명·6-max, 상금은 표시용.
+  기획/리서치: `docs/spec-mtt-2026-07-23.md`, `docs/research-mtt-2026-07-23.md`.
+  - **소유권 분리**: 엔진은 mtt 모드에서 테이블 로컬 우승 판정·상금풀 산정·이탈 순위를 전부
+    비활성(`isMtt()` 가드 — "테이블 1명 생존=우승"은 SnG 전제)하고, 전역 순위/상금/시계는
+    매니저가 `applyTournamentEliminations`/`setTournamentField`/`setTournamentLevel`로 주입한다.
+    RoomManager는 `MttRoomHooks`(applyLevel/onHandComplete/isHeld/onPlayerLeave)로 핸드 경계마다
+    매니저에게 위임 — onHandComplete 반환('continue'|'hold'|'gone')이 다음 핸드 예약을 결정한다.
+  - **블라인드**: `mtt-structure.ts` 프리셋(스탠다드 8분/터보 5분/하이퍼 3분, `MTT_LEVEL_MS`로
+    단축) + BB 앤티(레벨 4부터, 하이퍼는 1부터). 앤티는 엔진 `postAnte`가 블라인드보다 먼저
+    dead money로 공제 — `Player.deadContributed`로 라이브 기여와 분리해 rebuildPots의 올인 캡이
+    부풀지 않게 한다 (회귀: engine.ante.test.ts). 레벨은 단일 시계에서 "각 테이블 다음 핸드부터"
+    적용(TDA 23), 브레이크(N레벨마다)는 배리어 hold + 타이머 해제.
+  - **밸런싱**: 핸드 종료 훅에서만 — 인원차>1이면 다음 BB 좌석 이동(`transferMttSeat` — 경제
+    정산 없는 이석, 칩 보존), 새 좌석은 "곧 BB가 되는 빈 좌석". 테이블 브레이크는 정원 사전
+    검사 후 전원 이주+`disposeRoom('mtt-break')` — 부분 이주는 이동 핑퐁을 만든다. **생존 판정
+    `isAlive`는 "칩>0 또는 (핸드 중 active/all-in)"** — chips>0만 보면 다른 테이블 라이브 핸드의
+    올인 좌석을 놓쳐 조기 브레이크가 난다 (2026-07-23 QA). 페이아웃은 `payout-table.ts` 계단표
+    (합계 보정 — 잔여는 1위). 버블(입상+1명)에선 hand-for-hand: 전 테이블 완료 배리어 후
+    동기화 핸드 무장(h4h.armed), 같은 라운드 탈락은 테이블이 달라도 handStartChips로 동시 판정.
+  - **수명주기 주의**: MTT 테이블은 `getRoomList`에서 숨기고 join-room 직접 입장 차단,
+    **`sweepIdleRooms`에서 제외**(휴먼 전원 탈락 후 봇만 남아도 완주해야 한다 — 스윕이 파이널
+    테이블을 회수하면 영구 교착, 2026-07-23 QA). 자리비움/끊김/grace/나가기 예약 거절은 SnG
+    계약 공유(`isTournamentRoom`). 명시적 나가기 = 현재 순위 탈락(onPlayerLeave). 체크인은
+    "시작 시점 접속=출석" — 미접속 등록자는 착석 제외(노쇼 방지). 완주 후 전 테이블 10분 보존.
+  - **클라 계약**: 테이블 이동은 `table-move` 이벤트(로비 미경유 currentRoomId 교체 + 스냅샷·채팅
+    통째 교체 — 이전 방 diff와 섞지 말 것), 목록은 `tournament-list` 개인화 브로드캐스트, 상세는
+    get-tournament 5초 폴링(TournamentPanel). 탈락자는 EliminationNotice 후 8초 뒤 room-lost
+    로비 복귀(파이널 종료 시엔 결과 오버레이 관람 위해 유지). 회귀: tournament-manager.test.ts ·
+    .break.test.ts(이중 브레이크/H4H+머지 재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -351,7 +382,10 @@ npx tsc --noEmit
 - 비참가자 관전 모드(방에 안 앉고 구경 — 파산 좌석은 30초 리바이 유예 동안만 관전 가능,
   SnG 탈락자 관전은 토너먼트 종료까지 구현됨),
   멀티 테이블 동시 플레이(1세션 1테이블)
-- 멀티 테이블 토너먼트(MTT) — 시트앤고(단일 테이블)만 구현됨
+- MTT Phase 2 — 디렉터 콘솔(일시정지/정지 중 블라인드 수정/강제 제거/취소+환불), /admin
+  토너먼트 탭, wallet MTT(토너 단위 에스크로+다인 페이아웃), 레이트 레지/리엔트리, ops_event
+  화이트리스트·table_hand.tournament_id, 9-max UI 좌표, 봇 AI 대사 토너 단위 상한
+  (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.
