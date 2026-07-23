@@ -203,6 +203,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     // 서버 주도 테이블 이동 — 로비를 경유하지 않고 현재 방을 새 테이블로 교체한다.
     // 이전 방의 gameState와 diff를 섞지 않도록 스냅샷·채팅을 통째로 갈아끼운다.
     socket.on('table-move', data => {
+      if (get().currentRoomId !== data.fromRoomId) return;
       clearActionAckTimeout();
       set({
         currentRoomId: data.roomId,

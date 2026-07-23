@@ -7,9 +7,11 @@ import type {
 } from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
 import { createBot } from '../lib/bot/bot-manager';
+import { makePlayer } from '../lib/poker/test-helpers';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
 import type { ProfileKdf } from './profile-manager';
+import type { TournamentRuntimeHooks } from './tournament-manager';
 
 function withAck<T>(
   send: (done: (ack: RealtimeAck<T>) => void) => void,
@@ -59,6 +61,18 @@ const WALLET_SNG_ROOM: RoomConfig = {
   maxBuyIn: 1_500,
   entryBuyIn: 1_500,
   entryFee: 150,
+  tableType: 'mixed',
+};
+
+const MTT_MOVE_ROOM: RoomConfig = {
+  ...HUMAN_ROOM,
+  name: '이동 테스트 MTT',
+  gameMode: 'mtt',
+  economyMode: 'practice',
+  startingStack: 1_500,
+  minBuyIn: 1_500,
+  maxBuyIn: 1_500,
+  tournamentId: 'mtt-move-test',
   tableType: 'mixed',
 };
 
@@ -127,6 +141,82 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
         ok: false,
         code: 'arena-disabled',
       });
+  });
+
+  it('lobby 보존 좌석 이동은 조용히 목적지만 바꾸고 활성 테이블 이동은 한 번만 보낸다', async () => {
+    harness = await createSocketTestHarness();
+    const client = await harness.connect('mtt-move-client');
+    const sourceRoomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: '출발 테이블',
+    });
+    const destinationRoomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: '도착 테이블',
+    });
+    const source = harness.runtime.roomManager.getRoom(sourceRoomId)!;
+    expect(source.engine.addPlayer(makePlayer(client.playerId, 1_500, 0, {
+      name: '이동 참가자',
+      status: 'sitting-out',
+      sitOutNext: true,
+    }))).toBe(true);
+
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    session.roomId = null;
+    const receivedMoves: Array<{ fromRoomId: string; roomId: string }> = [];
+    client.socket.on('table-move', move => receivedMoves.push(move));
+    const managerHooks = (
+      harness.runtime.tournamentManager as unknown as {
+        hooks: Pick<TournamentRuntimeHooks, 'onPlayerMoved'>;
+      }
+    ).hooks;
+
+    expect(harness.runtime.roomManager.transferMttSeat(
+      sourceRoomId,
+      destinationRoomId,
+      client.playerId,
+      0,
+    )).toBe(true);
+    managerHooks.onPlayerMoved?.({
+      tournamentId: 'mtt-move-test',
+      playerId: client.playerId,
+      fromRoomId: sourceRoomId,
+      toRoomId: destinationRoomId,
+    });
+    await wait(20);
+
+    expect(receivedMoves).toEqual([]);
+    expect(session.roomId).toBeNull();
+    expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(destinationRoomId);
+    expect(harness.runtime.roomManager.getRoom(destinationRoomId)!.engine.state.players)
+      .toContainEqual(expect.objectContaining({ id: client.playerId, sitOutNext: true }));
+
+    // 로비에서 명시적으로 복귀하면 보존 좌석의 새 목적지로 들어간다.
+    await expect(joinRoom(client, destinationRoomId, 0))
+      .resolves.toMatchObject({ ok: true });
+    expect(session.roomId).toBe(destinationRoomId);
+
+    expect(harness.runtime.roomManager.transferMttSeat(
+      destinationRoomId,
+      sourceRoomId,
+      client.playerId,
+      0,
+    )).toBe(true);
+    managerHooks.onPlayerMoved?.({
+      tournamentId: 'mtt-move-test',
+      playerId: client.playerId,
+      fromRoomId: destinationRoomId,
+      toRoomId: sourceRoomId,
+    });
+    await waitUntil(() => receivedMoves.length === 1);
+
+    expect(receivedMoves).toEqual([expect.objectContaining({
+      fromRoomId: destinationRoomId,
+      roomId: sourceRoomId,
+    })]);
+    expect(session.roomId).toBe(sourceRoomId);
+    expect(harness.getServerSocketRooms(client.socket.id!)).toContain(sourceRoomId);
+    expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(destinationRoomId);
   });
 
   it('keeps arena queue state private and blocks room entry until an explicit leave ack', async () => {

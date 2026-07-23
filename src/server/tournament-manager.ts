@@ -168,6 +168,8 @@ interface TournamentRuntime {
   pauseAccumMs: number; // 일시정지 누적 — clockPos가 (now - startedAt - accum)으로 시계를 계산
   /** 디렉터 일시정지 시각 — null이 아니면 시계 동결 + 전 테이블 다음 핸드 보류 */
   pausedAt: number | null;
+  /** 디렉터가 예약한 레벨 — 각 테이블의 다음 startHand 경계에서 모두 적용된 뒤 해제 */
+  pendingLevelIndex: number | null;
   entrants: Map<string, MttEntrant>;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
@@ -283,6 +285,7 @@ export class TournamentManager {
       finishedAt: null,
       pauseAccumMs: 0,
       pausedAt: null,
+      pendingLevelIndex: null,
       entrants: new Map(),
       seatedCount: 0,
       tables: new Map(),
@@ -391,6 +394,17 @@ export class TournamentManager {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
+    if (
+      t.config.economyMode === 'wallet'
+      && t.phase === 'running'
+      && (
+        action.kind === 'remove-player'
+        || action.kind === 'set-level'
+        || action.kind === 'cancel'
+      )
+    ) {
+      return 'bad-state';
+    }
     switch (action.kind) {
       case 'pause': return this.directorPause(t);
       case 'resume': return this.directorResume(t);
@@ -478,13 +492,10 @@ export class TournamentManager {
       : 0;
     const offset = idx * t.structure.levelDurationMs + breaks * t.structure.breakDurationMs;
     t.pauseAccumMs = t.pausedAt - t.startedAt - offset;
+    t.pendingLevelIndex = idx;
 
-    const pos = this.clockPos(t);
-    const cur = mttLevelAt(t.structure, pos.levelIndex);
+    const cur = mttLevelAt(t.structure, idx);
     for (const roomId of t.tables.keys()) {
-      const engine = this.roomManager.getRoom(roomId)?.engine;
-      if (!engine) continue;
-      this.pushLevel(t, engine, pos, true); // initial=true — 공지는 아래 전용 문구로
       const anteText = cur.ante > 0 ? ` · 앤티 ${cur.ante}` : '';
       this.roomManager.postSystemChat(
         roomId,
@@ -935,7 +946,23 @@ export class TournamentManager {
   private applyLevel(roomId: string, engine: PokerEngine): void {
     const t = this.byTable(roomId);
     if (!t || t.startedAt === null || t.phase !== 'running') return;
-    this.pushLevel(t, engine, this.clockPos(t), false);
+    const pos = this.clockPos(t);
+    const pendingLevelIndex = t.pendingLevelIndex;
+    this.pushLevel(
+      t,
+      engine,
+      pendingLevelIndex === null ? pos : { ...pos, levelIndex: pendingLevelIndex },
+      false,
+    );
+    if (
+      pendingLevelIndex !== null
+      && [...t.tables.keys()].every(id => (
+        this.roomManager.getRoom(id)?.engine.state.tournament?.level
+        === pendingLevelIndex + 1
+      ))
+    ) {
+      t.pendingLevelIndex = null;
+    }
   }
 
   private onHandStarted(roomId: string, handNumber: number): void {
@@ -1797,15 +1824,16 @@ export class TournamentManager {
       ? (t.pausedAt ?? Date.now()) + pos.segmentRemainingMs
       : 0;
     for (const roomId of t.tables.keys()) {
-      const state = this.roomManager.getRoom(roomId)?.engine.state.tournament;
-      if (!state) continue;
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      const state = engine?.state.tournament;
+      if (!engine || !state) continue;
       state.fieldRemaining = t.remaining;
       state.stage = t.stage;
       state.holdReasons = this.publicHoldReasons(t, roomId);
       state.stageEndsAt = t.stageEndsAt
         ?? (state.holdReasons.includes('scheduled-break') ? clockDeadline : undefined);
       state.finalTheme = t.finalTheme;
-      if (pos && cur) {
+      if (pos && cur && t.pendingLevelIndex === null && !engine.state.isHandInProgress) {
         state.level = pos.levelIndex + 1;
         state.smallBlind = cur.smallBlind;
         state.bigBlind = cur.bigBlind;
