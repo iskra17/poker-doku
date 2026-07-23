@@ -130,6 +130,41 @@ describe('PokerEngine hand record', () => {
     ]);
   });
 
+  it('records an uncalled return without counting it as contribution or profit', () => {
+    const { engine } = setupTable(
+      [1000, 150],
+      'As Ad Kh Qd 2c 7h 9s 3d 5h',
+      { gameMode: 'mtt' },
+    );
+    engine.startHand();
+
+    act(engine, 'all-in');
+    act(engine, 'call');
+    completeRunout(engine);
+
+    const record = engine.getCompletedHandRecord();
+    expect(record!.actions).toEqual([
+      { street: 'preflop', playerId: 'p1', kind: 'post-sb', amount: 10 },
+      { street: 'preflop', playerId: 'p2', kind: 'post-bb', amount: 20 },
+      { street: 'preflop', playerId: 'p1', kind: 'all-in', amount: 1000 },
+      { street: 'preflop', playerId: 'p2', kind: 'call', amount: 130 },
+      { street: 'preflop', playerId: 'p1', kind: 'uncalled-return', amount: 850 },
+    ]);
+    expect(record!.potTotal).toBe(300);
+
+    const byId = new Map(record!.players.map(player => [player.id, player]));
+    expect(byId.get('p1')).toMatchObject({
+      totalContributed: 150,
+      won: 300,
+      profit: 150,
+    });
+    expect(byId.get('p2')).toMatchObject({
+      totalContributed: 150,
+      won: 0,
+      profit: -150,
+    });
+  });
+
   it('mid-hand leave is recorded as a fold action', () => {
     const { engine } = setupTable([1000, 1000, 1000]);
     engine.startHand();

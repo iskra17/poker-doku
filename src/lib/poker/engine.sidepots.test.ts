@@ -34,6 +34,33 @@ function setupWalletTable(chipCounts: number[], riggedCodes: string) {
  */
 
 describe('사이드팟 — 단일 스트리트 (기존에도 정상이던 케이스)', () => {
+  it('returns unmatched preflop excess before all-in runout', () => {
+    const { engine } = setupTable([1000, 150], undefined, { gameMode: 'mtt' });
+    engine.startHand();
+
+    act(engine, 'all-in');
+    expect(engine.state.lastAction).toEqual({
+      playerId: 'p1',
+      type: 'all-in',
+      amount: 1000,
+    });
+
+    act(engine, 'call');
+
+    expect(engine.state.lastAction).toEqual({
+      playerId: 'p2',
+      type: 'call',
+      amount: 130,
+    });
+    expect(engine.state.allInRunout).toBe(true);
+    expect(engine.state.players.find(p => p.id === 'p1')!.chips).toBe(850);
+    expect(engine.state.players.find(p => p.id === 'p1')!.totalContributed).toBe(150);
+    expect(engine.state.pots).toEqual([{
+      amount: 300,
+      eligiblePlayerIds: expect.arrayContaining(['p1', 'p2']),
+    }]);
+  });
+
   it('프리플랍 불균등 올인 3인: 팟 계층과 금액이 정확하다', () => {
     // p1 1000, p2 1000, p3 150 (숏스택)
     const { engine, initialTotal } = setupTable(
@@ -96,6 +123,15 @@ describe('사이드팟 — 멀티 스트리트 (버그 A 재현)', () => {
     expect(totalTableChips(engine)).toBe(initialTotal);
 
     act(engine, 'fold'); // p1 폴드 → 라운드 완료 → 런아웃 → 쇼다운
+
+    const p2AfterReturn = engine.state.players.find(p => p.id === 'p2')!;
+    expect(p2AfterReturn.chips).toBe(850);
+    expect(p2AfterReturn.totalContributed).toBe(150);
+    expect(engine.state.pots).toEqual([{
+      amount: 320,
+      eligiblePlayerIds: expect.arrayContaining(['p2', 'p3']),
+    }]);
+
     completeRunout(engine);
 
     // 쇼다운 후 스택 총합 보존 (팟은 표시용으로 유지되므로 스택만 검증)
@@ -213,8 +249,9 @@ describe('wallet cash rake with showdown pots', () => {
     act(engine, 'call');
     completeRunout(engine);
 
-    expect(engine.state.pots.map(pot => pot.amount)).toEqual([300, 200, 100]);
-    expect(engine.state.handRake).toBe(30);
+    expect(engine.state.pots.map(pot => pot.amount)).toEqual([300, 200]);
+    expect(engine.state.players.find(p => p.id === 'p3')!.chips).toBe(100);
+    expect(engine.state.handRake).toBe(25);
     expect(engine.state.winners?.map(winner => ({
       playerId: winner.playerId,
       amount: winner.amount,
@@ -222,12 +259,11 @@ describe('wallet cash rake with showdown pots', () => {
     }))).toEqual([
       { playerId: 'p1', amount: 285, potIndex: 0 },
       { playerId: 'p2', amount: 190, potIndex: 1 },
-      { playerId: 'p3', amount: 95, potIndex: 2 },
     ]);
     expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
   });
 
-  it('awards the odd net chip to the first winning position in a tied pot', () => {
+  it('awards the odd net chip to the first tied winner left of the button', () => {
     const { engine, initialTotal } = setupWalletTable(
       [1000, 1000],
       '2h 3d 2c 3c As Ks Qs Js Ts',
@@ -246,8 +282,8 @@ describe('wallet cash rake with showdown pots', () => {
       playerId: winner.playerId,
       amount: winner.amount,
     }))).toEqual([
-      { playerId: 'p1', amount: 48 },
-      { playerId: 'p2', amount: 47 },
+      { playerId: 'p1', amount: 47 },
+      { playerId: 'p2', amount: 48 },
     ]);
     expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
   });
