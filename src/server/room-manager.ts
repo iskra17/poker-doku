@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { ARENA_CONFIG_V1 } from '../lib/arena/config';
-import { PokerEngine } from '../lib/poker/engine';
+import { PokerEngine, type EngineRuntimeHooks } from '../lib/poker/engine';
+import { cfg } from './game-config/live';
 import { HAND_RANK_KO } from '../lib/poker/evaluator';
 import {
   RoomConfig,
@@ -28,6 +29,14 @@ import type {
 } from './economy-runtime';
 import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
 import type { ArenaOfficialSummary } from './arena-service';
+
+/** 엔진에 주입하는 서버 런타임 훅 — 레이크 정책을 정산 시점마다 핫 컨피그에서 읽는다 */
+const ENGINE_RUNTIME_HOOKS: EngineRuntimeHooks = {
+  rakePolicy: () => ({
+    rateBps: cfg('economy.rakeBps'),
+    capBB: cfg('economy.rakeCapBB'),
+  }),
+};
 
 const DEFAULT_TURN_TIMEOUT_S = 15; // config.turnTime 미설정 시 폴백 (초) — 연장은 수동 타임칩 사용만 (2026-07-23 피드백: 8→15)
 const DISCONNECTED_AUTO_ACT_MS = 1_000; // 끊긴 플레이어 턴 자동 처리 지연
@@ -217,7 +226,12 @@ export class RoomManager {
       : config;
     const id = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const runId = this.reserveRoomRunId();
-    const engine = new PokerEngine(normalizedConfig, id);
+    const engine = new PokerEngine(
+      normalizedConfig,
+      id,
+      undefined,
+      ENGINE_RUNTIME_HOOKS,
+    );
     this.rooms.set(id, {
       engine,
       config: normalizedConfig,
@@ -791,7 +805,12 @@ export class RoomManager {
     if (this.unresolvedSettlementRooms.has(roomId)) return;
     if (this.isWalletCash(room) && room.engine.state.isHandInProgress) return;
     const nextRunId = this.reserveRoomRunId();
-    const nextEngine = new PokerEngine(room.config, roomId);
+    const nextEngine = new PokerEngine(
+      room.config,
+      roomId,
+      undefined,
+      ENGINE_RUNTIME_HOOKS,
+    );
     if (this.isWalletCash(room)) {
       try {
         this.requireEconomy().voidRoom(roomId);

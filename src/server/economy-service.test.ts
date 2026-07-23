@@ -11,6 +11,9 @@ import {
   getKstDateKey,
   getNextKstMidnight,
 } from './economy-service';
+import { initGameConfig, resetGameConfigForTest } from './game-config/live';
+import { GameConfigRepository } from './game-config/repository';
+import { GameConfigService } from './game-config/service';
 
 let database: PokerDatabase;
 let repository: EconomyRepository;
@@ -1227,6 +1230,74 @@ describe('EconomyService casual wallet Sit & Go', () => {
       { status: 'reserved', count: 6 },
       { status: 'started', count: 6 },
     ]);
+  });
+});
+
+describe('hot config overrides (game-config live)', () => {
+  afterEach(() => resetGameConfigForTest());
+
+  function hydrateOverrides(updates: Record<string, number>): void {
+    const service = new GameConfigService(
+      new GameConfigRepository(database),
+      { logger: { warn: () => {} } },
+    );
+    service.set(updates);
+    initGameConfig(service);
+  }
+
+  it('applies overridden daily grant and rescue rules to the next claim', () => {
+    seedProfile('profile-1', 0);
+    const at = Date.parse('2026-07-16T12:00:00+09:00');
+    const service = new EconomyService(repository, () => at);
+    hydrateOverrides({
+      'economy.dailyGrant': 2_500,
+      'economy.rescueThreshold': 1_500,
+      'economy.rescueTarget': 5_000,
+      'economy.rescueDailyLimit': 1,
+    });
+
+    service.claimDaily('profile-1', at);
+    expect(walletBalance()).toBe(2_500);
+
+    // 잔액 2500 — 기본 threshold(800)로는 부적격이지만 오버라이드(1500)... 2500 > 1500이라 부적격.
+    // 1201로 내리면 새 threshold(1500) 미만 → 적격, 지급액은 새 target(5000)-1201
+    drainWalletTo(1_201, 'hot-config-drain', at + 1);
+    const status = service.getStatus('profile-1', at + 2);
+    expect(status.economy.daily.grantAmount).toBe(2_500);
+    expect(status.economy.rescue).toMatchObject({
+      eligible: true,
+      grantAmount: 3_799,
+      remainingToday: 1,
+    });
+
+    service.claimRescue('profile-1', at + 3);
+    expect(walletBalance()).toBe(5_000);
+
+    // 일일 한도 1회 소진 — 재차 잔액을 비워도 당일은 부적격
+    drainWalletTo(0, 'hot-config-drain-2', at + 4);
+    expect(service.getStatus('profile-1', at + 5).economy.rescue)
+      .toMatchObject({ eligible: false, reason: 'daily-limit', remainingToday: 0 });
+  });
+
+  it('clamps remainingToday when the daily limit is lowered below claimed count', () => {
+    seedProfile('profile-1', 1_000);
+    const at = Date.parse('2026-07-16T12:00:00+09:00');
+    const service = new EconomyService(repository, () => at);
+    // 기본 한도(3)로 2회 수령한 뒤 한도를 1로 하향 — 초과분은 회수 없이 0으로 클램프
+    insertRescueClaim('2026-07-16', 1, at - 2);
+    insertRescueClaim('2026-07-16', 2, at - 1);
+    hydrateOverrides({ 'economy.rescueDailyLimit': 1 });
+
+    const status = service.getStatus('profile-1', at);
+    expect(status.economy.rescue.remainingToday).toBe(0);
+    expect(status.economy.rescue.eligible).toBe(false);
+  });
+
+  it('uses the overridden starting chips for newly created profiles', () => {
+    hydrateOverrides({ 'economy.startingChips': 7_777 });
+    expect(ECONOMY_RULES.startingChips).toBe(7_777);
+    resetGameConfigForTest();
+    expect(ECONOMY_RULES.startingChips).toBe(10_000);
   });
 });
 

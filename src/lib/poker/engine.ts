@@ -66,9 +66,19 @@ interface HandRecordDraft {
   positions: Map<string, string>;
 }
 
+/**
+ * 서버 런타임이 주입하는 훅 — lib 순수성 유지를 위해 엔진은 서버 설정을 직접 import하지
+ * 않고, 정산 시점마다 provider를 호출해 현재 유효값을 읽는다 (핫 컨피그 next-hand 반영).
+ */
+export interface EngineRuntimeHooks {
+  /** 캐시(wallet) 레이크 정책 — 미주입 시 rake.ts 기본값 (5% / 5BB 캡) */
+  rakePolicy?: () => { rateBps: number; capBB: number };
+}
+
 export class PokerEngine {
   private deck: Deck;
   private config: RoomConfig;
+  private readonly runtimeHooks: EngineRuntimeHooks;
   state: GameState;
   /** 진행 중 핸드의 히스토리 초안 — startHand가 열고 endHand가 완성한다 */
   private handRecordDraft: HandRecordDraft | null = null;
@@ -79,9 +89,15 @@ export class PokerEngine {
    */
   private completedHandRecord: CompletedHandRecord | null = null;
 
-  constructor(config: RoomConfig, roomId: string, deck: Deck = new Deck()) {
+  constructor(
+    config: RoomConfig,
+    roomId: string,
+    deck: Deck = new Deck(),
+    runtimeHooks: EngineRuntimeHooks = {},
+  ) {
     this.deck = deck;
     this.config = config;
+    this.runtimeHooks = runtimeHooks;
     this.state = {
       id: roomId,
       players: [],
@@ -997,6 +1013,8 @@ export class PokerEngine {
           totalPot: grossTotal,
           bigBlind: this.state.bigBlind,
           flopDealt: this.state.communityCards.length >= 3,
+          // 정산 시점마다 현재 레이크 정책을 읽는다 — 핫 컨피그가 다음 핸드부터 반영
+          ...this.runtimeHooks.rakePolicy?.(),
         });
       }
       allocations = allocateRakeAcrossPots(
