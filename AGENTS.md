@@ -204,6 +204,28 @@ npx tsc --noEmit
     get-tournament 5초 폴링(TournamentPanel). 탈락자는 EliminationNotice 후 8초 뒤 room-lost
     로비 복귀(파이널 종료 시엔 결과 오버레이 관람 위해 유지). 회귀: tournament-manager.test.ts ·
     .break.test.ts(이중 브레이크/H4H+머지 재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
+  - **디렉터 콘솔 (Phase 2)**: 개설자(hostId) 전용 `tournament-admin` 소켓 이벤트 —
+    pause(시계 동결 `pausedAt` + isHeld로 전 테이블 다음 핸드 보류, 진행 중 핸드는 끝까지)/
+    resume(pauseAccum으로 정지 구간 제외, 브레이크 구간이면 브레이크 대기 복귀)/
+    set-level(**정지 중에만** — 시계를 해당 레벨 시작점으로 리셋. 라이브 조정은 테이블별 적용
+    시점이 갈려 금지)/remove-player(명시적 퇴장 경로 재사용 = 현재 순위 탈락)/cancel.
+    모든 개입은 시스템 채팅 공지 + `mtt-director-action` ops_event. UI는 TournamentPanel 상세
+    모달 [운영] 패널(위험 액션은 2탭 확인 — confirm 다이얼로그 금지). 회귀: .director.test.ts.
+  - **wallet MTT (Phase 2)**: `economyMode:'wallet'` — 참가비(바이인 1500+수수료 150,
+    `lib/economy/mtt-entry.ts`)를 **토너 단위 에스크로**로 예약. sng_entries 테이블을
+    room_id=토너먼트ID 키로 재사용(마이그레이션 v26이 place CHECK 1..1000 확장 — SnG 6인
+    상품 검증은 리포지토리가 유지). 등록=reserveMttEntry(잔액/이중 좌석 가드), 취소·노쇼=환불,
+    시작=startMttTournament(수수료 소각, 출석 명단과 완전 일치 필수 — 노쇼 환불이 먼저),
+    완주=settleMttTournament(**payout-table 계단표 강제** + 전 순위 1..N 완전 열거, 재호출 멱등),
+    취소=voidMttTournament(전원 전액 환불 — 프리즈아웃 중도 취소는 순위 확정 불가라 전액이 유일).
+    정산 실패는 10초 후 1회 재시도 + `mtt-complete` settlementOk 기록, 최종 실패는 서버 재시작
+    복구(recoverIncompleteSngEntries)가 환불로 회수. wallet은 봇 충원 불가(서버 강제 해제).
+    회귀: economy-mtt.test.ts(에스크로) · tournament-manager.wallet.test.ts(흐름).
+  - **/admin 토너먼트 탭 (Phase 2)**: `GET /api/admin/tournaments`(adminRuntime 경유
+    `getAdminTournamentSummaries`) — 테이블별 생존/보류 사유·스탠딩·일시정지/브레이크/H4H 배지.
+    핸드 감사는 `table_hand.tournament_id`(v25 — v23의 game_mode CHECK가 MTT 핸드 기록을 조용히
+    거부하던 버그도 이때 수정) + `/api/admin/hands?tournament=` 필터. mtt-* 이벤트 7종은
+    ops_event 화이트리스트로 영속.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·

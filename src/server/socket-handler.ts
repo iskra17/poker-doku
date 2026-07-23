@@ -42,10 +42,16 @@ import { readProfileCredentialCookie } from './profile-http';
 import { EconomyDomainError } from './economy-repository';
 import type {
   CashAdmissionEconomy,
+  MttAdmissionEconomy,
   RoomEconomyHooks,
   SngAdmissionEconomy,
 } from './economy-runtime';
 import { ECONOMY_RULES } from './economy-service';
+import {
+  MTT_WALLET_BUY_IN,
+  MTT_WALLET_ENTRY_COST,
+  MTT_WALLET_ENTRY_FEE,
+} from '../lib/economy/mtt-entry';
 import {
   ProgressionRuntime,
   type ProgressionRuntimeService,
@@ -85,7 +91,7 @@ export interface SocketRuntimeOptions {
   sngRetentionMs?: number;
   /** 인증된 소켓 접속 시 호출 — 프로필 활동 지표(접속 횟수/마지막 활동) 기록용. 실패는 무시 */
   onProfileConnected?: (profileId: string) => void;
-  economy?: CashAdmissionEconomy & SngAdmissionEconomy & RoomEconomyHooks;
+  economy?: CashAdmissionEconomy & SngAdmissionEconomy & MttAdmissionEconomy & RoomEconomyHooks;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
   arena?: {
@@ -486,6 +492,24 @@ export function setupSocketHandlers(
     onTournamentsChanged: () => broadcastTournamentList(),
     // v1 상세(순위표)는 get-tournament 폴링 — 상세 브로드캐스트는 확장 시 도입
     onTournamentUpdate: () => {},
+    // wallet MTT 토너 단위 에스크로 — economy 미주입(테스트 등)이면 wallet 개설이 거부된다
+    economy: economy
+      ? {
+          reserveEntry: (profileId, tournamentId, maxEntrants) => {
+            economy.reserveMttEntry(profileId, tournamentId, maxEntrants);
+          },
+          refundEntry: (profileId, tournamentId) => {
+            economy.cancelMttEntry(profileId, tournamentId);
+          },
+          startEscrow: (tournamentId, profileIds) => {
+            economy.startMttTournament(tournamentId, profileIds);
+          },
+          settle: (tournamentId, results) => {
+            economy.settleMttTournament(tournamentId, results);
+          },
+          refundAll: tournamentId => economy.voidMttTournament(tournamentId),
+        }
+      : undefined,
   });
 
   if (arena) {
@@ -2294,6 +2318,9 @@ export function setupSocketHandlers(
         || typeof payload.botFill !== 'boolean'
         || typeof payload.turnTime !== 'number'
         || !VALID_TURN_TIMES.includes(payload.turnTime)
+        || !(payload.economyMode === undefined
+          || payload.economyMode === 'practice'
+          || payload.economyMode === 'wallet')
         || !(payload.startAt === null
           || (typeof payload.startAt === 'number'
             && payload.startAt > Date.now() - 10_000
@@ -2302,15 +2329,20 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      const economyMode = payload.economyMode === 'wallet' ? 'wallet' : 'practice';
       const created = tournamentManager.createTournament({
         name: payload.name.trim(),
         speed: payload.speed as MttSpeed,
         maxEntrants: payload.maxEntrants,
         tableSize: 6, // v1은 6-max 고정 노출 (엔진/매니저는 2~9 지원)
         startAt: payload.startAt,
-        botFill: payload.botFill,
+        // wallet은 봇 충원 불가 — 봇은 바이인을 내지 못한다 (서버가 강제 해제)
+        botFill: economyMode === 'wallet' ? false : payload.botFill,
         turnTime: payload.turnTime,
         hostId: session.playerId,
+        economyMode,
+        entryBuyIn: economyMode === 'wallet' ? MTT_WALLET_BUY_IN : 0,
+        entryFee: economyMode === 'wallet' ? MTT_WALLET_ENTRY_FEE : 0,
       });
       if (!created.ok) {
         ack?.({
@@ -2346,11 +2378,27 @@ export function setupSocketHandlers(
         });
         return;
       }
-      const result = tournamentManager.register(payload.tournamentId, {
-        id: session.playerId,
-        name: profileAlias,
-        avatar: socket.data.profileAvatarId ?? profileAvatarId,
-      });
+      let result: 'ok' | 'not-found' | 'closed' | 'full' | 'already';
+      try {
+        result = tournamentManager.register(payload.tournamentId, {
+          id: session.playerId,
+          name: profileAlias,
+          avatar: socket.data.profileAvatarId ?? profileAvatarId,
+        });
+      } catch (error) {
+        // wallet 에스크로 예약 실패 — 잔액 부족/이중 좌석을 구분해 안내
+        const code = error instanceof EconomyDomainError ? error.code : null;
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: code === 'INSUFFICIENT_BALANCE'
+            ? `보유 칩이 부족해요 (참가비 ${MTT_WALLET_ENTRY_COST.toLocaleString()}).`
+            : code === 'SNG_ACTIVE_SEAT'
+              ? '이미 다른 게임 좌석이나 참가 예약이 있어요 — 먼저 정리해 주세요.'
+              : '참가비 예약에 실패했어요. 잠시 후 다시 시도해 주세요.',
+        });
+        return;
+      }
       if (result === 'ok') {
         ack?.({ ok: true });
         return;
@@ -2415,6 +2463,7 @@ export function setupSocketHandlers(
         'not-host': '개설자만 시작할 수 있어요.',
         'not-registering': '이미 시작됐거나 종료된 토너먼트예요.',
         'not-enough': '시작하려면 접속 중인 참가자가 더 필요해요.',
+        economy: '참가비 처리에 실패했어요 — 잠시 후 다시 시도해 주세요.',
       }[result];
       ack?.({
         ok: false,

@@ -9,6 +9,11 @@ import type {
   TournamentSummary,
 } from '@/lib/realtime/protocol';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
+import {
+  MTT_WALLET_BUY_IN,
+  MTT_WALLET_ENTRY_COST,
+  MTT_WALLET_ENTRY_FEE,
+} from '@/lib/economy/mtt-entry';
 import Button from '@/components/ui/Button';
 
 /**
@@ -109,6 +114,11 @@ function TournamentRow({
               {badge.label}
             </span>
             <span className="truncate text-sm font-bold text-ink">{tournament.name}</span>
+            {tournament.economyMode === 'wallet' && (
+              <span className="rounded-md border border-gilded/40 bg-gilded/15 px-1 py-0.5 text-[9px] font-bold text-gilded">
+                💰 리얼 칩
+              </span>
+            )}
             {tournament.registered && tournament.phase === 'registering' && (
               <span className="text-[10px] font-bold text-cyber">✓ 등록됨</span>
             )}
@@ -156,6 +166,7 @@ function CreateTournamentModal({
   const [botFill, setBotFill] = useState(true);
   const [turnTime, setTurnTime] = useState(15);
   const [startDelayMin, setStartDelayMin] = useState<number | null>(null);
+  const [economyMode, setEconomyMode] = useState<'practice' | 'wallet'>('practice');
   const [busy, setBusy] = useState(false);
 
   const submit = async () => {
@@ -166,8 +177,10 @@ function CreateTournamentModal({
       speed,
       maxEntrants,
       startAt: startDelayMin === null ? null : Date.now() + startDelayMin * 60_000,
-      botFill,
+      // wallet은 봇 충원 불가 (서버도 강제) — 사람만 모여야 시작
+      botFill: economyMode === 'wallet' ? false : botFill,
       turnTime,
+      economyMode,
     };
     const id = await createTournament(config);
     if (id) {
@@ -225,10 +238,36 @@ function CreateTournamentModal({
           </OptionButton>
         ))}
       </div>
-      <label className="mt-2 flex items-center gap-2 text-xs text-ink">
-        <input type="checkbox" checked={botFill} onChange={e => setBotFill(e.target.checked)} />
-        시작 시 남는 자리를 봇으로 채우기 (혼자여도 풀필드!)
-      </label>
+      <p className="mt-2 text-xs text-ink-dim">참가 방식</p>
+      <div className="mt-1 grid grid-cols-2 gap-1.5">
+        <OptionButton
+          active={economyMode === 'practice'}
+          onClick={() => setEconomyMode('practice')}
+        >
+          🎯 무료 연습
+          <span className="block text-[9px] text-ink-dim">상금은 표시용</span>
+        </OptionButton>
+        <OptionButton
+          active={economyMode === 'wallet'}
+          onClick={() => setEconomyMode('wallet')}
+        >
+          💰 리얼 칩
+          <span className="block text-[9px] text-ink-dim">
+            바이인 {MTT_WALLET_BUY_IN.toLocaleString()} + 수수료 {MTT_WALLET_ENTRY_FEE}
+          </span>
+        </OptionButton>
+      </div>
+      {economyMode === 'practice' ? (
+        <label className="mt-2 flex items-center gap-2 text-xs text-ink">
+          <input type="checkbox" checked={botFill} onChange={e => setBotFill(e.target.checked)} />
+          시작 시 남는 자리를 봇으로 채우기 (혼자여도 풀필드!)
+        </label>
+      ) : (
+        <p className="mt-2 text-[10px] text-ink-dim">
+          리얼 칩 토너먼트는 봇 충원 없이 사람만 참가해요 — 등록 시 참가비{' '}
+          {MTT_WALLET_ENTRY_COST.toLocaleString()} 칩이 예약되고, 취소·유찰 시 전액 환불돼요.
+        </p>
+      )}
       <div className="mt-3 flex gap-2">
         <Button variant="secondary" size="sm" onClick={onClose} className="flex-1">
           취소
@@ -421,7 +460,9 @@ function TournamentDetailModal({
               disabled={busy}
               onClick={() => void act(() => registerTournament(summary.id))}
             >
-              등록하기
+              {summary.economyMode === 'wallet'
+                ? `등록하기 (${(summary.entryBuyIn + summary.entryFee).toLocaleString()} 칩)`
+                : '등록하기'}
             </Button>
           )}
           {isHost && (
@@ -439,6 +480,12 @@ function TournamentDetailModal({
       {summary.phase === 'registering' && summary.botFill && (
         <p className="mt-1 text-center text-[10px] text-ink-dim">
           시작 시 남는 자리는 봇 캐릭터들이 채워요 (총 {summary.maxEntrants}명)
+        </p>
+      )}
+      {summary.phase === 'registering' && summary.economyMode === 'wallet' && (
+        <p className="mt-1 text-center text-[10px] text-ink-dim">
+          💰 리얼 칩 토너먼트 — 등록 시 참가비가 예약되고 취소·유찰 시 전액 환불,
+          상금은 지갑으로 지급돼요.
         </p>
       )}
 

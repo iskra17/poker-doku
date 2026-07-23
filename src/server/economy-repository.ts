@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PublicProfile } from '@/lib/profile/types';
+import { computePayouts } from '@/lib/poker/payout-table';
 import type { PokerDatabase } from './persistence/database';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
@@ -367,61 +368,81 @@ export class EconomyRepository {
         this.assertSngTournamentRows(roomEntries, buyIn, fee, 'reserved');
         tournamentId = roomEntries[0].tournamentId;
       }
-
-      const profile = this.requirePublicProfile(profileId);
-      if (profile.wallet.balance < total) {
-        throw new EconomyDomainError('INSUFFICIENT_BALANCE');
-      }
-      const nextBalance = this.safeAdd(
-        profile.wallet.balance,
-        -total,
-        'WALLET_BALANCE_OVERFLOW',
-      );
-      const entryId = randomUUID();
-      this.database.db.prepare(`
-        UPDATE wallets SET balance = ?, updated_at = ? WHERE profile_id = ?
-      `).run(nextBalance, at, profileId);
-      this.database.db.prepare(`
-        INSERT INTO sng_entries (
-          id, tournament_id, room_id, profile_id, buy_in, fee,
-          status, place, prize, start_attempt, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL, 0, 0, ?, ?)
-      `).run(
-        entryId,
-        tournamentId,
-        roomId,
+      return this.insertReservedEntry(
         profileId,
+        roomId,
+        tournamentId,
         buyIn,
         fee,
-        at,
+        total,
         at,
       );
-      this.database.db.prepare(`
-        INSERT INTO seat_escrows (
-          id, profile_id, room_id, mode, amount, checkpoint_amount,
-          checkpoint_hand, status, updated_at
-        ) VALUES (?, ?, ?, 'sng', ?, ?, 0, 'active', ?)
-      `).run(entryId, profileId, roomId, total, total, at);
-      this.insertLedger({
-        profileId,
-        account: 'wallet',
-        delta: -total,
-        reason: 'SNG_ENTRY_RESERVE',
-        refId: roomId,
-        idempotencyKey: `sng-reserve:${entryId}:wallet`,
-        at,
-      });
-      this.insertLedger({
-        profileId,
-        account: 'escrow',
-        delta: total,
-        reason: 'SNG_ENTRY_RESERVE',
-        refId: roomId,
-        idempotencyKey: `sng-reserve:${entryId}:escrow`,
-        at,
-      });
-      return this.requireSngEntry(entryId);
     });
+  }
+
+  /** 예약 참가 공통 삽입 — 지갑 차감 + 참가 행 + 좌석 에스크로 + 원장 (SnG/MTT 공용) */
+  private insertReservedEntry(
+    profileId: string,
+    entryKey: string,
+    incarnationId: string,
+    buyIn: number,
+    fee: number,
+    total: number,
+    at: number,
+  ): SngEntry {
+    const profile = this.requirePublicProfile(profileId);
+    if (profile.wallet.balance < total) {
+      throw new EconomyDomainError('INSUFFICIENT_BALANCE');
+    }
+    const nextBalance = this.safeAdd(
+      profile.wallet.balance,
+      -total,
+      'WALLET_BALANCE_OVERFLOW',
+    );
+    const entryId = randomUUID();
+    this.database.db.prepare(`
+      UPDATE wallets SET balance = ?, updated_at = ? WHERE profile_id = ?
+    `).run(nextBalance, at, profileId);
+    this.database.db.prepare(`
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL, 0, 0, ?, ?)
+    `).run(
+      entryId,
+      incarnationId,
+      entryKey,
+      profileId,
+      buyIn,
+      fee,
+      at,
+      at,
+    );
+    this.database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount, checkpoint_amount,
+        checkpoint_hand, status, updated_at
+      ) VALUES (?, ?, ?, 'sng', ?, ?, 0, 'active', ?)
+    `).run(entryId, profileId, entryKey, total, total, at);
+    this.insertLedger({
+      profileId,
+      account: 'wallet',
+      delta: -total,
+      reason: 'SNG_ENTRY_RESERVE',
+      refId: entryKey,
+      idempotencyKey: `sng-reserve:${entryId}:wallet`,
+      at,
+    });
+    this.insertLedger({
+      profileId,
+      account: 'escrow',
+      delta: total,
+      reason: 'SNG_ENTRY_RESERVE',
+      refId: entryKey,
+      idempotencyKey: `sng-reserve:${entryId}:escrow`,
+      at,
+    });
+    return this.requireSngEntry(entryId);
   }
 
   hasActiveSngEntry(profileId: string, roomId: string): boolean {
@@ -507,42 +528,53 @@ export class EconomyRepository {
       }
 
       for (const entry of entries) {
-        const attempt = this.safeAdd(
-          entry.startAttempt,
-          1,
-          'SNG_START_INVALID',
-        );
-        this.insertLedger({
-          profileId: entry.profileId,
-          account: 'escrow',
-          delta: -fee,
-          reason: 'SNG_FEE_BURN',
-          refId: roomId,
-          idempotencyKey: `sng-start:${entry.id}:${attempt}:escrow`,
-          at,
-        });
-        this.insertLedger({
-          profileId: entry.profileId,
-          account: 'burn',
-          delta: fee,
-          reason: 'SNG_FEE_BURN',
-          refId: roomId,
-          idempotencyKey: `sng-start:${entry.id}:${attempt}:burn`,
-          at,
-        });
-        this.database.db.prepare(`
-          UPDATE sng_entries
-          SET status = 'started', start_attempt = ?, updated_at = ?
-          WHERE id = ? AND status = 'reserved'
-        `).run(attempt, at, entry.id);
-        this.database.db.prepare(`
-          UPDATE seat_escrows
-          SET amount = ?, checkpoint_amount = ?, updated_at = ?
-          WHERE id = ? AND mode = 'sng' AND status = 'active'
-        `).run(buyIn, buyIn, at, entry.id);
+        this.burnEntryFee(entry, roomId, buyIn, fee, at);
       }
       return entries[0].tournamentId;
     });
+  }
+
+  /** 시작 수수료 소각 + started 전이 공통 처리 (SnG/MTT 공용) */
+  private burnEntryFee(
+    entry: SngEntry,
+    refKey: string,
+    buyIn: number,
+    fee: number,
+    at: number,
+  ): void {
+    const attempt = this.safeAdd(
+      entry.startAttempt,
+      1,
+      'SNG_START_INVALID',
+    );
+    this.insertLedger({
+      profileId: entry.profileId,
+      account: 'escrow',
+      delta: -fee,
+      reason: 'SNG_FEE_BURN',
+      refId: refKey,
+      idempotencyKey: `sng-start:${entry.id}:${attempt}:escrow`,
+      at,
+    });
+    this.insertLedger({
+      profileId: entry.profileId,
+      account: 'burn',
+      delta: fee,
+      reason: 'SNG_FEE_BURN',
+      refId: refKey,
+      idempotencyKey: `sng-start:${entry.id}:${attempt}:burn`,
+      at,
+    });
+    this.database.db.prepare(`
+      UPDATE sng_entries
+      SET status = 'started', start_attempt = ?, updated_at = ?
+      WHERE id = ? AND status = 'reserved'
+    `).run(attempt, at, entry.id);
+    this.database.db.prepare(`
+      UPDATE seat_escrows
+      SET amount = ?, checkpoint_amount = ?, updated_at = ?
+      WHERE id = ? AND mode = 'sng' AND status = 'active'
+    `).run(buyIn, buyIn, at, entry.id);
   }
 
   revertSngTournamentStart(
@@ -681,6 +713,215 @@ export class EconomyRepository {
         throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
       }
       return entries[0].tournamentId;
+    });
+  }
+
+  // --- wallet MTT 토너 단위 에스크로 (Phase 2 — spec-mtt §4-7) ---
+  // sng_entries를 공유하되 room_id 자리에 **토너먼트 ID**를 키로 쓴다 (1토너=N방이라
+  // 방 단위 집계가 성립하지 않음). 원장 사유(SNG_*)와 좌석 에스크로(mode 'sng')는 그대로
+  // 재사용해 잔액 보존·복구(recoverIncompleteSngEntries)·이중 착석 가드를 공짜로 승계한다.
+  // SnG와 다른 곳은 정원(6 고정 → 2~maxEntrants)과 상금표(50/30/20 고정 → payout-table)뿐.
+
+  reserveMttEntry(
+    profileId: string,
+    tournamentId: string,
+    buyIn: number,
+    fee: number,
+    maxEntrants: number,
+    at: number,
+  ): SngEntry {
+    const total = this.assertSngAmounts(buyIn, fee);
+    this.assertSngIdentity(profileId, tournamentId);
+    if (
+      !Number.isSafeInteger(maxEntrants)
+      || maxEntrants < 2
+      || maxEntrants > 1000
+    ) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      const existingEntry = this.getActiveSngEntry(profileId);
+      if (existingEntry) {
+        if (
+          existingEntry.roomId === tournamentId
+          && existingEntry.status === 'reserved'
+          && existingEntry.buyIn === buyIn
+          && existingEntry.fee === fee
+        ) {
+          this.requireMatchingSngSeat(existingEntry, total);
+          return existingEntry;
+        }
+        throw new EconomyDomainError('SNG_ACTIVE_SEAT');
+      }
+      if (this.getActiveSeatEscrow(profileId)) {
+        throw new EconomyDomainError('SNG_ACTIVE_SEAT');
+      }
+
+      const groupEntries = this.listActiveSngEntriesByRoom(tournamentId);
+      if (groupEntries.length >= maxEntrants) {
+        throw new EconomyDomainError('SNG_START_INVALID');
+      }
+      let incarnationId: string = randomUUID();
+      if (groupEntries.length > 0) {
+        this.assertSngTournamentRows(groupEntries, buyIn, fee, 'reserved');
+        incarnationId = groupEntries[0].tournamentId;
+      }
+      return this.insertReservedEntry(
+        profileId,
+        tournamentId,
+        incarnationId,
+        buyIn,
+        fee,
+        total,
+        at,
+      );
+    });
+  }
+
+  /** MTT 시작 에스크로 — 체크인 확정 인원의 수수료 소각 + started 전이 (재시도 멱등) */
+  startMttTournament(
+    tournamentId: string,
+    profileIds: readonly string[],
+    buyIn: number,
+    fee: number,
+    at: number,
+  ): string {
+    this.assertSngIdentity(profileIds[0] ?? '', tournamentId);
+    this.assertMttEntrants(profileIds);
+    const total = this.assertSngAmounts(buyIn, fee);
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      const entries = this.listActiveSngEntriesByRoom(tournamentId);
+      this.assertExactSngProfiles(entries, profileIds);
+      const statuses = new Set(entries.map(entry => entry.status));
+      if (statuses.size !== 1) {
+        throw new EconomyDomainError('SNG_START_INVALID');
+      }
+      const status = entries[0]?.status;
+      if (status !== 'reserved' && status !== 'started') {
+        throw new EconomyDomainError('SNG_START_INVALID');
+      }
+      this.assertSngTournamentRows(entries, buyIn, fee, status);
+      for (const entry of entries) this.requireMatchingSngSeat(entry, total);
+      if (status === 'started') {
+        for (const entry of entries) this.assertSngStartLedger(entry);
+        return entries[0].tournamentId;
+      }
+      for (const entry of entries) {
+        this.burnEntryFee(entry, tournamentId, buyIn, fee, at);
+      }
+      return entries[0].tournamentId;
+    });
+  }
+
+  /**
+   * MTT 정산 — 전 순위 확정 결과에 payout-table 계단표를 강제하고 상금을 지급한다.
+   * 이미 정산된 토너먼트에 같은 결과로 재호출하면 멱등 통과, 다른 결과면 CONFLICT.
+   */
+  settleMttTournament(
+    tournamentId: string,
+    results: readonly SngResult[],
+    buyIn: number,
+    fee: number,
+    at: number,
+  ): string {
+    this.assertSngIdentity('settlement', tournamentId);
+    this.assertSngAmounts(buyIn, fee);
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      let entries = this.listActiveSngEntriesByRoom(tournamentId);
+      if (entries.length === 0) {
+        entries = this.listLatestSettledSngEntries(tournamentId);
+        this.assertSettledMttDuplicate(entries, results, buyIn, fee);
+        return entries[0].tournamentId;
+      }
+      const expectedPrizes = this.assertMttResults(results, buyIn, fee);
+      this.assertExactSngProfiles(
+        entries,
+        results.map(result => result.playerId),
+        'SNG_SETTLEMENT_INVALID',
+      );
+      this.assertSngTournamentRows(entries, buyIn, fee, 'started');
+      const resultByProfile = new Map(results.map(result => [result.playerId, result]));
+      let paid = 0;
+      for (const entry of entries) {
+        this.requireMatchingSngSeat(
+          entry,
+          this.assertSngAmounts(buyIn, fee),
+        );
+        this.assertSngStartLedger(entry);
+        const result = resultByProfile.get(entry.profileId);
+        if (!result) throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+        if (result.prize > 0) {
+          const profile = this.requirePublicProfile(entry.profileId);
+          const nextBalance = this.safeAdd(
+            profile.wallet.balance,
+            result.prize,
+            'WALLET_BALANCE_OVERFLOW',
+          );
+          this.database.db.prepare(`
+            UPDATE wallets SET balance = ?, updated_at = ? WHERE profile_id = ?
+          `).run(nextBalance, at, entry.profileId);
+          this.insertLedger({
+            profileId: entry.profileId,
+            account: 'wallet',
+            delta: result.prize,
+            reason: 'SNG_PRIZE',
+            refId: tournamentId,
+            idempotencyKey: `sng-prize:${tournamentId}:${entry.profileId}:${entry.tournamentId}`,
+            at,
+          });
+          paid = this.safeAdd(paid, result.prize, 'SNG_SETTLEMENT_INVALID');
+        }
+        this.insertLedger({
+          profileId: entry.profileId,
+          account: 'escrow',
+          delta: -buyIn,
+          reason: 'SNG_PRIZE_POOL',
+          refId: tournamentId,
+          idempotencyKey: `sng-pool:${tournamentId}:${entry.profileId}:${entry.tournamentId}`,
+          at,
+        });
+        this.database.db.prepare(`
+          UPDATE sng_entries
+          SET status = 'settled', place = ?, prize = ?, updated_at = ?
+          WHERE id = ? AND status = 'started'
+        `).run(result.place, result.prize, at, entry.id);
+        this.database.db.prepare(`
+          UPDATE seat_escrows
+          SET status = 'settled', amount = 0, checkpoint_amount = 0, updated_at = ?
+          WHERE id = ? AND mode = 'sng' AND status = 'active'
+        `).run(at, entry.id);
+      }
+      const expectedTotal = expectedPrizes.reduce((sum, prize) => (
+        this.safeAdd(sum, prize, 'SNG_SETTLEMENT_INVALID')
+      ), 0);
+      if (paid !== expectedTotal) {
+        throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+      }
+      return entries[0].tournamentId;
+    });
+  }
+
+  /**
+   * MTT 무효화 환불 — 취소(디렉터/인원 미달) 시 활성 참가 전원에게 전액(수수료 포함) 반환.
+   * reserved/started 혼재를 허용한다 (등록 중 취소와 진행 중 취소를 한 경로로 처리).
+   */
+  voidMttTournament(tournamentId: string, at: number): number {
+    this.assertSngIdentity('void', tournamentId);
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      const entries = this.listActiveSngEntriesByRoom(tournamentId);
+      for (const entry of entries) {
+        const total = this.assertSngAmounts(entry.buyIn, entry.fee);
+        this.requireMatchingSngSeat(entry, total);
+        if (entry.status === 'started') this.assertSngStartLedger(entry);
+      }
+      for (const entry of entries) {
+        this.refundSngEntry(entry, 'SNG_VOID_REFUND', at);
+      }
+      return entries.length;
     });
   }
 
@@ -1553,6 +1794,65 @@ export class EconomyRepository {
     }
   }
 
+  /** MTT 참가 명단 — 2~1000인 가변 정원, 중복/공백 금지 */
+  private assertMttEntrants(profileIds: readonly string[]): void {
+    if (
+      profileIds.length < 2
+      || profileIds.length > 1000
+      || new Set(profileIds).size !== profileIds.length
+      || profileIds.some(profileId => !profileId)
+    ) {
+      throw new EconomyDomainError('SNG_START_INVALID');
+    }
+  }
+
+  /**
+   * MTT 결과 검증 — 순위 1..N 완전 열거 + 상금은 payout-table 계단표(합계 보정)와
+   * 정확히 일치해야 한다. 상금표의 단일 소스는 lib/poker/payout-table (UI와 동일).
+   */
+  private assertMttResults(
+    results: readonly SngResult[],
+    buyIn: number,
+    fee: number,
+  ): readonly number[] {
+    this.assertSngAmounts(buyIn, fee);
+    const count = Array.isArray(results) ? results.length : 0;
+    if (
+      count < 2
+      || count > 1000
+      || results.some(result => (
+        !result
+        || typeof result !== 'object'
+        || typeof result.playerId !== 'string'
+        || !result.playerId
+        || !Number.isSafeInteger(result.place)
+        || result.place < 1
+        || result.place > count
+        || !Number.isSafeInteger(result.prize)
+        || result.prize < 0
+      ))
+      || new Set(results.map(result => result.playerId)).size !== count
+      || new Set(results.map(result => result.place)).size !== count
+    ) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+    }
+    const pool = this.safeMultiply(buyIn, count, 'SNG_SETTLEMENT_INVALID');
+    const ladder = computePayouts(pool, count);
+    const prizes = Array.from(
+      { length: count },
+      (_, index) => ladder[index] ?? 0,
+    );
+    if (prizes.some(prize => !Number.isSafeInteger(prize) || prize < 0)) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+    }
+    for (const result of results) {
+      if (result.prize !== prizes[result.place - 1]) {
+        throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+      }
+    }
+    return prizes;
+  }
+
   private assertSngResults(
     results: readonly SngResult[],
     buyIn: number,
@@ -1601,16 +1901,22 @@ export class EconomyRepository {
     return prizes;
   }
 
+  /**
+   * 참가 원장 행과 기대 프로필 집합의 완전 일치 검증.
+   * 인원은 profileIds 길이를 따른다(2인 이상) — SnG 경로는 상위에서 6인을 별도 강제
+   * (assertSngEntrants/assertSngResults)하고, MTT 경로는 가변 정원을 허용한다.
+   */
   private assertExactSngProfiles(
     entries: readonly SngEntry[],
     profileIds: readonly string[],
     code: EconomyErrorCode = 'SNG_START_INVALID',
   ): void {
+    const count = profileIds.length;
     if (
-      entries.length !== 6
-      || profileIds.length !== 6
-      || new Set(entries.map(entry => entry.profileId)).size !== 6
-      || new Set(profileIds).size !== 6
+      count < 2
+      || entries.length !== count
+      || new Set(entries.map(entry => entry.profileId)).size !== count
+      || new Set(profileIds).size !== count
     ) {
       throw new EconomyDomainError(code);
     }
@@ -1761,8 +2067,9 @@ export class EconomyRepository {
       || row.prize < 0
       || !Number.isSafeInteger(row.start_attempt)
       || row.start_attempt < 0
+      // MTT(토너 단위 참가)는 순위가 6위를 넘는다 — DDL(v26)과 동일 상한
       || (row.place !== null && (
-        !Number.isSafeInteger(row.place) || row.place < 1 || row.place > 6
+        !Number.isSafeInteger(row.place) || row.place < 1 || row.place > 1000
       ))
       || (
         (row.status === 'reserved' || row.status === 'started' || row.status === 'refunded')
@@ -1832,6 +2139,66 @@ export class EconomyRepository {
     }
     try {
       this.assertSngResults(results, buyIn, fee);
+    } catch {
+      throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
+    }
+    const canonical = (values: readonly SngResult[]): string => JSON.stringify(
+      [...values]
+        .sort((left, right) => left.playerId.localeCompare(right.playerId))
+        .map(result => [result.playerId, result.place, result.prize]),
+    );
+    if (canonical(results) !== canonical(persisted)) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
+    }
+  }
+
+  /** MTT 정산 재호출 멱등 검증 — SnG 버전의 payout-table(가변 정원) 변형 */
+  private assertSettledMttDuplicate(
+    entries: readonly SngEntry[],
+    results: readonly SngResult[],
+    buyIn: number,
+    fee: number,
+  ): void {
+    let persisted: SngResult[];
+    const persistedBuyIn = entries[0]?.buyIn;
+    const persistedFee = entries[0]?.fee;
+    try {
+      if (persistedBuyIn === undefined || persistedFee === undefined) {
+        throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+      }
+      this.assertSngAmounts(persistedBuyIn, persistedFee);
+      this.assertExactSngProfiles(
+        entries,
+        entries.map(entry => entry.profileId),
+        'ECONOMY_PERSISTENCE_INVALID',
+      );
+      this.assertSngTournamentRows(
+        entries,
+        persistedBuyIn,
+        persistedFee,
+        'settled',
+      );
+      persisted = entries.map(entry => ({
+        playerId: entry.profileId,
+        place: entry.place as number,
+        prize: entry.prize,
+      }));
+      this.assertMttResults(persisted, persistedBuyIn, persistedFee);
+    } catch (error) {
+      if (
+        error instanceof EconomyDomainError
+        && error.code === 'ECONOMY_PERSISTENCE_INVALID'
+      ) {
+        throw error;
+      }
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+
+    if (buyIn !== persistedBuyIn || fee !== persistedFee) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
+    }
+    try {
+      this.assertMttResults(results, buyIn, fee);
     } catch {
       throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
     }

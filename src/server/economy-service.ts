@@ -15,6 +15,10 @@ import {
   CASUAL_SNG_BUY_IN,
   CASUAL_SNG_ENTRY_FEE,
 } from '@/lib/economy/casual-sng';
+import {
+  MTT_WALLET_BUY_IN,
+  MTT_WALLET_ENTRY_FEE,
+} from '@/lib/economy/mtt-entry';
 import { cfg } from './game-config/live';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
@@ -307,6 +311,71 @@ export class EconomyService {
 
   recoverIncompleteSngEntries(at = this.clock()): number {
     return this.repository.recoverIncompleteSngEntries(at);
+  }
+
+  // --- wallet MTT (토너 단위 에스크로 — 키는 토너먼트 ID) ---
+
+  reserveMttEntry(
+    profileId: string,
+    tournamentId: string,
+    maxEntrants: number,
+    buyIn: number = MTT_WALLET_BUY_IN,
+    fee: number = MTT_WALLET_ENTRY_FEE,
+    at = this.clock(),
+  ): SngEntry {
+    return this.repository.reserveMttEntry(
+      profileId,
+      tournamentId,
+      buyIn,
+      fee,
+      maxEntrants,
+      at,
+    );
+  }
+
+  /** 등록 취소/노쇼 환불 — MTT 키(sng_entries.room_id=토너먼트 ID) 기준 reserved 환불 */
+  cancelMttEntry(
+    profileId: string,
+    tournamentId: string,
+    at = this.clock(),
+  ): SngEntry | null {
+    return this.repository.cancelSngEntry(profileId, tournamentId, at);
+  }
+
+  startMttTournament(
+    tournamentId: string,
+    profileIds: readonly string[],
+    buyIn: number = MTT_WALLET_BUY_IN,
+    fee: number = MTT_WALLET_ENTRY_FEE,
+    at = this.clock(),
+  ): string {
+    return this.repository.startMttTournament(
+      tournamentId,
+      profileIds,
+      buyIn,
+      fee,
+      at,
+    );
+  }
+
+  settleMttTournament(
+    tournamentId: string,
+    results: readonly SngResult[],
+    buyIn: number = MTT_WALLET_BUY_IN,
+    fee: number = MTT_WALLET_ENTRY_FEE,
+    at = this.clock(),
+  ): string {
+    return this.repository.settleMttTournament(
+      tournamentId,
+      results,
+      buyIn,
+      fee,
+      at,
+    );
+  }
+
+  voidMttTournament(tournamentId: string, at = this.clock()): number {
+    return this.repository.voidMttTournament(tournamentId, at);
   }
 
   openCashEscrow(

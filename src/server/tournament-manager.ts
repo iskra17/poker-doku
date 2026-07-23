@@ -46,6 +46,27 @@ export interface CreateTournamentInput {
   botFill: boolean; // 시작 시 남는 자리를 봇으로 충원 (practice)
   turnTime: number;
   hostId: string;
+  /** 'wallet' = 지갑 바이인 에스크로 (봇 충원 불가, 상금 = 리얼 칩). 기본 'practice' */
+  economyMode?: 'practice' | 'wallet';
+  /** wallet 참가 바이인 — 상금 풀 산정 기준 (practice는 0) */
+  entryBuyIn?: number;
+  /** wallet 참가 수수료 — 시작 시 소각 (practice는 0) */
+  entryFee?: number;
+}
+
+/**
+ * wallet MTT 경제 훅 — EconomyService 토너 단위 에스크로에 대한 좁은 어댑터.
+ * 전부 동기·throw 계약 (EconomyDomainError) — 호출부(manager)가 흐름별로 처리한다.
+ */
+export interface MttEconomyHooks {
+  reserveEntry(profileId: string, tournamentId: string, maxEntrants: number): void;
+  refundEntry(profileId: string, tournamentId: string): void;
+  startEscrow(tournamentId: string, profileIds: readonly string[]): void;
+  settle(
+    tournamentId: string,
+    results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
+  ): void;
+  refundAll(tournamentId: string): number;
 }
 
 export interface MttEntrant {
@@ -85,6 +106,8 @@ export interface TournamentRuntimeHooks {
   onTournamentsChanged?(): void;
   /** 특정 토너먼트 상세 변화 (탈락/이동/레벨) — 관전/참가자 브로드캐스트 트리거 */
   onTournamentUpdate?(tournamentId: string): void;
+  /** wallet MTT 에스크로 — 미주입 시 wallet 토너먼트 개설 불가 */
+  economy?: MttEconomyHooks;
 }
 
 type HoldReason = 'setup' | 'break' | 'h4h' | 'complete';
@@ -103,6 +126,7 @@ export interface AdminTournamentView {
   level: number;
   onBreak: boolean;
   h4hActive: boolean;
+  economyMode: 'practice' | 'wallet';
   entrantCount: number;
   seatedCount: number;
   remaining: number;
@@ -151,6 +175,8 @@ interface TournamentRuntime {
   finalAnnounced: boolean;
   startTimer: NodeJS.Timeout | null;
   cleanupTimer: NodeJS.Timeout | null;
+  /** wallet 정산 재시도 (1회) — 완주 시 settle 실패하면 잠시 후 다시 시도 */
+  settleRetryTimer: NodeJS.Timeout | null;
 }
 
 const MAX_TOURNAMENTS = 4; // 동시 개설 상한 (테이블 수 폭주 방지 — MAX_ROOMS와 별개 가드)
@@ -211,11 +237,25 @@ export class TournamentManager {
     ) {
       return { ok: false, reason: 'invalid' };
     }
+    const economyMode = input.economyMode ?? 'practice';
+    // wallet은 봇 충원 불가(봇은 바이인을 못 낸다) + 경제 훅 필수 + 상품가 필수
+    if (economyMode === 'wallet' && (
+      !this.hooks.economy
+      || input.botFill
+      || !Number.isSafeInteger(input.entryBuyIn)
+      || (input.entryBuyIn ?? 0) <= 0
+      || !Number.isSafeInteger(input.entryFee)
+      || (input.entryFee ?? 0) <= 0
+    )) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const entryBuyIn = economyMode === 'wallet' ? input.entryBuyIn ?? 0 : 0;
+    const entryFee = economyMode === 'wallet' ? input.entryFee ?? 0 : 0;
 
     const id = `mtt-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const t: TournamentRuntime = {
       id,
-      config: { ...input, name, tableSize, maxEntrants },
+      config: { ...input, name, tableSize, maxEntrants, economyMode, entryBuyIn, entryFee },
       structure: MTT_STRUCTURES[input.speed],
       phase: 'registering',
       createdAt: Date.now(),
@@ -237,6 +277,7 @@ export class TournamentManager {
       finalAnnounced: false,
       startTimer: null,
       cleanupTimer: null,
+      settleRetryTimer: null,
     };
     if (input.startAt !== null) {
       const delay = Math.max(1_000, input.startAt - Date.now());
@@ -253,6 +294,7 @@ export class TournamentManager {
     return { ok: true, tournamentId: id };
   }
 
+  /** 등록 — wallet은 에스크로 예약이 먼저다 (실패 시 EconomyDomainError를 그대로 던진다) */
   register(tournamentId: string, entrant: MttEntrant):
     'ok' | 'not-found' | 'closed' | 'full' | 'already' {
     const t = this.tournaments.get(tournamentId);
@@ -260,6 +302,10 @@ export class TournamentManager {
     if (t.phase !== 'registering') return 'closed';
     if (t.entrants.has(entrant.id)) return 'already';
     if (t.entrants.size >= t.config.maxEntrants) return 'full';
+    if (t.config.economyMode === 'wallet') {
+      // throw 시 등록 미반영 — 소켓 계층이 코드별 안내(잔액 부족/이중 좌석)로 변환
+      this.hooks.economy?.reserveEntry(entrant.id, t.id, t.config.maxEntrants);
+    }
     t.entrants.set(entrant.id, { ...entrant, name: entrant.name.slice(0, 20) });
     this.hooks.onTournamentsChanged?.();
     this.hooks.onTournamentUpdate?.(tournamentId);
@@ -269,6 +315,15 @@ export class TournamentManager {
   unregister(tournamentId: string, playerId: string): boolean {
     const t = this.tournaments.get(tournamentId);
     if (!t || t.phase !== 'registering') return false;
+    if (!t.entrants.has(playerId)) return false;
+    if (t.config.economyMode === 'wallet') {
+      try {
+        this.hooks.economy?.refundEntry(playerId, t.id);
+      } catch {
+        // 환불 실패면 등록을 유지한다 — 에스크로와 등록부가 어긋나면 안 된다
+        return false;
+      }
+    }
     const removed = t.entrants.delete(playerId);
     if (removed) {
       this.hooks.onTournamentsChanged?.();
@@ -279,7 +334,7 @@ export class TournamentManager {
 
   /** 호스트 수동 시작 */
   startTournament(tournamentId: string, requesterId: string):
-    'ok' | 'not-found' | 'not-host' | 'not-registering' | 'not-enough' {
+    'ok' | 'not-found' | 'not-host' | 'not-registering' | 'not-enough' | 'economy' {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
@@ -447,7 +502,7 @@ export class TournamentManager {
       ? this.clockPos(t)
       : null;
     const previewPool = t.phase === 'registering'
-      ? Math.max(t.entrants.size, 2) * t.structure.startingStack
+      ? Math.max(t.entrants.size, 2) * this.entryUnit(t)
       : t.prizePool;
     const previewEntrants = t.phase === 'registering'
       ? Math.max(
@@ -457,7 +512,7 @@ export class TournamentManager {
       )
       : t.seatedCount;
     const pool = t.phase === 'registering' && t.config.botFill
-      ? t.config.maxEntrants * t.structure.startingStack
+      ? t.config.maxEntrants * this.entryUnit(t)
       : previewPool;
     const payouts = t.phase === 'registering'
       ? computePayouts(pool, previewEntrants).map((prize, i) => ({ place: i + 1, prize }))
@@ -532,6 +587,7 @@ export class TournamentManager {
           level: clock ? clock.levelIndex + 1 : 1,
           onBreak: clock?.onBreak ?? false,
           h4hActive: t.h4h.active,
+          economyMode: t.config.economyMode ?? 'practice',
           entrantCount: t.phase === 'registering' ? t.entrants.size : t.seatedCount,
           seatedCount: t.seatedCount,
           remaining: t.remaining,
@@ -561,6 +617,20 @@ export class TournamentManager {
       if (t.startTimer) clearTimeout(t.startTimer);
       if (t.breakTimer) clearTimeout(t.breakTimer);
       if (t.cleanupTimer) clearTimeout(t.cleanupTimer);
+      if (t.settleRetryTimer) clearTimeout(t.settleRetryTimer);
+    }
+  }
+
+  /** wallet 정산 시도 — 성공 여부만 반환 (재호출은 리포지토리가 멱등 처리) */
+  private settleWallet(t: TournamentRuntime, results: MttResult[]): boolean {
+    try {
+      this.hooks.economy?.settle(
+        t.id,
+        results.map(r => ({ playerId: r.playerId, place: r.place, prize: r.prize })),
+      );
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -569,12 +639,13 @@ export class TournamentManager {
   private attemptStart(
     t: TournamentRuntime,
     requesterId: string | null,
-  ): 'ok' | 'not-registering' | 'not-enough' {
+  ): 'ok' | 'not-registering' | 'not-enough' | 'economy' {
     if (t.phase !== 'registering') return 'not-registering';
     if (t.startTimer) {
       clearTimeout(t.startTimer);
       t.startTimer = null;
     }
+    const isWallet = t.config.economyMode === 'wallet';
 
     // 체크인: 시작 시점 접속 = 출석. 미접속 등록자는 착석에서 제외한다 (노쇼 방지 — 무료 등록의
     // 유령 좌석이 초반 테이블을 죽이는 문제. 리서치 §3-3 #4)
@@ -587,8 +658,33 @@ export class TournamentManager {
     const total = checkedIn.length + botCount;
     if (total < 2 || checkedIn.length < 1) {
       // 자동 시작(예약)인데 인원이 안 되면 취소한다 — 수동 시작은 에러만 반환
+      // (wallet 환불은 cancelTournament의 refundAll이 담당)
       if (requesterId === null) this.cancelTournament(t, 'not-enough');
       return 'not-enough';
+    }
+
+    if (isWallet) {
+      // 노쇼(미접속 등록자) 환불 — 시작 에스크로는 출석 명단과 정확히 일치해야 한다
+      const checkedInIds = new Set(checkedIn.map(e => e.id));
+      for (const entrant of t.entrants.values()) {
+        if (checkedInIds.has(entrant.id)) continue;
+        try {
+          this.hooks.economy?.refundEntry(entrant.id, t.id);
+        } catch {
+          // 환불 실패 좌석은 서버 재시작 복구(recoverIncompleteSngEntries)가 회수한다
+          eventLog.log('mtt-cancel', {
+            data: { tournamentId: t.id, reason: 'no-show-refund-failed', playerId: entrant.id },
+          });
+        }
+      }
+      try {
+        this.hooks.economy?.startEscrow(t.id, checkedIn.map(e => e.id));
+      } catch {
+        // 시작 에스크로 실패 — 등록 상태를 유지하고(노쇼는 이미 제외) 재시도 여지를 남긴다
+        t.entrants = new Map(checkedIn.map(e => [e.id, e]));
+        this.hooks.onTournamentsChanged?.();
+        return 'economy';
+      }
     }
 
     t.entrants = new Map(checkedIn.map(e => [e.id, e]));
@@ -676,7 +772,10 @@ export class TournamentManager {
 
     t.seatedCount = total;
     t.remaining = total;
-    t.prizePool = total * t.structure.startingStack;
+    // 상금 풀 — practice는 표시용 칩 풀, wallet은 리얼 칩(바이인 × 인원, 수수료 제외)
+    t.prizePool = isWallet
+      ? total * t.config.entryBuyIn!
+      : total * t.structure.startingStack;
     t.prizes = computePayouts(t.prizePool, total);
     t.startedAt = Date.now();
     t.phase = 'running';
@@ -725,6 +824,18 @@ export class TournamentManager {
     t.pausedAt = null;
     if (t.startTimer) { clearTimeout(t.startTimer); t.startTimer = null; }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
+    // wallet 무효화 환불 — 등록 중(reserved)·진행 중(started) 전원 전액(수수료 포함) 반환.
+    // 프리즈아웃 중도 취소는 순위 확정이 불가능하므로 전원 환불이 유일하게 공정하다.
+    if (t.config.economyMode === 'wallet') {
+      try {
+        this.hooks.economy?.refundAll(t.id);
+      } catch {
+        // 환불 실패 좌석은 서버 재시작 복구가 회수한다 — 취소 진행은 막지 않는다
+        eventLog.log('mtt-cancel', {
+          data: { tournamentId: t.id, reason: 'refund-failed' },
+        });
+      }
+    }
     for (const roomId of t.tables.keys()) {
       this.byRoom.delete(roomId);
       this.roomManager.disposeRoom(roomId, 'mtt-cancel');
@@ -919,12 +1030,30 @@ export class TournamentManager {
       this.roomManager.retainFinishedTournament(roomId);
     }
 
+    // wallet 상금 정산 — 전 순위(1..N) 결과를 payout-table 검증과 함께 지급.
+    // 실패 시 10초 후 1회 재시도, 그래도 실패하면 재시작 복구가 전액 환불로 회수한다
+    // (상금 미지급이 조용히 사라지지 않게 mtt-complete에 settlementOk를 남긴다).
+    let settlementOk = true;
+    if (t.config.economyMode === 'wallet') {
+      settlementOk = this.settleWallet(t, results);
+      if (!settlementOk) {
+        t.settleRetryTimer = setTimeout(() => {
+          t.settleRetryTimer = null;
+          const retried = this.settleWallet(t, results);
+          eventLog.log('mtt-complete', {
+            data: { tournamentId: t.id, settlementRetryOk: retried },
+          });
+        }, 10_000);
+      }
+    }
+
     eventLog.log('mtt-complete', {
       data: {
         tournamentId: t.id,
         entrants: t.seatedCount,
         champion: results[0]?.name,
         prizePool: t.prizePool,
+        settlementOk,
       },
     });
     this.hooks.onTournamentsChanged?.();
@@ -1328,6 +1457,13 @@ export class TournamentManager {
     return tid ? this.tournaments.get(tid) : undefined;
   }
 
+  /** 1인당 상금 풀 기여 단위 — practice는 시작 스택(표시용), wallet은 바이인(리얼 칩) */
+  private entryUnit(t: TournamentRuntime): number {
+    return t.config.economyMode === 'wallet'
+      ? t.config.entryBuyIn ?? 0
+      : t.structure.startingStack;
+  }
+
   private standings(t: TournamentRuntime): TournamentStandingRow[] {
     const rows: TournamentStandingRow[] = [];
     for (const [roomId, meta] of t.tables) {
@@ -1387,7 +1523,7 @@ export class TournamentManager {
       tableCount: t.tables.size,
       prizePool: t.phase === 'registering'
         ? (t.config.botFill ? t.config.maxEntrants : Math.max(t.entrants.size, 2))
-          * t.structure.startingStack
+          * this.entryUnit(t)
         : t.prizePool,
       startAt: t.config.startAt,
       startedAt: t.startedAt,
@@ -1395,6 +1531,9 @@ export class TournamentManager {
       hostId: t.config.hostId,
       level: clockLevel,
       paused: t.pausedAt !== null,
+      economyMode: t.config.economyMode ?? 'practice',
+      entryBuyIn: t.config.entryBuyIn ?? 0,
+      entryFee: t.config.entryFee ?? 0,
       ...(forPlayerId
         ? { registered: t.entrants.has(forPlayerId) }
         : {}),

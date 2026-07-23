@@ -165,6 +165,7 @@ interface AdminTournament {
   id: string; name: string; phase: string; speed: string; hostId: string;
   createdAt: number; startedAt: number | null; finishedAt: number | null;
   paused: boolean; level: number; onBreak: boolean; h4hActive: boolean;
+  economyMode: 'practice' | 'wallet';
   entrantCount: number; seatedCount: number; remaining: number; prizePool: number;
   tables: AdminTournamentTable[]; standings: AdminTournamentStanding[];
 }
@@ -958,6 +959,9 @@ function TournamentsTab({ tournaments }: { tournaments: AdminTournament[] }) {
             <span className="font-bold text-ink">{t.name}</span>
             <span className="rounded bg-white/10 px-1.5 py-0.5">{MTT_PHASE_LABEL[t.phase] ?? t.phase}</span>
             <span className="text-ink-dim">{t.speed} · Lv.{t.level}</span>
+            {t.economyMode === 'wallet' && (
+              <span className="rounded bg-gilded/20 px-1.5 py-0.5 font-bold text-gilded">💰 wallet</span>
+            )}
             {t.paused && <span className="rounded bg-blossom/20 px-1.5 py-0.5 font-bold text-blossom">⏸ 일시정지</span>}
             {t.onBreak && <span className="rounded bg-cyber/20 px-1.5 py-0.5 text-cyber">☕ 브레이크</span>}
             {t.h4hActive && <span className="rounded bg-gilded/20 px-1.5 py-0.5 text-gilded">⚔️ H4H</span>}

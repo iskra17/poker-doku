@@ -159,6 +159,10 @@ export interface TournamentSummary {
   level: number;
   /** 디렉터 일시정지 중 — 시계 동결·전 테이블 다음 핸드 보류 (Phase 2) */
   paused: boolean;
+  /** wallet = 지갑 바이인 에스크로·리얼 칩 상금 (봇 충원 불가). 기본 practice */
+  economyMode: 'practice' | 'wallet';
+  entryBuyIn: number; // wallet 바이인 (practice는 0)
+  entryFee: number; // wallet 수수료 (practice는 0)
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
   myTableRoomId?: string; // 참가 중이면 내 테이블
 }
@@ -189,6 +193,8 @@ export interface CreateTournamentRequest {
   startAt: number | null; // 예약 시각 (null = 호스트 수동 시작)
   botFill: boolean;
   turnTime: number;
+  /** 'wallet' = 지갑 바이인 에스크로 (봇 충원 불가). 생략 시 practice */
+  economyMode?: 'practice' | 'wallet';
 }
 
 /**

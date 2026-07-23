@@ -4604,6 +4604,50 @@ export const migrations: readonly Migration[] = [
         ON hand_history(profile_id, id);
     `,
   },
+  {
+    version: 26,
+    name: 'mtt_tournament_entries',
+    sql: `
+      -- wallet MTT 토너 단위 에스크로 — sng_entries를 SnG(6인)+MTT(2~48인) 공용 참가
+      -- 원장으로 일반화한다. MTT는 room_id 자리에 토너먼트 ID를 키로 쓰며, 순위가 6위를
+      -- 넘으므로 place CHECK를 넓힌다 (SnG 결과 검증은 리포지토리가 여전히 6인을 강제).
+      ALTER TABLE sng_entries RENAME TO sng_entries_v4_backup;
+
+      CREATE TABLE sng_entries (
+        id TEXT PRIMARY KEY,
+        tournament_id TEXT NOT NULL,
+        room_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        buy_in INTEGER NOT NULL CHECK (buy_in > 0),
+        fee INTEGER NOT NULL CHECK (fee > 0),
+        status TEXT NOT NULL CHECK (status IN ('reserved','started','settled','refunded')),
+        place INTEGER CHECK (place IS NULL OR place BETWEEN 1 AND 1000),
+        prize INTEGER NOT NULL DEFAULT 0 CHECK (prize >= 0),
+        start_attempt INTEGER NOT NULL DEFAULT 0 CHECK (start_attempt >= 0),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (tournament_id, profile_id)
+      ) STRICT;
+
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, created_at, updated_at
+      )
+      SELECT
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, created_at, updated_at
+      FROM sng_entries_v4_backup;
+
+      DROP TABLE sng_entries_v4_backup;
+
+      CREATE UNIQUE INDEX one_active_sng_entry_per_profile
+        ON sng_entries(profile_id)
+        WHERE status IN ('reserved', 'started');
+
+      CREATE INDEX idx_sng_entries_room_status_tournament
+        ON sng_entries(room_id, status, tournament_id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

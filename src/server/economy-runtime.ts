@@ -38,11 +38,55 @@ export interface SngAdmissionEconomy {
   hasActiveSngEntry(profileId: string, roomId: string): boolean;
 }
 
+/** wallet MTT — 토너 단위 에스크로 (키는 토너먼트 ID, 기본 상품가는 economy-service) */
+export interface MttAdmissionEconomy {
+  reserveMttEntry(
+    profileId: string,
+    tournamentId: string,
+    maxEntrants: number,
+  ): unknown;
+  cancelMttEntry(profileId: string, tournamentId: string): unknown;
+  startMttTournament(tournamentId: string, profileIds: readonly string[]): string;
+  settleMttTournament(
+    tournamentId: string,
+    results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
+  ): string;
+  voidMttTournament(tournamentId: string): number;
+}
+
 export class EconomyRuntime implements
   RoomEconomyHooks,
   CashAdmissionEconomy,
-  SngAdmissionEconomy {
+  SngAdmissionEconomy,
+  MttAdmissionEconomy {
   constructor(private readonly economy: EconomyService) {}
+
+  reserveMttEntry(
+    profileId: string,
+    tournamentId: string,
+    maxEntrants: number,
+  ): unknown {
+    return this.economy.reserveMttEntry(profileId, tournamentId, maxEntrants);
+  }
+
+  cancelMttEntry(profileId: string, tournamentId: string): unknown {
+    return this.economy.cancelMttEntry(profileId, tournamentId);
+  }
+
+  startMttTournament(tournamentId: string, profileIds: readonly string[]): string {
+    return this.economy.startMttTournament(tournamentId, profileIds);
+  }
+
+  settleMttTournament(
+    tournamentId: string,
+    results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
+  ): string {
+    return this.economy.settleMttTournament(tournamentId, results);
+  }
+
+  voidMttTournament(tournamentId: string): number {
+    return this.economy.voidMttTournament(tournamentId);
+  }
 
   openCashEscrow(profileId: string, roomId: string, buyIn: number): unknown {
     return this.economy.openCashEscrow(profileId, roomId, buyIn);

@@ -119,6 +119,7 @@ describe('/api/admin/* 백오피스 API', () => {
           id: 'mtt-1', name: '도쿠컵', phase: 'running' as const, speed: 'turbo' as const,
           hostId: 'p1', createdAt: 1_000, startedAt: 2_000, finishedAt: null,
           paused: true, level: 3, onBreak: false, h4hActive: false,
+          economyMode: 'practice' as const,
           entrantCount: 12, seatedCount: 12, remaining: 9, prizePool: 120_000,
           tables: [{
             roomId: 'mtt-room-1', no: 1, players: 6, humans: 2, alive: 5,
