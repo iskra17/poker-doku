@@ -38,8 +38,11 @@ const ENGINE_RUNTIME_HOOKS: EngineRuntimeHooks = {
   }),
 };
 
-// 턴 타임 폴백·자동 처리 지연·런아웃 간격·타임칩 연장은 핫 컨피그로 이동 —
+// 턴 타임 폴백·자동 처리 지연·런아웃 간격은 핫 컨피그로 이동 —
 // cfg('timer.*')를 사용 시점마다 읽는다 (기본값 정의는 game-config/registry.ts)
+/** 타임칩 연장 시간 — 클라 3곳(도움말·액션바·방 만들기)에 "+30초" 문구가 하드코딩되어 있어
+ *  핫 컨피그 제외 (변경하려면 문구와 함께 코드 수정) */
+const TIME_BANK_EXTEND_MS = 30_000;
 const DEFAULT_SNG_RETENTION_MS = 10 * 60_000;
 /** 마지막 휴먼이 떠난 캐시 유저 방의 보존 시간 — 그 사이 재입장하면 방이 유지된다 (SnG는 즉시 정리 유지) */
 const EMPTY_USER_ROOM_RETENTION_MS = 10 * 60_000;
@@ -1708,10 +1711,9 @@ export class RoomManager {
     if ((activePlayer.timeBankChips ?? 0) <= 0) return false;
 
     activePlayer.timeBankChips = (activePlayer.timeBankChips ?? 0) - 1;
-    const extendMs = cfg('timer.timeBankExtendMs');
     const remaining = this.getTurnTimeRemaining(roomId);
-    this.startTurnTimer(roomId, remaining + extendMs);
-    this.sendSystemChat(roomId, `${activePlayer.name}님이 타임칩을 사용했습니다 (+${extendMs / 1000}초).`);
+    this.startTurnTimer(roomId, remaining + TIME_BANK_EXTEND_MS);
+    this.sendSystemChat(roomId, `${activePlayer.name}님이 타임칩을 사용했습니다 (+${TIME_BANK_EXTEND_MS / 1000}초).`);
     this.onUpdate(roomId, room.engine);
     return true;
   }
