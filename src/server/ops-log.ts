@@ -18,6 +18,7 @@ export const OPS_PERSIST_TYPES = new Set([
   'join-room:reject',  // 입장 거부
   'grace-expired',     // 재접속 유예 만료 (좌석 회수 여부 포함)
   'room-lost',
+  'config-change',     // 백오피스 런타임 게임 설정 변경 — 감사 추적 (diff 포함)
 ]);
 
 /** settlementOk:false인 hand-end처럼 조건부로 영속할 이벤트 판정 */

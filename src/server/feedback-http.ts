@@ -6,11 +6,11 @@ import {
   type FeedbackCategory,
 } from '@/lib/feedback/rules';
 import { clientAddress } from './client-address';
+import { drainRequest as drain, readJsonBody as readJson } from './http-body';
 import type { TransientHttpRateLimiter } from './http-rate-limit';
 import type { PokerDatabase } from './persistence/database';
 import { readProfileCredentialCookie } from './profile-http';
 
-const MAX_JSON_BODY_BYTES = 8 * 1_024;
 const DAILY_LIMIT_PER_PROFILE = 10;
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const MAX_LIST_LIMIT = 200;
@@ -214,33 +214,6 @@ function handleOperatorList(
 
 function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
-}
-
-function drain(request: IncomingMessage): void {
-  request.resume();
-}
-
-async function readJson(request: IncomingMessage): Promise<unknown> {
-  const contentType = request.headers['content-type'];
-  if (
-    typeof contentType !== 'string'
-    || !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)
-  ) {
-    drain(request);
-    throw new Error('FEEDBACK_MEDIA_TYPE');
-  }
-  const chunks: Buffer[] = [];
-  let bytes = 0;
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    bytes += buffer.length;
-    if (bytes > MAX_JSON_BODY_BYTES) {
-      drain(request);
-      throw new Error('FEEDBACK_TOO_LARGE');
-    }
-    chunks.push(buffer);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
 function sendJson(

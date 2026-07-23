@@ -1,7 +1,10 @@
-import type { ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { UrlWithParsedQuery } from 'node:url';
 import { eventLog } from './event-log';
+import { GAME_CONFIG_GROUP_LABELS } from './game-config/registry';
+import { GameConfigValidationError, type GameConfigService } from './game-config/service';
 import type { HandHistoryRepository, TableHandRepository } from './hand-history';
+import { drainRequest, HttpBodyError, readJsonBody } from './http-body';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
 
@@ -14,6 +17,8 @@ import type { PokerDatabase } from './persistence/database';
  * - GET /api/admin/hands     — 테이블 정본 핸드 목록 (room=/profile=/limit=/before=)
  * - GET /api/admin/hands/:id — 전역 핸드 ID로 정본 상세 (전체 홀카드 — 핸드 감사 전용)
  * - GET /api/admin/security  — 최근 신호 이벤트 타입별 집계 (hours=, 기본 24)
+ * - GET/POST /api/admin/config — 런타임 게임 설정 조회/변경 (핫 컨피그 — 레지스트리 메타 포함,
+ *   변경은 config-change 이벤트로 감사 기록)
  *
  * 커스텀 서버 직결 (debug/log와 동일) — Next 라우트로 옮기면 번들 경계에서
  * 링 버퍼/런타임 참조가 쪼개진다.
@@ -69,6 +74,8 @@ export interface AdminHttpOptions {
   handHistory?: HandHistoryRepository;
   /** 늦은 바인딩 — 소켓 런타임은 HTTP 핸들러 생성 이후에 준비된다 */
   runtime: () => AdminRuntimeSnapshot | null;
+  /** 런타임 게임 설정 (핫 컨피그) — 게임 읽기 경로(live cfg)와 같은 인스턴스여야 한다 */
+  gameConfig?: GameConfigService;
   debugToken?: string;
   now?: () => number;
 }
@@ -89,14 +96,28 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
   const now = options.now ?? Date.now;
   const startedAt = now();
 
-  return (
+  return async (
+    req: IncomingMessage,
     res: ServerResponse,
     pathname: string,
     query: UrlWithParsedQuery['query'],
-  ): boolean => {
+  ): Promise<boolean> => {
     if (!pathname.startsWith('/api/admin/')) return false;
     if (!options.debugToken || one(query.token) !== options.debugToken) {
+      drainRequest(req);
       send(res, 403, { error: 'forbidden' });
+      return true;
+    }
+
+    if (pathname === '/api/admin/config') {
+      await handleGameConfig(req, res, options, now);
+      return true;
+    }
+
+    // 나머지 라우트는 전부 조회 전용
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      drainRequest(req);
+      send(res, 405, { error: 'method-not-allowed', allow: 'GET' });
       return true;
     }
 
@@ -296,4 +317,84 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     send(res, 404, { error: 'not-found' });
     return true;
   };
+}
+
+/**
+ * 런타임 게임 설정 조회/변경 (핫 컨피그).
+ * GET  → 레지스트리 메타 + 현재값/오버라이드 여부 (UI는 이 메타만 렌더 — 클라 번들에 레지스트리 미포함)
+ * POST → { updates: { [key]: number | null } } (null = 기본값 복원). 전체 검증 통과 시에만 반영,
+ *        diff를 응답하고 config-change 이벤트로 감사 기록(ops_event 영속).
+ */
+async function handleGameConfig(
+  req: IncomingMessage,
+  res: ServerResponse,
+  options: AdminHttpOptions,
+  now: () => number,
+): Promise<void> {
+  const service = options.gameConfig;
+  if (!service) {
+    drainRequest(req);
+    send(res, 404, { error: 'not-found' });
+    return;
+  }
+
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    send(res, 200, {
+      at: now(),
+      groupLabels: GAME_CONFIG_GROUP_LABELS,
+      entries: service.snapshot(),
+    });
+    return;
+  }
+
+  if (req.method !== 'POST') {
+    drainRequest(req);
+    send(res, 405, { error: 'method-not-allowed', allow: 'GET, POST' });
+    return;
+  }
+
+  let body: unknown;
+  try {
+    body = await readJsonBody(req);
+  } catch (error) {
+    send(res, 400, {
+      error: 'invalid-body',
+      message: error instanceof HttpBodyError && error.kind === 'too-large'
+        ? '요청 본문이 너무 큽니다'
+        : '요청 본문이 올바르지 않습니다 (application/json)',
+    });
+    return;
+  }
+
+  const updates = (body as { updates?: unknown } | null)?.updates;
+  if (
+    typeof updates !== 'object'
+    || updates === null
+    || Array.isArray(updates)
+    || Object.keys(updates).length === 0
+    || Object.values(updates).some(
+      value => value !== null && typeof value !== 'number',
+    )
+  ) {
+    send(res, 400, {
+      error: 'invalid-body',
+      message: 'updates에 { 설정키: 숫자 | null } 형태만 허용됩니다',
+    });
+    return;
+  }
+
+  try {
+    const changes = service.set(updates as Record<string, number | null>);
+    if (changes.length > 0) {
+      // 감사 기록 — ops_event 화이트리스트(config-change)로 SQLite 영속
+      eventLog.log('config-change', { data: { changes } });
+    }
+    send(res, 200, { at: now(), changes });
+  } catch (error) {
+    if (error instanceof GameConfigValidationError) {
+      send(res, 400, { error: 'validation', errors: error.errors });
+      return;
+    }
+    send(res, 500, { error: 'internal' });
+  }
 }

@@ -69,6 +69,7 @@ let profileRateLimiter: TransientHttpRateLimiter | undefined;
 let profileManager: ProfileManager | undefined;
 let economyService: EconomyService | undefined;
 let economyRuntime: EconomyRuntime | undefined;
+let gameConfigService: GameConfigService | undefined;
 let progressionService: ProgressionService | undefined;
 let handHistoryService: HandHistoryService | undefined;
 let backupManager: BackupManager | undefined;
@@ -143,9 +144,10 @@ function initializePersistenceAndRecover(): void {
   database = openPokerDatabase(databasePath);
   // 런타임 게임 설정(핫 컨피그) — 다른 모든 서비스보다 먼저 하이드레이션해야
   // 이후 생성되는 서비스들이 부팅 시점부터 오버라이드 값을 본다.
-  initGameConfig(new GameConfigService(new GameConfigRepository(database), {
+  gameConfigService = new GameConfigService(new GameConfigRepository(database), {
     envDefaults: resolveEnvConfigDefaults(process.env),
-  }));
+  });
+  initGameConfig(gameConfigService);
   profileManager = new ProfileManager(new ProfileRepository(database));
   const economyRepository = new EconomyRepository(database);
   economyService = new EconomyService(economyRepository);
@@ -258,6 +260,7 @@ async function listen(): Promise<void> {
       runtime?.refreshPublicCosmetics(profileId, snapshot);
     },
     opsEvents,
+    gameConfig: gameConfigService,
     adminRuntime: () => {
       if (!runtime) return null;
       return {
