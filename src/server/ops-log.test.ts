@@ -38,6 +38,16 @@ describe('OpsEventRepository', () => {
     })).toBe(true);
   });
 
+  it('MTT 수명주기/개입 이벤트를 영속한다 (Phase 2 — spec §6)', () => {
+    const base = { seq: 1, t: 1 };
+    for (const type of [
+      'mtt-create', 'mtt-start', 'mtt-cancel', 'mtt-complete',
+      'mtt-table-break', 'mtt-move', 'mtt-director-action',
+    ]) {
+      expect(shouldPersistOpsEvent({ ...base, type })).toBe(true);
+    }
+  });
+
   it('기록·커서 조회·타입 필터·초과분 정리가 동작한다', () => {
     database = openPokerDatabase(':memory:');
     const repo = new OpsEventRepository(database);

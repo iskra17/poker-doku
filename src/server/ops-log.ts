@@ -19,6 +19,14 @@ export const OPS_PERSIST_TYPES = new Set([
   'grace-expired',     // 재접속 유예 만료 (좌석 회수 여부 포함)
   'room-lost',
   'config-change',     // 백오피스 런타임 게임 설정 변경 — 감사 추적 (diff 포함)
+  // MTT 수명주기/개입 — 토너먼트 분쟁·운영 개입 역추적 (spec-mtt §6)
+  'mtt-create',
+  'mtt-start',
+  'mtt-cancel',           // 사유 포함 (인원 미달 자동 취소 vs 디렉터 취소)
+  'mtt-complete',         // 정산 요약 (우승자·상금 풀)
+  'mtt-table-break',
+  'mtt-move',             // 밸런싱 이동 (선수·from→to)
+  'mtt-director-action',  // 일시정지/재개/레벨 수정/강제 제거 등 운영 개입
 ]);
 
 /** settlementOk:false인 hand-end처럼 조건부로 영속할 이벤트 판정 */

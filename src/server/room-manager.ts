@@ -81,6 +81,8 @@ export interface RoomHandHistoryHooks {
     roomName: string;
     gameMode: GameMode;
     record: CompletedHandRecord;
+    /** MTT 테이블이면 소속 토너먼트 — 정본 기록(table_hand.tournament_id)의 조인 키 */
+    tournamentId?: string | null;
   }): void;
 }
 
@@ -2813,6 +2815,7 @@ export class RoomManager {
         roomName: room.config.name,
         gameMode: (room.config.gameMode ?? 'cash') as GameMode,
         record,
+        tournamentId: room.config.tournamentId ?? null,
       });
     } catch {
       // 히스토리 저장 실패는 게임에 치명적이지 않다 — 다음 핸드 진행을 우선한다

@@ -33,7 +33,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_season_catalog',
       'arena_season_results',
@@ -98,7 +98,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(new ArenaRepository(database)
       .requireProfile('v14-season', 'v1-marker').mmr).toBe(1_000);
     expect(database.db.prepare(`
@@ -319,7 +319,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(24);
+    expect(migration.version).toBe(25);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -453,7 +453,81 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(24);
+    expect(result.count).toBe(25);
+  });
+
+  it('upgrades V24 hand records to V25 (mtt 허용·토너먼트 링크) preserving rows and IDs', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+
+    const raw = new DatabaseSync(path);
+    try {
+      raw.exec(`
+        CREATE TABLE schema_migrations (
+          version INTEGER PRIMARY KEY,
+          name TEXT NOT NULL,
+          applied_at INTEGER NOT NULL
+        ) STRICT;
+      `);
+      const record = raw.prepare(
+        'INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)',
+      );
+      for (const migration of migrations) {
+        if (migration.version > 24) break;
+        raw.exec(migration.sql);
+        record.run(migration.version, migration.name, 1);
+      }
+      raw.prepare(`
+        INSERT INTO profiles (
+          id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+          alias, avatar_id, adult_confirmed_at, created_at, updated_at
+        ) VALUES ('mtt-hero', 'h', 'l', 'r', 'rl', '히어로', 'sakura', 1, 1, 1)
+      `).run();
+      raw.prepare(`
+        INSERT INTO table_hand (
+          room_id, room_name, game_mode, hand_number, big_blind, pot_total, rake,
+          showdown, player_count, human_count, board, winners, detail, played_at
+        ) VALUES ('room-1', '방', 'cash', 7, 20, 60, 0, 0, 3, 1, '[]', '[]', '{}', 1000)
+      `).run();
+      // V23~V24의 CHECK는 mtt를 거부한다 — 확장 전 상태 확인 (MTT 기록 유실 버그의 원인)
+      expect(() => raw.prepare(`
+        INSERT INTO table_hand (
+          room_id, room_name, game_mode, hand_number, big_blind, pot_total, rake,
+          showdown, player_count, human_count, board, winners, detail, played_at
+        ) VALUES ('room-2', '방', 'mtt', 1, 20, 0, 0, 0, 3, 1, '[]', '[]', '{}', 1000)
+      `).run()).toThrow();
+      raw.prepare(`
+        INSERT INTO hand_history (
+          profile_id, room_id, room_name, game_mode, hand_number, big_blind,
+          profit, hero_cards, board, detail, played_at, table_hand_id
+        ) VALUES ('mtt-hero', 'room-1', '방', 'cash', 7, 20, 40, '[]', '[]', '{}', 1000, 1)
+      `).run();
+    } finally {
+      raw.close();
+    }
+
+    database = openPokerDatabase(path);
+    // 기존 행 보존 + 새 컬럼은 NULL
+    expect(database.db.prepare(`
+      SELECT id, game_mode, tournament_id FROM table_hand
+    `).all()).toEqual([{ id: 1, game_mode: 'cash', tournament_id: null }]);
+    expect(database.db.prepare(`
+      SELECT id, profile_id, table_hand_id FROM hand_history
+    `).all()).toEqual([{ id: 1, profile_id: 'mtt-hero', table_hand_id: 1 }]);
+    // 전역 핸드 ID 시퀀스 승계 — 재구축 후에도 기존 최대 id 다음부터 발급
+    const inserted = database.db.prepare(`
+      INSERT INTO table_hand (
+        room_id, room_name, game_mode, hand_number, big_blind, pot_total, rake,
+        showdown, player_count, human_count, board, winners, detail, played_at,
+        tournament_id
+      ) VALUES ('mtt-room', '토너 테이블', 'mtt', 1, 100, 0, 0, 0, 6, 2, '[]', '[]', '{}', 2000, 'mtt-1')
+    `).run();
+    expect(Number(inserted.lastInsertRowid)).toBe(2);
+    // 감사 불변(UPDATE 금지) 트리거 재생성 확인
+    expect(() => database!.db.prepare(
+      'UPDATE table_hand SET rake = 1 WHERE id = 1',
+    ).run()).toThrow();
   });
 
   it('preserves V13 data while atomically adding the Arena schema', () => {
@@ -469,7 +543,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -501,7 +575,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -744,7 +818,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(arena.requireSeason('v14-season').id).toBe('v14-season');
     expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
     expect(arena.requireMatch('v14-match').status).toBe('forming');
@@ -799,7 +873,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(arena.requireGroup('v15-open-group').status).toBe('open');
     expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
     expect(database.db.prepare(`
@@ -1781,7 +1855,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -1808,7 +1882,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -1854,7 +1928,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
   });
 
@@ -1898,7 +1972,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -2208,7 +2282,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2466,7 +2540,7 @@ describe('PokerDatabase migrations', () => {
       { version: 15 },
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
-      { version: 23 }, { version: 24 },
+      { version: 23 }, { version: 24 }, { version: 25 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2733,7 +2807,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -3076,7 +3150,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 24 });
+    `).get()).toEqual({ version: 25 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants

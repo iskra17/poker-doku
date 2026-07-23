@@ -4514,6 +4514,96 @@ export const migrations: readonly Migration[] = [
       ) STRICT;
     `,
   },
+  {
+    version: 25,
+    name: 'mtt_hand_records_and_tournament_link',
+    sql: `
+      -- MTT 핸드 기록 허용 + 토너먼트 조인 키.
+      -- v21/v23의 game_mode CHECK가 ('cash','sng')만 허용해 MTT 테이블의 정본/개인 핸드 기록이
+      -- 전부 조용히 실패(예외 삼킴 설계)하고 있었다. SQLite는 CHECK를 ALTER할 수 없어
+      -- 테이블 재구축으로 넓힌다. table_hand에는 tournament_id(전역 핸드 ID ↔ 토너먼트
+      -- 조인 키 — 분쟁·콜루전 조사용)도 함께 추가한다.
+      CREATE TABLE table_hand_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        room_id TEXT NOT NULL CHECK (length(room_id) BETWEEN 1 AND 100),
+        room_name TEXT NOT NULL CHECK (length(room_name) BETWEEN 1 AND 100),
+        game_mode TEXT NOT NULL CHECK (game_mode IN ('cash','sng','mtt')),
+        hand_number INTEGER NOT NULL CHECK (hand_number >= 1),
+        big_blind INTEGER NOT NULL CHECK (big_blind >= 1),
+        pot_total INTEGER NOT NULL CHECK (pot_total >= 0),
+        rake INTEGER NOT NULL CHECK (rake >= 0),
+        showdown INTEGER NOT NULL CHECK (showdown IN (0, 1)),
+        player_count INTEGER NOT NULL CHECK (player_count BETWEEN 2 AND 9),
+        human_count INTEGER NOT NULL CHECK (human_count >= 0),
+        board TEXT NOT NULL CHECK (length(board) <= 1024),
+        winners TEXT NOT NULL CHECK (length(winners) <= 4096),
+        detail TEXT NOT NULL CHECK (length(detail) <= 131072),
+        played_at INTEGER NOT NULL CHECK (
+          played_at BETWEEN 0 AND 253402300799999
+        ),
+        tournament_id TEXT CHECK (
+          tournament_id IS NULL OR length(tournament_id) BETWEEN 1 AND 100
+        )
+      ) STRICT;
+
+      INSERT INTO table_hand_next (
+        id, room_id, room_name, game_mode, hand_number, big_blind, pot_total, rake,
+        showdown, player_count, human_count, board, winners, detail, played_at,
+        tournament_id
+      )
+      SELECT id, room_id, room_name, game_mode, hand_number, big_blind, pot_total, rake,
+             showdown, player_count, human_count, board, winners, detail, played_at,
+             NULL
+      FROM table_hand;
+
+      -- 전역 핸드 ID 시퀀스는 복사된 행의 max(id)가 AUTOINCREMENT 카운터를 자연 승계한다.
+      -- (빈 테이블은 ID를 발급한 적이 없어 카운터 리셋이 무해 — 링크 충돌 불가)
+      DROP TABLE table_hand;
+      ALTER TABLE table_hand_next RENAME TO table_hand;
+
+      CREATE INDEX idx_table_hand_room_id ON table_hand(room_id, id);
+      CREATE INDEX idx_table_hand_played_at ON table_hand(played_at);
+      CREATE INDEX idx_table_hand_tournament ON table_hand(tournament_id, id)
+        WHERE tournament_id IS NOT NULL;
+
+      CREATE TRIGGER freeze_table_hand_update
+      BEFORE UPDATE ON table_hand
+      BEGIN SELECT RAISE(ABORT, 'table_hand is immutable'); END;
+
+      -- 개인(히어로 관점) 기록도 같은 CHECK 확장 재구축
+      CREATE TABLE hand_history_next (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        room_id TEXT NOT NULL CHECK (length(room_id) BETWEEN 1 AND 100),
+        room_name TEXT NOT NULL CHECK (length(room_name) BETWEEN 1 AND 100),
+        game_mode TEXT NOT NULL CHECK (game_mode IN ('cash','sng','mtt')),
+        hand_number INTEGER NOT NULL CHECK (hand_number >= 1),
+        big_blind INTEGER NOT NULL CHECK (big_blind >= 1),
+        profit INTEGER NOT NULL,
+        hero_cards TEXT NOT NULL CHECK (length(hero_cards) <= 512),
+        board TEXT NOT NULL CHECK (length(board) <= 1024),
+        detail TEXT NOT NULL CHECK (length(detail) <= 131072),
+        played_at INTEGER NOT NULL CHECK (
+          played_at BETWEEN 0 AND 253402300799999
+        ),
+        table_hand_id INTEGER
+      ) STRICT;
+
+      INSERT INTO hand_history_next (
+        id, profile_id, room_id, room_name, game_mode, hand_number,
+        big_blind, profit, hero_cards, board, detail, played_at, table_hand_id
+      )
+      SELECT id, profile_id, room_id, room_name, game_mode, hand_number,
+             big_blind, profit, hero_cards, board, detail, played_at, table_hand_id
+      FROM hand_history;
+
+      DROP TABLE hand_history;
+      ALTER TABLE hand_history_next RENAME TO hand_history;
+
+      CREATE INDEX idx_hand_history_profile_id
+        ON hand_history(profile_id, id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

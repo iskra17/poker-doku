@@ -139,6 +139,32 @@ describe('TableHandRepository', () => {
     expect(tableHands.count()).toBe(3);
   });
 
+  it('MTT 핸드를 기록하고 토너먼트 ID로 필터한다 (v25 — mtt CHECK 확장 회귀)', () => {
+    // v23의 game_mode CHECK ('cash','sng')가 mtt 기록을 조용히 거부하던 버그 회귀
+    const mttHand = tableHands.insert({
+      roomId: 'mtt-room-1', roomName: '도쿠컵 · 테이블 1', gameMode: 'mtt',
+      record: makeRecord(1), playedAt: NOW, tournamentId: 'mtt-123',
+    });
+    tableHands.insert({
+      roomId: 'mtt-room-2', roomName: '도쿠컵 · 테이블 2', gameMode: 'mtt',
+      record: makeRecord(1), playedAt: NOW + 1, tournamentId: 'mtt-456',
+    });
+    tableHands.insert({
+      roomId: 'room-cash', roomName: '캐시 방', gameMode: 'cash',
+      record: makeRecord(2), playedAt: NOW + 2,
+    });
+
+    const filtered = tableHands.list({ tournamentId: 'mtt-123' });
+    expect(filtered).toHaveLength(1);
+    expect(filtered[0].id).toBe(mttHand);
+    expect(filtered[0].gameMode).toBe('mtt');
+    expect(filtered[0].tournamentId).toBe('mtt-123');
+
+    const all = tableHands.list({});
+    expect(all).toHaveLength(3);
+    expect(all[0].tournamentId).toBeNull(); // 캐시 핸드는 링크 없음
+  });
+
   it('statsSince가 기간 내 핸드 수·레이크·팟 합계를 집계한다', () => {
     tableHands.insert({
       roomId: 'room-1', roomName: '방', gameMode: 'cash',
@@ -214,6 +240,26 @@ describe('HandHistoryService + 정본 통합', () => {
     expect(summaries).toHaveLength(1);
     const detail = repository.getDetail(summaries[0].id, HERO_ID);
     expect(detail!.tableHandId).toBeNull();
+  });
+
+  it('MTT 핸드는 개인 기록도 mtt로 남고 정본에 토너먼트가 링크된다', () => {
+    const repository = new HandHistoryRepository(database);
+    const tableHands = new TableHandRepository(database);
+    const service = new HandHistoryService(repository, {
+      now: () => NOW,
+      tableHands,
+    });
+    service.recordCompletedHand({
+      roomId: 'mtt-room-1', roomName: '도쿠컵 · 테이블 1', gameMode: 'mtt',
+      record: makeRecord(1), tournamentId: 'mtt-789',
+    });
+
+    const canonical = tableHands.list({ tournamentId: 'mtt-789' });
+    expect(canonical).toHaveLength(1);
+    const summaries = repository.listByProfile(HERO_ID, 10);
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0].gameMode).toBe('mtt');
+    expect(summaries[0].tableHandId).toBe(canonical[0].id);
   });
 
   it('휴먼 없는 핸드도 정본에는 남는다 (개인 기록은 없음)', () => {

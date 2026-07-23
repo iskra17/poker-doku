@@ -18,6 +18,8 @@ export interface TableHandSummary {
   roomId: string;
   roomName: string;
   gameMode: GameMode;
+  /** MTT 테이블 핸드면 소속 토너먼트 — 분쟁·콜루전 조사의 조인 키 */
+  tournamentId: string | null;
   handNumber: number;
   bigBlind: number;
   potTotal: number;
@@ -45,6 +47,7 @@ interface TableHandRow {
   room_id: unknown;
   room_name: unknown;
   game_mode: unknown;
+  tournament_id: unknown;
   hand_number: unknown;
   big_blind: unknown;
   pot_total: unknown;
@@ -77,6 +80,7 @@ export class TableHandRepository {
     gameMode: GameMode;
     record: CompletedHandRecord;
     playedAt: number;
+    tournamentId?: string | null;
   }): number {
     const { record } = input;
     const humanCount = record.players.filter(p => p.type === 'human').length;
@@ -96,8 +100,8 @@ export class TableHandRepository {
       INSERT INTO table_hand (
         room_id, room_name, game_mode, hand_number, big_blind,
         pot_total, rake, showdown, player_count, human_count,
-        board, winners, detail, played_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        board, winners, detail, played_at, tournament_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.roomId,
       input.roomName,
@@ -113,18 +117,28 @@ export class TableHandRepository {
       JSON.stringify(winners),
       JSON.stringify(record),
       input.playedAt,
+      input.tournamentId ?? null,
     );
     return Number(result.lastInsertRowid);
   }
 
-  /** 최신순 목록 — 방 필터 + before(id) 커서 페이지네이션 */
-  list(opts: { roomId?: string; limit?: number; beforeId?: number } = {}): TableHandSummary[] {
+  /** 최신순 목록 — 방/토너먼트 필터 + before(id) 커서 페이지네이션 */
+  list(opts: {
+    roomId?: string;
+    tournamentId?: string;
+    limit?: number;
+    beforeId?: number;
+  } = {}): TableHandSummary[] {
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
     const conditions: string[] = [];
     const params: (string | number)[] = [];
     if (opts.roomId) {
       conditions.push('room_id = ?');
       params.push(opts.roomId);
+    }
+    if (opts.tournamentId) {
+      conditions.push('tournament_id = ?');
+      params.push(opts.tournamentId);
     }
     if (opts.beforeId !== undefined && Number.isSafeInteger(opts.beforeId)) {
       conditions.push('id < ?');
@@ -134,7 +148,7 @@ export class TableHandRepository {
     const rows = this.#database.db.prepare(`
       SELECT id, room_id, room_name, game_mode, hand_number, big_blind,
              pot_total, rake, showdown, player_count, human_count,
-             board, winners, played_at
+             board, winners, played_at, tournament_id
       FROM table_hand ${where}
       ORDER BY id DESC LIMIT ?
     `).all(...params, limit) as unknown as TableHandRow[];
@@ -143,6 +157,7 @@ export class TableHandRepository {
       roomId: String(row.room_id),
       roomName: String(row.room_name),
       gameMode: String(row.game_mode) as GameMode,
+      tournamentId: row.tournament_id === null ? null : String(row.tournament_id),
       handNumber: Number(row.hand_number),
       bigBlind: Number(row.big_blind),
       potTotal: Number(row.pot_total),
@@ -358,6 +373,8 @@ export class HandHistoryService {
     roomName: string;
     gameMode: GameMode;
     record: CompletedHandRecord;
+    /** MTT 테이블이면 소속 토너먼트 — 정본 기록의 조인 키로 남는다 */
+    tournamentId?: string | null;
   }): void {
     const playedAt = this.#now();
     // 정본을 먼저 기록해 전역 핸드 ID를 확보 — 개인 기록이 이 ID를 링크한다.
@@ -371,6 +388,7 @@ export class HandHistoryService {
           gameMode: input.gameMode,
           record: input.record,
           playedAt,
+          tournamentId: input.tournamentId ?? null,
         });
         this.#tableHands.prune(this.#keepTableHands);
       } catch {

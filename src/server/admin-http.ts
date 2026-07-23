@@ -282,6 +282,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         mode: 'table',
         hands: options.tableHands?.list({
           roomId: one(query.room),
+          tournamentId: one(query.tournament),
           limit,
           beforeId,
         }) ?? [],
