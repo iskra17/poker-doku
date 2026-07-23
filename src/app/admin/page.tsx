@@ -150,6 +150,37 @@ interface SecuritySummary {
   counts: Record<string, number>;
 }
 
+// 런타임 게임 설정 (핫 컨피그) — 메타는 서버 레지스트리가 단일 소스, UI는 렌더만
+interface GameConfigEntryView {
+  key: string;
+  label: string;
+  group: string;
+  min: number;
+  max: number;
+  unit?: string;
+  applyMode: 'immediate' | 'next-hand' | 'new-room';
+  description?: string;
+  warning?: string;
+  effectiveDefault: number;
+  value: number;
+  overridden: boolean;
+  updatedAt: number | null;
+}
+
+interface GameConfigResponse {
+  groupLabels: Record<string, string>;
+  entries: GameConfigEntryView[];
+}
+
+interface GameConfigSaveResult {
+  ok: boolean;
+  message: string;
+  errors?: Array<{ key: string; message: string }>;
+}
+
+/** 게임 설정 변경 이력 — config-change 감사 이벤트(ops_event)를 그대로 조회 */
+const CONFIG_HISTORY_PATH = '/api/admin/events?limit=50&type=config-change';
+
 // ---------- 표시 헬퍼 ----------
 
 const TABS = [
@@ -157,6 +188,7 @@ const TABS = [
   { key: 'tables', label: '테이블' },
   { key: 'players', label: '플레이어' },
   { key: 'hands', label: '핸드' },
+  { key: 'config', label: '게임 설정' },
   { key: 'feedback', label: '문의/리포트' },
   { key: 'events', label: '이벤트' },
   { key: 'security', label: '보안·공정성' },
@@ -300,6 +332,8 @@ export default function AdminPage() {
   const [hands, setHands] = useState<TableHandSummary[]>([]);
   const [handDetail, setHandDetail] = useState<TableHandDetail | null>(null);
   const [security, setSecurity] = useState<SecuritySummary | null>(null);
+  const [gameConfig, setGameConfig] = useState<GameConfigResponse | null>(null);
+  const [configHistory, setConfigHistory] = useState<OpsEvent[]>([]);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [profileHands, setProfileHands] = useState<Record<string, ProfileHandSummary[]>>({});
@@ -320,6 +354,29 @@ export default function AdminPage() {
     }
     if (!response.ok) return null;
     return await response.json() as T;
+  }, [token]);
+
+  const apiPost = useCallback(async <T,>(
+    path: string,
+    body: unknown,
+  ): Promise<{ status: number; body: T | null }> => {
+    const joiner = path.includes('?') ? '&' : '?';
+    const response = await fetch(`${path}${joiner}token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 403) {
+      setAuthFailed(true);
+      return { status: 403, body: null };
+    }
+    let parsed: T | null = null;
+    try {
+      parsed = await response.json() as T;
+    } catch {
+      parsed = null;
+    }
+    return { status: response.status, body: parsed };
   }, [token]);
 
   const refresh = useCallback(async () => {
@@ -363,6 +420,12 @@ export default function AdminPage() {
       if (activeTab === 'security') {
         const body = await api<SecuritySummary>('/api/admin/security?hours=24');
         if (body) setSecurity(body);
+      }
+      if (activeTab === 'config') {
+        const body = await api<GameConfigResponse>('/api/admin/config');
+        if (body) setGameConfig(body);
+        const historyBody = await api<{ events: OpsEvent[] }>(CONFIG_HISTORY_PATH);
+        if (historyBody) setConfigHistory(historyBody.events ?? []);
       }
       setLastError(null);
       setUpdatedAt(Date.now());
@@ -428,6 +491,41 @@ export default function AdminPage() {
     void openHandDetail(tableHandId);
   };
 
+  const saveGameConfig = async (
+    updates: Record<string, number | null>,
+  ): Promise<GameConfigSaveResult> => {
+    const { status, body } = await apiPost<{
+      changes?: Array<{ key: string; from: number; to: number }>;
+      errors?: Array<{ key: string; message: string }>;
+      message?: string;
+    }>('/api/admin/config', { updates });
+    if (status === 200 && body) {
+      const [refreshed, historyBody] = await Promise.all([
+        api<GameConfigResponse>('/api/admin/config'),
+        api<{ events: OpsEvent[] }>(CONFIG_HISTORY_PATH),
+      ]);
+      if (refreshed) setGameConfig(refreshed);
+      if (historyBody) setConfigHistory(historyBody.events ?? []);
+      const changes = body.changes ?? [];
+      if (changes.length === 0) return { ok: true, message: '변경된 값이 없어요.' };
+      const labelOf = (key: string) =>
+        gameConfig?.entries.find(entry => entry.key === key)?.label ?? key;
+      return {
+        ok: true,
+        message: `저장됨 — ${changes
+          .map(change => `${labelOf(change.key)} ${change.from.toLocaleString()} → ${change.to.toLocaleString()}`)
+          .join(' · ')}`,
+      };
+    }
+    if (status === 400 && body?.errors) {
+      return { ok: false, message: '저장 실패 — 입력값을 확인해주세요.', errors: body.errors };
+    }
+    if (status === 400) {
+      return { ok: false, message: body?.message ?? '요청 형식이 올바르지 않아요.' };
+    }
+    return { ok: false, message: '저장에 실패했어요. 잠시 후 다시 시도해주세요.' };
+  };
+
   const applyToken = () => {
     const value = tokenInput.trim();
     if (!value) return;
@@ -470,7 +568,9 @@ export default function AdminPage() {
     : feedback;
 
   return (
-    <main className="min-h-dvh overflow-y-auto bg-abyss p-4 text-ink">
+    // body가 overflow:hidden + fixed(게임 앱 전제)라 main을 h-dvh 스크롤 컨테이너로 만든다 —
+    // min-h-dvh면 내용이 뷰포트를 넘어도 스크롤이 생기지 않는다 (게임 설정 탭에서 발견)
+    <main className="h-dvh overflow-y-auto bg-abyss p-4 text-ink">
       <div className="mx-auto max-w-6xl space-y-4">
         <header className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-3">
@@ -551,6 +651,9 @@ export default function AdminPage() {
             onLoadMore={() => void loadMoreHands()}
             stats24h={overview?.handStats24h ?? null}
           />
+        )}
+        {activeTab === 'config' && (
+          <ConfigTab config={gameConfig} history={configHistory} onSave={saveGameConfig} />
         )}
         {activeTab === 'feedback' && (
           <FeedbackTab
@@ -1294,6 +1397,385 @@ function SecurityTab({ security }: { security: SecuritySummary | null }) {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+// ---------- 게임 설정 (핫 컨피그) ----------
+
+const APPLY_MODE_BADGE: Record<GameConfigEntryView['applyMode'], { label: string; cls: string }> = {
+  immediate: { label: '즉시 반영', cls: 'border-green-400/40 bg-green-400/10 text-green-400' },
+  'next-hand': { label: '다음 핸드부터', cls: 'border-cyber/40 bg-cyber/10 text-cyber' },
+  'new-room': { label: '새 방부터', cls: 'border-gilded/40 bg-gilded/10 text-gilded' },
+};
+
+const CONFIG_UNIT_LABEL: Record<string, string> = {
+  ms: 'ms', s: '초', chips: '칩', bps: 'bps', BB: 'BB', '개': '개', '%': '%',
+};
+
+const APPLY_MODE_DESC: Record<GameConfigEntryView['applyMode'], string> = {
+  immediate: '저장 즉시 다음 판정/호출부터 반영됩니다.',
+  'next-hand': '진행 중인 핸드는 그대로 두고, 다음 핸드부터 반영됩니다.',
+  'new-room': '이미 만들어진 방은 유지되고, 새로 만드는 방부터 반영됩니다.',
+};
+
+function fmtConfigValue(value: number, unit?: string): string {
+  if (unit === 'ms') {
+    return `${value.toLocaleString('ko-KR')}ms (${(value / 1000).toLocaleString('ko-KR')}초)`;
+  }
+  const unitLabel = unit ? CONFIG_UNIT_LABEL[unit] ?? unit : '';
+  return `${value.toLocaleString('ko-KR')}${unitLabel}`;
+}
+
+/** 변경 이력은 연도까지 — 감사 기록이라 해를 넘겨도 시점이 특정돼야 한다 */
+function fmtHistoryTime(ms: number): string {
+  return new Date(ms).toLocaleString('ko-KR', {
+    year: '2-digit', month: 'numeric', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+interface ConfigHistoryRow {
+  eventId: number;
+  at: number;
+  key: string;
+  from: number;
+  to: number;
+}
+
+/** config-change 이벤트(data.changes[])를 항목 단위 행으로 평탄화 — 형식이 어긋난 데이터는 건너뛴다 */
+function flattenConfigHistory(events: OpsEvent[]): ConfigHistoryRow[] {
+  const rows: ConfigHistoryRow[] = [];
+  for (const event of events) {
+    const changes = (event.data as { changes?: unknown }).changes;
+    if (!Array.isArray(changes)) continue;
+    for (const change of changes as Array<{ key?: unknown; from?: unknown; to?: unknown }>) {
+      if (typeof change?.key !== 'string') continue;
+      if (typeof change.from !== 'number' || typeof change.to !== 'number') continue;
+      rows.push({ eventId: event.id, at: event.at, key: change.key, from: change.from, to: change.to });
+    }
+  }
+  return rows;
+}
+
+function ConfigTab({ config, history, onSave }: {
+  config: GameConfigResponse | null;
+  history: OpsEvent[];
+  onSave: (updates: Record<string, number | null>) => Promise<GameConfigSaveResult>;
+}) {
+  // 편집 중(dirty) 키는 5초 폴링이 입력값을 덮지 않도록 로컬 초안으로 관리한다
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<GameConfigSaveResult | null>(null);
+  // 변경 확정 대기 — to === null이면 기본값 복원 요청
+  const [confirm, setConfirm] = useState<{ entry: GameConfigEntryView; to: number | null } | null>(null);
+
+  if (!config) {
+    return <SectionBox className="p-4 text-sm text-ink-dim">게임 설정을 불러오는 중…</SectionBox>;
+  }
+
+  const groups: Array<{ group: string; label: string; entries: GameConfigEntryView[] }> = [];
+  for (const entry of config.entries) {
+    const bucket = groups.find(item => item.group === entry.group);
+    if (bucket) bucket.entries.push(entry);
+    else {
+      groups.push({
+        group: entry.group,
+        label: config.groupLabels[entry.group] ?? entry.group,
+        entries: [entry],
+      });
+    }
+  }
+
+  const draftOf = (entry: GameConfigEntryView) => drafts[entry.key] ?? String(entry.value);
+  const dirtyKeys = Object.keys(drafts).filter(key => {
+    const entry = config.entries.find(item => item.key === key);
+    return entry !== undefined && drafts[key] !== String(entry.value);
+  });
+  const errorOf = (key: string) =>
+    result?.errors?.find(item => item.key === key)?.message ?? null;
+
+  const discardDraft = (key: string) => {
+    setDrafts(prev => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  // [변경] 클릭 — 클라 선검증 통과 시에만 확인 모달 (범위 검증의 정본은 서버)
+  const requestChange = (entry: GameConfigEntryView) => {
+    const parsed = Number(draftOf(entry));
+    if (!Number.isSafeInteger(parsed)) {
+      setResult({
+        ok: false,
+        message: '입력값을 확인해주세요.',
+        errors: [{ key: entry.key, message: '정수만 입력할 수 있습니다' }],
+      });
+      return;
+    }
+    if (parsed < entry.min || parsed > entry.max) {
+      setResult({
+        ok: false,
+        message: '입력값을 확인해주세요.',
+        errors: [{
+          key: entry.key,
+          message: `허용 범위는 ${entry.min.toLocaleString()}~${entry.max.toLocaleString()}입니다`,
+        }],
+      });
+      return;
+    }
+    setResult(null);
+    setConfirm({ entry, to: parsed });
+  };
+
+  const applyConfirm = async () => {
+    if (!confirm) return;
+    const { entry, to } = confirm;
+    setSaving(true);
+    const saved = await onSave({ [entry.key]: to });
+    setSaving(false);
+    setConfirm(null);
+    setResult(saved);
+    if (saved.ok) discardDraft(entry.key);
+  };
+
+  const historyRows = flattenConfigHistory(history);
+  const entryByKey = new Map(config.entries.map(entry => [entry.key, entry]));
+
+  return (
+    <div className="space-y-4">
+      <SectionBox className="p-3">
+        <p className="text-[11px] leading-snug text-ink-dim">
+          서버 배포 없이 게임 설정을 조정합니다 (SQLite 영속 — 재시작 후에도 유지).
+          값을 고친 뒤 항목별 <span className="font-bold text-blossom">[변경]</span> 버튼을 누르면
+          변경 내용을 한 번 더 확인한 후 반영됩니다.
+          적용 방식 배지를 확인하세요: <span className="font-bold text-green-400">즉시 반영</span>은 다음 판정부터,{' '}
+          <span className="font-bold text-cyber">다음 핸드부터</span>는 진행 중 핸드 종료 후,{' '}
+          <span className="font-bold text-gilded">새 방부터</span>는 이미 만들어진 방에는 적용되지 않습니다.
+          모든 변경은 아래 변경 이력에 감사 기록됩니다.
+        </p>
+      </SectionBox>
+
+      {result && (
+        <SectionBox className="p-3">
+          <p className={`text-[11px] leading-snug ${result.ok ? 'text-green-400' : 'text-blossom'}`}>
+            {result.message}
+          </p>
+        </SectionBox>
+      )}
+
+      {groups.map(group => (
+        <section key={group.group} className="space-y-2">
+          <h2 className="text-sm font-bold text-blossom">{group.label}</h2>
+          <SectionBox className="divide-y divide-mystic/10">
+            {group.entries.map(entry => {
+              const badge = APPLY_MODE_BADGE[entry.applyMode];
+              const draft = draftOf(entry);
+              const draftNumber = Number(draft);
+              const rowError = errorOf(entry.key);
+              const dirty = dirtyKeys.includes(entry.key);
+              return (
+                <div key={entry.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5">
+                  <div className="min-w-[220px] flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-ink">{entry.label}</span>
+                      <span className={`rounded-full border px-1.5 py-px text-[10px] font-bold ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                      {entry.overridden && (
+                        <span className="rounded-full border border-blossom/40 bg-blossom/10 px-1.5 py-px text-[10px] font-bold text-blossom">
+                          변경됨
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-ink-dim">{entry.key}</p>
+                    {entry.description && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-ink-dim">{entry.description}</p>
+                    )}
+                    {entry.warning && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-gilded">⚠ {entry.warning}</p>
+                    )}
+                    {rowError && (
+                      <p className="mt-0.5 text-[11px] font-bold text-blossom">{rowError}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={draft}
+                      min={entry.min}
+                      max={entry.max}
+                      onChange={event => setDrafts(prev => ({ ...prev, [entry.key]: event.target.value }))}
+                      className={`w-32 rounded-lg border bg-elevated/70 px-2 py-1.5 text-right text-sm tabular text-ink outline-none focus:border-blossom/50 ${
+                        rowError
+                          ? 'border-blossom/60'
+                          : dirty
+                            ? 'border-cyber/50'
+                            : 'border-mystic/20'
+                      }`}
+                    />
+                    <span className="w-8 text-[11px] text-ink-dim">
+                      {entry.unit ? CONFIG_UNIT_LABEL[entry.unit] ?? entry.unit : ''}
+                    </span>
+                    <div className="w-40 text-right text-[11px] text-ink-dim">
+                      {entry.unit === 'ms' && Number.isFinite(draftNumber) && (
+                        <span className="mr-2 text-cyber">= {(draftNumber / 1000).toLocaleString()}초</span>
+                      )}
+                      <span>범위 {entry.min.toLocaleString()}~{entry.max.toLocaleString()}</span>
+                    </div>
+                    <div className="flex w-44 items-center justify-end gap-1.5">
+                      {dirty ? (
+                        <>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => discardDraft(entry.key)}
+                            className="rounded-lg border border-mystic/30 px-2 py-1 text-[11px] text-ink-dim hover:bg-white/5 hover:text-ink"
+                          >
+                            취소
+                          </button>
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => requestChange(entry)}
+                            className="rounded-lg border border-blossom/50 bg-blossom/20 px-3 py-1 text-[11px] font-bold text-blossom hover:bg-blossom/30"
+                          >
+                            변경
+                          </button>
+                        </>
+                      ) : entry.overridden ? (
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => {
+                            setResult(null);
+                            setConfirm({ entry, to: null });
+                          }}
+                          className="rounded-lg border border-mystic/30 px-2 py-1 text-[11px] text-ink-dim hover:bg-white/5 hover:text-ink"
+                        >
+                          기본값 {entry.effectiveDefault.toLocaleString()} 복원
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-ink-dim">
+                          기본값 {entry.effectiveDefault.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </SectionBox>
+        </section>
+      ))}
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-bold text-blossom">변경 이력</h2>
+        <SectionBox className="overflow-x-auto">
+          {historyRows.length === 0 ? (
+            <p className="p-4 text-sm text-ink-dim">아직 변경 이력이 없습니다.</p>
+          ) : (
+            <table className="w-full min-w-[560px] text-left text-xs">
+              <thead>
+                <tr className="border-b border-mystic/20 text-[10px] text-ink-dim">
+                  <th className="px-3 py-2 font-normal">변경일시</th>
+                  <th className="px-3 py-2 font-normal">변경 항목</th>
+                  <th className="px-3 py-2 text-right font-normal">이전 수치</th>
+                  <th className="px-2 py-2 font-normal" aria-hidden />
+                  <th className="px-3 py-2 font-normal">변경 수치</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyRows.map((row, index) => {
+                  const entry = entryByKey.get(row.key);
+                  return (
+                    <tr key={`${row.eventId}-${row.key}-${index}`} className="border-b border-mystic/10 last:border-b-0">
+                      <td className="whitespace-nowrap px-3 py-2 tabular text-ink-dim">{fmtHistoryTime(row.at)}</td>
+                      <td className="px-3 py-2">
+                        <span className="font-bold text-ink">{entry?.label ?? row.key}</span>
+                        {entry && <span className="ml-1.5 text-[10px] text-ink-dim">{row.key}</span>}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 text-right tabular text-ink-dim">
+                        {fmtConfigValue(row.from, entry?.unit)}
+                      </td>
+                      <td className="px-2 py-2 text-center text-ink-dim">→</td>
+                      <td className="whitespace-nowrap px-3 py-2 font-bold tabular text-cyber">
+                        {fmtConfigValue(row.to, entry?.unit)}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </SectionBox>
+        <p className="text-[10px] text-ink-dim">
+          최근 50건 표시 — 전체 기록은 이벤트 탭에서 type=config-change로 조회할 수 있어요.
+        </p>
+      </section>
+
+      {confirm && (() => {
+        const { entry } = confirm;
+        const isReset = confirm.to === null;
+        const toValue = confirm.to ?? entry.effectiveDefault;
+        const badge = APPLY_MODE_BADGE[entry.applyMode];
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+            onClick={() => {
+              if (!saving) setConfirm(null);
+            }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              className="w-full max-w-md space-y-3 rounded-2xl border border-mystic/30 bg-panel p-4"
+              onClick={event => event.stopPropagation()}
+            >
+              <h3 className="text-sm font-bold text-ink">
+                {isReset ? '기본값 복원 확인' : '설정 변경 확인'}
+              </h3>
+              <div>
+                <p className="text-sm font-bold text-blossom">{entry.label}</p>
+                <p className="text-[10px] text-ink-dim">{entry.key}</p>
+              </div>
+              <div className="rounded-xl border border-mystic/20 bg-elevated/50 p-3 text-center">
+                <span className="text-sm tabular text-ink-dim">{fmtConfigValue(entry.value, entry.unit)}</span>
+                <span className="mx-2 text-ink-dim">→</span>
+                <span className="text-base font-bold tabular text-cyber">{fmtConfigValue(toValue, entry.unit)}</span>
+              </div>
+              <div className="flex items-start gap-2 text-[11px] leading-snug">
+                <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] font-bold ${badge.cls}`}>
+                  {badge.label}
+                </span>
+                <span className="text-ink-dim">{APPLY_MODE_DESC[entry.applyMode]}</span>
+              </div>
+              {entry.warning && (
+                <p className="text-[11px] leading-snug text-gilded">⚠ {entry.warning}</p>
+              )}
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setConfirm(null)}
+                  className="rounded-lg border border-mystic/30 px-3 py-1.5 text-sm text-ink-dim hover:bg-white/5 hover:text-ink"
+                >
+                  취소
+                </button>
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => void applyConfirm()}
+                  className="rounded-lg border border-blossom/50 bg-blossom/20 px-4 py-1.5 text-sm font-bold text-blossom hover:bg-blossom/30"
+                >
+                  {saving ? '저장 중…' : isReset ? '기본값 복원' : '변경 확정'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

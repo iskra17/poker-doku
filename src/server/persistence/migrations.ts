@@ -4498,6 +4498,22 @@ export const migrations: readonly Migration[] = [
       ALTER TABLE hand_history ADD COLUMN table_hand_id INTEGER;
     `,
   },
+  {
+    version: 24,
+    name: 'game_config_overrides',
+    sql: `
+      -- 런타임 게임 설정 오버라이드 (백오피스 핫 컨피그) — 행이 없으면 코드/env 기본값 사용.
+      -- 오버라이드만 저장하므로 배포로 기본값이 바뀌어도 미오버라이드 키는 새 기본값을 따른다.
+      -- 키/값 해석과 범위 검증의 단일 소스는 src/server/game-config/registry.ts.
+      CREATE TABLE game_config (
+        key TEXT PRIMARY KEY CHECK (length(key) BETWEEN 1 AND 64),
+        value TEXT NOT NULL CHECK (length(value) <= 128),
+        updated_at INTEGER NOT NULL CHECK (
+          updated_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

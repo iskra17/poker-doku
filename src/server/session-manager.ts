@@ -23,6 +23,10 @@ export interface RevokedSession {
   socketId: string;
 }
 
+/**
+ * 재접속 유예 기본값 — 실제 유예는 socket-handler가 끊김 시점마다
+ * cfg('timer.graceMs')로 읽는다 (핫 컨피그). 이 상수는 문서/테스트 참조용.
+ */
 export const GRACE_MS = 60_000;
 
 export class SessionManager {

@@ -7,6 +7,7 @@ import {
   type AdminRuntimeSnapshot,
 } from './admin-http';
 import { eventLog } from './event-log';
+import type { GameConfigService } from './game-config/service';
 import type { OpsEventRepository } from './ops-log';
 import {
   createFeedbackHttpHandler,
@@ -59,6 +60,8 @@ interface HttpHandlerCommonOptions {
   /** 운영 백오피스 (/api/admin/*) — 영속 이벤트 저장소 + 늦은 바인딩 런타임 스냅샷 */
   opsEvents?: OpsEventRepository;
   adminRuntime?: () => AdminRuntimeSnapshot | null;
+  /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
+  gameConfig?: GameConfigService;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -169,6 +172,7 @@ export function createHttpRequestHandler(
         tableHands: new TableHandRepository(options.database),
         handHistory: new HandHistoryRepository(options.database),
         runtime: options.adminRuntime ?? (() => null),
+        gameConfig: options.gameConfig,
         debugToken,
         now: options.now,
       })
@@ -210,7 +214,7 @@ export function createHttpRequestHandler(
       if (
         adminHandler
         && parsedUrl.pathname
-        && adminHandler(res, parsedUrl.pathname, parsedUrl.query)
+        && await adminHandler(req, res, parsedUrl.pathname, parsedUrl.query)
       ) {
         return;
       }

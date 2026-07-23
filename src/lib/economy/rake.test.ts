@@ -31,6 +31,35 @@ describe('computeCashRake', () => {
     },
   );
 
+  it('applies an injected rate and cap (hot config policy)', () => {
+    // 3% / 캡 10BB
+    expect(computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, rateBps: 300, capBB: 10,
+    })).toBe(30);
+    expect(computeCashRake({
+      totalPot: 100_000, bigBlind: 20, flopDealt: true, rateBps: 300, capBB: 10,
+    })).toBe(200);
+    // 0%면 무레이크, 캡 0이어도 무레이크
+    expect(computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, rateBps: 0,
+    })).toBe(0);
+    expect(computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, capBB: 0,
+    })).toBe(0);
+  });
+
+  it('rejects invalid injected rake policy values', () => {
+    expect(() => computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, rateBps: 10_001,
+    })).toThrow('rateBps must not exceed 10000');
+    expect(() => computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, rateBps: -1,
+    })).toThrow('rateBps must be a safe nonnegative integer');
+    expect(() => computeCashRake({
+      totalPot: 1000, bigBlind: 20, flopDealt: true, capBB: 1.5,
+    })).toThrow('capBB must be a safe nonnegative integer');
+  });
+
   it('returns a safe integer for very large valid chip inputs', () => {
     const rake = computeCashRake({
       totalPot: Number.MAX_SAFE_INTEGER,

@@ -5,6 +5,7 @@ import type {
   LeaveRoomRequest,
   PlayerActionRequest,
 } from '../lib/realtime/protocol';
+import { cfg } from './game-config/live';
 
 export type ParseResult<T> =
   | { ok: true; value: T }
@@ -114,8 +115,13 @@ export function parseCreateRoomRequest(input: unknown): ParseResult<CreateRoomRe
   if (!isRecord(input)) return fail();
   const name = cleanText(input.name, 40);
   const bigBlind = input.bigBlind === undefined ? 20 : finiteNumber(input.bigBlind);
-  const turnTime = input.turnTime === undefined ? 15 : finiteNumber(input.turnTime);
-  const botCount = input.botCount === undefined ? 2 : finiteNumber(input.botCount);
+  // 턴 시간/봇 수 기본값은 핫 컨피그 — 새로 만드는 방부터 반영 (new-room)
+  const turnTime = input.turnTime === undefined
+    ? cfg('timer.turnTimeDefault')
+    : finiteNumber(input.turnTime);
+  const botCount = input.botCount === undefined
+    ? cfg('bot.defaultBotCount')
+    : finiteNumber(input.botCount);
   const gameMode = input.gameMode === undefined ? 'cash' : input.gameMode;
   const difficulty = input.difficulty === undefined ? 'normal' : input.difficulty;
   const tableType = input.tableType === undefined ? 'mixed' : input.tableType;

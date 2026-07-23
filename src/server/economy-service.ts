@@ -15,6 +15,7 @@ import {
   CASUAL_SNG_BUY_IN,
   CASUAL_SNG_ENTRY_FEE,
 } from '@/lib/economy/casual-sng';
+import { cfg } from './game-config/live';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
 
@@ -25,16 +26,34 @@ const KST_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-export const ECONOMY_RULES = {
-  startingChips: 10_000,
-  dailyGrant: 1_000,
-  rescueThreshold: 800,
-  rescueTarget: 2_000,
-  rescueDailyLimit: 3,
-  rescueCooldownMs: 4 * 60 * 60 * 1_000,
+export interface EconomyRules {
+  readonly startingChips: number;
+  readonly dailyGrant: number;
+  readonly rescueThreshold: number;
+  readonly rescueTarget: number;
+  readonly rescueDailyLimit: number;
+  readonly rescueCooldownMs: number;
+  readonly casualSngBuyIn: number;
+  readonly casualSngFee: number;
+}
+
+/**
+ * 경제 규칙 — 런타임 게임 설정(game-config)을 매 접근마다 읽는 live getter 객체.
+ * 기본값의 정의처는 game-config/registry.ts (백오피스에서 무배포 조정 가능).
+ * 소비처는 기존처럼 `ECONOMY_RULES.x`로 읽으면 항상 현재 유효값을 본다.
+ * casualSng 계열은 클라이언트 번들(sng-entry 등)이 같은 상수를 import하므로
+ * 서버만 바꾸면 화면과 어긋난다 — 클라 동기화 채널이 생기기 전까지 리터럴 유지.
+ */
+export const ECONOMY_RULES: EconomyRules = {
+  get startingChips() { return cfg('economy.startingChips'); },
+  get dailyGrant() { return cfg('economy.dailyGrant'); },
+  get rescueThreshold() { return cfg('economy.rescueThreshold'); },
+  get rescueTarget() { return cfg('economy.rescueTarget'); },
+  get rescueDailyLimit() { return cfg('economy.rescueDailyLimit'); },
+  get rescueCooldownMs() { return cfg('economy.rescueCooldownMs'); },
   casualSngBuyIn: CASUAL_SNG_BUY_IN,
   casualSngFee: CASUAL_SNG_ENTRY_FEE,
-} as const;
+};
 
 interface KstDateParts {
   year: number;
@@ -106,11 +125,12 @@ export class EconomyService {
     const claimDate = getKstDateKey(at);
     const nextMidnight = getNextKstMidnight(at);
     const snapshot = this.repository.getStatusSnapshot(profileId, claimDate);
-    if (snapshot.rescueClaimsToday > ECONOMY_RULES.rescueDailyLimit) {
-      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
-    }
-    const remainingToday = ECONOMY_RULES.rescueDailyLimit
-      - snapshot.rescueClaimsToday;
+    // 한도 초과분은 0으로 클램프 — 핫 컨피그로 일일 한도를 낮추면 이미 수령한
+    // 횟수가 새 한도를 넘는 상태가 정상적으로 존재한다 (수령분 회수 없음)
+    const remainingToday = Math.max(
+      0,
+      ECONOMY_RULES.rescueDailyLimit - snapshot.rescueClaimsToday,
+    );
     const cooldownAvailableAt = snapshot.latestRescueAt === null
       ? at
       : snapshot.latestRescueAt + ECONOMY_RULES.rescueCooldownMs;
