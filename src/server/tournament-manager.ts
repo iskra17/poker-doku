@@ -104,7 +104,9 @@ interface TournamentRuntime {
   createdAt: number;
   startedAt: number | null;
   finishedAt: number | null;
-  pauseAccumMs: number; // Phase 2 일시정지 대비 (v1은 항상 0)
+  pauseAccumMs: number; // 일시정지 누적 — clockPos가 (now - startedAt - accum)으로 시계를 계산
+  /** 디렉터 일시정지 시각 — null이 아니면 시계 동결 + 전 테이블 다음 핸드 보류 */
+  pausedAt: number | null;
   entrants: Map<string, MttEntrant>;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
@@ -190,6 +192,7 @@ export class TournamentManager {
       startedAt: null,
       finishedAt: null,
       pauseAccumMs: 0,
+      pausedAt: null,
       entrants: new Map(),
       seatedCount: 0,
       tables: new Map(),
@@ -251,6 +254,152 @@ export class TournamentManager {
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
     return this.attemptStart(t, requesterId);
+  }
+
+  // --- 디렉터 콘솔 (Phase 2 — 개설자 전용 운영 개입) ---
+
+  /**
+   * 디렉터 개입 — 개설자(hostId)만. 모든 개입은 시스템 채팅 공지 + ops_event
+   * (mtt-director-action) 감사 기록을 남긴다 (spec §5-3).
+   * - pause: 시계 동결 + 전 테이블 다음 핸드 보류 (진행 중 핸드는 끝까지)
+   * - resume: 시계 재개 + 보류 해제 (브레이크 구간이면 브레이크 대기로 복귀)
+   * - set-level: 정지 중에만 — 시계를 해당 레벨 시작점으로 리셋 (실수 인상 롤백/스킵)
+   * - remove-player: 강제 제거 = 현재 순위 탈락 (명시적 퇴장과 같은 경로)
+   * - cancel: 토너먼트 취소 — 전 테이블 해산, 참가자는 room-lost 로비 복귀
+   */
+  directorAction(
+    tournamentId: string,
+    requesterId: string,
+    action:
+      | { kind: 'pause' }
+      | { kind: 'resume' }
+      | { kind: 'set-level'; level: number }
+      | { kind: 'remove-player'; playerId: string }
+      | { kind: 'cancel' },
+  ): 'ok' | 'not-found' | 'not-host' | 'bad-state' | 'invalid' {
+    const t = this.tournaments.get(tournamentId);
+    if (!t) return 'not-found';
+    if (t.config.hostId !== requesterId) return 'not-host';
+    switch (action.kind) {
+      case 'pause': return this.directorPause(t);
+      case 'resume': return this.directorResume(t);
+      case 'set-level': return this.directorSetLevel(t, action.level);
+      case 'remove-player': return this.directorRemovePlayer(t, action.playerId);
+      case 'cancel': {
+        if (t.phase === 'completed' || t.phase === 'cancelled') return 'bad-state';
+        this.logDirectorAction(t, { action: 'cancel' });
+        this.cancelTournament(t, 'director');
+        return 'ok';
+      }
+    }
+  }
+
+  private directorPause(t: TournamentRuntime): 'ok' | 'bad-state' {
+    if (t.phase !== 'running' || t.pausedAt !== null) return 'bad-state';
+    t.pausedAt = Date.now();
+    // 브레이크 재개 타이머는 정지 중 발화하면 안 된다 — 재개 시 남은 시간으로 재무장
+    if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
+    t.breakAnnounced = false;
+    for (const roomId of t.tables.keys()) {
+      this.roomManager.postSystemChat(
+        roomId,
+        '⏸️ 운영자가 토너먼트를 일시정지했습니다 — 진행 중인 핸드까지만 진행돼요.',
+      );
+    }
+    this.logDirectorAction(t, { action: 'pause' });
+    this.hooks.onTournamentsChanged?.();
+    this.hooks.onTournamentUpdate?.(t.id);
+    return 'ok';
+  }
+
+  private directorResume(t: TournamentRuntime): 'ok' | 'bad-state' {
+    if (t.phase !== 'running' || t.pausedAt === null) return 'bad-state';
+    t.pauseAccumMs += Date.now() - t.pausedAt;
+    t.pausedAt = null;
+    for (const roomId of t.tables.keys()) {
+      this.roomManager.postSystemChat(roomId, '▶️ 토너먼트가 재개됩니다!');
+    }
+    this.logDirectorAction(t, { action: 'resume' });
+    // 브레이크 구간에서 재개하면 브레이크 대기로 복귀, 아니면 보류 없는 테이블부터 재가동
+    if (this.clockPos(t).onBreak) {
+      for (const roomId of t.tables.keys()) this.hold(t, roomId, 'break');
+      this.armBreakResume(t);
+    } else {
+      for (const roomId of t.tables.keys()) {
+        if (!t.held.has(roomId)) this.roomManager.resumeRoom(roomId);
+      }
+    }
+    this.hooks.onTournamentsChanged?.();
+    this.hooks.onTournamentUpdate?.(t.id);
+    return 'ok';
+  }
+
+  private directorSetLevel(
+    t: TournamentRuntime,
+    level: number,
+  ): 'ok' | 'bad-state' | 'invalid' {
+    // 정지 중에만 — 라이브 시계 밑에서 레벨을 움직이면 테이블별 적용 시점이 갈린다
+    if (t.phase !== 'running' || t.pausedAt === null || t.startedAt === null) {
+      return 'bad-state';
+    }
+    if (!Number.isInteger(level) || level < 1 || level > t.structure.levels.length) {
+      return 'invalid';
+    }
+    // 시계를 해당 레벨의 시작점으로 리셋 — 경과 시간 = 레벨 앞 세그먼트(레벨+브레이크) 합
+    const idx = level - 1;
+    const breaks = t.structure.breakEveryLevels > 0
+      ? Math.floor(idx / t.structure.breakEveryLevels)
+      : 0;
+    const offset = idx * t.structure.levelDurationMs + breaks * t.structure.breakDurationMs;
+    t.pauseAccumMs = t.pausedAt - t.startedAt - offset;
+
+    const pos = this.clockPos(t);
+    const cur = mttLevelAt(t.structure, pos.levelIndex);
+    for (const roomId of t.tables.keys()) {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      if (!engine) continue;
+      this.pushLevel(t, engine, pos, true); // initial=true — 공지는 아래 전용 문구로
+      const anteText = cur.ante > 0 ? ` · 앤티 ${cur.ante}` : '';
+      this.roomManager.postSystemChat(
+        roomId,
+        `🛠️ 운영자가 블라인드를 조정했습니다 — 레벨 ${level}: ${cur.smallBlind}/${cur.bigBlind}${anteText}`,
+      );
+    }
+    this.logDirectorAction(t, { action: 'set-level', level });
+    this.hooks.onTournamentUpdate?.(t.id);
+    return 'ok';
+  }
+
+  private directorRemovePlayer(
+    t: TournamentRuntime,
+    playerId: string,
+  ): 'ok' | 'bad-state' | 'invalid' {
+    if (t.phase !== 'running') return 'bad-state';
+    for (const roomId of t.tables.keys()) {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      const player = engine?.state.players.find(
+        p => p.id === playerId && !p.finishPlace && !p.pendingRemoval,
+      );
+      if (!player) continue;
+      this.roomManager.postSystemChat(
+        roomId,
+        `⚠️ 운영자가 ${player.name}님을 토너먼트에서 제거했습니다.`,
+      );
+      this.logDirectorAction(t, { action: 'remove-player', playerId, name: player.name });
+      // 명시적 퇴장과 같은 경로 — leaveRoom이 onPlayerLeave 훅(현재 순위 탈락 확정)을 태운다
+      this.roomManager.leaveRoom(roomId, playerId);
+      return 'ok';
+    }
+    return 'invalid';
+  }
+
+  private logDirectorAction(
+    t: TournamentRuntime,
+    data: Record<string, unknown>,
+  ): void {
+    eventLog.log('mtt-director-action', {
+      data: { tournamentId: t.id, ...data },
+    });
   }
 
   // --- 조회 ---
@@ -498,6 +647,7 @@ export class TournamentManager {
   private cancelTournament(t: TournamentRuntime, reason: string): void {
     if (t.phase === 'completed' || t.phase === 'cancelled') return;
     t.phase = 'cancelled';
+    t.pausedAt = null;
     if (t.startTimer) { clearTimeout(t.startTimer); t.startTimer = null; }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
     for (const roomId of t.tables.keys()) {
@@ -520,6 +670,8 @@ export class TournamentManager {
   private isHeld(roomId: string): boolean {
     const t = this.byTable(roomId);
     if (!t) return false;
+    // 디렉터 일시정지 — 진행 중 핸드는 끝까지, 다음 핸드는 전 테이블 보류
+    if (t.pausedAt !== null) return true;
     if (t.held.has(roomId)) return true;
     // H4H 중에는 배리어 해제 시 무장(armed)된 테이블만 다음 핸드를 시작할 수 있다
     if (t.h4h.active && !t.h4h.armed.has(roomId)) return true;
@@ -1045,7 +1197,9 @@ export class TournamentManager {
   }
 
   private clockPos(t: TournamentRuntime) {
-    const elapsed = t.startedAt === null ? 0 : Date.now() - t.startedAt - t.pauseAccumMs;
+    // 일시정지 중엔 정지 시각을 기준으로 시계를 동결한다
+    const nowRef = t.pausedAt ?? Date.now();
+    const elapsed = t.startedAt === null ? 0 : nowRef - t.startedAt - t.pauseAccumMs;
     return mttClockAt(t.structure, elapsed);
   }
 
@@ -1165,6 +1319,7 @@ export class TournamentManager {
       botFill: t.config.botFill,
       hostId: t.config.hostId,
       level: clockLevel,
+      paused: t.pausedAt !== null,
       ...(forPlayerId
         ? { registered: t.entrants.has(forPlayerId) }
         : {}),

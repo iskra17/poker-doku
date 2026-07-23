@@ -252,10 +252,13 @@ function TournamentDetailModal({
   const registerTournament = useGameStore(state => state.registerTournament);
   const unregisterTournament = useGameStore(state => state.unregisterTournament);
   const startTournament = useGameStore(state => state.startTournament);
+  const directorTournamentAction = useGameStore(state => state.directorTournamentAction);
   const myPlayerId = useGameStore(state => state.myPlayerId);
   const [detail, setDetail] = useState<TournamentDetailView | null>(null);
   const [gone, setGone] = useState(false);
   const [busy, setBusy] = useState(false);
+  // 위험 액션(취소/강제 제거) 2탭 확인 — 브라우저 confirm 다이얼로그 금지 (자동화 차단 이슈)
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const next = await fetchTournamentDetail(tournamentId);
@@ -312,7 +315,11 @@ function TournamentDetailModal({
 
       {detail.clock && (
         <div className="mt-2 rounded-lg border border-gilded/30 bg-gilded/10 px-2 py-1.5 text-center text-xs">
-          {detail.clock.onBreak ? (
+          {summary.paused ? (
+            <span className="font-bold text-blossom">
+              ⏸ 일시정지 중 — 레벨 {detail.clock.level}에서 시계가 멈춰 있어요
+            </span>
+          ) : detail.clock.onBreak ? (
             <span className="font-bold text-cyber">☕ 휴식 중 — 곧 재개돼요</span>
           ) : (
             <span className="text-ink">
@@ -321,6 +328,76 @@ function TournamentDetailModal({
                 <ClockCountdown remainingMs={detail.clock.segmentRemainingMs} />
               )}
             </span>
+          )}
+        </div>
+      )}
+
+      {isHost && summary.phase !== 'completed' && summary.phase !== 'cancelled' && (
+        <div className="mt-2 rounded-lg border border-blossom/30 bg-blossom/5 p-2">
+          <p className="mb-1.5 text-[10px] font-bold text-blossom">🛠️ 운영 (개설자 전용)</p>
+          <div className="flex flex-wrap gap-1.5">
+            {summary.phase === 'running' && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => void act(() =>
+                  directorTournamentAction(summary.id, {
+                    action: summary.paused ? 'resume' : 'pause',
+                  }))}
+              >
+                {summary.paused ? '▶ 재개' : '⏸ 일시정지'}
+              </Button>
+            )}
+            {summary.phase === 'running' && summary.paused && detail.clock && (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy || detail.clock.level <= 1}
+                  onClick={() => void act(() =>
+                    directorTournamentAction(summary.id, {
+                      action: 'set-level',
+                      level: detail.clock!.level - 1,
+                    }))}
+                >
+                  레벨 ▼
+                </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => void act(() =>
+                    directorTournamentAction(summary.id, {
+                      action: 'set-level',
+                      level: detail.clock!.level + 1,
+                    }))}
+                >
+                  레벨 ▲
+                </Button>
+              </>
+            )}
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy}
+              className={confirmKey === 'cancel' ? 'border-blossom/60 text-blossom' : ''}
+              onClick={() => {
+                if (confirmKey !== 'cancel') {
+                  setConfirmKey('cancel');
+                  return;
+                }
+                setConfirmKey(null);
+                void act(() => directorTournamentAction(summary.id, { action: 'cancel' }));
+              }}
+            >
+              {confirmKey === 'cancel' ? '정말 취소할까요?' : '토너먼트 취소'}
+            </Button>
+          </div>
+          {summary.phase === 'running' && !summary.paused && (
+            <p className="mt-1 text-[9px] text-ink-dim">
+              블라인드 조정은 일시정지 중에만 할 수 있어요.
+            </p>
           )}
         </div>
       )}
@@ -391,6 +468,37 @@ function TournamentDetailModal({
                     <td className="px-2 py-1 text-right text-ink-dim">
                       {row.tableNo !== null ? `T${row.tableNo}` : ''}
                     </td>
+                    {isHost && summary.phase === 'running' && (
+                      <td className="px-1 py-1 text-right">
+                        {row.place === null && (
+                          <button
+                            type="button"
+                            disabled={busy}
+                            aria-label={`${row.name} 강제 제거`}
+                            className={`rounded px-1 text-[10px] ${
+                              confirmKey === `remove:${row.playerId}`
+                                ? 'bg-blossom/20 font-bold text-blossom'
+                                : 'text-ink-dim hover:text-blossom'
+                            }`}
+                            onClick={() => {
+                              const key = `remove:${row.playerId}`;
+                              if (confirmKey !== key) {
+                                setConfirmKey(key);
+                                return;
+                              }
+                              setConfirmKey(null);
+                              void act(() =>
+                                directorTournamentAction(summary.id, {
+                                  action: 'remove-player',
+                                  playerId: row.playerId,
+                                }));
+                            }}
+                          >
+                            {confirmKey === `remove:${row.playerId}` ? '제거 확정' : '✖'}
+                          </button>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

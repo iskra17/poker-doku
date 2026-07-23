@@ -157,6 +157,8 @@ export interface TournamentSummary {
   botFill: boolean;
   hostId: string;
   level: number;
+  /** 디렉터 일시정지 중 — 시계 동결·전 테이블 다음 핸드 보류 (Phase 2) */
+  paused: boolean;
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
   myTableRoomId?: string; // 참가 중이면 내 테이블
 }
@@ -284,6 +286,8 @@ export interface ClientToServerEvents {
   'register-tournament': (data: unknown, ack?: AckCallback) => void;
   'unregister-tournament': (data: unknown, ack?: AckCallback) => void;
   'start-tournament': (data: unknown, ack?: AckCallback) => void;
+  /** 디렉터 콘솔 — 개설자 전용 운영 개입 (pause/resume/set-level/remove-player/cancel) */
+  'tournament-admin': (data: unknown, ack?: AckCallback) => void;
   'arena-queue-join': (ack?: AckCallback) => void;
   'arena-queue-leave': (ack?: AckCallback) => void;
   'arena-training-accept': (

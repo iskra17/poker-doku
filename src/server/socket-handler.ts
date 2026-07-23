@@ -2423,6 +2423,72 @@ export function setupSocketHandlers(
       });
     });
 
+    // 디렉터 콘솔 — 개설자 전용 운영 개입. 권한 검증(hostId)은 매니저가 수행한다.
+    socket.on('tournament-admin', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('joinRoom', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      let action:
+        | { kind: 'pause' }
+        | { kind: 'resume' }
+        | { kind: 'set-level'; level: number }
+        | { kind: 'remove-player'; playerId: string }
+        | { kind: 'cancel' };
+      switch (payload.action) {
+        case 'pause':
+        case 'resume':
+        case 'cancel':
+          action = { kind: payload.action };
+          break;
+        case 'set-level':
+          if (typeof payload.level !== 'number' || !Number.isInteger(payload.level)) {
+            invalidPayload(ack);
+            return;
+          }
+          action = { kind: 'set-level', level: payload.level };
+          break;
+        case 'remove-player':
+          if (typeof payload.playerId !== 'string' || payload.playerId.length === 0) {
+            invalidPayload(ack);
+            return;
+          }
+          action = { kind: 'remove-player', playerId: payload.playerId };
+          break;
+        default:
+          invalidPayload(ack);
+          return;
+      }
+      const result = tournamentManager.directorAction(
+        payload.tournamentId,
+        session.playerId,
+        action,
+      );
+      if (result === 'ok') {
+        ack?.({ ok: true });
+        return;
+      }
+      const message = {
+        'not-found': '토너먼트를 찾을 수 없어요.',
+        'not-host': '개설자만 운영할 수 있어요.',
+        'bad-state': '지금 상태에서는 할 수 없는 작업이에요.',
+        invalid: '요청 값이 올바르지 않아요.',
+      }[result];
+      ack?.({
+        ok: false,
+        code: result === 'not-found' ? 'room-not-found' : 'action-rejected',
+        message,
+      });
+    });
+
     // Request room list
     socket.on('get-rooms', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs(rawArgs);

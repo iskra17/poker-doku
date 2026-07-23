@@ -115,6 +115,14 @@ interface GameStore {
   registerTournament: (tournamentId: string) => Promise<boolean>;
   unregisterTournament: (tournamentId: string) => Promise<boolean>;
   startTournament: (tournamentId: string) => Promise<boolean>;
+  /** 디렉터 콘솔 (개설자 전용) — pause/resume/set-level/remove-player/cancel */
+  directorTournamentAction: (
+    tournamentId: string,
+    action:
+      | { action: 'pause' | 'resume' | 'cancel' }
+      | { action: 'set-level'; level: number }
+      | { action: 'remove-player'; playerId: string },
+  ) => Promise<boolean>;
   /** 토너먼트 액션 실패 안내 (로비 표시용) */
   tournamentError: string | null;
   clearTournamentError: () => void;
@@ -590,6 +598,17 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!socket?.connected) return Promise.resolve(false);
     return new Promise(resolve => {
       socket.emit('start-tournament', { tournamentId }, ack => {
+        set({ tournamentError: ack.ok ? null : ack.message });
+        resolve(ack.ok);
+      });
+    });
+  },
+
+  directorTournamentAction: (tournamentId, action) => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise(resolve => {
+      socket.emit('tournament-admin', { tournamentId, ...action }, ack => {
         set({ tournamentError: ack.ok ? null : ack.message });
         resolve(ack.ok);
       });
