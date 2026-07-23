@@ -150,6 +150,34 @@ interface SecuritySummary {
   counts: Record<string, number>;
 }
 
+// 런타임 게임 설정 (핫 컨피그) — 메타는 서버 레지스트리가 단일 소스, UI는 렌더만
+interface GameConfigEntryView {
+  key: string;
+  label: string;
+  group: string;
+  min: number;
+  max: number;
+  unit?: string;
+  applyMode: 'immediate' | 'next-hand' | 'new-room';
+  description?: string;
+  warning?: string;
+  effectiveDefault: number;
+  value: number;
+  overridden: boolean;
+  updatedAt: number | null;
+}
+
+interface GameConfigResponse {
+  groupLabels: Record<string, string>;
+  entries: GameConfigEntryView[];
+}
+
+interface GameConfigSaveResult {
+  ok: boolean;
+  message: string;
+  errors?: Array<{ key: string; message: string }>;
+}
+
 // ---------- 표시 헬퍼 ----------
 
 const TABS = [
@@ -157,6 +185,7 @@ const TABS = [
   { key: 'tables', label: '테이블' },
   { key: 'players', label: '플레이어' },
   { key: 'hands', label: '핸드' },
+  { key: 'config', label: '게임 설정' },
   { key: 'feedback', label: '문의/리포트' },
   { key: 'events', label: '이벤트' },
   { key: 'security', label: '보안·공정성' },
@@ -300,6 +329,7 @@ export default function AdminPage() {
   const [hands, setHands] = useState<TableHandSummary[]>([]);
   const [handDetail, setHandDetail] = useState<TableHandDetail | null>(null);
   const [security, setSecurity] = useState<SecuritySummary | null>(null);
+  const [gameConfig, setGameConfig] = useState<GameConfigResponse | null>(null);
   const [expandedRoomId, setExpandedRoomId] = useState<string | null>(null);
   const [expandedProfileId, setExpandedProfileId] = useState<string | null>(null);
   const [profileHands, setProfileHands] = useState<Record<string, ProfileHandSummary[]>>({});
@@ -320,6 +350,29 @@ export default function AdminPage() {
     }
     if (!response.ok) return null;
     return await response.json() as T;
+  }, [token]);
+
+  const apiPost = useCallback(async <T,>(
+    path: string,
+    body: unknown,
+  ): Promise<{ status: number; body: T | null }> => {
+    const joiner = path.includes('?') ? '&' : '?';
+    const response = await fetch(`${path}${joiner}token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 403) {
+      setAuthFailed(true);
+      return { status: 403, body: null };
+    }
+    let parsed: T | null = null;
+    try {
+      parsed = await response.json() as T;
+    } catch {
+      parsed = null;
+    }
+    return { status: response.status, body: parsed };
   }, [token]);
 
   const refresh = useCallback(async () => {
@@ -363,6 +416,10 @@ export default function AdminPage() {
       if (activeTab === 'security') {
         const body = await api<SecuritySummary>('/api/admin/security?hours=24');
         if (body) setSecurity(body);
+      }
+      if (activeTab === 'config') {
+        const body = await api<GameConfigResponse>('/api/admin/config');
+        if (body) setGameConfig(body);
       }
       setLastError(null);
       setUpdatedAt(Date.now());
@@ -426,6 +483,37 @@ export default function AdminPage() {
   const jumpToHand = (tableHandId: number) => {
     setActiveTab('hands');
     void openHandDetail(tableHandId);
+  };
+
+  const saveGameConfig = async (
+    updates: Record<string, number | null>,
+  ): Promise<GameConfigSaveResult> => {
+    const { status, body } = await apiPost<{
+      changes?: Array<{ key: string; from: number; to: number }>;
+      errors?: Array<{ key: string; message: string }>;
+      message?: string;
+    }>('/api/admin/config', { updates });
+    if (status === 200 && body) {
+      const refreshed = await api<GameConfigResponse>('/api/admin/config');
+      if (refreshed) setGameConfig(refreshed);
+      const changes = body.changes ?? [];
+      if (changes.length === 0) return { ok: true, message: '변경된 값이 없어요.' };
+      const labelOf = (key: string) =>
+        gameConfig?.entries.find(entry => entry.key === key)?.label ?? key;
+      return {
+        ok: true,
+        message: `저장됨 — ${changes
+          .map(change => `${labelOf(change.key)} ${change.from.toLocaleString()} → ${change.to.toLocaleString()}`)
+          .join(' · ')}`,
+      };
+    }
+    if (status === 400 && body?.errors) {
+      return { ok: false, message: '저장 실패 — 입력값을 확인해주세요.', errors: body.errors };
+    }
+    if (status === 400) {
+      return { ok: false, message: body?.message ?? '요청 형식이 올바르지 않아요.' };
+    }
+    return { ok: false, message: '저장에 실패했어요. 잠시 후 다시 시도해주세요.' };
   };
 
   const applyToken = () => {
@@ -551,6 +639,9 @@ export default function AdminPage() {
             onLoadMore={() => void loadMoreHands()}
             stats24h={overview?.handStats24h ?? null}
           />
+        )}
+        {activeTab === 'config' && (
+          <ConfigTab config={gameConfig} onSave={saveGameConfig} />
         )}
         {activeTab === 'feedback' && (
           <FeedbackTab
@@ -1294,6 +1385,208 @@ function SecurityTab({ security }: { security: SecuritySummary | null }) {
           ))}
         </div>
       </section>
+    </div>
+  );
+}
+
+// ---------- 게임 설정 (핫 컨피그) ----------
+
+const APPLY_MODE_BADGE: Record<GameConfigEntryView['applyMode'], { label: string; cls: string }> = {
+  immediate: { label: '즉시 반영', cls: 'border-green-400/40 bg-green-400/10 text-green-400' },
+  'next-hand': { label: '다음 핸드부터', cls: 'border-cyber/40 bg-cyber/10 text-cyber' },
+  'new-room': { label: '새 방부터', cls: 'border-gilded/40 bg-gilded/10 text-gilded' },
+};
+
+const CONFIG_UNIT_LABEL: Record<string, string> = {
+  ms: 'ms', s: '초', chips: '칩', bps: 'bps', BB: 'BB', '개': '개', '%': '%',
+};
+
+function ConfigTab({ config, onSave }: {
+  config: GameConfigResponse | null;
+  onSave: (updates: Record<string, number | null>) => Promise<GameConfigSaveResult>;
+}) {
+  // 편집 중(dirty) 키는 5초 폴링이 입력값을 덮지 않도록 로컬 초안으로 관리한다
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [result, setResult] = useState<GameConfigSaveResult | null>(null);
+
+  if (!config) {
+    return <SectionBox className="p-4 text-sm text-ink-dim">게임 설정을 불러오는 중…</SectionBox>;
+  }
+
+  const groups: Array<{ group: string; label: string; entries: GameConfigEntryView[] }> = [];
+  for (const entry of config.entries) {
+    const bucket = groups.find(item => item.group === entry.group);
+    if (bucket) bucket.entries.push(entry);
+    else {
+      groups.push({
+        group: entry.group,
+        label: config.groupLabels[entry.group] ?? entry.group,
+        entries: [entry],
+      });
+    }
+  }
+
+  const draftOf = (entry: GameConfigEntryView) => drafts[entry.key] ?? String(entry.value);
+  const dirtyKeys = Object.keys(drafts).filter(key => {
+    const entry = config.entries.find(item => item.key === key);
+    return entry !== undefined && drafts[key] !== String(entry.value);
+  });
+  const errorOf = (key: string) =>
+    result?.errors?.find(item => item.key === key)?.message ?? null;
+
+  const handleSave = async () => {
+    const updates: Record<string, number | null> = {};
+    const localErrors: Array<{ key: string; message: string }> = [];
+    for (const key of dirtyKeys) {
+      const parsed = Number(drafts[key]);
+      if (!Number.isSafeInteger(parsed)) {
+        localErrors.push({ key, message: '정수만 입력할 수 있습니다' });
+        continue;
+      }
+      updates[key] = parsed;
+    }
+    if (localErrors.length > 0) {
+      setResult({ ok: false, message: '저장 실패 — 입력값을 확인해주세요.', errors: localErrors });
+      return;
+    }
+    if (Object.keys(updates).length === 0) return;
+    setSaving(true);
+    const saved = await onSave(updates);
+    setSaving(false);
+    setResult(saved);
+    if (saved.ok) setDrafts({});
+  };
+
+  const handleReset = async (key: string) => {
+    setSaving(true);
+    const saved = await onSave({ [key]: null });
+    setSaving(false);
+    setResult(saved);
+    setDrafts(prev => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
+  return (
+    <div className="space-y-4">
+      <SectionBox className="p-3">
+        <p className="text-[11px] leading-snug text-ink-dim">
+          서버 배포 없이 게임 설정을 조정합니다 (SQLite 영속 — 재시작 후에도 유지).
+          적용 방식 배지를 확인하세요: <span className="font-bold text-green-400">즉시 반영</span>은 다음 판정부터,{' '}
+          <span className="font-bold text-cyber">다음 핸드부터</span>는 진행 중 핸드 종료 후,{' '}
+          <span className="font-bold text-gilded">새 방부터</span>는 이미 만들어진 방에는 적용되지 않습니다.
+          모든 변경은 이벤트 탭(config-change)에 감사 기록됩니다.
+        </p>
+      </SectionBox>
+
+      {groups.map(group => (
+        <section key={group.group} className="space-y-2">
+          <h2 className="text-sm font-bold text-blossom">{group.label}</h2>
+          <SectionBox className="divide-y divide-mystic/10">
+            {group.entries.map(entry => {
+              const badge = APPLY_MODE_BADGE[entry.applyMode];
+              const draft = draftOf(entry);
+              const draftNumber = Number(draft);
+              const rowError = errorOf(entry.key);
+              return (
+                <div key={entry.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2.5">
+                  <div className="min-w-[220px] flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-ink">{entry.label}</span>
+                      <span className={`rounded-full border px-1.5 py-px text-[10px] font-bold ${badge.cls}`}>
+                        {badge.label}
+                      </span>
+                      {entry.overridden && (
+                        <span className="rounded-full border border-blossom/40 bg-blossom/10 px-1.5 py-px text-[10px] font-bold text-blossom">
+                          변경됨
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-ink-dim">{entry.key}</p>
+                    {entry.description && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-ink-dim">{entry.description}</p>
+                    )}
+                    {entry.warning && (
+                      <p className="mt-0.5 text-[11px] leading-snug text-gilded">⚠ {entry.warning}</p>
+                    )}
+                    {rowError && (
+                      <p className="mt-0.5 text-[11px] font-bold text-blossom">{rowError}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      value={draft}
+                      min={entry.min}
+                      max={entry.max}
+                      onChange={event => setDrafts(prev => ({ ...prev, [entry.key]: event.target.value }))}
+                      className={`w-32 rounded-lg border bg-elevated/70 px-2 py-1.5 text-right text-sm tabular text-ink outline-none focus:border-blossom/50 ${
+                        rowError
+                          ? 'border-blossom/60'
+                          : dirtyKeys.includes(entry.key)
+                            ? 'border-cyber/50'
+                            : 'border-mystic/20'
+                      }`}
+                    />
+                    <span className="w-8 text-[11px] text-ink-dim">
+                      {entry.unit ? CONFIG_UNIT_LABEL[entry.unit] ?? entry.unit : ''}
+                    </span>
+                    <div className="w-40 text-right text-[11px] text-ink-dim">
+                      {entry.unit === 'ms' && Number.isFinite(draftNumber) && (
+                        <span className="mr-2 text-cyber">= {(draftNumber / 1000).toLocaleString()}초</span>
+                      )}
+                      <span>범위 {entry.min.toLocaleString()}~{entry.max.toLocaleString()}</span>
+                    </div>
+                    <div className="w-44 text-right">
+                      {entry.overridden ? (
+                        <button
+                          type="button"
+                          disabled={saving}
+                          onClick={() => void handleReset(entry.key)}
+                          className="rounded-lg border border-mystic/30 px-2 py-1 text-[11px] text-ink-dim hover:bg-white/5 hover:text-ink"
+                        >
+                          기본값 {entry.effectiveDefault.toLocaleString()} 복원
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-ink-dim">
+                          기본값 {entry.effectiveDefault.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </SectionBox>
+        </section>
+      ))}
+
+      <div className="sticky bottom-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-mystic/30 bg-panel p-3">
+        <p className={`min-w-0 flex-1 text-[11px] leading-snug ${
+          result ? (result.ok ? 'text-green-400' : 'text-blossom') : 'text-ink-dim'
+        }`}>
+          {result
+            ? result.message
+            : dirtyKeys.length > 0
+              ? `${dirtyKeys.length}개 항목이 수정 대기 중입니다.`
+              : '값을 수정하면 여기서 일괄 저장합니다.'}
+        </p>
+        <button
+          type="button"
+          disabled={saving || dirtyKeys.length === 0}
+          onClick={() => void handleSave()}
+          className={`rounded-xl border px-4 py-2 text-sm font-bold ${
+            dirtyKeys.length > 0 && !saving
+              ? 'border-blossom/50 bg-blossom/20 text-blossom hover:bg-blossom/30'
+              : 'border-mystic/20 bg-elevated/50 text-ink-dim'
+          }`}
+        >
+          {saving ? '저장 중…' : `저장${dirtyKeys.length > 0 ? ` (${dirtyKeys.length})` : ''}`}
+        </button>
+      </div>
     </div>
   );
 }
