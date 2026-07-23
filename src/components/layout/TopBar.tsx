@@ -171,7 +171,7 @@ function GearIcon() {
   );
 }
 
-/** 시트앤고 레벨/블라인드/다음 인상 카운트다운 */
+/** 시트앤고/MTT 레벨/블라인드/다음 인상 카운트다운 (+MTT: 앤티·전체 잔존 인원) */
 function TournamentBadge({ tournament }: { tournament: TournamentState }) {
   const seconds = useCountdownTo(tournament.finished ? 0 : tournament.levelEndsAt);
 
@@ -179,11 +179,19 @@ function TournamentBadge({ tournament }: { tournament: TournamentState }) {
     <span className="text-xs flex items-center gap-1.5">
       <span className="text-gilded font-bold">Lv.{tournament.level}</span>
       <span className="text-ink-dim">
-        <span className="text-gilded">{tournament.smallBlind}/{tournament.bigBlind}</span>
+        <span className="text-gilded">
+          {tournament.smallBlind}/{tournament.bigBlind}
+          {(tournament.ante ?? 0) > 0 && ` A${tournament.ante}`}
+        </span>
       </span>
       {seconds !== null && tournament.nextBigBlind !== null && (
         <span className="text-cyber tabular" title={`다음 ${tournament.nextSmallBlind}/${tournament.nextBigBlind}`}>
           ↑{formatCountdown(seconds)}
+        </span>
+      )}
+      {tournament.fieldRemaining !== undefined && tournament.fieldRemaining > 0 && (
+        <span className="text-ink-dim" title="전체 잔존 인원">
+          👥{tournament.fieldRemaining}/{tournament.entrants}
         </span>
       )}
     </span>

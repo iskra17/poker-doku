@@ -3,7 +3,13 @@
 import { create } from 'zustand';
 import { io } from 'socket.io-client';
 import type { ActionType, ChatMessage, GameState } from '../poker/types';
-import type { PokerClientSocket, RoomListItem } from '../realtime/protocol';
+import type {
+  CreateTournamentRequest,
+  PokerClientSocket,
+  RoomListItem,
+  TournamentDetailView,
+  TournamentSummary,
+} from '../realtime/protocol';
 import { diffGameState, emitGameEvent } from '../events/game-events';
 import { THROWABLE_MAP, THROW_COOLDOWN_MS } from '../throwables/catalog';
 import { useSettingsStore } from './settings-store';
@@ -74,6 +80,7 @@ interface GameStore {
   gameState: GameState | null;
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
+  tournaments: TournamentSummary[];
   showCreateRoom: boolean;
   /** 방금 만든 방 id — 로비가 바이인 모달을 자동으로 띄우는 데 쓰고, 입장/닫기 시 소거 */
   createdRoomId: string | null;
@@ -100,6 +107,17 @@ interface GameStore {
   createRoom: (config: CreateRoomConfig) => void;
   setShowCreateRoom: (show: boolean) => void;
   clearCreatedRoom: () => void;
+
+  // --- MTT (멀티테이블 토너먼트) ---
+  refreshTournaments: () => void;
+  fetchTournamentDetail: (tournamentId: string) => Promise<TournamentDetailView | null>;
+  createTournament: (config: CreateTournamentRequest) => Promise<string | null>;
+  registerTournament: (tournamentId: string) => Promise<boolean>;
+  unregisterTournament: (tournamentId: string) => Promise<boolean>;
+  startTournament: (tournamentId: string) => Promise<boolean>;
+  /** 토너먼트 액션 실패 안내 (로비 표시용) */
+  tournamentError: string | null;
+  clearTournamentError: () => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -119,8 +137,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   gameState: null,
   chatMessages: [],
   rooms: [],
+  tournaments: [],
   showCreateRoom: false,
   createdRoomId: null,
+  tournamentError: null,
 
   connect: () => {
     const existing = get().socket;
@@ -166,6 +186,24 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('room-list', rooms => {
       set({ rooms });
+    });
+
+    socket.on('tournament-list', tournaments => {
+      set({ tournaments });
+    });
+
+    // 서버 주도 테이블 이동 — 로비를 경유하지 않고 현재 방을 새 테이블로 교체한다.
+    // 이전 방의 gameState와 diff를 섞지 않도록 스냅샷·채팅을 통째로 갈아끼운다.
+    socket.on('table-move', data => {
+      clearActionAckTimeout();
+      set({
+        currentRoomId: data.roomId,
+        pendingRoomId: null,
+        pendingAction: null,
+        gameState: data.gameState,
+        chatMessages: data.chatHistory,
+        tableNotice: '🚚 테이블이 이동됐어요! 새 테이블에서 다음 핸드부터 참가합니다.',
+      });
     });
 
     socket.on('room-joined', data => {
@@ -264,10 +302,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
       gameState: null,
       chatMessages: [],
       rooms: [],
+      tournaments: [],
       joinError: null,
       joinErrorCode: null,
       tableNotice: null,
       showCreateRoom: false,
+      tournamentError: null,
     });
   },
 
@@ -486,4 +526,75 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setShowCreateRoom: showCreateRoom => set({ showCreateRoom }),
 
   clearCreatedRoom: () => set({ createdRoomId: null }),
+
+  // --- MTT (멀티테이블 토너먼트) ---
+
+  refreshTournaments: () => {
+    const { socket } = get();
+    if (!socket?.connected) return;
+    socket.emit('get-tournaments', ack => {
+      if (ack.ok && ack.data) set({ tournaments: ack.data });
+    });
+  },
+
+  fetchTournamentDetail: tournamentId => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(null);
+    return new Promise(resolve => {
+      socket.emit('get-tournament', { tournamentId }, ack => {
+        resolve(ack.ok ? ack.data ?? null : null);
+      });
+    });
+  },
+
+  createTournament: config => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(null);
+    return new Promise(resolve => {
+      socket.emit('create-tournament', config, ack => {
+        if (ack.ok) {
+          set({ tournamentError: null });
+          resolve(ack.data?.tournamentId ?? null);
+        } else {
+          set({ tournamentError: ack.message });
+          resolve(null);
+        }
+      });
+    });
+  },
+
+  registerTournament: tournamentId => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise(resolve => {
+      socket.emit('register-tournament', { tournamentId }, ack => {
+        set({ tournamentError: ack.ok ? null : ack.message });
+        resolve(ack.ok);
+      });
+    });
+  },
+
+  unregisterTournament: tournamentId => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise(resolve => {
+      socket.emit('unregister-tournament', { tournamentId }, ack => {
+        set({ tournamentError: ack.ok ? null : ack.message });
+        resolve(ack.ok);
+      });
+    });
+  },
+
+  startTournament: tournamentId => {
+    const { socket } = get();
+    if (!socket?.connected) return Promise.resolve(false);
+    return new Promise(resolve => {
+      socket.emit('start-tournament', { tournamentId }, ack => {
+        set({ tournamentError: ack.ok ? null : ack.message });
+        resolve(ack.ok);
+      });
+    });
+  },
+
+  clearTournamentError: () => set({ tournamentError: null }),
 }));
