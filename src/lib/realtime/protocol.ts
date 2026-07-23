@@ -1,10 +1,13 @@
 import type { Socket } from 'socket.io-client';
 import type { ActionType, ChatMessage, GameState } from '../poker/types';
+import type { MttSpeed } from '../poker/mtt-structure';
 import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
 } from '../progression/types';
 import type { ArenaTier } from '../arena/types';
+
+export type { MttSpeed };
 
 export type RealtimeErrorCode =
   | 'invalid-payload'
@@ -134,6 +137,70 @@ export interface RoomJoinedPayload {
   chatHistory: ChatMessage[];
 }
 
+// --- MTT (멀티테이블 토너먼트) ---
+
+export type TournamentPhase = 'registering' | 'running' | 'completed' | 'cancelled';
+
+export interface TournamentSummary {
+  id: string;
+  name: string;
+  phase: TournamentPhase;
+  speed: MttSpeed;
+  entrantCount: number; // 등록 인원 (시작 후엔 봇 포함 확정 인원)
+  maxEntrants: number;
+  tableSize: number;
+  remaining: number;
+  tableCount: number;
+  prizePool: number;
+  startAt: number | null;
+  startedAt: number | null;
+  botFill: boolean;
+  hostId: string;
+  level: number;
+  registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
+  myTableRoomId?: string; // 참가 중이면 내 테이블
+}
+
+export interface TournamentStandingRow {
+  playerId: string;
+  name: string;
+  chips: number; // 탈락자는 0
+  tableNo: number | null;
+  place: number | null;
+  prize: number;
+}
+
+export interface TournamentDetailView {
+  summary: TournamentSummary;
+  levels: Array<{ level: number; smallBlind: number; bigBlind: number; ante: number }>;
+  levelDurationMs: number;
+  payouts: Array<{ place: number; prize: number }>;
+  entrants: Array<{ id: string; name: string; avatar: string }>;
+  standings: TournamentStandingRow[];
+  clock: { level: number; onBreak: boolean; segmentRemainingMs: number | null } | null;
+}
+
+export interface CreateTournamentRequest {
+  name: string;
+  speed: MttSpeed;
+  maxEntrants: number; // 8~48
+  startAt: number | null; // 예약 시각 (null = 호스트 수동 시작)
+  botFill: boolean;
+  turnTime: number;
+}
+
+/**
+ * 서버 주도 테이블 이동 — room-lost(로비행)와 달리 로비를 경유하지 않고
+ * currentRoomId를 새 테이블로 교체한다. gameState는 이동 직후 개인화 스냅샷.
+ */
+export interface TableMovePayload {
+  tournamentId: string;
+  fromRoomId: string;
+  roomId: string;
+  gameState: GameState;
+  chatHistory: ChatMessage[];
+}
+
 export interface ArenaQueueState {
   status: 'idle' | 'queued' | 'forming' | 'training-offered';
   joinedAt?: number;
@@ -164,6 +231,8 @@ export interface ServerToClientEvents {
   session: (data: { playerId: string }) => void;
   'session-replaced': (data: { message: string }) => void;
   'room-list': (rooms: RoomListItem[]) => void;
+  'tournament-list': (tournaments: TournamentSummary[]) => void;
+  'table-move': (data: TableMovePayload) => void;
   'room-joined': (data: RoomJoinedPayload) => void;
   'room-lost': (data?: { message?: string }) => void;
   'room-created': (data: { roomId: string }) => void;
@@ -206,6 +275,15 @@ export interface ClientToServerEvents {
   'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;
   'create-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
   'sng-fill-bots': (ack?: AckCallback) => void;
+  'get-tournaments': (ack?: AckCallback<TournamentSummary[]>) => void;
+  'get-tournament': (data: unknown, ack?: AckCallback<TournamentDetailView>) => void;
+  'create-tournament': (
+    data: unknown,
+    ack?: AckCallback<{ tournamentId: string }>,
+  ) => void;
+  'register-tournament': (data: unknown, ack?: AckCallback) => void;
+  'unregister-tournament': (data: unknown, ack?: AckCallback) => void;
+  'start-tournament': (data: unknown, ack?: AckCallback) => void;
   'arena-queue-join': (ack?: AckCallback) => void;
   'arena-queue-leave': (ack?: AckCallback) => void;
   'arena-training-accept': (

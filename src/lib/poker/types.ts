@@ -156,6 +156,8 @@ export interface TournamentState {
   nextBigBlind: number | null;
   levelEndsAt: number; // epoch ms — 다음 인상 시각 (0 = 카운트다운 없음)
   entrants: number; // 시작 인원 (0 = 아직 미시작). MTT는 전체 필드 인원 (매니저가 주입)
+  /** MTT 전용 — 전체 필드 잔존 인원 (매니저가 탈락마다 갱신, HUD 표시용) */
+  fieldRemaining?: number;
   prizes: number[]; // 순위별 상금 (1위부터)
   finished: boolean;
   results: TournamentResult[];

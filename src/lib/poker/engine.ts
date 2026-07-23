@@ -1179,13 +1179,25 @@ export class PokerEngine {
     t.results.sort((a, b) => a.place - b.place);
   }
 
-  /** MTT 전용 — 매니저가 전체 필드 정보(표시용 미러)를 주입한다 */
-  setTournamentField(entrants: number, prizes: number[], finished: boolean): void {
+  /**
+   * MTT 전용 — 매니저가 전체 필드 정보(표시용 미러)를 주입한다.
+   * results를 주면 이 테이블의 로컬 결과를 전체 결과로 통째 교체한다
+   * (파이널 테이블의 TournamentResultOverlay가 전 필드 순위를 보여줄 수 있게).
+   */
+  setTournamentField(
+    entrants: number,
+    prizes: number[],
+    finished: boolean,
+    results?: readonly { playerId: string; name: string; place: number; prize: number }[],
+  ): void {
     const t = this.state.tournament;
     if (!t || !this.isMtt()) return;
     t.entrants = entrants;
     t.prizes = prizes;
     t.finished = finished;
+    if (results) {
+      t.results = [...results].sort((a, b) => a.place - b.place);
+    }
   }
 
   getPublicState(forPlayerId?: string): GameState {

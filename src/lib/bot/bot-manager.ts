@@ -71,7 +71,8 @@ export function fillEmptySeats(
   const occupiedSeats = new Set(engine.state.players.map(p => p.seatIndex));
   const usedCharacters = getUsedCharacterIds(engine);
 
-  for (let seat = 0; seat < 6 && engine.state.players.length < minPlayers; seat++) {
+  // MTT 가변 정원(최대 9)을 지원하기 위해 좌석 탐색 상한을 목표 인원까지 확장
+  for (let seat = 0; seat < Math.max(6, minPlayers) && engine.state.players.length < minPlayers; seat++) {
     if (!occupiedSeats.has(seat)) {
       const bot = createBot(seat, botStack ?? engine.state.bigBlind * 100, usedCharacters, difficulty);
       if (engine.addPlayer(bot)) {

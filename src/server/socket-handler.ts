@@ -17,6 +17,8 @@ import type {
   AckCallback,
   ClientToServerEvents,
   ServerToClientEvents,
+  TournamentDetailView,
+  TournamentSummary,
 } from '../lib/realtime/protocol';
 import {
   isRecord,
@@ -55,9 +57,15 @@ import {
 } from './arena-matchmaker';
 import { ArenaRuntime } from './arena-runtime';
 import type { ArenaService } from './arena-service';
+import { TournamentManager } from './tournament-manager';
+import type { MttSpeed } from '../lib/poker/mtt-structure';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
+const VALID_MTT_SPEEDS: MttSpeed[] = ['standard', 'turbo', 'hyper'];
+const VALID_TURN_TIMES = [8, 15, 30];
+/** 탈락 안내(EliminationNotice) 표시 후 로비 복귀까지의 여유 */
+const MTT_ELIMINATION_EXIT_MS = 8_000;
 // 방 수 상한은 핫 컨피그 cfg('table.maxRooms') — 하향해도 기존 방은 유지, 생성만 차단
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
@@ -89,6 +97,7 @@ export interface SocketRuntimeOptions {
 
 export interface SocketRuntime {
   roomManager: RoomManager;
+  tournamentManager: TournamentManager;
   sessions: SessionManager;
   revokeProfile: (profileId: string) => void;
   refreshPublicCosmetics: (
@@ -368,6 +377,14 @@ export function setupSocketHandlers(
             socket?.emit('room-lost', {
               message: '종료된 Sit & Go 보존 시간이 끝나 로비로 돌아왔어요.',
             });
+          } else if (reason === 'mtt-break') {
+            socket?.emit('room-lost', {
+              message: '토너먼트 테이블이 통합되어 로비로 돌아왔어요.',
+            });
+          } else if (reason === 'mtt-cancel') {
+            socket?.emit('room-lost', {
+              message: '토너먼트가 취소되어 로비로 돌아왔어요.',
+            });
           }
           session.roomId = null;
           sessions.releaseIfIdle(session);
@@ -375,6 +392,101 @@ export function setupSocketHandlers(
       },
     },
   );
+
+  // 소켓별 개인화(등록 여부·내 테이블) 토너먼트 목록 브로드캐스트 — room-list와 같은 계약
+  function broadcastTournamentList(): void {
+    for (const [socketId, sock] of io.sockets.sockets) {
+      sock.emit(
+        'tournament-list',
+        tournamentManager.listTournaments(sessions.getBySocketId(socketId)?.playerId),
+      );
+    }
+  }
+
+  const tournamentManager = new TournamentManager(roomManager, {
+    // 체크인 = 시작 시점 접속 (노쇼 방지 — 미접속 등록자는 착석 제외)
+    isConnected: playerId => {
+      const targetSession = sessions.getByPlayerId(playerId);
+      return !!(targetSession?.socketId
+        && io.sockets.sockets.get(targetSession.socketId));
+    },
+    // 시작 착석 — 기존 좌석 정리 후 세션을 토너 테이블로 전환하고 room-joined를 push
+    onSeated: ({ playerId, roomId }) => {
+      const targetSession = sessions.getByPlayerId(playerId);
+      if (!targetSession) return;
+      const targetSocket = targetSession.socketId
+        ? io.sockets.sockets.get(targetSession.socketId)
+        : undefined;
+      if (targetSession.roomId && targetSession.roomId !== roomId) {
+        roomManager.leaveRoom(targetSession.roomId, playerId);
+        targetSocket?.leave(targetSession.roomId);
+      }
+      roomManager.leaveAllSeatsExcept(playerId, roomId);
+      targetSession.roomId = roomId;
+      if (!targetSocket) return;
+      targetSocket.join(roomId);
+      const room = roomManager.getRoom(roomId);
+      if (!room) return;
+      targetSocket.emit('room-joined', {
+        roomId,
+        gameState: {
+          ...room.engine.getPublicState(playerId),
+          turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+        },
+        chatHistory: roomManager.getChatHistory(roomId),
+      });
+    },
+    // 서버 주도 테이블 이동 — 로비 경유 없이 currentRoomId를 교체하는 table-move 계약
+    onPlayerMoved: ({ tournamentId, playerId, fromRoomId, toRoomId }) => {
+      const targetSession = sessions.getByPlayerId(playerId);
+      if (!targetSession) return;
+      const targetSocket = targetSession.socketId
+        ? io.sockets.sockets.get(targetSession.socketId)
+        : undefined;
+      if (targetSession.roomId === fromRoomId) {
+        targetSession.roomId = toRoomId;
+        targetSocket?.leave(fromRoomId);
+      }
+      if (!targetSocket) return;
+      targetSocket.join(toRoomId);
+      const room = roomManager.getRoom(toRoomId);
+      if (!room) return;
+      targetSocket.emit('table-move', {
+        tournamentId,
+        fromRoomId,
+        roomId: toRoomId,
+        gameState: {
+          ...room.engine.getPublicState(playerId),
+          turnTimeRemaining: roomManager.getTurnTimeRemaining(toRoomId),
+        },
+        chatHistory: roomManager.getChatHistory(toRoomId),
+      });
+    },
+    // 탈락: EliminationNotice(스냅샷 finishPlace)가 순위를 보여준 뒤 로비로 복귀.
+    // 파이널에서 토너먼트가 끝났으면 결과 오버레이 관람을 위해 보존 만료까지 좌석을 유지한다.
+    onEliminated: ({ roomId, playerId, place, prize }) => {
+      setTimeout(() => {
+        const room = roomManager.getRoom(roomId);
+        if (room?.engine.state.tournament?.finished) return;
+        const targetSession = sessions.getByPlayerId(playerId);
+        if (!targetSession || targetSession.roomId !== roomId) return;
+        targetSession.roomId = null;
+        const targetSocket = targetSession.socketId
+          ? io.sockets.sockets.get(targetSession.socketId)
+          : undefined;
+        targetSocket?.leave(roomId);
+        targetSocket?.emit('room-lost', {
+          message: prize > 0
+            ? `🏆 ${place}위 입상! 상금 ${prize.toLocaleString()} 칩을 획득했어요.`
+            : `${place}위로 토너먼트를 마쳤어요 — 수고하셨습니다!`,
+        });
+        sessions.releaseIfIdle(targetSession);
+      }, MTT_ELIMINATION_EXIT_MS);
+    },
+    onTournamentsChanged: () => broadcastTournamentList(),
+    // v1 상세(순위표)는 get-tournament 폴링 — 상세 브로드캐스트는 확장 시 도입
+    onTournamentUpdate: () => {},
+  });
 
   if (arena) {
     arenaRuntime = new ArenaRuntime(roomManager, arena.service, {
@@ -703,6 +815,7 @@ export function setupSocketHandlers(
 
     // Send room list — 보존 중인 내 좌석(mySeat) 포함 개인화
     socket.emit('room-list', roomManager.getRoomList(session.playerId));
+    socket.emit('tournament-list', tournamentManager.listTournaments(session.playerId));
 
     // 재접속 복원: 세션에 방이 남아 있고 좌석이 유지되어 있으면 그대로 복귀.
     // 방/좌석이 사라졌으면(유휴 정리·grace 만료) room-lost로 클라이언트를 로비로 돌려보낸다.
@@ -1043,6 +1156,20 @@ export function setupSocketHandlers(
           ok: false,
           code: 'arena-reserved',
           message: '예약된 아레나 참가자만 입장할 수 있어요.',
+        });
+        return;
+      }
+      // MTT 테이블은 직접 입장 불가 — 좌석 배정·이동은 전부 TournamentManager가 주도한다
+      if (room.config.tournamentId) {
+        eventLog.log('join-room:reject', {
+          roomId,
+          playerId: session.playerId,
+          data: { reason: 'mtt-table' },
+        });
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '토너먼트 테이블은 로비에서 등록해 참가해요.',
         });
         return;
       }
@@ -2111,6 +2238,191 @@ export function setupSocketHandlers(
       }
     });
 
+    // --- MTT (멀티테이블 토너먼트) ---
+
+    socket.on('get-tournaments', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs<TournamentSummary[]>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const list = tournamentManager.listTournaments(session.playerId);
+      socket.emit('tournament-list', list);
+      ack?.({ ok: true, data: list });
+    });
+
+    socket.on('get-tournament', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<TournamentDetailView>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const detail = tournamentManager.getDetail(payload.tournamentId, session.playerId);
+      if (!detail) {
+        ack?.({ ok: false, code: 'room-not-found', message: '토너먼트를 찾을 수 없어요.' });
+        return;
+      }
+      ack?.({ ok: true, data: detail });
+    });
+
+    socket.on('create-tournament', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ tournamentId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!ensureRateLimit('createRoom', '토너먼트 개설 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      if (
+        !isRecord(payload)
+        || typeof payload.name !== 'string'
+        || payload.name.trim().length === 0
+        || payload.name.trim().length > 30
+        || !VALID_MTT_SPEEDS.includes(payload.speed as MttSpeed)
+        || typeof payload.maxEntrants !== 'number'
+        || typeof payload.botFill !== 'boolean'
+        || typeof payload.turnTime !== 'number'
+        || !VALID_TURN_TIMES.includes(payload.turnTime)
+        || !(payload.startAt === null
+          || (typeof payload.startAt === 'number'
+            && payload.startAt > Date.now() - 10_000
+            && payload.startAt < Date.now() + 24 * 60 * 60_000))
+      ) {
+        invalidPayload(ack);
+        return;
+      }
+      const created = tournamentManager.createTournament({
+        name: payload.name.trim(),
+        speed: payload.speed as MttSpeed,
+        maxEntrants: payload.maxEntrants,
+        tableSize: 6, // v1은 6-max 고정 노출 (엔진/매니저는 2~9 지원)
+        startAt: payload.startAt,
+        botFill: payload.botFill,
+        turnTime: payload.turnTime,
+        hostId: session.playerId,
+      });
+      if (!created.ok) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: created.reason === 'limit'
+            ? '동시에 열 수 있는 토너먼트 수를 초과했어요. 잠시 후 다시 시도해 주세요.'
+            : '토너먼트 설정이 올바르지 않아요.',
+        });
+        return;
+      }
+      ack?.({ ok: true, data: { tournamentId: created.tournamentId } });
+    });
+
+    socket.on('register-tournament', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('joinRoom', '등록 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      if (tournamentManager.hasActiveEngagement(session.playerId)) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '이미 참가 중인 토너먼트가 있어요 — 한 번에 하나만 참가할 수 있어요.',
+        });
+        return;
+      }
+      const result = tournamentManager.register(payload.tournamentId, {
+        id: session.playerId,
+        name: profileAlias,
+        avatar: socket.data.profileAvatarId ?? profileAvatarId,
+      });
+      if (result === 'ok') {
+        ack?.({ ok: true });
+        return;
+      }
+      const message = {
+        'not-found': '토너먼트를 찾을 수 없어요.',
+        closed: '등록이 마감된 토너먼트예요.',
+        full: '정원이 가득 찼어요.',
+        already: '이미 등록되어 있어요.',
+      }[result];
+      ack?.({
+        ok: false,
+        code: result === 'not-found' ? 'room-not-found' : 'action-rejected',
+        message,
+      });
+    });
+
+    socket.on('unregister-tournament', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('joinRoom', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      if (!tournamentManager.unregister(payload.tournamentId, session.playerId)) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '등록을 취소할 수 없어요 (이미 시작됐거나 등록 내역이 없어요).',
+        });
+        return;
+      }
+      ack?.({ ok: true });
+    });
+
+    socket.on('start-tournament', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('joinRoom', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const result = tournamentManager.startTournament(payload.tournamentId, session.playerId);
+      if (result === 'ok') {
+        ack?.({ ok: true });
+        return;
+      }
+      const message = {
+        'not-found': '토너먼트를 찾을 수 없어요.',
+        'not-host': '개설자만 시작할 수 있어요.',
+        'not-registering': '이미 시작됐거나 종료된 토너먼트예요.',
+        'not-enough': '시작하려면 접속 중인 참가자가 더 필요해요.',
+      }[result];
+      ack?.({
+        ok: false,
+        code: result === 'not-found' ? 'room-not-found' : 'action-rejected',
+        message,
+      });
+    });
+
     // Request room list
     socket.on('get-rooms', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs(rawArgs);
@@ -2147,6 +2459,7 @@ export function setupSocketHandlers(
 
   return {
     roomManager,
+    tournamentManager,
     sessions,
     refreshPublicCosmetics: (profileId, snapshot) => {
       const session = sessions.getByPlayerId(profileId);
@@ -2186,6 +2499,7 @@ export function setupSocketHandlers(
         pendingOfficialMatchIds: [],
         pendingTrainingOfferIds: [],
       };
+      tournamentManager.shutdown();
       sessions.shutdown();
       roomManager.shutdown();
       return report;

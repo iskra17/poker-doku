@@ -160,7 +160,28 @@ export type RoomDisposeReason =
   | 'empty'
   | 'sng-expired'
   | 'arena-rollback'
+  | 'mtt-break'
+  | 'mtt-cancel'
   | 'shutdown';
+
+/**
+ * MTT 테이블 훅 — TournamentManager가 setMttHooks로 주입한다.
+ * 토너먼트 공용 시계·전역 순위·밸런싱은 전부 매니저 소유이고, RoomManager는
+ * 핸드 경계에서 이 훅을 호출해 진행 여부만 위임받는다 (아레나 패턴의 확장).
+ */
+export interface MttRoomHooks {
+  /** 핸드 사이 블라인드 레벨 적용 — 토너먼트 공용 시계 기준 (TDA Rule 23: 다음 핸드부터) */
+  applyLevel(roomId: string, engine: PokerEngine): void;
+  /**
+   * 핸드 종료 훅 — 탈락 수집/밸런싱/브레이크/H4H 처리 후 진행 지시를 반환.
+   * 'continue'=다음 핸드 예약, 'hold'=보류(매니저가 나중에 resumeRoom), 'gone'=테이블 해체됨.
+   */
+  onHandComplete(roomId: string): 'continue' | 'hold' | 'gone';
+  /** 브레이크/H4H 배리어/종료 등으로 다음 핸드 시작을 보류 중인지 */
+  isHeld(roomId: string): boolean;
+  /** 명시적 퇴장/서버 회수 직전 호출 — 매니저가 현재 순위로 탈락 확정 */
+  onPlayerLeave(roomId: string, playerId: string): void;
+}
 
 export interface RoomManagerRuntimeStats {
   rooms: number;
@@ -230,6 +251,7 @@ export class RoomManager {
   private roomRunGeneration = 0;
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
+  private mttHooks?: MttRoomHooks;
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
   /** 좌석 구성이 서버 내부에서 바뀔 때(자동 정리 등) 로비 목록 재브로드캐스트 훅 */
@@ -249,6 +271,32 @@ export class RoomManager {
       ...options,
       sngRetentionMs: options.sngRetentionMs ?? DEFAULT_SNG_RETENTION_MS,
     };
+  }
+
+  /** MTT 훅 주입 — TournamentManager가 생성 후 연결한다 (순환 참조 회피) */
+  setMttHooks(hooks: MttRoomHooks): void {
+    this.mttHooks = hooks;
+  }
+
+  /** MTT 소속 테이블 여부 — 수명주기/레벨/순위가 TournamentManager 소유인 방 */
+  private isMttRoom(room: { config: RoomConfig }): boolean {
+    return room.config.gameMode === 'mtt';
+  }
+
+  /** 토너먼트형 방(SnG/MTT) — 좌석 보존·딜인 유지·즉시 퇴장 계약을 공유한다 */
+  private isTournamentRoom(room: { config: RoomConfig }): boolean {
+    return room.config.gameMode === 'sng' || room.config.gameMode === 'mtt';
+  }
+
+  /** TournamentManager 등 외부 오케스트레이터의 시스템 채팅 공지용 공개 래퍼 */
+  postSystemChat(roomId: string, message: string): void {
+    this.sendSystemChat(roomId, message);
+  }
+
+  /** 상태 스냅샷만 재브로드캐스트 (게임 재개 시도 없음 — 탈락 확정 표시 등) */
+  broadcastRoom(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (room) this.onUpdate(roomId, room.engine);
   }
 
   createRoom(config: RoomConfig, persistent = false): string {
@@ -505,6 +553,8 @@ export class RoomManager {
     const list: RoomListItem[] = [];
     this.rooms.forEach((room, id) => {
       if (room.config.competitionMode) return;
+      // MTT 테이블은 로비 방 목록에 노출하지 않는다 — 토너먼트 엔티티(별도 목록)로만 보인다
+      if (room.config.tournamentId) return;
       const tournament = room.engine.state.tournament;
       const seat = forPlayerId
         ? room.engine.state.players.find(p => p.id === forPlayerId && !p.pendingRemoval)
@@ -798,6 +848,11 @@ export class RoomManager {
       return true;
     }
 
+    // MTT: 명시적 퇴장 = 현재 순위로 탈락 확정 (전역 순위는 매니저 소유 — 엔진 로컬 판정은 비활성)
+    if (this.isMttRoom(room)) {
+      this.mttHooks?.onPlayerLeave(roomId, playerId);
+    }
+
     const wasInProgress = room.engine.state.isHandInProgress;
     const leavingPlayer = room.engine.state.players.find(p => p.id === playerId);
     let economicLeaveCommitted = false;
@@ -860,6 +915,7 @@ export class RoomManager {
       humans.length === 0
       && !preserveForEconomicSettlement
       && this.seatWaiterCount(roomId) === 0
+      && !this.isMttRoom(room) // MTT 테이블은 봇만 남아도 계속 진행 — 수명주기는 매니저 소유
     ) {
       if (wasInProgress && handComplete) {
         this.handleCompletedHand(roomId);
@@ -886,6 +942,60 @@ export class RoomManager {
       }
     }
     if (economicLeaveCommitted) this.resumeAfterEconomicLeave(roomId);
+    return true;
+  }
+
+  /**
+   * MTT 테이블 간 좌석 이동 — 칩을 보존한 채 소스에서 빼 목적지에 정렬 삽입한다.
+   * 경제 정산(leaveRoom의 settleExit/cancelWaitingSng)을 절대 타지 않는 이동 전용 경로.
+   * 소스는 핸드 사이여야 하고(핸드 종료 훅에서 호출 전제), 목적지는 핸드 중이어도 된다
+   * (엔진이 꼬리 push 후 다음 핸드 normalizeSeatOrder로 정렬 — 착석 대기와 같은 계약).
+   * 세션 roomId 전환·table-move emit은 호출자(TournamentManager 훅) 책임.
+   */
+  transferMttSeat(
+    fromRoomId: string,
+    toRoomId: string,
+    playerId: string,
+    seatIndex: number,
+  ): boolean {
+    const from = this.rooms.get(fromRoomId);
+    const to = this.rooms.get(toRoomId);
+    if (!from || !to || !this.isMttRoom(from) || !this.isMttRoom(to)) return false;
+    if (from.engine.state.isHandInProgress) return false;
+    const seated = from.engine.state.players.find(p => p.id === playerId);
+    if (!seated || seated.pendingRemoval || seated.chips <= 0) return false;
+
+    this.cancelSitOutAbandon(fromRoomId, playerId);
+    const { player: removed } = from.engine.processLeave(playerId);
+    if (!removed) return false;
+
+    const moved: Player = {
+      ...removed,
+      seatIndex,
+      holeCards: [],
+      currentBet: 0,
+      totalContributed: 0,
+      deadContributed: 0,
+      status: 'waiting',
+      hasActed: false,
+      pendingRemoval: undefined,
+      revealed: false,
+      leaveReservation: undefined,
+      bustReclaimDeadline: undefined,
+      // 유지: chips(스택 보존) · timeBankChips · handsPlayed · sitOutNext(자리비움 승계) ·
+      // isDisconnected/disconnectGraceDeadline(끊김 상태 승계) · finishPlace 없음(생존자만 이동)
+    };
+    if (!to.engine.addPlayer(moved)) {
+      // 목적지 거절(좌석 충돌 등 예외 경로) — 원 좌석으로 원복해 칩 소실을 막는다
+      from.engine.addPlayer(removed);
+      this.onUpdate(fromRoomId, from.engine);
+      return false;
+    }
+
+    this.sendSystemChat(fromRoomId, `${removed.name}님이 다른 테이블로 이동했어요.`);
+    this.sendSystemChat(toRoomId, `${removed.name}님이 이 테이블로 이동해 왔어요.`);
+    this.onUpdate(fromRoomId, from.engine);
+    this.onUpdate(toRoomId, to.engine);
     return true;
   }
 
@@ -1212,6 +1322,11 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament?.finished) return; // 토너먼트 종료 — 재시작 없음
+    // MTT 보류(브레이크/H4H 배리어/종료 처리) 중엔 다음 핸드를 잡지 않는다 — 매니저가 resumeRoom으로 해제
+    if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) {
+      this.onUpdate(roomId, room.engine);
+      return;
+    }
 
     // 이미 예약된 start가 있으면 취소 후 재스케줄
     this.clearPendingStart(roomId);
@@ -1244,6 +1359,8 @@ export class RoomManager {
 
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
+    // MTT 보류 재확인 — 예약 타이머가 걸린 뒤 브레이크/배리어가 시작됐을 수 있다
+    if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) return;
 
     // 파산한 봇 좌석 회수 + 재충원 — 누적되면 칩 보유 2인 미만으로 방이 정지한다
     this.refreshCashBots(roomId);
@@ -1293,8 +1410,12 @@ export class RoomManager {
     }
 
     // 시트앤고: 첫 핸드 직전 토너먼트 개시, 이후엔 시간 경과에 따른 레벨 인상
+    // MTT: 개시·상금·레벨은 전부 TournamentManager 소유 — 공용 시계에서 레벨만 당겨 적용
     const tournament = room.engine.state.tournament;
-    if (tournament) {
+    if (tournament && this.isMttRoom(room)) {
+      if (tournament.finished) return;
+      this.mttHooks?.applyLevel(roomId, room.engine);
+    } else if (tournament) {
       if (tournament.finished) return;
       if (tournament.entrants === 0) {
         const walletSng = this.isWalletSng(room);
@@ -1641,7 +1762,7 @@ export class RoomManager {
    */
   private scheduleBustReclaims(roomId: string): void {
     const room = this.rooms.get(roomId);
-    if (!room || room.config.gameMode === 'sng') return;
+    if (!room || this.isTournamentRoom(room)) return;
     let armed = false;
     for (const p of room.engine.state.players) {
       if (p.type !== 'human' || p.pendingRemoval || p.chips > 0) continue;
@@ -1677,7 +1798,7 @@ export class RoomManager {
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return false;
 
-    const isSng = room.config.gameMode === 'sng';
+    const isSng = this.isTournamentRoom(room); // SnG/MTT 공통: 딜인 유지 + away 자동 폴드
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
     if (sittingOut) {
       // --- 게임 복귀 ---
@@ -1779,7 +1900,7 @@ export class RoomManager {
       }
       return 'cleared';
     }
-    if (room.config.gameMode === 'sng' || room.config.competitionMode) return 'rejected';
+    if (this.isTournamentRoom(room) || room.config.competitionMode) return 'rejected';
 
     const st = room.engine.state;
     const inCurrentHand = st.isHandInProgress
@@ -1845,7 +1966,7 @@ export class RoomManager {
       this.leaveRoom(roomId, playerId);
       return false;
     }
-    const isSng = room.config.gameMode === 'sng';
+    const isSng = this.isTournamentRoom(room); // SnG/MTT 공통: 좌석 무조건 보존
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
     // 캐시 파산(0칩) 좌석은 지킬 칩이 없다 — 자리비움이라도 유지하지 않고 즉시 회수
     // (진행 중 핸드의 올인 0칩은 팟 지분이 살아 있으므로 파산이 아니다. 재입장은 새 바이인 리바이)
@@ -2421,6 +2542,7 @@ export class RoomManager {
   private finalizeFinishedTournament(roomId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room?.engine.state.tournament?.finished) return true;
+    if (this.isMttRoom(room)) return true; // MTT 상금/기록 정산은 TournamentManager 소유
     if (room.config.competitionMode) {
       if (this.settledTournamentRooms.has(roomId)) return true;
       try {
@@ -2592,6 +2714,7 @@ export class RoomManager {
     if (
       settlementOk
       && state.tournament?.finished
+      && !this.isMttRoom(room) // MTT 종료 정산은 TournamentManager 소유
       && !this.finalizeFinishedTournament(roomId)
     ) {
       settlementOk = false;
@@ -2634,6 +2757,16 @@ export class RoomManager {
     if (previous?.handNumber === state.handNumber && !previous.ok) {
       this.economyBlockedRooms.delete(roomId);
       this.unresolvedSettlementRooms.delete(roomId);
+    }
+
+    // MTT 테이블: 탈락/밸런싱/브레이크는 매니저가 핸드 경계에서 처리하고 진행 여부를 지시한다.
+    // 캐시/SnG 전용 경로(나가기 예약·빈 방 정리·파산 유예·착석 핸드오프)는 타지 않는다.
+    if (this.isMttRoom(room)) {
+      const verdict = this.mttHooks?.onHandComplete(roomId) ?? 'continue';
+      if (verdict === 'continue' && this.rooms.has(roomId)) {
+        this.scheduleNextHand(roomId);
+      }
+      return;
     }
 
     // 나가기 예약('이번 핸드 후'/'다음 BB 전') 실행 — 정산 확정 후·다음 핸드 예약 전.
