@@ -338,6 +338,89 @@ describe('TournamentManager', () => {
     expect(h.manager.roomHooks.isHeld(t1)).toBe(true);
   });
 
+  it('counts mid-hand all-in seats as alive (no premature break/move)', () => {
+    // 2026-07-23 라이브 QA 버그: 다른 테이블 라이브 핸드의 올인 좌석(chips 0)을 죽은 것으로
+    // 세어 총 생존을 과소평가 → 조기 브레이크 → 정원 부족 부분 이주 → 이동 핑퐁
+    const { tables } = start12(h);
+    const [t1, t2] = tables;
+    const e2 = engineOf(h.roomManager, t2);
+
+    // t2를 "전원 올인 라이브 핸드" 상태로 조작 — 6명 모두 chips 0이지만 팟 지분 생존자
+    e2.state.isHandInProgress = true;
+    for (const p of e2.state.players) {
+      p.handStartChips = p.chips;
+      p.totalContributed = p.chips;
+      p.chips = 0;
+      p.status = 'all-in';
+    }
+
+    // t1 핸드 종료 → 총 생존은 여전히 12 — 브레이크/이동 없이 계속되어야 한다
+    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('continue');
+    expect(h.manager.listTournaments()[0].tableCount).toBe(2);
+    expect(h.events.moved.length).toBe(0);
+    expect(engineOf(h.roomManager, t1).state.players.length).toBe(6);
+
+    // 순위표에도 올인 생존자가 팟 기여분 포함 스택으로 표시된다
+    const detail = h.manager.getDetail(h.manager.listTournaments()[0].id)!;
+    const aliveRows = detail.standings.filter(r => r.place === null);
+    expect(aliveRows.length).toBe(12);
+    const t2Rows = aliveRows.filter(r => r.tableNo === 2);
+    expect(t2Rows.every(r => r.chips === 10000)).toBe(true);
+  });
+
+  it('aborts a table break entirely when destinations lack capacity', () => {
+    const { tables } = start12(h);
+    const [t1, t2] = tables;
+    const e1 = engineOf(h.roomManager, t1);
+    const e2 = engineOf(h.roomManager, t2);
+
+    // t1에서 1명만 탈락 → 11명. t2를 라이브 핸드로 잠가 t1 완료 시점에 target 계산을 흔들어도
+    // (모두 생존으로 계산되므로) 브레이크가 일어나지 않아야 하고, 어떤 부분 이주도 없어야 한다.
+    bust(e1, aliveIds(e1)[0], 100);
+    e2.state.isHandInProgress = true;
+    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('continue');
+    expect(h.events.moved.length).toBe(0);
+    expect(aliveIds(e1).length).toBe(5);
+    expect(h.manager.listTournaments()[0].tableCount).toBe(2);
+  });
+
+  it('avoids duplicate bot characters across tables at start', () => {
+    const created = h.manager.createTournament({
+      name: '전역 캐릭터',
+      speed: 'turbo',
+      maxEntrants: 12,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    h.manager.register(created.tournamentId, { id: 'h1', name: '유저1', avatar: 'ara' });
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+    const ids = mttTableIds(h.roomManager).flatMap(roomId =>
+      engineOf(h.roomManager, roomId).state.players
+        .filter(p => p.type === 'bot')
+        .map(p => p.personalityId));
+    expect(ids.length).toBe(11); // 봇 11 ≤ 로스터 16 → 전역 중복 없어야 한다
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('sweepIdleRooms never reclaims tournament tables', () => {
+    // 2026-07-23 라이브 교착: 휴먼 전원 탈락 후 봇만 남은 파이널 테이블을 유휴 스윕이
+    // 회수해 토너먼트가 영영 완주하지 못했다
+    const { tables } = start12(h);
+    for (const roomId of tables) {
+      // 휴먼 전원 탈락 상황을 흉내 — 봇만 남은 방
+      for (const p of engineOf(h.roomManager, roomId).state.players) p.type = 'bot';
+    }
+    expect(h.roomManager.sweepIdleRooms(0)).toBe(0);
+    for (const roomId of tables) {
+      expect(h.roomManager.getRoom(roomId)).toBeDefined();
+    }
+  });
+
   it('records an explicit leave as elimination at current place', () => {
     const { tables } = start12(h);
     const [t1] = tables;

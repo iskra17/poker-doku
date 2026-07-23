@@ -9,7 +9,7 @@ import {
   type MttStructure,
 } from '../lib/poker/mtt-structure';
 import { computePayouts, paidPlaces } from '../lib/poker/payout-table';
-import { fillEmptySeats, getUsedCharacterIds } from '../lib/bot/bot-manager';
+import { createBot, getUsedCharacterIds } from '../lib/bot/bot-manager';
 import type {
   TournamentDetailView,
   TournamentPhase,
@@ -423,12 +423,30 @@ export class TournamentManager {
       this.roomManager.joinRoom(roomIds[ti], player);
     });
 
-    // 남는 자리는 봇으로 — 테이블별 목표 인원까지 (캐릭터는 테이블 내 중복 회피)
+    // 남는 자리는 봇으로 — 캐릭터는 토너먼트 전역에서 중복 회피 (로스터 16명 소진 시에만
+    // 테이블 간 중복 허용, 테이블 내 중복은 항상 회피). 같은 캐릭터가 두 테이블에서 각각
+    // 탈락해 순위표에 "초코 4위·초코 6위"로 보이는 혼란 방지 (2026-07-23 QA).
     if (botCount > 0) {
+      const usedGlobal: string[] = roomIds.flatMap(roomId => {
+        const engine = this.roomManager.getRoom(roomId)?.engine;
+        return engine ? getUsedCharacterIds(engine) : [];
+      });
       roomIds.forEach((roomId, i) => {
-        const room = this.roomManager.getRoom(roomId);
-        if (!room) return;
-        fillEmptySeats(room.engine, targetSizes[i], t.structure.startingStack, 'normal');
+        const engine = this.roomManager.getRoom(roomId)?.engine;
+        if (!engine) return;
+        for (
+          let seat = 0;
+          seat < t.config.tableSize && engine.state.players.length < targetSizes[i];
+          seat++
+        ) {
+          if (engine.state.players.some(p => p.seatIndex === seat)) continue;
+          const tableUsed = getUsedCharacterIds(engine);
+          let bot = createBot(seat, t.structure.startingStack, usedGlobal, 'normal');
+          if (bot.personalityId && tableUsed.includes(bot.personalityId)) {
+            bot = createBot(seat, t.structure.startingStack, tableUsed, 'normal');
+          }
+          if (engine.addPlayer(bot)) usedGlobal.push(bot.personalityId ?? '');
+        }
       });
     }
 
@@ -643,9 +661,7 @@ export class TournamentManager {
     let winner: { roomId: string; player: Player } | null = null;
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;
-      const alive = engine?.state.players.find(
-        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
-      );
+      const alive = engine?.state.players.find(p => this.isAlive(engine, p));
       if (alive) winner = { roomId, player: alive };
     }
 
@@ -697,14 +713,26 @@ export class TournamentManager {
 
   // --- 밸런싱/브레이크 ---
 
+  /**
+   * 생존 판정 — 진행 중 핸드의 올인 좌석은 chips가 0이어도 팟 지분이 있는 생존자다.
+   * chips > 0만 보면 다른 테이블의 라이브 핸드 동안 총 생존을 과소평가해
+   * 조기 테이블 브레이크(정원 부족 부분 이주)와 순위표 누락이 생긴다 (2026-07-23 QA).
+   */
+  private isAlive(engine: PokerEngine, p: Player): boolean {
+    if (p.finishPlace || p.pendingRemoval) return false;
+    if (p.chips > 0) return true;
+    return engine.state.isHandInProgress
+      && (p.status === 'active' || p.status === 'all-in');
+  }
+
   /** 테이블별 생존(다음 핸드 딜인 대상) 인원 */
   private aliveCounts(t: TournamentRuntime): Map<string, number> {
     const counts = new Map<string, number>();
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;
-      const alive = engine?.state.players.filter(
-        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
-      ).length ?? 0;
+      const alive = engine
+        ? engine.state.players.filter(p => this.isAlive(engine, p)).length
+        : 0;
       counts.set(roomId, alive);
     }
     return counts;
@@ -775,6 +803,18 @@ export class TournamentManager {
       p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
     );
     const tableNo = t.tables.get(roomId)?.no;
+
+    // 정원 사전 검사 — 전원 수용이 불가능하면 해체를 시작하지 않는다.
+    // 절반만 이주된 채 중단되면 남은 테이블들이 격차 밸런싱으로 되밀어내는 핑퐁이 생긴다.
+    let capacity = 0;
+    for (const rid of t.tables.keys()) {
+      if (rid === roomId) continue;
+      const destRoom = this.roomManager.getRoom(rid);
+      if (!destRoom) continue;
+      const occupied = destRoom.engine.state.players.filter(p => !p.pendingRemoval).length;
+      capacity += Math.max(0, destRoom.config.maxPlayers - occupied);
+    }
+    if (capacity < movers.length) return;
 
     for (const mover of movers) {
       // 흡수처: 생존 인원이 가장 적은 다른 테이블 (탈락 예약 좌석은 곧 비워지므로 정원에서 제외)
@@ -1065,11 +1105,12 @@ export class TournamentManager {
       const engine = this.roomManager.getRoom(roomId)?.engine;
       if (!engine) continue;
       for (const p of engine.state.players) {
-        if (p.finishPlace || p.pendingRemoval || p.chips <= 0) continue;
+        if (!this.isAlive(engine, p)) continue;
         rows.push({
           playerId: p.id,
           name: p.name,
-          chips: p.chips,
+          // 진행 중 핸드의 기여분(팟 몫)을 포함해 표시 — 올인 생존자가 0으로 보이지 않게
+          chips: p.chips + (engine.state.isHandInProgress ? p.totalContributed : 0),
           tableNo: meta.no,
           place: null,
           prize: 0,

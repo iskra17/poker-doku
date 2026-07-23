@@ -529,6 +529,10 @@ export class RoomManager {
     const now = Date.now();
     this.rooms.forEach((room, id) => {
       if (room.persistent) return;
+      // MTT 테이블은 휴먼이 전원 탈락해 봇만 남아도 토너먼트가 끝날 때까지 진행해야 한다 —
+      // 수명주기는 TournamentManager 소유 (2026-07-23 라이브 QA: 스윕이 파이널 테이블을
+      // 회수해 토너먼트가 영영 안 끝나는 교착)
+      if (room.config.tournamentId) return;
       const humans = room.engine.state.players.filter(p => p.type === 'human' && !p.pendingRemoval);
       if (humans.length === 0 && now - room.createdAt > idleMs) {
         if (this.disposeRoom(id, 'idle')) removed++;
