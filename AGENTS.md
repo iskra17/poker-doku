@@ -194,14 +194,23 @@ npx tsc --noEmit
     올인 좌석을 놓쳐 조기 브레이크가 난다 (2026-07-23 QA). 페이아웃은 `payout-table.ts` 계단표
     (합계 보정 — 잔여는 1위). 버블(입상+1명)에선 hand-for-hand: 전 테이블 완료 배리어 후
     동기화 핸드 무장(h4h.armed), 같은 라운드 탈락은 테이블이 달라도 handStartChips로 동시 판정.
-  - **수명주기 주의**: MTT 테이블은 `getRoomList`에서 숨기고 join-room 직접 입장 차단,
-    **`sweepIdleRooms`에서 제외**(휴먼 전원 탈락 후 봇만 남아도 완주해야 한다 — 스윕이 파이널
-    테이블을 회수하면 영구 교착, 2026-07-23 QA). 자리비움/끊김/grace/나가기 예약 거절은 SnG
-    계약 공유(`isTournamentRoom`). 명시적 나가기 = 현재 순위 탈락(onPlayerLeave). 체크인은
-    "시작 시점 접속=출석" — 미접속 등록자는 착석 제외(노쇼 방지). 완주 후 전 테이블 10분 보존.
+  - **수명주기 주의**: MTT 테이블은 `getRoomList`에서 숨기고 join-room 직접 입장 차단 —
+    단 **본인 생존 좌석의 재입장(게임 복귀)은 허용**(멱등 rejoin 경로, 0칩 리바이 분기는
+    SnG/MTT 제외). **`sweepIdleRooms`에서 제외**(휴먼 전원 탈락 후 봇만 남아도 완주해야
+    한다 — 스윕이 파이널 테이블을 회수하면 영구 교착, 2026-07-23 QA). 자리비움/끊김/grace/
+    나가기 예약 거절은 SnG 계약 공유(`isTournamentRoom`). **생존 좌석의 나가기 = 자리비움**
+    (TDA 30 — 자리에 없어도 딜인 + 블라인드·앤티 차감 → 칩 소진 시 자연 탈락. 즉시 기권
+    없음, 소켓 leave-room이 sitOutAndLeave로 라우팅. sitOutAndLeave의 방치 회수 유예는
+    토너먼트 방 제외 — 회수하면 leaveRoom 경유 기권 탈락이 재발한다. 2026-07-24 모바일 QA로
+    v1의 "나가기=탈락"에서 변경). `onPlayerLeave` 탈락 확정은 디렉터 강제 제거 등 서버 주도
+    leaveRoom에만 남는다. 체크인은 "시작 시점 접속=출석" — 미접속 등록자는 착석 제외(노쇼
+    방지). 봇 충원이 로스터(16)를 넘으면 중복 캐릭터 이름에 번호 접미(엘레나 2 …) — 순위표
+    혼동 방지. 완주 후 전 테이블 10분 보존.
   - **클라 계약**: 테이블 이동은 `table-move` 이벤트(로비 미경유 currentRoomId 교체 + 스냅샷·채팅
     통째 교체 — 이전 방 diff와 섞지 말 것), 목록은 `tournament-list` 개인화 브로드캐스트, 상세는
-    get-tournament 5초 폴링(TournamentPanel). 탈락자는 EliminationNotice 후 8초 뒤 room-lost
+    get-tournament 5초 폴링. 상세 모달은 `TournamentDetailModal`(로비 패널·**게임 중 TopBar
+    배지 탭** 공용 — `state.tournament.tournamentId`가 진입 키, 내 순위/순위표/구조/[운영]/
+    [게임 복귀] 포함. 2026-07-24 모바일 QA). 탈락자는 EliminationNotice 후 8초 뒤 room-lost
     로비 복귀(파이널 종료 시엔 결과 오버레이 관람 위해 유지). 회귀: tournament-manager.test.ts ·
     .break.test.ts(이중 브레이크/H4H+머지 재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
   - **디렉터 콘솔 (Phase 2)**: 개설자(hostId) 전용 `tournament-admin` 소켓 이벤트 —

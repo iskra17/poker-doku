@@ -751,6 +751,13 @@ export class TournamentManager {
         const engine = this.roomManager.getRoom(roomId)?.engine;
         return engine ? getUsedCharacterIds(engine) : [];
       });
+      // 로스터(16명)보다 봇이 많으면 같은 캐릭터가 여러 테이블에 앉는다 — 순위표/로비에서
+      // "엘레나 2명"으로 보이는 혼란 방지를 위해 2번째 등장부터 이름에 번호를 붙인다
+      // (엘레나, 엘레나 2, 엘레나 3 …). 2026-07-24 모바일 QA 피드백.
+      const characterUses = new Map<string, number>();
+      for (const id of usedGlobal) {
+        characterUses.set(id, (characterUses.get(id) ?? 0) + 1);
+      }
       roomIds.forEach((roomId, i) => {
         const engine = this.roomManager.getRoom(roomId)?.engine;
         if (!engine) return;
@@ -765,7 +772,11 @@ export class TournamentManager {
           if (bot.personalityId && tableUsed.includes(bot.personalityId)) {
             bot = createBot(seat, t.structure.startingStack, tableUsed, 'normal');
           }
-          if (engine.addPlayer(bot)) usedGlobal.push(bot.personalityId ?? '');
+          const characterId = bot.personalityId ?? '';
+          const uses = (characterUses.get(characterId) ?? 0) + 1;
+          characterUses.set(characterId, uses);
+          if (uses > 1) bot.name = `${bot.name} ${uses}`;
+          if (engine.addPlayer(bot)) usedGlobal.push(characterId);
         }
       });
     }
@@ -785,6 +796,8 @@ export class TournamentManager {
       const engine = this.roomManager.getRoom(roomId)?.engine;
       if (!engine) continue;
       engine.setTournamentField(total, t.prizes, false);
+      // 게임 중 토너 상세(순위표/구조) 진입점 — 클라이언트가 이 ID로 get-tournament 조회
+      if (engine.state.tournament) engine.state.tournament.tournamentId = t.id;
       this.pushLevel(t, engine, pos, true);
     }
     this.syncRemaining(t);

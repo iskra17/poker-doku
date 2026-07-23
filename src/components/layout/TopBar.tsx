@@ -11,6 +11,7 @@ import NeonText from '@/components/ui/NeonText';
 import SettingsModal from './SettingsModal';
 import HelpModal from '../help/HelpModal';
 import HandHistoryModal from '../history/HandHistoryModal';
+import TournamentDetailModal from '../lobby/TournamentDetailModal';
 
 const STREET_LABELS: Record<string, string> = {
   preflop: '프리플랍',
@@ -32,6 +33,9 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // MTT 게임 중 토너 상세(내 순위/순위표/구조) — 배지 탭으로 진입 (2026-07-24 모바일 QA)
+  const [tournamentOpen, setTournamentOpen] = useState(false);
+  const mttTournamentId = gameState?.tournament?.tournamentId;
   const { copied, copy } = useInviteLink(currentRoomId);
 
   return (
@@ -47,7 +51,19 @@ export default function TopBar({ onLeave }: TopBarProps) {
       </div>
       <div className="flex items-center gap-2 md:gap-3">
         {gameState?.tournament && gameState.tournament.entrants > 0 ? (
-          <TournamentBadge tournament={gameState.tournament} />
+          mttTournamentId ? (
+            // MTT: 배지 탭 → 토너 상세 (순위표·구조·내 순위 — 게임을 떠나지 않고 확인)
+            <button
+              type="button"
+              onClick={() => setTournamentOpen(true)}
+              aria-label="토너먼트 상세 보기"
+              className="-mx-1 rounded-lg px-1 py-0.5 hover:bg-white/5 active:bg-white/10 transition-colors"
+            >
+              <TournamentBadge tournament={gameState.tournament} showInfoHint />
+            </button>
+          ) : (
+            <TournamentBadge tournament={gameState.tournament} />
+          )
         ) : (
           gameState && (
             <span className="text-ink-dim text-xs hidden md:inline">
@@ -108,6 +124,12 @@ export default function TopBar({ onLeave }: TopBarProps) {
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
+      {tournamentOpen && mttTournamentId && (
+        <TournamentDetailModal
+          tournamentId={mttTournamentId}
+          onClose={() => setTournamentOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -172,7 +194,14 @@ function GearIcon() {
 }
 
 /** 시트앤고/MTT 레벨/블라인드/다음 인상 카운트다운 (+MTT: 앤티·전체 잔존 인원) */
-function TournamentBadge({ tournament }: { tournament: TournamentState }) {
+function TournamentBadge({
+  tournament,
+  showInfoHint = false,
+}: {
+  tournament: TournamentState;
+  /** MTT 배지가 탭 가능함을 알리는 ⓘ 힌트 (TopBar 상세 진입점) */
+  showInfoHint?: boolean;
+}) {
   const seconds = useCountdownTo(tournament.finished ? 0 : tournament.levelEndsAt);
 
   return (
@@ -194,6 +223,7 @@ function TournamentBadge({ tournament }: { tournament: TournamentState }) {
           👥{tournament.fieldRemaining}/{tournament.entrants}
         </span>
       )}
+      {showInfoHint && <span className="text-ink-dim" aria-hidden>ⓘ</span>}
     </span>
   );
 }

@@ -1183,19 +1183,26 @@ export function setupSocketHandlers(
         });
         return;
       }
-      // MTT 테이블은 직접 입장 불가 — 좌석 배정·이동은 전부 TournamentManager가 주도한다
+      // MTT 테이블은 직접 입장 불가 — 좌석 배정·이동은 전부 TournamentManager가 주도한다.
+      // 예외: 자리비움으로 떠난 본인의 생존 좌석 복귀(게임 복귀)는 허용 — 아래 멱등
+      // 재입장 경로가 새 Player를 만들지 않고 기존 좌석에 세션만 다시 붙인다.
       if (room.config.tournamentId) {
-        eventLog.log('join-room:reject', {
-          roomId,
-          playerId: session.playerId,
-          data: { reason: 'mtt-table' },
-        });
-        ack?.({
-          ok: false,
-          code: 'action-rejected',
-          message: '토너먼트 테이블은 로비에서 등록해 참가해요.',
-        });
-        return;
+        const myAliveSeat = room.engine.state.players.some(p => (
+          p.id === session.playerId && !p.finishPlace && !p.pendingRemoval
+        ));
+        if (!myAliveSeat) {
+          eventLog.log('join-room:reject', {
+            roomId,
+            playerId: session.playerId,
+            data: { reason: 'mtt-table' },
+          });
+          ack?.({
+            ok: false,
+            code: 'action-rejected',
+            message: '토너먼트 테이블은 로비에서 등록해 참가해요.',
+          });
+          return;
+        }
       }
 
       eventLog.log('join-room:request', {
@@ -1342,8 +1349,10 @@ export function setupSocketHandlers(
           // 시작돼 그 사이를 놓친 리바이가 조용히 무시되던 문제. BustNotice 바로 리바이의 전제)
           const inLiveHand = room.engine.state.isHandInProgress
             && (seated.status === 'active' || seated.status === 'all-in');
+          // 토너먼트(SnG/MTT) 좌석은 리바이 불가 — MTT 복귀 좌석이 칩을 새로 받으면 안 된다
           if (
             room.config.gameMode !== 'sng'
+            && room.config.gameMode !== 'mtt'
             && seated.chips <= 0
             && !inLiveHand
           ) {
@@ -1876,7 +1885,16 @@ export function setupSocketHandlers(
           // 'leave-now': 기다릴 핸드/블라인드가 없다 — 아래 즉시 퇴장 경로로 처리
           reserveLeftNow = true;
         }
-        if (data.mode === 'sitout') {
+        // MTT 생존 좌석의 퇴장은 전부 자리비움으로 — 즉시 기권 탈락은 없다 (TDA 30:
+        // 자리에 없어도 딜인되고 블라인드·앤티가 계속 나간다 → 칩 소진 시 자연 탈락).
+        // 탈락 확정/종료 후 관전 좌석은 아래 일반 leave 경로로 정리된다.
+        const leavingRoom = roomManager.getRoom(roomId);
+        const mttAliveSeat = leavingRoom?.config.gameMode === 'mtt'
+          && !leavingRoom.engine.state.tournament?.finished
+          && leavingRoom.engine.state.players.some(p => (
+            p.id === session.playerId && !p.finishPlace && !p.pendingRemoval
+          ));
+        if (data.mode === 'sitout' || mttAliveSeat) {
           socket.leave(roomId);
           roomManager.sitOutAndLeave(roomId, session.playerId);
         } else {

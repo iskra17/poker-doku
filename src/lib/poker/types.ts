@@ -147,6 +147,8 @@ export interface GameState {
 
 /** 시트앤고/MTT 진행 상태 — getPublicState로 자동 브로드캐스트 */
 export interface TournamentState {
+  /** MTT 전용 — 소속 토너먼트 ID (게임 중 상세 조회/HUD 진입점의 키, 매니저가 주입) */
+  tournamentId?: string;
   level: number; // 1-based 블라인드 레벨
   smallBlind: number;
   bigBlind: number;

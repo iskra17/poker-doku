@@ -421,6 +421,56 @@ describe('TournamentManager', () => {
     }
   });
 
+  it('gives duplicate bot characters numbered names (48인 풀필드 — 2026-07-24 모바일 QA)', () => {
+    const created = h.manager.createTournament({
+      name: '풀필드',
+      speed: 'turbo',
+      maxEntrants: 48,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    h.manager.register(created.tournamentId, { id: 'h1', name: '유저1', avatar: 'ara' });
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+    const players = mttTableIds(h.roomManager).flatMap(roomId =>
+      engineOf(h.roomManager, roomId).state.players);
+    expect(players.length).toBe(48);
+    // 순위표/로비에서 구분 가능해야 한다 — 전 좌석 이름 유일
+    const names = players.map(p => p.name);
+    expect(new Set(names).size).toBe(names.length);
+    // 로스터(16) 초과분은 번호 접미 (엘레나, 엘레나 2, 엘레나 3 …)
+    expect(names.some(name => / 2$/.test(name))).toBe(true);
+
+    // 게임 중 상세 진입점 — 각 테이블 엔진 미러에 토너먼트 ID가 실린다
+    for (const roomId of mttTableIds(h.roomManager)) {
+      expect(engineOf(h.roomManager, roomId).state.tournament?.tournamentId)
+        .toBe(created.tournamentId);
+    }
+  });
+
+  it('sit-out leave keeps the seat — no reclaim, no elimination (TDA 30 블라인드 소진)', () => {
+    const { tables } = start12(h);
+    const [t1] = tables;
+    const e1 = engineOf(h.roomManager, t1);
+
+    const leaver = e1.state.players[0].id; // 셔플 배치라 t1의 실제 좌석에서 선택
+    h.roomManager.sitOutAndLeave(t1, leaver);
+    const player = e1.state.players.find(p => p.id === leaver)!;
+    expect(player.sitOutNext || player.status === 'sitting-out').toBe(true);
+
+    // 캐시라면 SITOUT_ABANDON_MS(5분) 후 회수되지만, MTT는 좌석을 절대 회수하지 않는다 —
+    // 블라인드·앤티 소진으로만 자연 탈락한다 (회수하면 leaveRoom 경유 기권 탈락이 재발)
+    vi.advanceTimersByTime(6 * 60_000);
+    const after = engineOf(h.roomManager, t1).state.players.find(p => p.id === leaver);
+    expect(after).toBeDefined();
+    expect(after!.finishPlace).toBeUndefined();
+    expect(after!.pendingRemoval).not.toBe(true);
+  });
+
   it('records an explicit leave as elimination at current place', () => {
     const { tables } = start12(h);
     const [t1] = tables;

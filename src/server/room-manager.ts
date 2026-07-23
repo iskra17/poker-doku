@@ -1876,8 +1876,10 @@ export class RoomManager {
       }
     }
 
-    // 캐시: 돌아오지 않아도 확실히 회수되도록 최종 정리 유예 (SnG는 블라인드 소진 → 자연 탈락)
-    if (room.config.gameMode !== 'sng') {
+    // 캐시: 돌아오지 않아도 확실히 회수되도록 최종 정리 유예.
+    // 토너먼트(SnG/MTT)는 회수하지 않는다 — 블라인드·앤티 소진 → 자연 탈락 (TDA 30).
+    // MTT를 회수 대상에 넣으면 leaveRoom 경유로 기권 탈락이 되어 자리비움 계약이 깨진다.
+    if (!this.isTournamentRoom(room)) {
       this.scheduleSitOutAbandon(roomId, playerId);
     }
   }

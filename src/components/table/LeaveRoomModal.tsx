@@ -7,6 +7,11 @@ interface LeaveRoomModalProps {
   isOpen: boolean;
   /** Sit & Go 방 여부 — 자리비움/기권 문구가 달라지고 나가기 예약이 숨는다 */
   isSng: boolean;
+  /**
+   * MTT 방 여부 — 즉시 기권이 없다 (TDA 30: 자리에 없어도 딜인 + 블라인드 차감 →
+   * 칩 소진 시 자연 탈락). 자리비움 선택지만 노출된다.
+   */
+  isMtt?: boolean;
   /** 연습 경제 여부 — 완전히 나가기 문구가 달라진다 (지갑 정산 없음) */
   isPractice: boolean;
   /** 나가기 예약 노출 여부 — 캐시 전용 (SnG/아레나 제외) */
@@ -22,7 +27,7 @@ interface LeaveRoomModalProps {
 
 /** 나가기 확인 다이얼로그 — 게임을 끝낼지, 자리만 비울지, 나가기를 예약할지 선택 */
 export default function LeaveRoomModal({
-  isOpen, isSng, isPractice, canReserve, onClose, onSitOut, onReserve, onExit,
+  isOpen, isSng, isMtt = false, isPractice, canReserve, onClose, onSitOut, onReserve, onExit,
 }: LeaveRoomModalProps) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="테이블을 떠날까요?">
@@ -30,9 +35,11 @@ export default function LeaveRoomModal({
         <ChoiceButton
           title="자리비움 하고 나가기"
           description={
-            isSng
-              ? '좌석과 칩을 유지해요. 블라인드는 계속 차감되고 돌아올 때까지 자동 폴드돼요 — 로비의 [게임 복귀] 버튼으로 언제든 한 번에 돌아올 수 있어요.'
-              : `좌석과 칩을 유지해요. 로비의 [게임 복귀] 버튼으로 바이인 없이 바로 돌아올 수 있어요 — 단, 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 자리에서 일어나요.`
+            isMtt
+              ? '토너먼트 좌석과 칩은 유지돼요. 자리를 비운 동안에도 블라인드·앤티가 계속 나가고, 칩이 다 떨어지면 그때 탈락해요 — 로비 🏆 토너먼트의 [게임 복귀]로 언제든 돌아올 수 있어요.'
+              : isSng
+                ? '좌석과 칩을 유지해요. 블라인드는 계속 차감되고 돌아올 때까지 자동 폴드돼요 — 로비의 [게임 복귀] 버튼으로 언제든 한 번에 돌아올 수 있어요.'
+                : `좌석과 칩을 유지해요. 로비의 [게임 복귀] 버튼으로 바이인 없이 바로 돌아올 수 있어요 — 단, 빅블라인드를 ${SITOUT_MISSED_BB_LIMIT}번 거르면 자동으로 자리에서 일어나요.`
           }
           accent="mystic"
           onClick={onSitOut}
@@ -53,18 +60,20 @@ export default function LeaveRoomModal({
             />
           </>
         )}
-        <ChoiceButton
-          title={isSng ? '기권하고 나가기' : '완전히 나가기'}
-          description={
-            isSng
-              ? '토너먼트에서 기권해요 — 현재 순위로 탈락 처리되고 되돌릴 수 없어요.'
-              : isPractice
-                ? '좌석을 정리하고 떠나요 — 연습 게임이라 지갑 칩에는 영향이 없어요.'
-                : '좌석을 정리하고 떠나요 — 남은 칩은 지갑으로 정산돼요.'
-          }
-          accent="danger"
-          onClick={onExit}
-        />
+        {!isMtt && (
+          <ChoiceButton
+            title={isSng ? '기권하고 나가기' : '완전히 나가기'}
+            description={
+              isSng
+                ? '토너먼트에서 기권해요 — 현재 순위로 탈락 처리되고 되돌릴 수 없어요.'
+                : isPractice
+                  ? '좌석을 정리하고 떠나요 — 연습 게임이라 지갑 칩에는 영향이 없어요.'
+                  : '좌석을 정리하고 떠나요 — 남은 칩은 지갑으로 정산돼요.'
+            }
+            accent="danger"
+            onClick={onExit}
+          />
+        )}
         <button
           onClick={onClose}
           className="w-full py-2.5 rounded-xl text-sm text-ink-dim hover:text-ink border border-white/10 hover:border-white/25 transition-colors"
