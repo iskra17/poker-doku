@@ -179,6 +179,20 @@ describe('TournamentManager 디렉터 콘솔', () => {
     expect(h.manager.listTournaments().length).toBe(0);
   });
 
+  it('getAdminSummaries가 테이블 상태·보류 사유·스탠딩을 담는다 (/admin 탭)', () => {
+    const { id } = start12(h);
+    h.manager.directorAction(id, 'h1', { kind: 'pause' });
+    const [view] = h.manager.getAdminSummaries();
+    expect(view.id).toBe(id);
+    expect(view.phase).toBe('running');
+    expect(view.paused).toBe(true);
+    expect(view.remaining).toBe(12);
+    expect(view.tables).toHaveLength(2);
+    expect(view.tables[0]).toMatchObject({ players: 6, humans: 6, alive: 6, handInProgress: false });
+    expect(view.standings).toHaveLength(12);
+    expect(view.standings.every(row => row.place === null)).toBe(true);
+  });
+
   it('정지 중 취소도 안전하다 (paused 해제 + 해산)', () => {
     const { id, tables } = start12(h);
     h.manager.directorAction(id, 'h1', { kind: 'pause' });

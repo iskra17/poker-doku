@@ -7,6 +7,7 @@ import type { HandHistoryRepository, TableHandRepository } from './hand-history'
 import { drainRequest, HttpBodyError, readJsonBody } from './http-body';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
+import type { AdminTournamentView } from './tournament-manager';
 
 /**
  * 운영 백오피스 API — 토큰(`DEBUG_LOG_TOKEN`) 게이트, /admin 페이지가 짧은 주기로 폴링한다.
@@ -63,6 +64,8 @@ export interface AdminRuntimeSnapshot {
   }>;
   rooms: AdminRoomSummary[];
   roomRuntime: Readonly<Record<string, number>>;
+  /** MTT 토너먼트 전체 뷰 — /api/admin/tournaments (Phase 2) */
+  tournaments?: AdminTournamentView[];
 }
 
 export interface AdminHttpOptions {
@@ -244,6 +247,12 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           };
         }),
       });
+      return true;
+    }
+
+    if (pathname === '/api/admin/tournaments') {
+      const runtime = options.runtime();
+      send(res, 200, { at: now(), tournaments: runtime?.tournaments ?? [] });
       return true;
     }
 

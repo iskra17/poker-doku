@@ -115,6 +115,19 @@ describe('/api/admin/* 백오피스 API', () => {
           }],
         }],
         roomRuntime: { rooms: 1 },
+        tournaments: [{
+          id: 'mtt-1', name: '도쿠컵', phase: 'running' as const, speed: 'turbo' as const,
+          hostId: 'p1', createdAt: 1_000, startedAt: 2_000, finishedAt: null,
+          paused: true, level: 3, onBreak: false, h4hActive: false,
+          entrantCount: 12, seatedCount: 12, remaining: 9, prizePool: 120_000,
+          tables: [{
+            roomId: 'mtt-room-1', no: 1, players: 6, humans: 2, alive: 5,
+            handInProgress: false, held: 'break',
+          }],
+          standings: [{
+            playerId: 'p1', name: '테스터', chips: 15_000, tableNo: 1, place: null, prize: 0,
+          }],
+        }],
       }),
     }));
     servers.push(server);
@@ -249,6 +262,23 @@ describe('/api/admin/* 백오피스 API', () => {
 
     expect((await fetch(`${baseUrl}/api/admin/hands/999999?token=admin-secret`)).status).toBe(404);
     expect((await fetch(`${baseUrl}/api/admin/hands/${handId}`)).status).toBe(403);
+  });
+
+  it('tournaments는 런타임 토너먼트 전체 뷰를 반환한다 (Phase 2)', async () => {
+    const { baseUrl } = await start();
+    expect((await fetch(`${baseUrl}/api/admin/tournaments`)).status).toBe(403);
+    const response = await fetch(`${baseUrl}/api/admin/tournaments?token=admin-secret`);
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      tournaments: Array<Record<string, unknown>>;
+    };
+    expect(body.tournaments).toHaveLength(1);
+    expect(body.tournaments[0]).toMatchObject({
+      id: 'mtt-1',
+      phase: 'running',
+      paused: true,
+      remaining: 9,
+    });
   });
 
   it('security는 기간 내 신호 이벤트 타입별 집계를 반환한다', async () => {

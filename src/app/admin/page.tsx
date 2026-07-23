@@ -150,6 +150,25 @@ interface SecuritySummary {
   counts: Record<string, number>;
 }
 
+// MTT 토너먼트 탭 — /api/admin/tournaments (Phase 2)
+interface AdminTournamentTable {
+  roomId: string; no: number; players: number; humans: number; alive: number;
+  handInProgress: boolean; held: string | null;
+}
+
+interface AdminTournamentStanding {
+  playerId: string; name: string; chips: number; tableNo: number | null;
+  place: number | null; prize: number;
+}
+
+interface AdminTournament {
+  id: string; name: string; phase: string; speed: string; hostId: string;
+  createdAt: number; startedAt: number | null; finishedAt: number | null;
+  paused: boolean; level: number; onBreak: boolean; h4hActive: boolean;
+  entrantCount: number; seatedCount: number; remaining: number; prizePool: number;
+  tables: AdminTournamentTable[]; standings: AdminTournamentStanding[];
+}
+
 // 런타임 게임 설정 (핫 컨피그) — 메타는 서버 레지스트리가 단일 소스, UI는 렌더만
 interface GameConfigEntryView {
   key: string;
@@ -186,6 +205,7 @@ const CONFIG_HISTORY_PATH = '/api/admin/events?limit=50&type=config-change';
 const TABS = [
   { key: 'dashboard', label: '대시보드' },
   { key: 'tables', label: '테이블' },
+  { key: 'tournaments', label: '토너먼트' },
   { key: 'players', label: '플레이어' },
   { key: 'hands', label: '핸드' },
   { key: 'config', label: '게임 설정' },
@@ -330,6 +350,7 @@ export default function AdminPage() {
   const [events, setEvents] = useState<OpsEvent[]>([]);
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [hands, setHands] = useState<TableHandSummary[]>([]);
+  const [adminTournaments, setAdminTournaments] = useState<AdminTournament[]>([]);
   const [handDetail, setHandDetail] = useState<TableHandDetail | null>(null);
   const [security, setSecurity] = useState<SecuritySummary | null>(null);
   const [gameConfig, setGameConfig] = useState<GameConfigResponse | null>(null);
@@ -411,6 +432,10 @@ export default function AdminPage() {
             });
           }
         }
+      }
+      if (activeTab === 'tournaments') {
+        const body = await api<{ tournaments: AdminTournament[] }>('/api/admin/tournaments');
+        if (body) setAdminTournaments(body.tournaments ?? []);
       }
       if (activeTab === 'hands' && !handsPagedRef.current) {
         const roomFilter = handRoomFilter ? `&room=${encodeURIComponent(handRoomFilter)}` : '';
@@ -626,6 +651,9 @@ export default function AdminPage() {
             expandedRoomId={expandedRoomId}
             onToggle={id => setExpandedRoomId(prev => (prev === id ? null : id))}
           />
+        )}
+        {activeTab === 'tournaments' && (
+          <TournamentsTab tournaments={adminTournaments} />
         )}
         {activeTab === 'players' && (
           <PlayersTab
@@ -906,6 +934,96 @@ function RoomRows({ room, expanded, onToggle }: {
         </tr>
       )}
     </>
+  );
+}
+
+// ---------- 토너먼트 (MTT) ----------
+
+const MTT_PHASE_LABEL: Record<string, string> = {
+  registering: '등록 중', running: '진행 중', completed: '종료', cancelled: '취소됨',
+};
+
+function TournamentsTab({ tournaments }: { tournaments: AdminTournament[] }) {
+  return (
+    <section className="space-y-3">
+      <h2 className="text-sm font-bold text-blossom">
+        토너먼트 ({tournaments.length}) — 상태·테이블·스탠딩, 개입 이력은 이벤트 탭 mtt-* 필터
+      </h2>
+      {tournaments.length === 0 && (
+        <SectionBox className="p-4 text-xs text-ink-dim">열려 있는 토너먼트 없음</SectionBox>
+      )}
+      {tournaments.map(t => (
+        <SectionBox key={t.id} className="p-3">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="font-bold text-ink">{t.name}</span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5">{MTT_PHASE_LABEL[t.phase] ?? t.phase}</span>
+            <span className="text-ink-dim">{t.speed} · Lv.{t.level}</span>
+            {t.paused && <span className="rounded bg-blossom/20 px-1.5 py-0.5 font-bold text-blossom">⏸ 일시정지</span>}
+            {t.onBreak && <span className="rounded bg-cyber/20 px-1.5 py-0.5 text-cyber">☕ 브레이크</span>}
+            {t.h4hActive && <span className="rounded bg-gilded/20 px-1.5 py-0.5 text-gilded">⚔️ H4H</span>}
+            <span className="ml-auto text-ink-dim">
+              잔존 {t.remaining}/{t.seatedCount || t.entrantCount} · 풀 <Amount value={t.prizePool} />
+            </span>
+          </div>
+          <div className="mt-1 text-[10px] text-ink-dim">
+            id {t.id} · 호스트 {t.hostId.slice(0, 12)}… · 개설 {fmtTime(t.createdAt)}
+            {t.startedAt !== null && ` · 시작 ${fmtTime(t.startedAt)}`}
+            {t.finishedAt !== null && ` · 종료 ${fmtTime(t.finishedAt)}`}
+          </div>
+          {t.tables.length > 0 && (
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full text-left text-[11px]">
+                <thead className="text-[10px] text-ink-dim">
+                  <tr>
+                    {['테이블', '방 ID', '좌석', '휴먼', '생존', '진행', '보류'].map(h => <Th key={h}>{h}</Th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {t.tables.map(table => (
+                    <tr key={table.roomId} className="border-t border-white/5">
+                      <td className="px-3 py-1.5 font-bold">T{table.no}</td>
+                      <td className="px-3 py-1.5 text-ink-dim">{table.roomId}</td>
+                      <td className="px-3 py-1.5 tabular">{table.players}</td>
+                      <td className="px-3 py-1.5 tabular">{table.humans}</td>
+                      <td className="px-3 py-1.5 tabular">{table.alive}</td>
+                      <td className="px-3 py-1.5">{table.handInProgress ? '▶ 핸드 중' : '대기'}</td>
+                      <td className="px-3 py-1.5">{table.held ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {t.standings.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer text-[11px] text-ink-dim hover:text-ink">
+                스탠딩 전체 ({t.standings.length}명)
+              </summary>
+              <div className="mt-1 max-h-64 overflow-y-auto">
+                <table className="w-full text-left text-[11px]">
+                  <tbody>
+                    {t.standings.map((row, i) => (
+                      <tr key={row.playerId} className="border-t border-white/5">
+                        <td className="px-3 py-1 tabular text-ink-dim">{row.place ?? i + 1}</td>
+                        <td className="px-3 py-1">{row.name}</td>
+                        <td className="px-3 py-1 text-right tabular">
+                          {row.place !== null
+                            ? row.prize > 0 ? <Amount value={row.prize} signed /> : '탈락'
+                            : row.chips.toLocaleString()}
+                        </td>
+                        <td className="px-3 py-1 text-right text-ink-dim">
+                          {row.tableNo !== null ? `T${row.tableNo}` : ''}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+        </SectionBox>
+      ))}
+    </section>
   );
 }
 

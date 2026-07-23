@@ -89,6 +89,36 @@ export interface TournamentRuntimeHooks {
 
 type HoldReason = 'setup' | 'break' | 'h4h' | 'complete';
 
+/** 백오피스 토너먼트 탭 뷰 (admin-http /api/admin/tournaments) */
+export interface AdminTournamentView {
+  id: string;
+  name: string;
+  phase: TournamentPhase;
+  speed: MttSpeed;
+  hostId: string;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  paused: boolean;
+  level: number;
+  onBreak: boolean;
+  h4hActive: boolean;
+  entrantCount: number;
+  seatedCount: number;
+  remaining: number;
+  prizePool: number;
+  tables: Array<{
+    roomId: string;
+    no: number;
+    players: number;
+    humans: number;
+    alive: number;
+    handInProgress: boolean;
+    held: string | null;
+  }>;
+  standings: TournamentStandingRow[];
+}
+
 interface PendingBust {
   roomId: string;
   playerId: string;
@@ -479,6 +509,51 @@ export class TournamentManager {
     let held = 0;
     for (const t of this.tournaments.values()) held += t.held.size;
     return { tournaments: this.tournaments.size, tables: this.byRoom.size, held };
+  }
+
+  /** 백오피스(/admin 토너먼트 탭) 전용 전체 뷰 — 테이블 상태·보류 사유·전 순위 포함 */
+  getAdminSummaries(): AdminTournamentView[] {
+    return [...this.tournaments.values()]
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map(t => {
+        const clock = t.startedAt !== null && t.phase === 'running'
+          ? this.clockPos(t)
+          : null;
+        return {
+          id: t.id,
+          name: t.config.name,
+          phase: t.phase,
+          speed: t.config.speed,
+          hostId: t.config.hostId,
+          createdAt: t.createdAt,
+          startedAt: t.startedAt,
+          finishedAt: t.finishedAt,
+          paused: t.pausedAt !== null,
+          level: clock ? clock.levelIndex + 1 : 1,
+          onBreak: clock?.onBreak ?? false,
+          h4hActive: t.h4h.active,
+          entrantCount: t.phase === 'registering' ? t.entrants.size : t.seatedCount,
+          seatedCount: t.seatedCount,
+          remaining: t.remaining,
+          prizePool: t.prizePool,
+          tables: [...t.tables.entries()].map(([roomId, meta]) => {
+            const engine = this.roomManager.getRoom(roomId)?.engine;
+            const players = engine?.state.players ?? [];
+            return {
+              roomId,
+              no: meta.no,
+              players: players.length,
+              humans: players.filter(p => p.type === 'human').length,
+              alive: engine
+                ? players.filter(p => this.isAlive(engine, p)).length
+                : 0,
+              handInProgress: engine?.state.isHandInProgress ?? false,
+              held: t.held.get(roomId) ?? null,
+            };
+          }),
+          standings: this.standings(t),
+        };
+      });
   }
 
   shutdown(): void {

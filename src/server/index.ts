@@ -268,6 +268,7 @@ async function listen(): Promise<void> {
         sessionList: runtime.sessions.snapshot(),
         rooms: runtime.roomManager.getAdminRoomSummaries(),
         roomRuntime: { ...runtime.roomManager.getRuntimeStats() } as Record<string, number>,
+        tournaments: runtime.tournamentManager.getAdminSummaries(),
       };
     },
   }));
