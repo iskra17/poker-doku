@@ -8,7 +8,6 @@ import LobbyHeader from '@/components/lobby/LobbyHeader';
 import RoomList from '@/components/lobby/RoomList';
 import CreateRoomModal from '@/components/lobby/CreateRoomModal';
 import JoinRoomModal from '@/components/lobby/JoinRoomModal';
-import TournamentPanel from '@/components/lobby/TournamentPanel';
 import EconomyBar from '@/components/lobby/EconomyBar';
 import MissionPanel from '@/components/lobby/MissionPanel';
 import PartnerCard from '@/components/lobby/PartnerCard';
@@ -178,7 +177,6 @@ export default function Home() {
         {lobbyView === 'games' && (
           <div className="flex h-full min-h-0 flex-col pt-1">
             <div className="flex-none"><PartnerCard /></div>
-            <TournamentPanel />
             {(joinError || pendingRoomId || inviteNotFound || inviteRoom?.locked) && (
               <div className="flex-none">
                 {joinError && (

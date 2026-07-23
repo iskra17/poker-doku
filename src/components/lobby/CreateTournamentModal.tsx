@@ -2,157 +2,22 @@
 
 import { useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
-import type {
-  CreateTournamentRequest,
-  MttSpeed,
-  TournamentSummary,
-} from '@/lib/realtime/protocol';
-import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
+import type { CreateTournamentRequest, MttSpeed } from '@/lib/realtime/protocol';
 import {
   MTT_WALLET_BUY_IN,
   MTT_WALLET_ENTRY_COST,
   MTT_WALLET_ENTRY_FEE,
 } from '@/lib/economy/mtt-entry';
 import Button from '@/components/ui/Button';
-import TournamentDetailModal, { ModalShell } from './TournamentDetailModal';
+import { ModalShell } from './TournamentDetailModal';
 
-/**
- * 로비 토너먼트 섹션 — 목록(tournament-list 브로드캐스트) + 개설 모달.
- * 상세(순위표·시계·운영 패널)는 TournamentDetailModal — 게임 중 TopBar 배지와 공용.
- */
+/** 토너먼트 개설 모달 — RoomList의 '토너먼트' 탭 [+ 개설]에서 진입. 개설자는 자동 등록. */
 
 const SPEED_LABELS: Record<MttSpeed, string> = {
   standard: '스탠다드',
   turbo: '터보',
   hyper: '하이퍼',
 };
-
-const PHASE_BADGES: Record<TournamentSummary['phase'], { label: string; cls: string }> = {
-  registering: { label: '등록 중', cls: 'bg-cyber/15 text-cyber border-cyber/40' },
-  running: { label: '진행 중', cls: 'bg-gilded/15 text-gilded border-gilded/40' },
-  completed: { label: '종료', cls: 'bg-mystic/15 text-mystic border-mystic/40' },
-  cancelled: { label: '취소됨', cls: 'bg-panel text-ink-dim border-mystic/25' },
-};
-
-export default function TournamentPanel() {
-  const tournaments = useGameStore(state => state.tournaments);
-  const tournamentError = useGameStore(state => state.tournamentError);
-  const clearTournamentError = useGameStore(state => state.clearTournamentError);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
-
-  const visible = tournaments.filter(t => t.phase !== 'cancelled');
-
-  return (
-    <section className="mx-auto mb-2 w-full max-w-4xl flex-none px-3 md:px-4">
-      <div className="rounded-2xl border border-gilded/30 bg-panel/85 p-2.5 md:p-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <h2 className="text-sm font-bold text-ink">🏆 토너먼트</h2>
-          <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)}>
-            + 개설
-          </Button>
-        </div>
-        {tournamentError && (
-          <button
-            type="button"
-            onClick={clearTournamentError}
-            className="mb-1.5 block w-full text-center text-xs text-blossom"
-          >
-            {tournamentError} (탭해서 닫기)
-          </button>
-        )}
-        {visible.length === 0 ? (
-          <p className="py-1 text-center text-xs text-ink-dim">
-            열려 있는 토너먼트가 없어요 — 직접 개설해 보세요!
-          </p>
-        ) : (
-          <ul className="flex flex-col gap-1.5">
-            {visible.map(t => (
-              <TournamentRow key={t.id} tournament={t} onOpen={() => setDetailId(t.id)} />
-            ))}
-          </ul>
-        )}
-      </div>
-      {createOpen && (
-        <CreateTournamentModal
-          onClose={() => setCreateOpen(false)}
-          onCreated={id => {
-            setCreateOpen(false);
-            setDetailId(id);
-          }}
-        />
-      )}
-      {detailId && (
-        <TournamentDetailModal tournamentId={detailId} onClose={() => setDetailId(null)} />
-      )}
-    </section>
-  );
-}
-
-function TournamentRow({
-  tournament,
-  onOpen,
-}: {
-  tournament: TournamentSummary;
-  onOpen: () => void;
-}) {
-  const joinRoom = useGameStore(state => state.joinRoom);
-  const badge = PHASE_BADGES[tournament.phase];
-  const startSeconds = useCountdownTo(
-    tournament.phase === 'registering' && tournament.startAt ? tournament.startAt : 0,
-  );
-  // 자리비움으로 떠난 생존 좌석 — 1탭 복귀 (서버가 본인 생존 좌석만 재입장 허용)
-  const canReturn = tournament.phase === 'running' && !!tournament.myTableRoomId;
-
-  return (
-    <li className="flex items-stretch gap-1.5">
-      <button
-        type="button"
-        onClick={onOpen}
-        className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-xl border border-mystic/25 bg-panel/70 px-2.5 py-2 text-left hover:border-gilded/40"
-      >
-        <div className="min-w-0">
-          <div className="flex items-center gap-1.5">
-            <span className={`rounded-md border px-1.5 py-0.5 text-[10px] font-bold ${badge.cls}`}>
-              {badge.label}
-            </span>
-            <span className="truncate text-sm font-bold text-ink">{tournament.name}</span>
-            {tournament.economyMode === 'wallet' && (
-              <span className="rounded-md border border-gilded/40 bg-gilded/15 px-1 py-0.5 text-[9px] font-bold text-gilded">
-                💰 리얼 칩
-              </span>
-            )}
-            {tournament.registered && tournament.phase === 'registering' && (
-              <span className="text-[10px] font-bold text-cyber">✓ 등록됨</span>
-            )}
-          </div>
-          <p className="mt-0.5 text-[11px] text-ink-dim">
-            {SPEED_LABELS[tournament.speed]} · {tournament.tableSize}인 테이블 ·{' '}
-            {tournament.phase === 'registering'
-              ? `등록 ${tournament.entrantCount}/${tournament.maxEntrants}${tournament.botFill ? ' (봇 충원)' : ''}`
-              : `잔존 ${tournament.remaining}/${tournament.entrantCount} · Lv.${tournament.level}`}
-            {startSeconds !== null && startSeconds > 0 && (
-              <span className="text-gilded"> · 시작 {formatCountdown(startSeconds)}</span>
-            )}
-          </p>
-        </div>
-        <div className="flex-none text-right">
-          <p className="text-[10px] text-ink-dim">상금 풀</p>
-          <p className="text-sm font-bold text-gilded">{tournament.prizePool.toLocaleString()}</p>
-        </div>
-      </button>
-      {canReturn && (
-        <button
-          type="button"
-          onClick={() => joinRoom(tournament.myTableRoomId!, 0, 0)}
-          className="flex-none rounded-xl border border-cyber/40 bg-cyber/10 px-2.5 text-xs font-bold text-cyber hover:bg-cyber/20"
-        >
-          ▶ 게임<br />복귀
-        </button>
-      )}
-    </li>
-  );
-}
 
 const ENTRANT_OPTIONS = [8, 12, 18, 24, 36, 48];
 const START_DELAY_OPTIONS: Array<[label: string, minutes: number | null]> = [
@@ -162,7 +27,7 @@ const START_DELAY_OPTIONS: Array<[label: string, minutes: number | null]> = [
   ['10분 후 자동 시작', 10],
 ];
 
-function CreateTournamentModal({
+export default function CreateTournamentModal({
   onClose,
   onCreated,
 }: {

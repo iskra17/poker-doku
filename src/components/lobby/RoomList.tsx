@@ -3,8 +3,12 @@
 import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
+import type { TournamentSummary } from '@/lib/realtime/protocol';
 import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
+import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import Button from '../ui/Button';
+import TournamentDetailModal from './TournamentDetailModal';
+import CreateTournamentModal from './CreateTournamentModal';
 
 interface RoomListProps {
   onJoin: (roomId: string) => void;
@@ -25,7 +29,7 @@ const TABLE_TYPE_BADGES: Record<string, { label: string; className: string }> = 
   humans: { label: '사람만', className: 'text-blossom border-blossom/40' },
 };
 
-type ModeFilter = 'all' | 'cash' | 'sng';
+type ModeFilter = 'all' | 'cash' | 'sng' | 'mtt';
 type TypeFilter = 'all' | 'bots' | 'mixed' | 'humans';
 type SortKey = 'default' | 'players' | 'blindAsc' | 'blindDesc';
 
@@ -33,7 +37,21 @@ const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
   { id: 'all', label: '전체' },
   { id: 'cash', label: '캐시' },
   { id: 'sng', label: 'Sit & Go' },
+  { id: 'mtt', label: '토너먼트' },
 ];
+
+const MTT_PHASE_BADGES: Record<TournamentSummary['phase'], { label: string; cls: string }> = {
+  registering: { label: '등록 중', cls: 'text-cyber border-cyber/40' },
+  running: { label: '진행 중', cls: 'text-gilded border-gilded/40' },
+  completed: { label: '종료', cls: 'text-mystic border-mystic/40' },
+  cancelled: { label: '취소됨', cls: 'text-ink-dim border-mystic/25' },
+};
+
+const MTT_SPEED_LABELS: Record<TournamentSummary['speed'], string> = {
+  standard: '스탠다드',
+  turbo: '터보',
+  hyper: '하이퍼',
+};
 
 const TYPE_FILTERS: Array<{ id: TypeFilter; label: string }> = [
   { id: 'all', label: '전체' },
@@ -88,30 +106,59 @@ function applyFilters(rooms: RoomInfo[], mode: ModeFilter, type: TypeFilter, joi
 
 export default function RoomList({ onJoin }: RoomListProps) {
   const { rooms } = useGameStore();
+  const tournaments = useGameStore(s => s.tournaments);
+  const tournamentError = useGameStore(s => s.tournamentError);
+  const clearTournamentError = useGameStore(s => s.clearTournamentError);
+  const joinRoom = useGameStore(s => s.joinRoom);
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [joinableOnly, setJoinableOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>('default');
+  const [mttDetailId, setMttDetailId] = useState<string | null>(null);
+  const [mttCreateOpen, setMttCreateOpen] = useState(false);
 
   const visible = useMemo(
-    () => applyFilters(rooms, modeFilter, typeFilter, joinableOnly, sort),
+    () => modeFilter === 'mtt'
+      ? []
+      : applyFilters(rooms, modeFilter, typeFilter, joinableOnly, sort),
     [rooms, modeFilter, typeFilter, joinableOnly, sort],
   );
+  // 토너먼트는 캐시/SnG 방과 같은 목록에 테이블 카드로 섞여 보인다 ('전체'와 '토너먼트' 탭)
+  const visibleTournaments = useMemo(() => {
+    if (modeFilter !== 'all' && modeFilter !== 'mtt') return [];
+    let list = tournaments.filter(t => t.phase !== 'cancelled');
+    if (joinableOnly) {
+      list = list.filter(t => !!t.myTableRoomId
+        || (t.phase === 'registering' && (t.registered || t.entrantCount < t.maxEntrants)));
+    }
+    return list;
+  }, [tournaments, modeFilter, joinableOnly]);
   // 자리비움 등으로 좌석이 보존된 방 — 필터와 무관하게 상단 복귀 배너로 노출
   const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
+  // 자리비움으로 떠난 MTT 생존 좌석 — 방 목록엔 MTT 테이블이 없으므로 토너 목록에서 판별
+  const myTournamentSeats = useMemo(
+    () => tournaments.filter(t => t.phase === 'running' && t.myTableRoomId),
+    [tournaments],
+  );
 
   return (
     // 헤더/복귀 배너/필터는 고정, 테이블 목록만 내부 스크롤 — 테이블이 늘어나도 컨트롤이 화면 밖으로 밀리지 않는다
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-3 md:px-4">
       <div className="flex flex-none items-center justify-between mb-2 md:mb-3">
         <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => useGameStore.getState().setShowCreateRoom(true)}
-        >
-          + 방 만들기
-        </Button>
+        {modeFilter === 'mtt' ? (
+          <Button variant="primary" size="sm" onClick={() => setMttCreateOpen(true)}>
+            + 토너먼트 개설
+          </Button>
+        ) : (
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => useGameStore.getState().setShowCreateRoom(true)}
+          >
+            + 방 만들기
+          </Button>
+        )}
       </div>
 
       {/* 보존 중인 내 좌석 — 자리비움으로 나온 테이블은 바이인/설정 없이 한 번에 복귀 */}
@@ -133,6 +180,36 @@ export default function RoomList({ onJoin }: RoomListProps) {
           </div>
           <Button variant="success" size="sm" className="shrink-0" onClick={() => onJoin(room.id)}>
             {room.mode !== 'sng' && (room.mySeat?.chips ?? 0) <= 0 ? '리바이' : '게임 복귀'}
+          </Button>
+        </motion.div>
+      ))}
+
+      {/* 자리비움으로 떠난 MTT 생존 좌석 — 블라인드가 계속 나가므로 복귀를 최상단에서 유도 */}
+      {myTournamentSeats.map(t => (
+        <motion.div
+          key={`mine-mtt-${t.id}`}
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="mb-3 flex-none bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
+        >
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/50 rounded px-1 py-px">
+                🏆 내 토너먼트
+              </span>
+              <span className="text-white font-bold text-sm truncate">{t.name}</span>
+            </div>
+            <p className="text-xs text-ink-dim mt-1 leading-relaxed">
+              Lv.{t.level} · 잔존 {t.remaining}/{t.entrantCount} · 블라인드가 계속 차감되고 있어요 — 서둘러 돌아오세요!
+            </p>
+          </div>
+          <Button
+            variant="success"
+            size="sm"
+            className="shrink-0"
+            onClick={() => joinRoom(t.myTableRoomId!, 0, 0)}
+          >
+            게임 복귀
           </Button>
         </motion.div>
       ))}
@@ -188,8 +265,33 @@ export default function RoomList({ onJoin }: RoomListProps) {
         </button>
       </div>
 
-      {/* 테이블 목록 — 유일한 스크롤 영역 */}
+      {tournamentError && (
+        <button
+          type="button"
+          onClick={clearTournamentError}
+          className="mb-2 flex-none text-center text-xs text-blossom"
+        >
+          {tournamentError} (탭해서 닫기)
+        </button>
+      )}
+
+      {/* 테이블 목록 — 유일한 스크롤 영역. 토너먼트 카드가 방 카드 위에 같은 형태로 섞인다 */}
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pb-4 scrollbar-thin md:space-y-3">
+        {visibleTournaments.map((t, i) => (
+          <TournamentCard
+            key={t.id}
+            tournament={t}
+            delay={i * 0.1}
+            onOpen={() => setMttDetailId(t.id)}
+            onReturn={t.myTableRoomId ? () => joinRoom(t.myTableRoomId!, 0, 0) : undefined}
+          />
+        ))}
+        {modeFilter === 'mtt' && visibleTournaments.length === 0 && (
+          <div className="text-center py-12 text-ink-dim">
+            <p className="text-4xl mb-3">🏆</p>
+            <p className="text-sm">열려 있는 토너먼트가 없어요 — 직접 개설해 보세요!</p>
+          </div>
+        )}
         {visible.map((room, i) => (
           <motion.div
             key={room.id}
@@ -263,12 +365,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
           </motion.div>
         ))}
 
-        {rooms.length === 0 ? (
+        {modeFilter !== 'mtt' && (rooms.length === 0 && visibleTournaments.length === 0 ? (
           <div className="text-center py-12 text-ink-dim">
             <p className="text-4xl mb-3">🃏</p>
             <p className="text-sm">아직 테이블이 없어요. 새 방을 만들어 시작해보세요!</p>
           </div>
-        ) : visible.length === 0 && (
+        ) : visible.length === 0 && visibleTournaments.length === 0 && (
           <div className="text-center py-12 text-ink-dim">
             <p className="text-4xl mb-3">🔍</p>
             <p className="text-sm">조건에 맞는 테이블이 없어요.</p>
@@ -284,8 +386,115 @@ export default function RoomList({ onJoin }: RoomListProps) {
               필터 초기화
             </button>
           </div>
-        )}
+        ))}
       </div>
+
+      {mttDetailId && (
+        <TournamentDetailModal tournamentId={mttDetailId} onClose={() => setMttDetailId(null)} />
+      )}
+      {mttCreateOpen && (
+        <CreateTournamentModal
+          onClose={() => setMttCreateOpen(false)}
+          onCreated={id => {
+            setMttCreateOpen(false);
+            setMttDetailId(id);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * 토너먼트 카드 — 캐시/SnG 방 카드와 같은 테이블 형태 (아이콘/배지/정보줄/우측 액션).
+ * 카드 탭 → 상세 모달(등록/순위표/운영), 내 생존 좌석이 있으면 우측 버튼이 즉시 복귀.
+ */
+function TournamentCard({
+  tournament: t,
+  delay,
+  onOpen,
+  onReturn,
+}: {
+  tournament: TournamentSummary;
+  delay: number;
+  onOpen: () => void;
+  onReturn?: () => void;
+}) {
+  const badge = MTT_PHASE_BADGES[t.phase];
+  const startSeconds = useCountdownTo(
+    t.phase === 'registering' && t.startAt ? t.startAt : 0,
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay }}
+      onClick={onOpen}
+      className="bg-panel/80 backdrop-blur-sm border border-mystic/20 rounded-xl p-3 md:p-4 flex items-center justify-between hover:border-gilded/40 transition-all active:scale-[0.98] cursor-pointer"
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-yellow-600/25 to-pink-600/25 flex items-center justify-center text-xl md:text-2xl border border-gilded/25 shrink-0">
+          🏆
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/40 rounded px-1 py-px">
+              토너먼트
+            </span>
+            <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${badge.cls}`}>
+              {badge.label}
+            </span>
+            {t.economyMode === 'wallet' && (
+              <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/40 rounded px-1 py-px">
+                💰 리얼 칩
+              </span>
+            )}
+            {t.registered && t.phase === 'registering' && (
+              <span className="shrink-0 text-[10px] font-bold text-cyber">✓ 등록됨</span>
+            )}
+            <h3 className="text-white font-bold text-sm md:text-base truncate">{t.name}</h3>
+          </div>
+          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
+            <span>{MTT_SPEED_LABELS[t.speed]}</span>
+            {t.phase === 'registering' ? (
+              <span>
+                등록 <span className="text-green-400">{t.entrantCount}/{t.maxEntrants}</span>
+                {t.botFill && <span className="text-ink-dim/70"> (봇 충원)</span>}
+              </span>
+            ) : (
+              <span>
+                잔존 <span className="text-green-400">{t.remaining}/{t.entrantCount}</span>
+                {' '}· Lv.<span className="text-gilded">{t.level}</span>
+              </span>
+            )}
+            <span>풀 <span className="text-gilded">{t.prizePool.toLocaleString()}</span></span>
+            {startSeconds !== null && startSeconds > 0 && (
+              <span className="text-cyber">시작 {formatCountdown(startSeconds)}</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 카드 전체가 상세 열기라 버튼 클릭은 전파를 끊는다 (복귀는 즉시 입장) */}
+      <span className="shrink-0" onClick={e => e.stopPropagation()}>
+        <Button
+          variant={onReturn || t.phase === 'registering' ? 'success' : 'secondary'}
+          size="sm"
+          onClick={() => {
+            if (onReturn) onReturn();
+            else onOpen();
+          }}
+        >
+          {onReturn
+            ? '복귀'
+            : t.phase === 'registering'
+              ? t.registered ? '대기 중' : '등록'
+              : t.phase === 'running'
+                ? '순위표'
+                : '결과'}
+        </Button>
+      </span>
+    </motion.div>
   );
 }

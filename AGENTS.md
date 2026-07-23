@@ -208,11 +208,15 @@ npx tsc --noEmit
     혼동 방지. 완주 후 전 테이블 10분 보존.
   - **클라 계약**: 테이블 이동은 `table-move` 이벤트(로비 미경유 currentRoomId 교체 + 스냅샷·채팅
     통째 교체 — 이전 방 diff와 섞지 말 것), 목록은 `tournament-list` 개인화 브로드캐스트, 상세는
-    get-tournament 5초 폴링. 상세 모달은 `TournamentDetailModal`(로비 패널·**게임 중 TopBar
-    배지 탭** 공용 — `state.tournament.tournamentId`가 진입 키, 내 순위/순위표/구조/[운영]/
-    [게임 복귀] 포함. 2026-07-24 모바일 QA). 탈락자는 EliminationNotice 후 8초 뒤 room-lost
-    로비 복귀(파이널 종료 시엔 결과 오버레이 관람 위해 유지). 회귀: tournament-manager.test.ts ·
-    .break.test.ts(이중 브레이크/H4H+머지 재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
+    get-tournament 5초 폴링. **로비 진입점은 별도 패널이 아니라 RoomList 통합** — 모드 필터에
+    '토너먼트' 탭, 캐시/SnG 방 카드와 같은 테이블 카드 형태(TournamentCard)로 '전체' 탭에도
+    섞여 노출, 개설은 토너먼트 탭의 [+ 토너먼트 개설](CreateTournamentModal). 자리비움 이탈
+    좌석은 '내 토너먼트' 복귀 배너 (2026-07-24 피드백 — TournamentPanel 삭제). 상세 모달은
+    `TournamentDetailModal`(로비 카드·**게임 중 TopBar 배지 탭** 공용 —
+    `state.tournament.tournamentId`가 진입 키, 내 순위/순위표/구조/[운영]/[게임 복귀] 포함).
+    탈락자는 EliminationNotice 후 8초 뒤 room-lost 로비 복귀(파이널 종료 시엔 결과 오버레이
+    관람 위해 유지). 회귀: tournament-manager.test.ts · .break.test.ts(이중 브레이크/H4H+머지
+    재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
   - **디렉터 콘솔 (Phase 2)**: 개설자(hostId) 전용 `tournament-admin` 소켓 이벤트 —
     pause(시계 동결 `pausedAt` + isHeld로 전 테이블 다음 핸드 보류, 진행 중 핸드는 끝까지)/
     resume(pauseAccum으로 정지 구간 제외, 브레이크 구간이면 브레이크 대기 복귀)/
