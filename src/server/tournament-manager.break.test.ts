@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RoomManager } from './room-manager';
 import { TournamentManager } from './tournament-manager';
 import { MTT_STRUCTURES } from '../lib/poker/mtt-structure';
+import type { GameState } from '../lib/poker/types';
 
 function prepareH4hBubble(
   tm: TournamentManager,
@@ -56,10 +57,17 @@ function prepareH4hBubble(
 describe('MTT break resume', () => {
   let rm: RoomManager;
   let tm: TournamentManager;
+  let publicSnapshots: Array<{ roomId: string; state: GameState }>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    rm = new RoomManager(() => {}, () => {});
+    publicSnapshots = [];
+    rm = new RoomManager((roomId, engine) => {
+      publicSnapshots.push({
+        roomId,
+        state: JSON.parse(JSON.stringify(engine.getPublicState())) as GameState,
+      });
+    }, () => {});
     tm = new TournamentManager(rm, { isConnected: () => true });
   });
 
@@ -373,5 +381,75 @@ describe('MTT break resume', () => {
     for (const roomId of remainingRooms) {
       expect(tm.roomHooks.isHeld(roomId)).toBe(false);
     }
+  });
+
+  it('broadcasts one public snapshot per hold batch when another hold remains', () => {
+    const created = tm.createTournament({
+      name: '보류 공개',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 5; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(r => r.mode === 'mtt')!.id;
+
+    publicSnapshots = [];
+    expect(tm.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(publicSnapshots).toHaveLength(1);
+    expect(publicSnapshots[0].roomId).toBe(roomId);
+    expect(publicSnapshots[0].state.tournament?.stage).toBe('final-intro');
+    expect(publicSnapshots[0].state.tournament?.holdReasons).toEqual([
+      'director-pause',
+      'final-intro',
+    ]);
+
+    publicSnapshots = [];
+    vi.advanceTimersByTime(4_500);
+    expect(publicSnapshots).toHaveLength(1);
+    expect(publicSnapshots[0].state.tournament?.stage).toBe('final-playing');
+    expect(publicSnapshots[0].state.tournament?.holdReasons).toEqual(['director-pause']);
+  });
+
+  it('enters final-forming before an idle removal and finishes after the seat is removed', () => {
+    const { tournamentId, tables } = prepareH4hBubble(tm, rm);
+    const [sourceRoomId] = tables;
+    const source = rm.getRoom(sourceRoomId)!.engine;
+    source.removePendingPlayers();
+
+    const first = source.state.players.find(p => p.chips > 0)!;
+    expect(rm.leaveRoom(sourceRoomId, first.id)).toBe(true);
+    expect(tm.getDetail(tournamentId)?.summary.remaining).toBe(5);
+    expect(tm.getDetail(tournamentId)?.stage).toBe('multi-table');
+
+    const target = source.state.players.find(p => p.chips > 0)!;
+    const originalProcessLeave = source.processLeave.bind(source);
+    let stageBeforeRemoval: string | undefined;
+    let holdsBeforeRemoval: string[] | undefined;
+    vi.spyOn(source, 'processLeave').mockImplementation(playerId => {
+      if (playerId === target.id) {
+        stageBeforeRemoval = source.state.tournament?.stage;
+        holdsBeforeRemoval = source.state.tournament?.holdReasons;
+      }
+      return originalProcessLeave(playerId);
+    });
+
+    expect(rm.leaveRoom(sourceRoomId, target.id)).toBe(true);
+    expect(stageBeforeRemoval).toBe('final-forming');
+    expect(holdsBeforeRemoval).toEqual(['final-forming']);
+
+    const finalRooms = rm.getAdminRoomSummaries().filter(r => r.mode === 'mtt').map(r => r.id);
+    expect(finalRooms).toHaveLength(1);
+    const final = rm.getRoom(finalRooms[0])!.engine;
+    expect(final.state.players.filter(p => p.chips > 0 && !p.pendingRemoval)).toHaveLength(4);
+    expect(final.state.tournament?.stage).toBe('final-intro');
+    expect(final.state.tournament?.holdReasons).toEqual(['final-intro']);
   });
 });

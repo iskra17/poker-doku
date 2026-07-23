@@ -185,6 +185,8 @@ export interface MttRoomHooks {
   isHeld(roomId: string): boolean;
   /** 명시적 퇴장/서버 회수 직전 호출 — 매니저가 현재 순위로 탈락 확정 */
   onPlayerLeave(roomId: string, playerId: string): void;
+  /** processLeave 성공 뒤 호출 — 좌석 제거가 필요한 테이블 편성을 안전하게 마무리 */
+  onPlayerLeft(roomId: string, playerId: string): void;
 }
 
 export interface RoomManagerRuntimeStats {
@@ -844,6 +846,7 @@ export class RoomManager {
   leaveRoom(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return true;
+    const mttRoom = this.isMttRoom(room);
     const officialArenaPlayer = room.config.competitionMode === 'arena-official'
       && !room.engine.state.tournament?.finished
       && room.engine.state.players.some(player => (
@@ -857,7 +860,7 @@ export class RoomManager {
     }
 
     // MTT: 명시적 퇴장 = 현재 순위로 탈락 확정 (전역 순위는 매니저 소유 — 엔진 로컬 판정은 비활성)
-    if (this.isMttRoom(room)) {
+    if (mttRoom) {
       this.mttHooks?.onPlayerLeave(roomId, playerId);
     }
 
@@ -950,6 +953,7 @@ export class RoomManager {
       }
     }
     if (economicLeaveCommitted) this.resumeAfterEconomicLeave(roomId);
+    if (mttRoom && player) this.mttHooks?.onPlayerLeft(roomId, playerId);
     return true;
   }
 
