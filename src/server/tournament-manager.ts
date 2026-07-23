@@ -179,7 +179,12 @@ interface TournamentRuntime {
   holds: Map<string, Set<InternalHoldReason>>;
   presentationBatchDepth: number;
   presentationDirtyRooms: Set<string>;
-  h4h: { active: boolean; armed: Set<string>; busts: PendingBust[] };
+  h4h: {
+    active: boolean;
+    roundOpen: boolean;
+    armed: Set<string>;
+    busts: PendingBust[];
+  };
   finalIntroTimer: NodeJS.Timeout | null;
   breakTimer: NodeJS.Timeout | null;
   breakAnnounced: boolean;
@@ -289,7 +294,7 @@ export class TournamentManager {
       holds: new Map(),
       presentationBatchDepth: 0,
       presentationDirtyRooms: new Set(),
-      h4h: { active: false, armed: new Set(), busts: [] },
+      h4h: { active: false, roundOpen: false, armed: new Set(), busts: [] },
       finalIntroTimer: null,
       breakTimer: null,
       breakAnnounced: false,
@@ -1099,6 +1104,7 @@ export class TournamentManager {
     t.finishedAt = Date.now();
     t.pausedAt = null;
     t.h4h.active = false;
+    t.h4h.roundOpen = false;
     t.h4h.armed.clear();
     t.h4h.busts = [];
     t.holds.clear();
@@ -1235,6 +1241,7 @@ export class TournamentManager {
     }
 
     t.h4h.active = false;
+    t.h4h.roundOpen = false;
     t.h4h.armed.clear();
     t.h4h.busts = [];
     t.stage = 'final-intro';
@@ -1526,6 +1533,7 @@ export class TournamentManager {
 
   private activateH4h(t: TournamentRuntime): void {
     t.h4h.active = true;
+    t.h4h.roundOpen = false;
     t.h4h.armed.clear();
     t.h4h.busts = [];
     for (const roomId of t.tables.keys()) {
@@ -1550,10 +1558,19 @@ export class TournamentManager {
   /** 전 테이블이 핸드 사이가 되면 라운드 버스트 순위 확정 + 다음 동기화 핸드 무장 */
   private tryReleaseH4h(t: TournamentRuntime): void {
     if (!t.h4h.active) return;
+    for (const roomId of [...t.h4h.armed]) {
+      if (!t.tables.has(roomId) || !this.roomManager.getRoom(roomId)) {
+        t.h4h.armed.delete(roomId);
+      }
+    }
+    // 초기 배리어(roundOpen=false)는 바로 무장할 수 있다. 이미 해제된 라운드는 모든
+    // 참가 테이블이 실제 startHand에 성공해 permit을 소비하기 전에는 완료할 수 없다.
+    if (t.h4h.roundOpen && t.h4h.armed.size > 0) return;
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;
       if (engine?.state.isHandInProgress) return; // 아직 도는 테이블이 있다 — 배리어 유지
     }
+    t.h4h.roundOpen = false;
 
     const roundBusts = t.h4h.busts;
     t.h4h.busts = [];
@@ -1565,6 +1582,7 @@ export class TournamentManager {
     // 버블 붕괴가 파이널 정원 이하를 만들면 다음 H4H 라운드보다 병합 배리어가 우선한다.
     if (this.beginFinalFormation(t) || t.stage === 'final-forming') {
       t.h4h.active = false;
+      t.h4h.roundOpen = false;
       t.h4h.armed.clear();
       this.batchTournamentPresentation(t, () => {
         for (const roomId of t.tables.keys()) {
@@ -1586,6 +1604,7 @@ export class TournamentManager {
     // 버블이 터졌으면 H4H 종료
     if (t.remaining <= paidPlaces(t.seatedCount)) {
       t.h4h.active = false;
+      t.h4h.roundOpen = false;
       t.h4h.armed.clear();
       for (const roomId of t.tables.keys()) {
         this.roomManager.postSystemChat(
@@ -1594,6 +1613,7 @@ export class TournamentManager {
         );
       }
     } else {
+      t.h4h.roundOpen = true;
       t.h4h.armed = new Set(t.tables.keys());
     }
 

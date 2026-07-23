@@ -279,6 +279,76 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.isHeld(t1)).toBe(true);
   });
 
+  it('waits for every released H4H permit to start and finish before rearming', () => {
+    const { tables: [t1, t2] } = prepareH4hBubble(tm, rm);
+    const first = rm.getRoom(t1)!.engine;
+    const second = rm.getRoom(t2)!.engine;
+    const bubble = first.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    first.startHand();
+    tm.roomHooks.onHandStarted(t1, first.state.handNumber);
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    first.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(resume).not.toHaveBeenCalled();
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    second.startHand();
+    tm.roomHooks.onHandStarted(t2, second.state.handNumber);
+    second.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
+    expect(resume).toHaveBeenCalledWith(t1);
+    expect(resume).toHaveBeenCalledWith(t2);
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+  });
+
+  it('keeps a completed H4H table blocked when a director hold prevented its peer from starting', () => {
+    const { tournamentId, tables: [t1, t2] } = prepareH4hBubble(tm, rm);
+    const first = rm.getRoom(t1)!.engine;
+    const second = rm.getRoom(t2)!.engine;
+    const bubble = first.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+
+    first.startHand();
+    tm.roomHooks.onHandStarted(t1, first.state.handNumber);
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    vi.advanceTimersByTime(2_000);
+    expect(second.state.handNumber).toBe(0);
+
+    first.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
+    expect(resume).not.toHaveBeenCalledWith(t1);
+    expect(resume).toHaveBeenCalledWith(t2);
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    second.startHand();
+    tm.roomHooks.onHandStarted(t2, second.state.handNumber);
+    second.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+  });
+
   it('balances a 4-max 1-versus-4 bubble before arming H4H', () => {
     const { tables: [shortRoomId, fullRoomId] } = prepareH4hBubble(tm, rm);
     const short = rm.getRoom(shortRoomId)!.engine;
