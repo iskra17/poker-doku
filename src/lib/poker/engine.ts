@@ -1013,17 +1013,20 @@ export class PokerEngine {
       // Handle remainder (odd chips go to the first tied winner left of the button)
       const remainder = pot.amount - share * potWinners.length;
       if (remainder > 0) {
-        const oddChipWinner = [...potWinners].sort(
+        const oddChipWinners = [...potWinners].sort(
           (a, b) => this.distanceLeftOfButton(a.player) - this.distanceLeftOfButton(b.player),
-        )[0];
-        oddChipWinner.player.chips += remainder;
-        const winResult = winners
-          .slice(winners.length - potWinners.length)
-          .find(result => result.playerId === oddChipWinner.player.id);
-        if (!winResult) {
-          throw new Error('settlement invariant failed: odd-chip winner has no payout entry');
+        ).slice(0, remainder);
+        const potWinResults = winners.slice(winners.length - potWinners.length);
+        for (const oddChipWinner of oddChipWinners) {
+          oddChipWinner.player.chips += 1;
+          const winResult = potWinResults.find(
+            result => result.playerId === oddChipWinner.player.id,
+          );
+          if (!winResult) {
+            throw new Error('settlement invariant failed: odd-chip winner has no payout entry');
+          }
+          winResult.amount += 1;
         }
-        winResult.amount += remainder;
       }
     }
 

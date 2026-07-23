@@ -287,4 +287,31 @@ describe('wallet cash rake with showdown pots', () => {
     ]);
     expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
   });
+
+  it('distributes multiple odd chips one each clockwise left of the button', () => {
+    const { engine, initialTotal } = setupWalletTable(
+      [1000, 1000, 1000],
+      '2h 3d 4h 5d 6h 7d As Ks Qs Js Ts',
+    );
+    engine.startHand();
+    act(engine, 'raise', 47);
+    act(engine, 'call');
+    act(engine, 'call');
+
+    while (engine.state.isHandInProgress) {
+      act(engine, 'check');
+    }
+
+    expect(engine.state.pots.map(pot => pot.amount)).toEqual([141]);
+    expect(engine.state.handRake).toBe(7);
+    expect(engine.state.winners?.map(winner => ({
+      playerId: winner.playerId,
+      amount: winner.amount,
+    }))).toEqual([
+      { playerId: 'p1', amount: 44 },
+      { playerId: 'p2', amount: 45 },
+      { playerId: 'p3', amount: 45 },
+    ]);
+    expect(totalStacks(engine) + engine.state.handRake).toBe(initialTotal);
+  });
 });

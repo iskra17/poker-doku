@@ -4,13 +4,19 @@ import { useCallback, useEffect, useState } from 'react';
 import Modal from '../ui/Modal';
 import CardComponent from '../table/Card';
 import { HAND_RANK_KO } from '@/lib/poker/evaluator';
+import {
+  computeStreetStartPots,
+  formatReplayAction,
+  type PlayStreet,
+} from '@/lib/poker/hand-history-replay';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import type {
   CompletedHandRecord,
+  HandHistoryAction,
   HandHistoryDetail,
   HandHistorySummary,
 } from '@/lib/poker/hand-history';
-import type { Card, Street } from '@/lib/poker/types';
+import type { Card } from '@/lib/poker/types';
 
 /**
  * 핸드 히스토리 (GGPoker PokerCraft + WPL 리플레이 벤치마킹):
@@ -24,7 +30,6 @@ interface HandHistoryModalProps {
 }
 
 type HandDetail = HandHistoryDetail & { id: number };
-type PlayStreet = Exclude<Street, 'showdown'>;
 
 const LOAD_ERROR = '핸드 히스토리를 불러오지 못했어요. 잠시 후 다시 시도해주세요.';
 const STREET_ORDER: PlayStreet[] = ['preflop', 'flop', 'turn', 'river'];
@@ -85,56 +90,6 @@ function streetCards(street: PlayStreet, board: Card[]): Card[] {
     case 'turn': return board.slice(3, 4);
     case 'river': return board.slice(4, 5);
   }
-}
-
-/**
- * 스트리트 시작 시점 팟 (WPL/GG 컬럼 헤더 표기와 동일 의미 — 프리플랍은 블라인드 합).
- * raise/all-in 액션의 amount는 "그 스트리트 총 벳"이라 플레이어별 스트리트 벳을 추적해 증분만 더한다.
- * 도달하지 않은 스트리트는 null.
- */
-function computeStreetStartPots(record: CompletedHandRecord): Record<PlayStreet, number | null> {
-  const startPots: Record<PlayStreet, number | null> = {
-    preflop: null, flop: null, turn: null, river: null,
-  };
-  const streetBets = new Map<string, number>();
-  let pot = 0;
-  let current: PlayStreet = 'preflop';
-  let posts = 0;
-
-  for (const action of record.actions) {
-    if (action.street !== current && action.street !== 'showdown') {
-      startPots[action.street as PlayStreet] = pot;
-      streetBets.clear();
-      current = action.street as PlayStreet;
-    }
-    switch (action.kind) {
-      case 'post-sb':
-      case 'post-bb':
-        pot += action.amount;
-        posts += action.amount;
-        streetBets.set(action.playerId, (streetBets.get(action.playerId) ?? 0) + action.amount);
-        break;
-      case 'call':
-        pot += action.amount;
-        streetBets.set(action.playerId, (streetBets.get(action.playerId) ?? 0) + action.amount);
-        break;
-      case 'raise':
-      case 'all-in': {
-        const previous = streetBets.get(action.playerId) ?? 0;
-        pot += action.amount - previous;
-        streetBets.set(action.playerId, action.amount);
-        break;
-      }
-      default:
-        break;
-    }
-  }
-  startPots.preflop = posts;
-  // 베팅 없이 런아웃된 스트리트 — 보드가 깔렸으면 진입 팟은 최종 팟과 같다
-  if (record.board.length >= 3 && startPots.flop === null) startPots.flop = pot;
-  if (record.board.length >= 4 && startPots.turn === null) startPots.turn = pot;
-  if (record.board.length >= 5 && startPots.river === null) startPots.river = pot;
-  return startPots;
 }
 
 /** 승자/쇼다운 블록을 붙일 컬럼 — 핸드가 끝난 스트리트 */
@@ -231,18 +186,8 @@ function HandDetailView({ hand, onBack }: { hand: HandDetail; onBack: () => void
     return player.id === hand.heroId ? '나' : player.name;
   };
 
-  const actionText = (kind: string, amount: number): string => {
-    switch (kind) {
-      case 'post-sb': return `SB ${amountText(amount)}`;
-      case 'post-bb': return `BB ${amountText(amount)}`;
-      case 'fold': return '폴드';
-      case 'check': return '체크';
-      case 'call': return `콜 ${amountText(amount)}`;
-      case 'raise': return `레이즈 ${amountText(amount)}`;
-      case 'all-in': return `올인 ${amountText(amount)}`;
-      default: return kind;
-    }
-  };
+  const actionText = (kind: HandHistoryAction['kind'], amount: number): string =>
+    formatReplayAction(kind, amountText(amount));
 
   // 블라인드 포스팅은 별도 컬럼 (WPL 방식) — 프리플랍 컬럼은 실제 액션만
   const postActions = hand.actions.filter(a => a.kind === 'post-sb' || a.kind === 'post-bb');
