@@ -23,6 +23,10 @@ export default function AffinityTab() {
   const balance = getBalance(snapshot.profile.balanceVersion);
   return (
     <div className="space-y-2">
+      <p className="text-xs text-ink-dim">
+        함께 인연을 쌓는 파트너예요. 로비에 상주하고 혼자 연습 방에 합류해요.
+        좌석에 보일 내 모습은 아바타 탭에서 바꿔요.
+      </p>
       {PROGRESSION_CHARACTER_IDS.map(characterId => {
         const character = getCharacterById(characterId);
         const affinity = snapshot.affinities.find(value => value.characterId === characterId);

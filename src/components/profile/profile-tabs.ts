@@ -1,4 +1,4 @@
-export const PROFILE_TABS = ['성장', '캐릭터', '인연', '보관함', '기록', '복구'] as const;
+export const PROFILE_TABS = ['성장', '아바타', '인연', '보관함', '기록', '복구'] as const;
 export type ProfileTab = typeof PROFILE_TABS[number];
 
 const NAVIGATION_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'Home', 'End']);

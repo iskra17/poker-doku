@@ -54,7 +54,7 @@ export default function ProfileHub() {
         aria-labelledby={`${tabGroupId}-tab-${PROFILE_TABS.indexOf(tab)}`}
         tabIndex={0}
       >
-        {tab === '성장' ? <ProgressionTab /> : tab === '캐릭터' ? <CharacterTab /> : tab === '인연' ? <AffinityTab /> : tab === '보관함' ? <InventoryTab /> : tab === '기록' ? <RecordsTab /> : <RecoveryPanel />}
+        {tab === '성장' ? <ProgressionTab /> : tab === '아바타' ? <CharacterTab /> : tab === '인연' ? <AffinityTab /> : tab === '보관함' ? <InventoryTab /> : tab === '기록' ? <RecordsTab /> : <RecoveryPanel />}
       </div>
       {action && <p role="status" className="mt-3 text-center text-xs text-mystic">성장 정보를 처리하는 중…</p>}
       {error && <p role="alert" className="mt-3 text-center text-xs text-blossom">{error}</p>}

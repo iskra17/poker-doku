@@ -25,7 +25,7 @@ export default function CharacterTab() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-ink-dim">
-        테이블 좌석에 보일 내 캐릭터예요. 🔒 캐릭터는 도장 레벨을 올리면 해금돼요.
+        테이블 좌석과 로비 프로필에 보이는 내 아바타예요. 🔒 캐릭터는 도장 레벨을 올리면 해금돼요.
         <span className="ml-1 font-bold text-mystic">현재 도장 Lv.{dojoLevel}</span>
       </p>
       <div className="grid grid-cols-3 gap-3">

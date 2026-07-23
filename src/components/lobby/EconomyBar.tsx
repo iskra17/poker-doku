@@ -34,9 +34,6 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
   const busy = action === 'daily' || action === 'rescue';
   const activeSeatChips = activeSeat?.chips
     ?? (profile.wallet.activeEscrow > 0 ? profile.wallet.activeEscrow : null);
-  const selectedAffinity = progression?.affinities.find(
-    item => item.characterId === progression.profile.selectedCharacterId,
-  );
   const balance = progression ? getBalance(progression.profile.balanceVersion) : null;
   const dojoThreshold = progression && balance && progression.profile.dojoLevel < balance.dojoMaxLevel
     ? balance.dojoXpForNextLevel(progression.profile.dojoLevel) : 0;
@@ -47,15 +44,17 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
         {/* 한 줄 통합: 프로필 | 도장 레벨(우측 빈공간 활용) | 버튼. 좁은 화면에선 자연 줄바꿈 */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <div className="flex min-w-0 items-center gap-3">
+            {/* 이 블록은 '나'의 정체성 행 — 얼굴은 내 아바타(avatarId). 인연 파트너 얼굴은
+                PartnerCard가 유일한 로비 표면이다 (아바타/인연 두 축 혼동 방지, 2026-07-23). */}
             <button
               type="button"
               onClick={() => setShowcaseOpen(true)}
-              aria-label="내 캐릭터 보기"
-              title="내 캐릭터 보기"
+              aria-label="내 아바타 보기"
+              title="내 아바타 보기"
               className="block h-11 w-11 shrink-0 overflow-hidden rounded-full border border-mystic/40 transition-transform hover:scale-105"
             >
               <CharacterImage
-                characterId={progression?.profile.selectedCharacterId ?? profile.avatarId}
+                characterId={profile.avatarId}
                 skinId={progression?.equipment.skin}
                 round
                 className="h-full w-full text-2xl"
@@ -80,7 +79,6 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
                 <span className="text-ink-dim">{dojoThreshold ? `${milliToUiUnits(progression.profile.dojoXpMilli)}/${milliToUiUnits(dojoThreshold)} XP` : '최고 레벨'}</span>
               </div>
               <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-abyss"><div className="h-full bg-mystic" style={{ width: dojoThreshold ? `${Math.floor(progression.profile.dojoXpMilli / dojoThreshold * 100)}%` : '100%' }} /></div>
-              <p className="mt-0.5 text-[10px] text-ink-dim">인연 <span className="font-bold text-blossom">Lv.{selectedAffinity?.level ?? 1}</span></p>
             </div>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -132,9 +130,7 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
       </div>
 
       <CharacterShowcaseModal
-        characterId={showcaseOpen
-          ? (progression?.profile.selectedCharacterId ?? profile.avatarId)
-          : null}
+        characterId={showcaseOpen ? profile.avatarId : null}
         onClose={() => setShowcaseOpen(false)}
       />
     </section>

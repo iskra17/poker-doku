@@ -95,7 +95,7 @@ export default function ProfileOnboarding() {
             disabled={!adultConfirmed}
             onClick={() => setStep('avatar')}
           >
-            캐릭터 선택
+            파트너 선택
           </Button>
           <button
             type="button"
@@ -118,10 +118,13 @@ export default function ProfileOnboarding() {
       {step === 'avatar' && (
         <div className="space-y-4">
           <div>
-            <p className="text-xs font-bold text-blossom">2 / 3 캐릭터 선택</p>
-            <h2 className="mt-1 text-xl font-bold text-ink">함께할 캐릭터를 골라 주세요</h2>
+            <p className="text-xs font-bold text-blossom">2 / 3 파트너 선택</p>
+            <h2 className="mt-1 text-xl font-bold text-ink">함께 수련할 파트너를 골라 주세요</h2>
+            <p className="mt-1 text-xs text-ink-dim">
+              선택한 파트너와 인연을 쌓아요. 내 프로필 아바타로도 함께 설정돼요 (나중에 각각 바꿀 수 있어요).
+            </p>
             <p className="mt-1 text-xs text-ink-dim">별명은 개인정보 없이 서버가 자동으로 만들어요.</p>
-            <p className="mt-1 text-xs text-mystic">🔒 잠긴 캐릭터는 플레이로 도장 레벨을 올리면 해금돼요.</p>
+            <p className="mt-1 text-xs text-mystic">🔒 잠긴 캐릭터는 플레이로 도장 레벨을 올리면 아바타로 해금돼요.</p>
             {lockedNotice && (
               <p aria-live="polite" className="mt-1 text-xs text-blossom">{lockedNotice}</p>
             )}
