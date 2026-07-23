@@ -7,6 +7,10 @@ import type { Street } from './types';
 
 export type PlayStreet = Exclude<Street, 'showdown'>;
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled hand history action kind: ${String(value)}`);
+}
+
 export interface ReplayContributionState {
   pot: number;
   posts: number;
@@ -30,6 +34,10 @@ export function applyReplayContribution(
     streetBets: new Map(state.streetBets),
   };
   switch (action.kind) {
+    case 'post-ante':
+      next.pot += action.amount;
+      next.posts += action.amount;
+      break;
     case 'post-sb':
     case 'post-bb':
       next.pot += action.amount;
@@ -59,8 +67,11 @@ export function applyReplayContribution(
       next.streetBets.set(action.playerId, previous - action.amount);
       break;
     }
-    default:
+    case 'fold':
+    case 'check':
       break;
+    default:
+      assertNever(action.kind);
   }
   return next;
 }
@@ -100,6 +111,7 @@ export function formatReplayAction(
   formattedAmount: string,
 ): string {
   switch (kind) {
+    case 'post-ante': return `앤티 ${formattedAmount}`;
     case 'post-sb': return `SB ${formattedAmount}`;
     case 'post-bb': return `BB ${formattedAmount}`;
     case 'fold': return '폴드';
@@ -108,6 +120,6 @@ export function formatReplayAction(
     case 'raise': return `레이즈 ${formattedAmount}`;
     case 'all-in': return `올인 ${formattedAmount}`;
     case 'uncalled-return': return `미응수 반환 ${formattedAmount}`;
-    default: return kind;
+    default: return assertNever(kind);
   }
 }

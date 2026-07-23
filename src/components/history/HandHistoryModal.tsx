@@ -189,10 +189,12 @@ function HandDetailView({ hand, onBack }: { hand: HandDetail; onBack: () => void
   const actionText = (kind: HandHistoryAction['kind'], amount: number): string =>
     formatReplayAction(kind, amountText(amount));
 
-  // 블라인드 포스팅은 별도 컬럼 (WPL 방식) — 프리플랍 컬럼은 실제 액션만
-  const postActions = hand.actions.filter(a => a.kind === 'post-sb' || a.kind === 'post-bb');
+  // 앤티/블라인드 강제 포스팅은 별도 컬럼 (WPL 방식) — 프리플랍 컬럼은 실제 액션만
+  const isForcedPost = (action: HandHistoryAction) =>
+    action.kind === 'post-ante' || action.kind === 'post-sb' || action.kind === 'post-bb';
+  const postActions = hand.actions.filter(isForcedPost);
   const streetActions = (street: PlayStreet) =>
-    hand.actions.filter(a => a.street === street && a.kind !== 'post-sb' && a.kind !== 'post-bb');
+    hand.actions.filter(a => a.street === street && !isForcedPost(a));
 
   const winnersByPlayer = new Map<string, number>();
   for (const w of hand.winners) {

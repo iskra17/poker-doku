@@ -30,4 +30,19 @@ describe('hand history replay', () => {
   it('renders an uncalled return with a Korean replay label', () => {
     expect(formatReplayAction('uncalled-return', '850')).toBe('미응수 반환 850');
   });
+
+  it('adds an ante to the pot and forced posts without changing the player street bet', () => {
+    const state = applyReplayContribution(
+      createReplayContributionState(),
+      { street: 'preflop', playerId: 'p3', kind: 'post-ante', amount: 20 },
+    );
+
+    expect(state.pot).toBe(20);
+    expect(state.posts).toBe(20);
+    expect(state.streetBets.has('p3')).toBe(false);
+  });
+
+  it('renders an ante with a Korean replay label', () => {
+    expect(formatReplayAction('post-ante', '20')).toBe('앤티 20');
+  });
 });
