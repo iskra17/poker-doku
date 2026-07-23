@@ -972,13 +972,20 @@ export class TournamentManager {
     // 파이널 전환이 아니면 테이블 브레이크/밸런싱을 먼저 확정한 뒤 다음 H4H를 무장한다.
     // H4H 진입 경계에서는 방금 끝난 테이블이 숏이어도 전역 최다 테이블에서 이동할 수 있다.
     const balance = this.balanceAfterHand(t, roomId, enteringH4h);
-    if (balance === 'gone') return 'gone';
+    if (balance === 'gone') {
+      if (
+        enteringH4h
+        && t.tables.size > 1
+        && t.remaining === paidPlaces(t.seatedCount) + 1
+      ) {
+        this.enterH4hBarrier(t);
+      }
+      return 'gone';
+    }
 
     // 버블(입상 1명 전) 도달 → hand-for-hand 발동 (테이블 2개 이상일 때만 의미)
     if (!t.h4h.active && t.tables.size > 1 && t.remaining === paidPlaces(t.seatedCount) + 1) {
-      this.activateH4h(t);
-      this.addHold(t, roomId, 'h4h-barrier');
-      this.tryReleaseH4h(t);
+      this.enterH4hBarrier(t);
       return 'hold';
     }
 
@@ -1499,6 +1506,15 @@ export class TournamentManager {
     }
   }
 
+  /** 다음 H4H 라운드가 열리기 전 모든 잔존 테이블의 다음 핸드를 먼저 동기적으로 막는다. */
+  private enterH4hBarrier(t: TournamentRuntime): void {
+    if (!t.h4h.active) this.activateH4h(t);
+    for (const roomId of t.tables.keys()) {
+      this.addHold(t, roomId, 'h4h-barrier');
+    }
+    this.tryReleaseH4h(t);
+  }
+
   /** 전 테이블이 핸드 사이가 되면 라운드 버스트 순위 확정 + 다음 동기화 핸드 무장 */
   private tryReleaseH4h(t: TournamentRuntime): void {
     if (!t.h4h.active) return;
@@ -1523,6 +1539,14 @@ export class TournamentManager {
       }
       this.finishFinalFormation(t);
       return;
+    }
+
+    // H4H 진입 시 최다 테이블이 아직 핸드 중이었다면 이 배리어 지점에서 처음 안전하게
+    // 1대4→2대3 밸런싱할 수 있다. permit을 만들기 전에 반드시 재시도한다.
+    if (t.tables.size > 1) {
+      const anchor = [...this.aliveCounts(t).entries()]
+        .sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (anchor) this.balanceAfterHand(t, anchor, true);
     }
 
     // 버블이 터졌으면 H4H 종료

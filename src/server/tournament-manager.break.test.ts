@@ -289,4 +289,89 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.isHeld(shortRoomId)).toBe(false);
     expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
   });
+
+  it('retries 1-versus-4 balance when the large table finishes later', () => {
+    const { tables: [shortRoomId, fullRoomId] } = prepareH4hBubble(tm, rm);
+    const short = rm.getRoom(shortRoomId)!.engine;
+    const full = rm.getRoom(fullRoomId)!.engine;
+    short.removePendingPlayers();
+    full.removePendingPlayers();
+
+    const mover = short.state.players.find(p => p.chips > 0)!;
+    const occupied = new Set(full.state.players.map(p => p.seatIndex));
+    const emptySeat = [0, 1, 2, 3].find(seat => !occupied.has(seat));
+    if (emptySeat === undefined) throw new Error('missing destination seat');
+    expect(rm.transferMttSeat(shortRoomId, fullRoomId, mover.id, emptySeat)).toBe(true);
+
+    full.state.isHandInProgress = true;
+    const bubble = short.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(shortRoomId)).toBe('hold');
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(true);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(true);
+
+    full.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(fullRoomId)).toBe('hold');
+
+    const counts = [shortRoomId, fullRoomId]
+      .map(roomId => rm.getRoom(roomId)!.engine.state.players.filter(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      ).length)
+      .sort((a, b) => a - b);
+    expect(counts).toEqual([2, 3]);
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(false);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
+  });
+
+  it('arms H4H on remaining tables when bubble balancing breaks the completed table', () => {
+    const created = tm.createTournament({
+      name: 'gone 뒤 H4H',
+      speed: 'standard',
+      maxEntrants: 12,
+      tableSize: 4,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 12; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [t1, t2, completedRoomId] = rm.getAdminRoomSummaries()
+      .filter(r => r.mode === 'mtt')
+      .map(r => r.id);
+    const eliminate = (roomId: string, count: number) => {
+      const players = rm.getRoom(roomId)!.engine.state.players
+        .filter(p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval)
+        .slice(0, count);
+      for (const player of players) tm.roomHooks.onPlayerLeave(roomId, player.id);
+    };
+    eliminate(t1, 2);
+    eliminate(t2, 1);
+    eliminate(completedRoomId, 3);
+    expect(tm.listTournaments()[0].remaining).toBe(6);
+
+    const completed = rm.getRoom(completedRoomId)!.engine;
+    const bubble = completed.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(completedRoomId)).toBe('gone');
+
+    expect(rm.getRoom(completedRoomId)).toBeUndefined();
+    const remainingRooms = rm.getAdminRoomSummaries()
+      .filter(r => r.mode === 'mtt')
+      .map(r => r.id);
+    expect(remainingRooms).toHaveLength(2);
+    expect(tm.getAdminSummaries()[0].h4hActive).toBe(true);
+    for (const roomId of remainingRooms) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(false);
+    }
+  });
 });
