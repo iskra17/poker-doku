@@ -14,7 +14,6 @@ export type RealtimeErrorCode =
   | 'bad-password'
   | 'sng-started'
   | 'practice-occupied'
-  | 'bot-seat-pending'
   | 'session-replaced'
   | 'stale-state'
   | 'not-your-turn'
@@ -188,7 +187,14 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   resync: (ack?: AckCallback) => void;
   'get-rooms': (ack?: AckCallback) => void;
-  'join-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
+  /**
+   * ack data.status 'waiting' = 만석(봇 포함) 방에 착석 대기로 입장 — room-joined는 즉시 오고,
+   * 본인 좌석은 진행 중 핸드 종료 후 game-update에 나타난다 (클라는 players 내 본인 유무로 판별).
+   */
+  'join-room': (
+    data: unknown,
+    ack?: AckCallback<{ roomId: string; status?: 'waiting' }>,
+  ) => void;
   'leave-room': (data?: unknown, ack?: AckCallback<LeaveReserveAckData>) => void;
   'player-action': (
     data: unknown,

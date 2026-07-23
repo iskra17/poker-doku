@@ -1546,6 +1546,103 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(room.engine.state.isHandInProgress).toBe(true);
   });
 
+  it('만석(봇 포함) 방의 핸드 중 입장은 착석 대기로 받고, 취소 시 escrow를 환불한다', async () => {
+    harness = await createSocketTestHarness();
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...WALLET_CASH_ROOM,
+      name: '착석 대기 방',
+      tableType: 'mixed',
+    });
+    const host = await harness.createProfile();
+    const hostClient = await harness.connect('seat-waiter-host-1234', {
+      profileCookie: host.cookie,
+    });
+    await expect(withAck(done => hostClient.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true });
+
+    const room = harness.runtime.roomManager.getRoom(roomId)!;
+    for (let seat = 1; seat <= 5; seat++) {
+      room.engine.addPlayer({
+        id: `waiter-test-bot-${seat}`,
+        name: `waiter-test-bot-${seat}`,
+        type: 'bot',
+        avatar: 'bot',
+        chips: 4_000,
+        seatIndex: seat,
+        holeCards: [],
+        currentBet: 0,
+        totalContributed: 0,
+        status: 'waiting',
+        hasActed: false,
+      });
+    }
+    harness.economyRuntime.beforeHand(roomId, room.engine);
+    room.engine.startHand();
+    expect(room.engine.state.isHandInProgress).toBe(true);
+
+    // 만석 + 핸드 진행 중 입장 → 즉시 거절 대신 착석 대기 (room-joined로 관전 뷰 진입)
+    const waiterProfile = await harness.createProfile();
+    const waiter = await harness.connect('seat-waiter-wait-1234', {
+      profileCookie: waiterProfile.cookie,
+    });
+    const roomJoined = new Promise(resolve => waiter.socket.once('room-joined', resolve));
+    await expect(withAck(done => waiter.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({
+      ok: true,
+      data: { roomId, status: 'waiting' },
+    });
+    await roomJoined;
+    expect(harness.runtime.roomManager.isSeatWaiter(roomId, waiterProfile.profile.id)).toBe(true);
+    // 양보 봇이 이번 핸드를 끝으로 나가도록 마킹됐고, 대기자 escrow는 열려 있다
+    expect(room.engine.state.players.filter(p => p.pendingRemoval)).toHaveLength(1);
+    expect(harness.walletState(waiterProfile.profile.id)).toEqual({
+      balance: 6_000,
+      activeEscrow: 4_000,
+      activeRoomId: roomId,
+    });
+
+    // 대기 중 나가기 → 대기 취소 + 양보 봇 원복 + escrow 환불
+    await expect(withAck(done => waiter.socket.emit(
+      'leave-room', { mode: 'exit' }, done,
+    ))).resolves.toMatchObject({ ok: true });
+    expect(harness.runtime.roomManager.isSeatWaiter(roomId, waiterProfile.profile.id)).toBe(false);
+    expect(room.engine.state.players.filter(p => p.pendingRemoval)).toHaveLength(0);
+    expect(harness.walletState(waiterProfile.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+
+    // 대기 중 접속 끊김 → grace 없이 즉시 대기 회수 + 환불
+    const dropProfile = await harness.createProfile();
+    const dropper = await harness.connect('seat-waiter-drop-1234', {
+      profileCookie: dropProfile.cookie,
+    });
+    await expect(withAck(done => dropper.socket.emit('join-room', {
+      roomId,
+      buyIn: 4_000,
+      seatIndex: 0,
+    }, done))).resolves.toMatchObject({ ok: true, data: { status: 'waiting' } });
+    dropper.socket.disconnect();
+    await waitUntil(() => (
+      !harness!.runtime.roomManager.isSeatWaiter(roomId, dropProfile.profile.id)
+      && harness!.walletState(dropProfile.profile.id).activeEscrow === 0
+    ));
+    expect(harness.walletState(dropProfile.profile.id)).toEqual({
+      balance: 10_000,
+      activeEscrow: 0,
+      activeRoomId: null,
+    });
+    // 진행 중이던 핸드는 그대로다
+    expect(room.engine.state.isHandInProgress).toBe(true);
+  });
+
   it('retires a cashed-out pending wallet seat before fresh same-room admission', async () => {
     harness = await createSocketTestHarness();
     const roomId = harness.runtime.roomManager.createRoom(WALLET_CASH_ROOM);

@@ -280,6 +280,21 @@ export function setupSocketHandlers(
           }
         }
       }
+      // 착석 대기자도 개인 game-update 수신 — 좌석이 없어 홀카드는 전부 마스킹된 관전 뷰
+      for (const waiterId of roomManager.getSeatWaiterIds(roomId)) {
+        const waiterSession = sessions.getByPlayerId(waiterId);
+        if (!waiterSession?.socketId || waiterSession.roomId !== roomId) continue;
+        const waiterSocket = io.sockets.sockets.get(waiterSession.socketId);
+        if (waiterSocket) {
+          waiterSocket.emit('game-update', {
+            roomId,
+            state: {
+              ...engine.getPublicState(waiterId),
+              turnTimeRemaining,
+            },
+          });
+        }
+      }
       // Also broadcast to spectators / general room
       io.to(roomId).emit('game-update-public', {
         roomId,
@@ -567,6 +582,13 @@ export function setupSocketHandlers(
       return;
     }
     const roomId = session.roomId;
+    // 착석 대기석은 grace 없이 즉시 회수 — 지킬 좌석/칩이 없다 (escrow는 hooks가 환불)
+    if (roomManager.cancelSeatWaiter(roomId, session.playerId, 'disconnect')) {
+      session.roomId = null;
+      sessions.releaseIfIdle(session);
+      broadcastRoomList();
+      return;
+    }
     // 유예 시간은 끊기는 시점마다 읽는다 — 핫 컨피그 변경이 이후의 끊김부터 적용 (테스트 오버라이드 우선)
     const graceMs = options.graceMs ?? cfg('timer.graceMs');
     // grace 만료로 좌석이 제거되는 경우 클라이언트가 회수 카운트다운 타임바를 그릴 수 있게 만료 시각 전달
@@ -690,9 +712,13 @@ export function setupSocketHandlers(
       const seated = room?.engine.state.players.find(
         p => p.id === session.playerId && !p.pendingRemoval,
       );
-      if (room && seated) {
+      // 착석 대기 중 resync — 대기 상태 그대로 방 스냅샷 재전송 (끊김 시엔 대기가 취소되므로
+      // 이 분기는 라이브 소켓의 resync에서만 탄다)
+      const waiting = !!room && !seated
+        && roomManager.isSeatWaiter(session.roomId, session.playerId);
+      if (room && (seated || waiting)) {
         socket.join(session.roomId);
-        roomManager.handleReconnect(session.roomId, session.playerId);
+        if (seated) roomManager.handleReconnect(session.roomId, session.playerId);
         if (room.config.competitionMode && room.config.arenaMatchId) {
           const matchId = room.config.arenaMatchId;
           const training = room.config.competitionMode === 'arena-training';
@@ -969,7 +995,7 @@ export function setupSocketHandlers(
 
     // Join room
     socket.on('join-room', (...rawArgs: unknown[]) => {
-      const args = parseRequiredPayloadArgs<{ roomId: string }>(rawArgs);
+      const args = parseRequiredPayloadArgs<{ roomId: string; status?: 'waiting' }>(rawArgs);
       if (!args.ok) {
         invalidPayload(args.ack);
         return;
@@ -1236,6 +1262,20 @@ export function setupSocketHandlers(
         }
       }
 
+      // 착석 대기 중 재요청(더블클릭/새 시도) — 멱등 응답으로 대기 유지
+      if (roomManager.isSeatWaiter(roomId, session.playerId)) {
+        socket.emit('room-joined', {
+          roomId,
+          gameState: {
+            ...room.engine.getPublicState(session.playerId),
+            turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+          },
+          chatHistory: roomManager.getChatHistory(roomId),
+        });
+        ack?.({ ok: true, data: { roomId, status: 'waiting' } });
+        return;
+      }
+
       // 비밀번호 방: 재입장(위 멱등 처리)이 아닌 신규 입장은 비밀번호 검증
       if (
         !retiredWalletSeat
@@ -1282,43 +1322,45 @@ export function setupSocketHandlers(
         }
       }
       // 만석이면 봇이 휴먼에게 자리를 양보한다.
-      // 핸드 진행 중 splice는 인덱스를 밀어 핸드를 깨뜨리므로, 핸드 사이에만 즉시 제거.
+      // 핸드 진행 중 splice는 인덱스를 밀어 핸드를 깨뜨리므로 즉시 착석은 불가 — 대신
+      // 관전 대기(seat waiter)로 입장시키고, 핸드가 끝나면 봇 퇴장→착석을 순차 진행한다.
       let botToRemove: Player | null = null;
+      let waitForSeat = false;
       if (room.engine.state.players.length >= 6) {
         if (room.engine.state.isHandInProgress) {
           const bot = room.engine.state.players.find(p => p.type === 'bot' && !p.pendingRemoval);
           if (!bot) {
-            ack?.({ ok: false, code: 'room-full', message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
-            return;
-          }
-          // leaveRoom 경유: 폴드로 핸드가 끝나는 경우의 승자 처리까지 위임
-          if (!roomManager.leaveRoom(roomId, bot.id)) {
+            eventLog.log('join-room:reject', {
+              roomId, playerId: session.playerId, data: { reason: 'room-full-humans' },
+            });
             ack?.({
               ok: false,
-              code: 'server-error',
-              message: '좌석 정리를 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+              code: 'room-full',
+              message: '자리가 모두 찼어요 — 새 방을 만들어 바로 시작해 보세요!',
             });
             return;
           }
-          ack?.({
-            ok: false,
-            code: 'bot-seat-pending',
-            message: `${bot.name}이(가) 이번 핸드를 끝으로 자리를 비워줘요 — 몇 초 후 다시 참가해 주세요!`,
-          });
-          return;
+          // 봇 양보 마킹은 enqueueSeatWaiter가 대기 등록과 함께 수행 (아래 waiting 경로)
+          waitForSeat = true;
+        } else {
+          // 핸드 사이: 예약된 봇(pendingRemoval) 포함 아무 봇이나 즉시 정리하고 그 자리에 착석
+          botToRemove = room.engine.state.players.find(p => p.type === 'bot') ?? null;
+          if (!botToRemove) {
+            ack?.({
+              ok: false,
+              code: 'room-full',
+              message: '자리가 모두 찼어요 — 새 방을 만들어 바로 시작해 보세요!',
+            });
+            return;
+          }
+          assignedSeat = botToRemove.seatIndex;
         }
-        // 핸드 사이: 예약된 봇(pendingRemoval) 포함 아무 봇이나 즉시 정리하고 그 자리에 착석
-        botToRemove = room.engine.state.players.find(p => p.type === 'bot') ?? null;
-        if (!botToRemove) {
-          ack?.({ ok: false, code: 'room-full', message: '자리가 모두 찼어요 — 다른 테이블을 찾아보세요.' });
-          return;
-        }
-        assignedSeat = botToRemove.seatIndex;
       }
 
       // 빈 좌석 탐색이 실패하면 assignedSeat이 -1로 남는다 — 그대로 앉히면 좌석 좌표가 없는
       // 유령 플레이어가 생겨(팟에는 참여) 테이블이 어그러진다. 여기서 끊는다.
-      if (assignedSeat < 0 || assignedSeat > 5) {
+      // (착석 대기는 좌석을 나중에 배정받으므로 예외)
+      if (!waitForSeat && (assignedSeat < 0 || assignedSeat > 5)) {
         eventLog.log('join-room:reject', {
           roomId, playerId: session.playerId,
           data: { reason: 'no-seat', assignedSeat, seats: seatSnapshot(roomId) },
@@ -1338,7 +1380,8 @@ export function setupSocketHandlers(
           : room.config.gameMode === 'sng'
             ? (room.config.startingStack ?? safeBuyIn)
             : safeBuyIn,
-        seatIndex: assignedSeat,
+        // 착석 대기는 좌석 미정(-1) — 실제 좌석은 착석 시점에 RoomManager가 배정
+        seatIndex: waitForSeat ? -1 : assignedSeat,
         holeCards: [],
         currentBet: 0,
         totalContributed: 0,
@@ -1478,6 +1521,85 @@ export function setupSocketHandlers(
         }
       }
 
+      // 착석 대기 경로 — escrow까지 연 상태로 대기 등록. 취소(이탈/끊김/방 정리) 시 hooks가
+      // escrow 환불과 room-lost 안내를 수행한다. 착석 자체는 핸드 종료 후 RoomManager가 진행.
+      if (waitForSeat) {
+        let escrowActive = admissionOpened !== null;
+        const refundWaiterEscrow = (): void => {
+          if (!escrowActive) return;
+          escrowActive = false;
+          try {
+            if (admissionOpened === 'sng') {
+              economy?.cancelSngEntry(session.playerId, roomId);
+            } else if (admissionOpened === 'cash') {
+              economy?.cancelCashEscrow(session.playerId, roomId);
+            }
+          } catch {
+            eventLog.log('join-room:compensation-failed', {
+              roomId,
+              playerId: session.playerId,
+              data: { reason: 'economy-unavailable' },
+            });
+          }
+        };
+        const enqueued = roomManager.enqueueSeatWaiter(roomId, player, {
+          onCancelled: (reason, message) => {
+            refundWaiterEscrow();
+            // self-leave는 leave-room ack가 클라이언트 상태를 정리한다 — room-lost 불필요
+            if (reason === 'self-leave') return;
+            const waiterSession = sessions.getByPlayerId(session.playerId);
+            if (!waiterSession || waiterSession.roomId !== roomId) return;
+            waiterSession.roomId = null;
+            const waiterSocket = waiterSession.socketId
+              ? io.sockets.sockets.get(waiterSession.socketId)
+              : undefined;
+            if (waiterSocket) {
+              waiterSocket.leave(roomId);
+              waiterSocket.emit('room-lost', { message });
+            }
+          },
+        });
+        if (enqueued !== 'waiting') {
+          refundWaiterEscrow();
+          eventLog.log('join-room:reject', {
+            roomId,
+            playerId: session.playerId,
+            data: { reason: `seat-waiter-${enqueued}`, seats: seatSnapshot(roomId) },
+          });
+          ack?.({
+            ok: false,
+            code: 'room-full',
+            message: '자리가 모두 찼어요 — 새 방을 만들어 바로 시작해 보세요!',
+          });
+          return;
+        }
+        if (!commitRoomMembership(roomId)) {
+          // cancelSeatWaiter가 hooks 경유로 escrow를 환불한다 (roomId 미커밋이라 room-lost는 생략됨)
+          roomManager.cancelSeatWaiter(roomId, session.playerId, 'seat-unavailable');
+          ack?.({
+            ok: false,
+            code: 'server-error',
+            message: '저장 연결을 확인 중이에요. 잠시 후 다시 시도해 주세요.',
+          });
+          return;
+        }
+        eventLog.log('join-room:waiting', {
+          roomId,
+          playerId: session.playerId,
+          data: { name: playerName, chips: player.chips, seats: seatSnapshot(roomId) },
+        });
+        socket.emit('room-joined', {
+          roomId,
+          gameState: {
+            ...room.engine.getPublicState(session.playerId),
+            turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+          },
+          chatHistory: roomManager.getChatHistory(roomId),
+        });
+        ack?.({ ok: true, data: { roomId, status: 'waiting' } });
+        return;
+      }
+
       if (botToRemove) room.engine.processLeave(botToRemove.id);
       let success = false;
       try {
@@ -1575,6 +1697,14 @@ export function setupSocketHandlers(
           roomId, playerId: session.playerId,
           data: { mode: data.mode, seats: seatSnapshot(roomId) },
         });
+        // 착석 대기 중 나가기 — 대기 취소 (hooks가 escrow 환불, 클라 정리는 이 ack가 담당)
+        if (roomManager.cancelSeatWaiter(roomId, session.playerId, 'self-leave')) {
+          socket.leave(roomId);
+          session.roomId = null;
+          broadcastRoomList();
+          ack?.({ ok: true });
+          return;
+        }
         if (isReserveMode) {
           const kind = data.mode === 'reserve-hand'
             ? 'hand' as const

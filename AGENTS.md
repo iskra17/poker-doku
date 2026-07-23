@@ -179,7 +179,16 @@ npx tsc --noEmit
   시스템·봇 메시지는 모두 `appendChatMessage()`를 통과해 방별 최신 100개만 보존하고,
   `getChatHistory()`는 내부 배열의 복사본을 반환한다.
 - **캐시 방 봇 정책**: `RoomConfig.botCount`(0~5, 기본 2)까지만 충원. 봇 좌석은 만석이 아님 —
-  만석 입장 시 봇이 자리를 양보한다 (핸드 사이 즉시, 핸드 중엔 pendingRemoval + 재시도 안내).
+  만석 입장 시 봇이 자리를 양보한다 (핸드 사이엔 즉시 교체). **핸드 진행 중엔 착석 대기(seat
+  waiter)**: 거절/수동 재시도 대신 방에 관전 대기로 입장(room-joined + ack status 'waiting',
+  게임뷰는 본인이 players에 없으면 '자리 준비 중' 배너), 양보 봇은 pendingRemoval+폴드 마킹.
+  핸드 종료 후 봇 퇴장(t+5s)→대기자 착석(t+6.2s)을 **순차 브로드캐스트** — 한 프레임에 봇이
+  사람으로 바뀌면 버그로 오인된다(2026-07-23 유저 피드백). 폴드한 봇도 핸드 종료 전 좌석 제거
+  금지(팟 회계 불변식). 착석이 다음 핸드를 +2초로 재예약하므로 6.5초 스타트와 경합 없음.
+  대기 취소(나가기/끊김 — grace 없음)는 양보 봇 원복 + escrow 환불(hooks), 방 정리는 room-lost.
+  refreshCashBots는 대기자 몫 좌석을 재충원에서 제외. 사람만으로 만석이면 'room-full' 거절 —
+  클라 로비가 '새 방 만들기' CTA 노출(웨이팅 리스트는 미구현 범위). 회귀:
+  `room-manager.seat-waiter.test.ts`, `socket-handler.integration.test.ts` '착석 대기'.
   로비 만석 판정은 humanCount 기준 (RoomList.isRoomFull).
 - **테이블 인원 구성**: `RoomConfig.tableType: 'bots'|'mixed'|'humans'` — UI 라벨은
   '🎯 혼자 연습'/'봇+사람'/'사람만'. bots를 '봇 전용'으로 부르지 말 것 (AI끼리 논다는 오해를

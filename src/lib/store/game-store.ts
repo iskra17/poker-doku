@@ -67,6 +67,8 @@ interface GameStore {
   pendingRoomId: string | null;
   pendingAction: PendingAction | null;
   joinError: string | null;
+  /** 마지막 입장 실패 코드 — 'room-full'이면 로비가 '새 방 만들기' CTA를 함께 노출 */
+  joinErrorCode: string | null;
   tableNotice: string | null;
 
   gameState: GameState | null;
@@ -112,6 +114,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   pendingRoomId: null,
   pendingAction: null,
   joinError: null,
+  joinErrorCode: null,
   tableNotice: null,
   gameState: null,
   chatMessages: [],
@@ -175,6 +178,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameState: data.gameState,
         chatMessages: data.chatHistory,
         joinError: null,
+        joinErrorCode: null,
         tableNotice: null,
       });
     });
@@ -217,7 +221,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     });
 
     socket.on('room-created', () => {
-      set({ showCreateRoom: false, joinError: null });
+      set({ showCreateRoom: false, joinError: null, joinErrorCode: null });
     });
 
     socket.on('room-lost', data => {
@@ -231,6 +235,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         chatMessages: [],
         tableNotice: null,
         joinError: data?.message ?? '게임 연결이 초기화되어 로비로 돌아왔어요.',
+        joinErrorCode: null,
       });
     });
 
@@ -260,6 +265,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       chatMessages: [],
       rooms: [],
       joinError: null,
+      joinErrorCode: null,
       tableNotice: null,
       showCreateRoom: false,
     });
@@ -284,7 +290,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get();
     if (!socket?.connected) return;
     // 입장을 시도했으면 생성 방 자동 오픈은 소비된 것 — 로비 복귀 시 모달이 다시 뜨지 않게
-    set({ pendingRoomId: roomId, joinError: null, createdRoomId: null });
+    set({ pendingRoomId: roomId, joinError: null, joinErrorCode: null, createdRoomId: null });
     clearJoinTimeout();
     joinTimeoutTimer = setTimeout(() => {
       joinTimeoutTimer = null;
@@ -292,6 +298,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({
         pendingRoomId: null,
         joinError: '방 입장 응답을 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
+        joinErrorCode: null,
       });
     }, JOIN_TIMEOUT_MS);
 
@@ -303,7 +310,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }, ack => {
       if (ack.ok || get().pendingRoomId !== roomId) return;
       clearJoinTimeout();
-      set({ pendingRoomId: null, joinError: ack.message });
+      set({ pendingRoomId: null, joinError: ack.message, joinErrorCode: ack.code });
     });
   },
 
@@ -329,6 +336,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
           gameState: null,
           chatMessages: [],
           joinError: null,
+          joinErrorCode: null,
           tableNotice: null,
         });
         resolve(true);
@@ -360,6 +368,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
             gameState: null,
             chatMessages: [],
             joinError: null,
+            joinErrorCode: null,
             tableNotice: null,
           });
         }
@@ -467,7 +476,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     }, ack => {
       if (ack.ok) {
         // 방금 만든 방의 바이인 모달을 로비가 바로 띄우도록 id를 남긴다
-        set({ showCreateRoom: false, joinError: null, createdRoomId: ack.data?.roomId ?? null });
+        set({ showCreateRoom: false, joinError: null, joinErrorCode: null, createdRoomId: ack.data?.roomId ?? null });
       } else {
         set({ joinError: ack.message });
       }

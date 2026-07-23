@@ -34,7 +34,8 @@ export default function Home() {
   const bootstrap = useProfileStore(state => state.bootstrap);
   const refresh = useProfileStore(state => state.refresh);
   const {
-    leaveRoom, currentRoomId, pendingRoomId, joinError, rooms, createdRoomId, clearCreatedRoom,
+    leaveRoom, currentRoomId, pendingRoomId, joinError, joinErrorCode, rooms, createdRoomId,
+    clearCreatedRoom, setShowCreateRoom,
   } = useGameStore();
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -178,7 +179,21 @@ export default function Home() {
             <div className="flex-none"><PartnerCard /></div>
             {(joinError || pendingRoomId || inviteNotFound || inviteRoom?.locked) && (
               <div className="flex-none">
-                {joinError && <p className="mb-2 text-center text-xs text-blossom">{joinError}</p>}
+                {joinError && (
+                  <div className="mb-2 flex flex-wrap items-center justify-center gap-2">
+                    <p className="text-center text-xs text-blossom">{joinError}</p>
+                    {/* 만석(사람만) 방 입장 실패 → 새 방 생성 유도 (웨이팅 리스트는 차후 과제) */}
+                    {joinErrorCode === 'room-full' && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateRoom(true)}
+                        className="rounded-lg border border-blossom/50 bg-blossom/15 px-2.5 py-1 text-xs font-bold text-blossom hover:bg-blossom/25"
+                      >
+                        + 새 방 만들기
+                      </button>
+                    )}
+                  </div>
+                )}
                 {pendingRoomId && <p className="mb-2 text-center text-xs text-gilded">입장 확인 중…</p>}
                 {inviteNotFound && (
                   <p className="mb-2 text-center text-xs text-blossom">

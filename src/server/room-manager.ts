@@ -49,6 +49,21 @@ const EMPTY_USER_ROOM_RETENTION_MS = 10 * 60_000;
 const PRE_HAND_RETRY_MS = 1_000;
 const MAX_PRE_HAND_RETRIES = 3;
 const HAND_SETTLEMENT_RETRY_MS = 1_000;
+// 착석 대기 핸드오프 연출 — 핸드 종료(승리 연출 ~5.5s와 병행) 후 봇 퇴장을 먼저 보여주고,
+// 잠시 뒤 대기자를 앉힌다. 봇 퇴장과 착석이 한 프레임에 겹치면 "봇이 사람으로 바뀌는 버그"로
+// 오인된다 (2026-07-23 유저 피드백). 착석 시 joinRoom→tryStartGame이 다음 핸드를 +2초로
+// 재예약하므로 기본 6.5초 스타트 타이머와 경합하지 않는다.
+const SEAT_HANDOFF_BOT_EXIT_MS = 5_000;
+const SEAT_HANDOFF_SIT_DELAY_MS = 1_200;
+
+function seatWaiterCancelMessage(reason: SeatWaiterCancelReason): string {
+  switch (reason) {
+    case 'self-leave': return '착석 대기를 취소했어요.';
+    case 'disconnect': return '연결이 끊겨 착석 대기가 취소됐어요.';
+    case 'room-closed': return '테이블이 정리되어 로비로 돌아왔어요.';
+    case 'seat-unavailable': return '좌석을 확보하지 못했어요 — 다른 테이블을 찾아보세요.';
+  }
+}
 const SNG_FINALIZE_RETRY_MS = 1_000;
 const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
 
@@ -93,6 +108,33 @@ export interface RoomManagerOptions {
   onSeatReclaimed?: (roomId: string, playerId: string, message?: string) => void;
 }
 
+/**
+ * 착석 대기 취소 사유.
+ * - self-leave: 본인이 대기 취소(leave-room) — 클라이언트가 ack로 정리하므로 room-lost 불필요
+ * - disconnect: 대기 중 접속 끊김 — 대기석은 grace 없이 즉시 회수
+ * - room-closed: 방 정리/초기화 — room-lost 안내 필요
+ * - seat-unavailable: 좌석 확보 실패(엔진 거절 등 예외 경로)
+ */
+export type SeatWaiterCancelReason =
+  | 'self-leave'
+  | 'disconnect'
+  | 'room-closed'
+  | 'seat-unavailable';
+
+export interface SeatWaiterHooks {
+  /**
+   * 대기 취소 통지 — escrow 환불·세션 정리·room-lost emit은 socket-handler 몫.
+   * 착석 성공 시에는 호출되지 않는다 (클라이언트는 game-update의 본인 좌석 등장으로 감지).
+   */
+  onCancelled?: (reason: SeatWaiterCancelReason, message: string) => void;
+}
+
+interface SeatWaiter {
+  player: Player;
+  hooks?: SeatWaiterHooks;
+  enqueuedAt: number;
+}
+
 export interface RoomArenaHooks {
   completeOfficial(input: {
     matchId: string;
@@ -131,6 +173,7 @@ export interface RoomManagerRuntimeStats {
   deadlines: number;
   epochs: number;
   tournamentClocks: number;
+  seatWaiters: number;
 }
 
 export class RoomManager {
@@ -152,6 +195,10 @@ export class RoomManager {
   private turnDeadlines: Map<string, number> = new Map();
   /** 자리비움 후 방을 떠난 좌석의 최종 정리 타이머 — 키 `${roomId}:${playerId}` (복귀 시 취소) */
   private sitOutAbandonTimers: Map<string, NodeJS.Timeout> = new Map();
+  /** 착석 대기열 — 만석(봇 포함) 방에 입장한 휴먼이 봇 좌석이 비워질 때까지 관전 대기 (FIFO) */
+  private seatWaiters: Map<string, SeatWaiter[]> = new Map();
+  /** 착석 핸드오프 연출 타이머(봇 퇴장→대기자 착석 순차 브로드캐스트) — disposeRoom에서 정리 */
+  private seatHandoffTimers: Map<string, NodeJS.Timeout[]> = new Map();
   /** 방별 휴먼 공격성 추적 — 봇의 상습 쇼버/레이저 대응용 (disposeRoom/엔진 교체 시 함께 정리) */
   private aggroTrackers: Map<string, AggroTracker> = new Map();
   private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -325,6 +372,7 @@ export class RoomManager {
       deadlines: this.turnDeadlines.size,
       epochs: this.botLoopEpochs.size,
       tournamentClocks: this.tournamentClocks.size,
+      seatWaiters: [...this.seatWaiters.values()].reduce((sum, list) => sum + list.length, 0),
     };
   }
 
@@ -386,6 +434,7 @@ export class RoomManager {
       clearTimeout(timer);
       this.sitOutAbandonTimers.delete(key);
     }
+    this.cancelAllSeatWaiters(roomId, 'room-closed');
 
     this.rooms.delete(roomId);
     this.chatHistory.delete(roomId);
@@ -565,6 +614,175 @@ export class RoomManager {
     return true;
   }
 
+  // --- 착석 대기 (만석 방의 봇 좌석 핸드오프) ---
+  // 만석(봇 포함) 방에 휴먼이 오면 거절/재시도 대신 관전 대기로 입장시키고, 진행 중 핸드가
+  // 끝나면 봇 퇴장 → 대기자 착석을 순차 브로드캐스트한다. 폴드한 봇이라도 핸드 종료 전에는
+  // 좌석을 제거하지 않는다 — 팟 회계(sum(pots) === sum(totalContributed))가 좌석 splice에
+  // 깨지는 엔진 불변식 때문이다 (AGENTS.md '핸드 중 이탈').
+
+  /**
+   * 착석 대기 등록 — 호출 전제: 캐시 방 만석 + 핸드 진행 중 (검증은 여기서 최종 수행).
+   * 양보할 봇을 즉시 pendingRemoval+폴드로 마킹해 "이번 핸드를 끝으로 나간다"를 확정한다.
+   * 대기자 push를 봇 이탈보다 먼저 해, 봇 폴드로 핸드가 동기 종료돼도 핸드오프가 대기자를 본다.
+   */
+  enqueueSeatWaiter(
+    roomId: string,
+    player: Player,
+    hooks?: SeatWaiterHooks,
+  ): 'waiting' | 'no-room' | 'not-cash' | 'already' | 'no-bot' {
+    const room = this.rooms.get(roomId);
+    if (!room) return 'no-room';
+    if (room.engine.state.tournament) return 'not-cash';
+    const st = room.engine.state;
+    if (st.players.some(p => p.id === player.id)) return 'already';
+    const queue = this.seatWaiters.get(roomId) ?? [];
+    if (queue.some(w => w.player.id === player.id)) return 'already';
+    const yieldingBot = st.players.find(p => p.type === 'bot' && !p.pendingRemoval);
+    if (!yieldingBot) return 'no-bot';
+
+    queue.push({ player, hooks, enqueuedAt: Date.now() });
+    this.seatWaiters.set(roomId, queue);
+    this.sendSystemChat(
+      roomId,
+      `${player.name}님이 입장했어요 — ${yieldingBot.name}이(가) 이번 핸드를 끝으로 자리를 비워줍니다.`,
+    );
+    this.leaveRoom(roomId, yieldingBot.id);
+    // 그 사이 핸드가 이미 끝나 있으면(동기 종료 포함) 기다릴 이유가 없다 — 즉시 착석 시도
+    const current = this.rooms.get(roomId);
+    if (current && !current.engine.state.isHandInProgress && !this.seatHandoffTimers.has(roomId)) {
+      this.trySeatWaitersNow(roomId);
+    }
+    return 'waiting';
+  }
+
+  /** 대기 취소 — 등록돼 있었으면 true. 양보 예약된 봇은 되돌린다 (다음 핸드부터 계속 딜인). */
+  cancelSeatWaiter(
+    roomId: string,
+    playerId: string,
+    reason: SeatWaiterCancelReason,
+  ): boolean {
+    const queue = this.seatWaiters.get(roomId);
+    if (!queue) return false;
+    const idx = queue.findIndex(w => w.player.id === playerId);
+    if (idx === -1) return false;
+    const [waiter] = queue.splice(idx, 1);
+    if (queue.length === 0) this.seatWaiters.delete(roomId);
+
+    // 방이 정리되는 중이 아니면 양보 봇 하나를 원복 — 파산(chips<=0) 봇은 어차피 정리 대상이라 제외
+    if (reason === 'self-leave' || reason === 'disconnect') {
+      const room = this.rooms.get(roomId);
+      const yieldedBot = room?.engine.state.players.find(
+        p => p.type === 'bot' && p.pendingRemoval && p.chips > 0,
+      );
+      if (yieldedBot) {
+        yieldedBot.pendingRemoval = false;
+        this.sendSystemChat(roomId, `${yieldedBot.name}이(가) 그대로 자리를 지키기로 했어요.`);
+      }
+    }
+
+    waiter.hooks?.onCancelled?.(reason, seatWaiterCancelMessage(reason));
+    return true;
+  }
+
+  isSeatWaiter(roomId: string, playerId: string): boolean {
+    return this.seatWaiters.get(roomId)?.some(w => w.player.id === playerId) ?? false;
+  }
+
+  /** 대기자 개인 game-update 전송 대상 — socket-handler onUpdate가 좌석 플레이어에 더해 사용 */
+  getSeatWaiterIds(roomId: string): string[] {
+    return this.seatWaiters.get(roomId)?.map(w => w.player.id) ?? [];
+  }
+
+  private seatWaiterCount(roomId: string): number {
+    return this.seatWaiters.get(roomId)?.length ?? 0;
+  }
+
+  /**
+   * 대기자 착석 시도 — 핸드 사이에만 실제 착석. 빈 좌석이 모자라면 남은 대기자는 다음
+   * 핸드오프까지 대기 유지. joinRoom이 착석 채팅과 tryStartGame(다음 핸드 +2초 재예약)을 담당.
+   */
+  private trySeatWaitersNow(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    const queue = this.seatWaiters.get(roomId);
+    if (!room || !queue || queue.length === 0) return;
+    if (room.engine.state.isHandInProgress) return;
+
+    let seatedAny = false;
+    while (queue.length > 0) {
+      const occupied = new Set(room.engine.state.players.map(p => p.seatIndex));
+      let seatIndex = -1;
+      for (let seat = 0; seat < room.config.maxPlayers; seat++) {
+        if (!occupied.has(seat)) { seatIndex = seat; break; }
+      }
+      if (seatIndex < 0) break; // 빈 좌석 없음 — 다음 핸드오프에서 재시도
+      const waiter = queue.shift()!;
+      waiter.player.seatIndex = seatIndex;
+      if (this.joinRoom(roomId, waiter.player)) {
+        seatedAny = true;
+      } else {
+        // 엔진 거절(중복 id 등 예외 경로) — 대기 유지가 더 위험하므로 취소 통지
+        waiter.hooks?.onCancelled?.(
+          'seat-unavailable',
+          seatWaiterCancelMessage('seat-unavailable'),
+        );
+      }
+    }
+    if (queue.length === 0) this.seatWaiters.delete(roomId);
+    if (seatedAny) {
+      this.onUpdate(roomId, room.engine);
+      this.onRoomsChanged?.();
+    }
+  }
+
+  /**
+   * 핸드 종료 후 좌석 핸드오프 연출 — 봇 퇴장(t=5s)과 대기자 착석(t=6.2s)을 별도
+   * 브로드캐스트로 나눠 기존 플레이어에게 순차적으로 보여준다.
+   */
+  private scheduleSeatHandoff(roomId: string): void {
+    if (this.seatWaiterCount(roomId) === 0) return;
+    this.clearSeatHandoffTimers(roomId);
+    const timers: NodeJS.Timeout[] = [];
+
+    timers.push(setTimeout(() => {
+      const room = this.rooms.get(roomId);
+      if (!room || room.engine.state.isHandInProgress) return;
+      const leaving = room.engine.state.players.filter(p => p.pendingRemoval && p.type === 'bot');
+      room.engine.removePendingPlayers();
+      if (leaving.length > 0) {
+        this.sendSystemChat(
+          roomId,
+          `${leaving.map(p => p.name).join(', ')}이(가) 자리에서 일어났어요.`,
+        );
+        this.onUpdate(roomId, room.engine);
+      }
+    }, SEAT_HANDOFF_BOT_EXIT_MS));
+
+    timers.push(setTimeout(() => {
+      this.seatHandoffTimers.delete(roomId);
+      this.trySeatWaitersNow(roomId);
+    }, SEAT_HANDOFF_BOT_EXIT_MS + SEAT_HANDOFF_SIT_DELAY_MS));
+
+    this.seatHandoffTimers.set(roomId, timers);
+  }
+
+  private clearSeatHandoffTimers(roomId: string): void {
+    const timers = this.seatHandoffTimers.get(roomId);
+    if (!timers) return;
+    for (const timer of timers) clearTimeout(timer);
+    this.seatHandoffTimers.delete(roomId);
+  }
+
+  /** 방 정리/초기화 시 대기열 일괄 취소 — escrow 환불·room-lost 안내는 hooks가 수행 */
+  private cancelAllSeatWaiters(roomId: string, reason: SeatWaiterCancelReason): void {
+    this.clearSeatHandoffTimers(roomId);
+    const queue = this.seatWaiters.get(roomId);
+    if (!queue) return;
+    this.seatWaiters.delete(roomId);
+    for (const waiter of queue) {
+      waiter.hooks?.onCancelled?.(reason, seatWaiterCancelMessage(reason));
+    }
+  }
+
   leaveRoom(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return true;
@@ -638,7 +856,11 @@ export class RoomManager {
     const preserveForEconomicSettlement = this.isWalletCash(room)
       && wasInProgress
       && room.engine.state.isHandInProgress;
-    if (humans.length === 0 && !preserveForEconomicSettlement) {
+    if (
+      humans.length === 0
+      && !preserveForEconomicSettlement
+      && this.seatWaiterCount(roomId) === 0
+    ) {
       if (wasInProgress && handComplete) {
         this.handleCompletedHand(roomId);
         this.cleanupEmptyRoom(roomId, player !== null);
@@ -759,6 +981,11 @@ export class RoomManager {
   private cleanupEmptyRoom(roomId: string, roomsChanged: boolean): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    // 착석 대기자가 있으면 방은 비어 있지 않다 — 정리 대신 착석시켜 게임을 잇는다
+    if (this.seatWaiterCount(roomId) > 0) {
+      if (!room.engine.state.isHandInProgress) this.trySeatWaitersNow(roomId);
+      return;
+    }
     if (this.unresolvedSettlementRooms.has(roomId)) {
       this.stopBotLoop(roomId);
       this.clearPendingStart(roomId);
@@ -804,6 +1031,8 @@ export class RoomManager {
   private resetRoomToIdle(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    // 엔진 교체는 양보 예약·좌석 상태를 전부 무효화한다 — 남은 대기자는 안내 후 정리
+    this.cancelAllSeatWaiters(roomId, 'room-closed');
     if (this.unresolvedSettlementRooms.has(roomId)) return;
     if (this.isWalletCash(room) && room.engine.state.isHandInProgress) return;
     const nextRunId = this.reserveRoomRunId();
@@ -907,9 +1136,10 @@ export class RoomManager {
 
     const humans = room.engine.state.players.filter(p => p.type === 'human').length;
     const bots = room.engine.state.players.length - humans;
+    // 착석 대기자 몫의 좌석은 봇 재충원에서 제외 — 아니면 양보로 비운 자리를 봇이 도로 채운다
     const targetBots = Math.min(
       room.config.botCount ?? cfg('bot.defaultBotCount'),
-      room.config.maxPlayers - humans,
+      room.config.maxPlayers - humans - this.seatWaiterCount(roomId),
     );
     if (bots < targetBots) {
       fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
@@ -2414,13 +2644,15 @@ export class RoomManager {
     const remainingHumans = state.players.filter(
       player => player.type === 'human' && !player.pendingRemoval,
     );
-    if (remainingHumans.length === 0) {
+    if (remainingHumans.length === 0 && this.seatWaiterCount(roomId) === 0) {
       this.cleanupEmptyRoom(roomId, true);
       return;
     }
     // 이번 핸드로 파산한 캐시 휴먼 좌석에 리바이 유예를 건다 (방치 좌석 회수의 유일한 경로)
     this.scheduleBustReclaims(roomId);
     this.scheduleNextHand(roomId);
+    // 착석 대기자가 있으면 봇 퇴장→착석을 순차 연출 (다음 핸드는 착석 시점에 +2초로 재예약됨)
+    this.scheduleSeatHandoff(roomId);
   }
 
   /**

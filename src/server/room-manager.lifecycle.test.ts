@@ -190,6 +190,7 @@ describe('RoomManager 메모리 수명주기', () => {
       deadlines: 0,
       epochs: 0,
       tournamentClocks: 0,
+      seatWaiters: 0,
     });
     expect(disposed).toEqual([{ roomId, playerIds: ['p1', 'p2'], reason: 'manual' }]);
   });
