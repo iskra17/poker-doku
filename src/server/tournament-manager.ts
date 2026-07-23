@@ -153,6 +153,8 @@ interface PendingBust {
   playerId: string;
   name: string;
   handStartChips: number;
+  seatIndex: number;
+  buttonSeatIndex: number;
 }
 
 interface TournamentRuntime {
@@ -959,12 +961,7 @@ export class TournamentManager {
     // 같은 동기화 핸드의 탈락은 테이블이 달라도 "같은 핸드"로 순위를 판정한다 (Stars 2.2)
     if (t.h4h.active) {
       for (const p of busted) {
-        t.h4h.busts.push({
-          roomId,
-          playerId: p.id,
-          name: p.name,
-          handStartChips: p.handStartChips ?? 0,
-        });
+        t.h4h.busts.push(this.pendingBust(roomId, engine, p));
         p.pendingRemoval = true;
       }
       this.addHold(t, roomId, 'h4h-barrier');
@@ -975,8 +972,7 @@ export class TournamentManager {
     if (busted.length > 0) {
       this.assignEliminations(
         t,
-        busted
-          .map(p => ({ roomId, playerId: p.id, name: p.name, handStartChips: p.handStartChips ?? 0 })),
+        busted.map(p => this.pendingBust(roomId, engine, p)),
       );
     }
 
@@ -1035,6 +1031,8 @@ export class TournamentManager {
         playerId,
         name: player.name,
         handStartChips: player.handStartChips ?? player.chips,
+        seatIndex: player.seatIndex,
+        buttonSeatIndex: engine.state.players[engine.state.dealerIndex]?.seatIndex ?? 0,
       }]);
       if (!this.checkCompletion(t)) this.beginFinalFormation(t);
     });
@@ -1049,38 +1047,109 @@ export class TournamentManager {
 
   // --- 탈락/순위 ---
 
-  /** 같은 배치 내 동시 탈락은 핸드 시작 스택 오름차순으로 낮은 순위부터 부여 */
+  private pendingBust(roomId: string, engine: PokerEngine, player: Player): PendingBust {
+    return {
+      roomId,
+      playerId: player.id,
+      name: player.name,
+      handStartChips: player.handStartChips ?? 0,
+      seatIndex: player.seatIndex,
+      buttonSeatIndex: engine.state.players[engine.state.dealerIndex]?.seatIndex ?? 0,
+    };
+  }
+
+  private buttonLeftDistance(t: TournamentRuntime, bust: PendingBust): number {
+    const distance = (
+      bust.seatIndex - bust.buttonSeatIndex + t.config.tableSize
+    ) % t.config.tableSize;
+    return distance === 0 ? t.config.tableSize : distance;
+  }
+
+  /**
+   * 높은 시작 스택부터 순위 그룹을 만든다. 같은 테이블의 동일 스택은 버튼 왼쪽
+   * 좌석 순으로 개별 순위를 받고, H4H의 서로 다른 테이블에서 같은 순번인 버스트는
+   * 공동 순위가 된다.
+   */
+  private eliminationGroups(
+    t: TournamentRuntime,
+    busts: readonly PendingBust[],
+  ): PendingBust[][] {
+    const byStack = new Map<number, PendingBust[]>();
+    for (const bust of busts) {
+      const group = byStack.get(bust.handStartChips) ?? [];
+      group.push(bust);
+      byStack.set(bust.handStartChips, group);
+    }
+
+    const groups: PendingBust[][] = [];
+    const stacks = [...byStack.keys()].sort((a, b) => b - a);
+    for (const stack of stacks) {
+      const byRoom = new Map<string, PendingBust[]>();
+      for (const bust of byStack.get(stack) ?? []) {
+        const roomBusts = byRoom.get(bust.roomId) ?? [];
+        roomBusts.push(bust);
+        byRoom.set(bust.roomId, roomBusts);
+      }
+      const roomGroups = [...byRoom.values()].map(roomBusts => (
+        roomBusts.sort((a, b) => (
+          this.buttonLeftDistance(t, a) - this.buttonLeftDistance(t, b)
+          || a.playerId.localeCompare(b.playerId)
+        ))
+      ));
+      const largestRoomGroup = Math.max(...roomGroups.map(group => group.length));
+      for (let index = 0; index < largestRoomGroup; index++) {
+        const tied = roomGroups
+          .map(group => group[index])
+          .filter((bust): bust is PendingBust => bust !== undefined)
+          .sort((a, b) => a.playerId.localeCompare(b.playerId));
+        groups.push(tied);
+      }
+    }
+    return groups;
+  }
+
+  /** 같은 배치의 탈락을 결정론적 순위 그룹으로 확정하고 점유 순위 상금을 분할한다. */
   private assignEliminations(t: TournamentRuntime, busts: PendingBust[]): void {
     if (busts.length === 0) return;
-    const ordered = [...busts].sort((a, b) => a.handStartChips - b.handStartChips);
-    for (const bust of ordered) {
-      const place = t.remaining;
-      const prize = t.prizes[place - 1] ?? 0;
-      t.remaining -= 1;
-      t.results.push({ playerId: bust.playerId, name: bust.name, place, prize });
+    const groups = this.eliminationGroups(t, busts);
+    let place = t.remaining - busts.length + 1;
+    for (const group of groups) {
+      const occupiedPrize = Array.from(
+        { length: group.length },
+        (_, index) => t.prizes[place + index - 1] ?? 0,
+      ).reduce((sum, prize) => sum + prize, 0);
+      const basePrize = Math.floor(occupiedPrize / group.length);
+      const remainder = occupiedPrize - basePrize * group.length;
 
-      const room = this.roomManager.getRoom(bust.roomId);
-      if (room) {
-        room.engine.applyTournamentEliminations([{ playerId: bust.playerId, place, prize }]);
-        const player = room.engine.state.players.find(p => p.id === bust.playerId);
-        if (player) {
-          player.pendingRemoval = true;
-          if (player.type === 'human') {
-            this.hooks.onEliminated?.({
-              tournamentId: t.id,
-              roomId: bust.roomId,
-              playerId: bust.playerId,
-              place,
-              prize,
-            });
+      for (const [index, bust] of group.entries()) {
+        const prize = basePrize + (index < remainder ? 1 : 0);
+        t.remaining -= 1;
+        t.results.push({ playerId: bust.playerId, name: bust.name, place, prize });
+
+        const room = this.roomManager.getRoom(bust.roomId);
+        if (room) {
+          room.engine.applyTournamentEliminations([{ playerId: bust.playerId, place, prize }]);
+          const player = room.engine.state.players.find(p => p.id === bust.playerId);
+          if (player) {
+            player.pendingRemoval = true;
+            if (player.type === 'human') {
+              this.hooks.onEliminated?.({
+                tournamentId: t.id,
+                roomId: bust.roomId,
+                playerId: bust.playerId,
+                place,
+                prize,
+              });
+            }
           }
+          const prizeText = prize > 0 ? ` — 상금 ${prize.toLocaleString()} 획득!` : '';
+          this.roomManager.postSystemChat(
+            bust.roomId,
+            `${bust.name}님이 ${place}위로 탈락했습니다${prizeText} (남은 인원 ${t.remaining}명)`,
+          );
         }
-        const prizeText = prize > 0 ? ` — 상금 ${prize.toLocaleString()} 획득!` : '';
-        this.roomManager.postSystemChat(
-          bust.roomId,
-          `${bust.name}님이 ${place}위로 탈락했습니다${prizeText} (남은 인원 ${t.remaining}명)`,
-        );
       }
+      place += group.length;
     }
     // 탈락 확정(finishPlace)·잔존 인원이 실린 스냅샷을 즉시 재브로드캐스트 — EliminationNotice 표시 계약
     this.syncTournamentPresentation(t);

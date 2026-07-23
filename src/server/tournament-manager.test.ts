@@ -5,6 +5,7 @@ import {
   type TournamentRuntimeHooks,
 } from './tournament-manager';
 import type { PokerEngine } from '../lib/poker/engine';
+import { computePayouts } from '../lib/poker/payout-table';
 
 /**
  * MTT 오케스트레이션 통합 테스트.
@@ -87,6 +88,87 @@ function start12(h: Harness): { id: string; tables: string[] } {
   const tables = mttTableIds(h.roomManager);
   expect(tables.length).toBe(2);
   return { id: created.tournamentId, tables };
+}
+
+function prepareFourMaxH4hBubble(h: Harness): { id: string; tables: string[] } {
+  const created = h.manager.createTournament({
+    name: '동률 H4H',
+    speed: 'standard',
+    maxEntrants: 12,
+    tableSize: 4,
+    startAt: null,
+    botFill: false,
+    turnTime: 15,
+    hostId: 'h1',
+  });
+  if (!created.ok) throw new Error('create failed');
+  for (let i = 1; i <= 12; i++) {
+    h.manager.register(created.tournamentId, {
+      id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+    });
+  }
+  expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+  while (h.manager.listTournaments()[0].remaining > 6) {
+    const candidates = mttTableIds(h.roomManager)
+      .map(id => ({ id, alive: aliveIds(engineOf(h.roomManager, id)).length }))
+      .sort((a, b) => b.alive - a.alive);
+    const roomId = candidates[0]?.id;
+    if (!roomId || candidates[0].alive === 0) {
+      throw new Error(
+        `no live H4H candidate: remaining=${h.manager.listTournaments()[0].remaining} `
+        + `${JSON.stringify(candidates)}`,
+      );
+    }
+    const engine = engineOf(h.roomManager, roomId);
+    bust(engine, aliveIds(engine)[0], 100);
+    h.manager.roomHooks.onHandComplete(roomId);
+  }
+
+  return { id: created.tournamentId, tables: mttTableIds(h.roomManager) };
+}
+
+function runCrossTableTie(
+  callbackOrder: 'forward' | 'reverse',
+): Array<{ playerId: string; place: number; prize: number }> {
+  const local = createHarness();
+  try {
+    const { tables } = prepareFourMaxH4hBubble(local);
+    const [firstRoomId, secondRoomId] = tables;
+    const first = engineOf(local.roomManager, firstRoomId);
+    const second = engineOf(local.roomManager, secondRoomId);
+
+    // 6 → 5명: 버블 H4H를 무장한 뒤 두 테이블이 같은 라운드를 시작한다.
+    bust(first, aliveIds(first)[0], 100);
+    expect(local.manager.roomHooks.onHandComplete(firstRoomId)).toBe('hold');
+    for (const [roomId, engine] of [
+      [firstRoomId, first],
+      [secondRoomId, second],
+    ] as const) {
+      engine.startHand();
+      local.manager.roomHooks.onHandStarted(roomId, engine.state.handNumber);
+    }
+
+    const firstPlayerId = aliveIds(first)[0];
+    const secondPlayerId = aliveIds(second)[0];
+    bust(first, firstPlayerId, 777);
+    bust(second, secondPlayerId, 777);
+
+    const callbacks = callbackOrder === 'forward'
+      ? [[firstRoomId, first], [secondRoomId, second]] as const
+      : [[secondRoomId, second], [firstRoomId, first]] as const;
+    for (const [roomId, engine] of callbacks) {
+      engine.state.isHandInProgress = false;
+      local.manager.roomHooks.onHandComplete(roomId);
+    }
+
+    return local.events.eliminated
+      .filter(event => event.playerId === firstPlayerId || event.playerId === secondPlayerId)
+      .sort((a, b) => a.playerId.localeCompare(b.playerId));
+  } finally {
+    local.manager.shutdown();
+    local.roomManager.shutdown();
+  }
 }
 
 describe('TournamentManager', () => {
@@ -252,6 +334,42 @@ describe('TournamentManager', () => {
     const movedId = h.events.moved[0].playerId;
     const moved = e1.state.players.find(p => p.id === movedId)!;
     expect(moved.chips).toBe(10000);
+  });
+
+  it('breaks same-table equal-stack eliminations by seat order left of the button', () => {
+    const { tables: [roomId] } = start12(h);
+    const engine = engineOf(h.roomManager, roomId);
+    engine.state.dealerIndex = 0;
+    const firstLeft = engine.state.players[1];
+    const fartherLeft = engine.state.players[3];
+
+    bust(engine, firstLeft.id, 500);
+    bust(engine, fartherLeft.id, 500);
+    expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('continue');
+
+    expect(firstLeft.finishPlace).toBe(11);
+    expect(fartherLeft.finishPlace).toBe(12);
+  });
+
+  it('gives cross-table equal-stack H4H busts identical results regardless of callback order', () => {
+    let randomCall = 0;
+    const random = vi.spyOn(Math, 'random').mockImplementation(
+      () => ((randomCall++ % 997) + 1) / 1_000,
+    );
+    try {
+      randomCall = 0;
+      const forward = runCrossTableTie('forward');
+      randomCall = 0;
+      const reverse = runCrossTableTie('reverse');
+      const ladder = computePayouts(120_000, 12);
+
+      expect(reverse).toEqual(forward);
+      expect(forward.map(result => result.place)).toEqual([4, 4]);
+      expect(forward.reduce((sum, result) => sum + result.prize, 0))
+        .toBe((ladder[3] ?? 0) + (ladder[4] ?? 0));
+    } finally {
+      random.mockRestore();
+    }
   });
 
   it('merges to a final table before arming H4H when the field fits', () => {
