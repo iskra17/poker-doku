@@ -17,6 +17,10 @@ import {
 import { EconomyRepository } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
+import { initGameConfig } from './game-config/live';
+import { resolveEnvConfigDefaults } from './game-config/registry';
+import { GameConfigRepository } from './game-config/repository';
+import { GameConfigService } from './game-config/service';
 import {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -137,6 +141,11 @@ function initializePersistenceAndRecover(): void {
     mkdirSync(dirname(resolve(databasePath)), { recursive: true });
   }
   database = openPokerDatabase(databasePath);
+  // 런타임 게임 설정(핫 컨피그) — 다른 모든 서비스보다 먼저 하이드레이션해야
+  // 이후 생성되는 서비스들이 부팅 시점부터 오버라이드 값을 본다.
+  initGameConfig(new GameConfigService(new GameConfigRepository(database), {
+    envDefaults: resolveEnvConfigDefaults(process.env),
+  }));
   profileManager = new ProfileManager(new ProfileRepository(database));
   const economyRepository = new EconomyRepository(database);
   economyService = new EconomyService(economyRepository);
