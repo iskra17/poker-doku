@@ -1642,7 +1642,9 @@ export class TournamentManager {
   }
 
   private resumeIfUnheld(t: TournamentRuntime, roomId: string): void {
-    if (!this.hasHolds(t, roomId)) this.roomManager.resumeRoom(roomId);
+    if (!this.hasHolds(t, roomId)) {
+      this.roomManager.resumeMttRoomAfterPresentation(roomId);
+    }
   }
 
   private publicHoldReasons(

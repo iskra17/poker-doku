@@ -614,6 +614,17 @@ export class RoomManager {
     this.tryStartGame(roomId);
   }
 
+  /**
+   * TournamentManager가 hold 해제 스냅샷을 이미 발행한 직후의 MTT 전용 재개 경로.
+   * 일반 resumeRoom의 선행 발행과 tryStartGame의 예약 전 발행만 생략하고,
+   * 동일한 예약·startNewHand·턴 타이머 순서를 유지한다.
+   */
+  resumeMttRoomAfterPresentation(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isMttRoom(room)) return;
+    this.tryStartGame(roomId, false);
+  }
+
   joinRoom(roomId: string, player: Player): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
@@ -1330,13 +1341,13 @@ export class RoomManager {
     );
   }
 
-  private tryStartGame(roomId: string): void {
+  private tryStartGame(roomId: string, publishBeforeSchedule = true): void {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament?.finished) return; // 토너먼트 종료 — 재시작 없음
     // MTT 보류(브레이크/H4H 배리어/종료 처리) 중엔 다음 핸드를 잡지 않는다 — 매니저가 resumeRoom으로 해제
     if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) {
-      this.onUpdate(roomId, room.engine);
+      if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
       return;
     }
 
@@ -1347,13 +1358,13 @@ export class RoomManager {
     const tournament = room.engine.state.tournament;
     if (tournament) {
       if (tournament.entrants === 0 && room.engine.state.players.length < room.config.maxPlayers) {
-        this.onUpdate(roomId, room.engine);
+        if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
         return;
       }
     } else {
       this.refreshCashBots(roomId);
     }
-    this.onUpdate(roomId, room.engine);
+    if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
 
     if (room.engine.canStartHand()) {
       const timer = setTimeout(() => {

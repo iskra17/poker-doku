@@ -65,7 +65,10 @@ describe('MTT break resume', () => {
     rm = new RoomManager((roomId, engine) => {
       publicSnapshots.push({
         roomId,
-        state: JSON.parse(JSON.stringify(engine.getPublicState())) as GameState,
+        state: JSON.parse(JSON.stringify({
+          ...engine.getPublicState(),
+          turnTimeRemaining: rm.getTurnTimeRemaining(roomId),
+        })) as GameState,
       });
     }, () => {});
     tm = new TournamentManager(rm, { isConnected: () => true });
@@ -150,7 +153,7 @@ describe('MTT break resume', () => {
       'scheduled-break',
     ]);
 
-    const resume = vi.spyOn(rm, 'resumeRoom');
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
     expect(tm.directorAction(created.tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
     expect(tm.roomHooks.isHeld(roomId)).toBe(true);
     expect(resume).not.toHaveBeenCalled();
@@ -233,7 +236,7 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
     expect(tm.directorAction(tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
 
-    const resume = vi.spyOn(rm, 'resumeRoom');
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
     engine(t2).state.isHandInProgress = false;
     expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
 
@@ -241,9 +244,18 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.isHeld(t2)).toBe(true);
     expect(resume).not.toHaveBeenCalled();
 
+    publicSnapshots = [];
     expect(tm.directorAction(tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
     expect(resume).toHaveBeenCalledWith(t1);
     expect(resume).toHaveBeenCalledWith(t2);
+    for (const roomId of [t1, t2]) {
+      const released = publicSnapshots.filter(snapshot => (
+        snapshot.roomId === roomId
+        && snapshot.state.tournament?.holdReasons?.length === 0
+      ));
+      expect(released).toHaveLength(1);
+    }
+    expect(rm.getRuntimeStats().pendingStartTimers).toBe(2);
   });
 
   it('consumes an H4H permit only after a hand actually starts', () => {
@@ -416,6 +428,45 @@ describe('MTT break resume', () => {
     expect(publicSnapshots).toHaveLength(1);
     expect(publicSnapshots[0].state.tournament?.stage).toBe('final-playing');
     expect(publicSnapshots[0].state.tournament?.holdReasons).toEqual(['director-pause']);
+  });
+
+  it('publishes final-intro release once and still starts the hand after the normal delay', () => {
+    const created = tm.createTournament({
+      name: '파이널 재개',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 5; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(r => r.mode === 'mtt')!.id;
+    const engine = rm.getRoom(roomId)!.engine;
+
+    publicSnapshots = [];
+    vi.advanceTimersByTime(4_500);
+
+    const releaseSnapshots = publicSnapshots.filter(({ state }) => (
+      state.handNumber === 0
+      && state.tournament?.stage === 'final-playing'
+      && state.tournament.holdReasons?.length === 0
+    ));
+    expect(releaseSnapshots).toHaveLength(1);
+    expect(rm.getRuntimeStats().pendingStartTimers).toBe(1);
+
+    vi.advanceTimersByTime(1_999);
+    expect(engine.state.handNumber).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(engine.state.handNumber).toBe(1);
+    expect(engine.state.isHandInProgress).toBe(true);
+    const handStartSnapshot = publicSnapshots.find(({ state }) => state.handNumber === 1);
+    expect(handStartSnapshot?.state.turnTimeRemaining).toBeGreaterThan(0);
   });
 
   it('enters final-forming before an idle removal and finishes after the seat is removed', () => {

@@ -292,7 +292,7 @@ describe('TournamentManager', () => {
     expect(aliveIds(e1)).toHaveLength(1);
 
     aliveIds(e2).slice(0, 2).forEach((pid, i) => bust(e2, pid, 100 * (i + 1)));
-    const resume = vi.spyOn(h.roomManager, 'resumeRoom');
+    const resume = vi.spyOn(h.roomManager, 'resumeMttRoomAfterPresentation');
     resume.mockClear();
     expect(h.manager.roomHooks.onHandComplete(t2)).toBe('hold');
 
@@ -380,7 +380,7 @@ describe('TournamentManager', () => {
     expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
     expect(engine.state.tournament?.holdReasons).toEqual(['director-pause', 'final-intro']);
 
-    const resume = vi.spyOn(h.roomManager, 'resumeRoom');
+    const resume = vi.spyOn(h.roomManager, 'resumeMttRoomAfterPresentation');
     vi.advanceTimersByTime(4_500);
     expect(engine.state.tournament?.stage).toBe('final-playing');
     expect(engine.state.tournament?.holdReasons).toEqual(['director-pause']);
