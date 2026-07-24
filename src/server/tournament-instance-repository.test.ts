@@ -439,7 +439,7 @@ describe('TournamentInstanceRepository', () => {
     });
   });
 
-  it('atomically releases active registrations and pending capacity on refund claim', () => {
+  it('preserves wallet enrollment ownership until the void transaction refunds it', () => {
     repository.createInstance(instanceCommand('late-refund'));
     seedProfileAndWalletEntry(database, 'late-refund');
     makeRunningOpenLate(database, 'late-refund');
@@ -482,16 +482,91 @@ describe('TournamentInstanceRepository', () => {
     expect(database.db.prepare(`
       SELECT status FROM tournament_registration
       WHERE instance_id = 'late-refund'
-    `).get()).toEqual({ status: 'refunded' });
+    `).get()).toEqual({ status: 'late-pending' });
     expect(database.db.prepare(`
       SELECT status FROM tournament_registration_attempt
       WHERE instance_id = 'late-refund'
-    `).get()).toEqual({ status: 'refunded' });
+    `).get()).toEqual({ status: 'late-pending' });
     expect(database.db.prepare(`
       SELECT COUNT(*) AS count FROM tournament_registration
       WHERE profile_id = 'profile-a'
         AND status IN ('registered', 'seat-claimed', 'late-pending', 'seated')
-    `).get()).toEqual({ count: 0 });
+    `).get()).toEqual({ count: 1 });
+  });
+
+  it('cancels freeroll active and finished enrollment without refunding it', () => {
+    repository.createInstance(instanceCommand('freeroll-refund', {
+      config: config('freeroll'),
+    }));
+    fundFreeroll(database, 'freeroll-refund', 100_000);
+    makeRunningOpenLate(database, 'freeroll-refund');
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET pending_late_entrants = 1
+      WHERE id = 'freeroll-refund'
+    `).run();
+    for (const [profileId, status] of [
+      ['profile-active', 'late-pending'],
+      ['profile-finished', 'registered'],
+    ] as const) {
+      database.db.prepare(`
+        INSERT INTO tournament_registration (
+          instance_id, profile_id, public_player_json, status, ever_seated,
+          registration_attempt, economy_entry_attempt, registered_at, updated_at
+        ) VALUES (
+          'freeroll-refund', ?, ?, ?, 0, 1, NULL, ?, ?
+        )
+      `).run(
+        profileId,
+        JSON.stringify({ id: profileId, name: profileId, avatar: 'sakura' }),
+        status,
+        NOW,
+        NOW,
+      );
+      database.db.prepare(`
+        INSERT INTO tournament_registration_attempt (
+          instance_id, profile_id, registration_attempt, request_id,
+          economy_entry_attempt, status, close_generation, close_owner_token,
+          close_reason, created_at, updated_at
+        ) VALUES (
+          'freeroll-refund', ?, 1, ?, NULL, ?, NULL, NULL, NULL, ?, ?
+        )
+      `).run(profileId, `request-${profileId}`, status, NOW, NOW);
+    }
+    for (const status of ['seat-claimed', 'seated', 'finished'] as const) {
+      database.db.prepare(`
+        UPDATE tournament_registration
+        SET status = ?,
+            ever_seated = CASE WHEN ? IN ('seated', 'finished') THEN 1
+                               ELSE ever_seated END,
+            updated_at = ?
+        WHERE instance_id = 'freeroll-refund'
+          AND profile_id = 'profile-finished'
+      `).run(status, status, NOW + 1);
+    }
+
+    expect(repository.claimRefundPending(
+      'freeroll-refund',
+      'operator-cancel',
+      'freeroll-cancel',
+    )).toMatchObject({
+      status: 'claimed',
+      instance: { pendingLateEntrants: 0 },
+    });
+    expect(database.db.prepare(`
+      SELECT profile_id, status
+      FROM tournament_registration
+      WHERE instance_id = 'freeroll-refund'
+      ORDER BY profile_id
+    `).all()).toEqual([
+      { profile_id: 'profile-active', status: 'cancelled' },
+      { profile_id: 'profile-finished', status: 'cancelled' },
+    ]);
+    expect(database.db.prepare(`
+      SELECT DISTINCT status
+      FROM tournament_registration_attempt
+      WHERE instance_id = 'freeroll-refund'
+    `).all()).toEqual([{ status: 'cancelled' }]);
   });
 
   it('atomically cancels registration attempts on direct cancellation', () => {
@@ -732,10 +807,86 @@ describe('TournamentInstanceRepository', () => {
           totalPrize: 100_000,
           fundingStatus: 'promotion-reserved',
         },
+        hostId: '',
       },
       entrants: [],
       standings: [],
     });
+  });
+
+  it('treats terminal enrollment as not registered and permits a clean new attempt', () => {
+    repository.createInstance(instanceCommand('terminal-registration'));
+    seedProfileAndWalletEntry(database, 'terminal-registration');
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'registering',
+          registration_state = 'open-prestart',
+          updated_at = ?
+      WHERE id = 'terminal-registration'
+    `).run(NOW + 1);
+    database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'terminal-registration', 'profile-a',
+        '{"id":"player-a","name":"A","avatar":"sakura"}',
+        'registered', 0, 1, 1, ?, ?
+      )
+    `).run(NOW, NOW);
+    database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'terminal-registration', 'profile-a', 1, 'terminal-request',
+        1, 'registered', NULL, NULL, NULL, ?, ?
+      )
+    `).run(NOW, NOW);
+    database.db.prepare(`
+      UPDATE tournament_registration
+      SET status = 'cancelled', updated_at = ?
+      WHERE instance_id = 'terminal-registration'
+        AND profile_id = 'profile-a'
+    `).run(NOW + 2);
+    database.db.prepare(`
+      UPDATE sng_entries
+      SET status = 'refunded', updated_at = ?
+      WHERE tournament_id = 'terminal-registration'
+    `).run(NOW + 2);
+
+    expect(repository.getPublicProjection(
+      'terminal-registration',
+      'profile-a',
+      NOW + 2_500_000,
+    )?.summary).toMatchObject({
+      registered: false,
+      myRegistrationStatus: 'cancelled',
+      canRegister: true,
+      hostId: '',
+    });
+  });
+
+  it('returns canonical public summaries without raw persistence status', () => {
+    repository.createInstance(instanceCommand('canonical-list'));
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible', updated_at = ?
+      WHERE id = 'canonical-list'
+    `).run(NOW + 1);
+
+    const [summary] = repository.listPublicProjections(undefined, NOW + 2);
+    expect(summary).toMatchObject({
+      id: 'canonical-list',
+      lifecycle: 'upcoming',
+      economyMode: 'wallet',
+      registrationState: 'not-open',
+      mySeat: null,
+      hostId: '',
+    });
+    expect(summary).not.toHaveProperty('status');
+    expect(summary).not.toHaveProperty('funding');
   });
 
   it('enforces template lead and wallet registration window bounds', () => {
@@ -764,6 +915,15 @@ describe('TournamentInstanceRepository', () => {
         registrationOpensAt: NOW,
         startsAt: null,
         manualStartExpiresAt: NOW + 20 * 60_000 + 1,
+      },
+    }))).toThrowError(TournamentPersistenceError);
+    expect(() => repository.createInstance(instanceCommand('freeroll-long-manual', {
+      config: config('freeroll'),
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: null,
+        manualStartExpiresAt: NOW + 6 * 60 * 60_000 + 1,
       },
     }))).toThrowError(TournamentPersistenceError);
   });

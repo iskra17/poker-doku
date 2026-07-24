@@ -6,6 +6,7 @@ import {
 } from '@/lib/poker/payout-table';
 import type {
   PublicTournamentLifecycle,
+  PublicTournamentSummary,
   TournamentDetailView,
   TournamentSummary,
 } from '@/lib/realtime/protocol';
@@ -26,6 +27,7 @@ type SqliteRow = Record<string, unknown>;
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const WALLET_REGISTRATION_WINDOW_MS = 20 * MINUTE_MS;
+const FREEROLL_MANUAL_WINDOW_MS = 6 * 60 * MINUTE_MS;
 const MAX_VISIBLE_LEAD_MS = 30 * DAY_MS;
 const MAX_FREEROLL_REGISTRATION_LEAD_MS = 7 * DAY_MS;
 
@@ -819,11 +821,14 @@ export class TournamentInstanceRepository {
         return { status: 'not-claimable' };
       }
 
-      this.#releaseRegistrationsForCancellation(
-        instanceId,
-        'refunded',
-        this.now(),
-      );
+      if (current.economyMode === 'freeroll') {
+        this.#terminateRegistrationsForCancellation(
+          instanceId,
+          'cancelled',
+          this.now(),
+          true,
+        );
+      }
       const closeGenerationIncrement = current.registrationState === 'closing'
         ? 0
         : 1;
@@ -969,10 +974,11 @@ export class TournamentInstanceRepository {
       ) {
         return { status: 'not-claimable' };
       }
-      this.#releaseRegistrationsForCancellation(
+      this.#terminateRegistrationsForCancellation(
         instanceId,
         'cancelled',
         completedAt,
+        false,
       );
       const generationIncrement = current.registrationState === 'closing' ? 0 : 1;
       const result = this.database.db.prepare(`
@@ -1238,7 +1244,7 @@ export class TournamentInstanceRepository {
   listPublicProjections(
     forPlayerId: string | undefined,
     now: number,
-  ): TournamentInstancePublicProjection[] {
+  ): PublicTournamentSummary[] {
     assertTimestamp(now);
     const ids = this.database.db.prepare(`
       SELECT id
@@ -1247,12 +1253,14 @@ export class TournamentInstanceRepository {
       ORDER BY COALESCE(starts_at, manual_expires_at), id
     `).all() as SqliteRow[];
     return ids.flatMap(row => {
-      const projection = this.#getPublicSummaryProjection(
+      const detail = this.getPublicProjection(
         stringValue(row.id),
         forPlayerId,
         now,
       );
-      return projection ? [projection] : [];
+      return detail
+        ? [detail.summary as PublicTournamentSummary]
+        : [];
     });
   }
 
@@ -1338,18 +1346,20 @@ export class TournamentInstanceRepository {
     });
   }
 
-  #releaseRegistrationsForCancellation(
+  #terminateRegistrationsForCancellation(
     instanceId: string,
     targetStatus: 'cancelled' | 'refunded',
     updatedAt: number,
+    includeFinished: boolean,
   ): void {
     this.database.assertTransactionActive();
-    const activeStatuses = [
+    const activeStatuses: string[] = [
       'registered',
       'seat-claimed',
       'late-pending',
       'seated',
-    ] as const;
+    ];
+    if (includeFinished) activeStatuses.push('eliminated', 'finished');
     const placeholders = activeStatuses.map(() => '?').join(', ');
     this.database.db.prepare(`
       UPDATE tournament_registration
@@ -1434,27 +1444,6 @@ export class TournamentInstanceRepository {
     return integerValue(row.liability) === 1;
   }
 
-  #getPublicSummaryProjection(
-    instanceId: string,
-    forPlayerId: string | undefined,
-    now: number,
-  ): TournamentInstancePublicProjection | null {
-    const row = this.#projectionRow(instanceId, forPlayerId);
-    if (!row) return null;
-    const instance = decodeInstance(row);
-    const funding = decodeFunding(row, instance.economyMode);
-    if (
-      !PUBLIC_STATUSES.has(instance.status)
-      || (
-        instance.economyMode === 'freeroll'
-        && !hasExactFreerollFunding(instance, funding)
-      )
-    ) {
-      return null;
-    }
-    return projectPublic(instance, row, funding, now);
-  }
-
   #publicEntrants(
     instanceId: string,
   ): Array<{ id: string; name: string; avatar: string }> {
@@ -1507,7 +1496,8 @@ export class TournamentInstanceRepository {
           WHERE seated.instance_id = instance.id
             AND seated.status = 'seated'
         ) AS alive_seated,
-        registration.status AS my_registration_status
+        registration.status AS my_registration_status,
+        registration.ever_seated AS my_ever_seated
       FROM tournament_instance instance
       LEFT JOIN tournament_prize_escrow escrow
         ON escrow.instance_id = instance.id
@@ -1528,6 +1518,7 @@ function projectPublic(
 ): TournamentInstancePublicProjection {
   const acceptedEntrants = integerValue(row.accepted_entrants);
   const myRegistrationStatus = nullableString(row.my_registration_status);
+  const registered = isActiveRegistrationStatus(myRegistrationStatus);
   return {
     id: instance.id,
     name: instance.config.name,
@@ -1553,7 +1544,7 @@ function projectPublic(
             ? instance.config.economy.buyIn
             : 0
         ),
-    registered: myRegistrationStatus !== null,
+    registered,
     myRegistrationStatus,
     funding,
     serverNow: now,
@@ -1596,6 +1587,20 @@ function projectDetail(
   }));
   const myStatus = projection.myRegistrationStatus as
     | TournamentSummary['myRegistrationStatus'];
+  const myEverSeated = row.my_ever_seated === null
+    ? false
+    : booleanInteger(row.my_ever_seated);
+  const mayCreateAttempt = (
+    myStatus === null
+    || (
+      !myEverSeated
+      && (
+        myStatus === 'cancelled'
+        || myStatus === 'no-show'
+        || myStatus === 'refunded'
+      )
+    )
+  );
   const capacityAvailable = (
     projection.acceptedEntrants + projection.pendingLateEntrants
     < instance.maxEntrants
@@ -1609,7 +1614,7 @@ function projectDetail(
   );
   const lateClosesAt = lateRegistrationClosesAt(instance);
   const canRegister = (
-    myStatus === null
+    mayCreateAttempt
     && capacityAvailable
     && (
       (
@@ -1658,8 +1663,7 @@ function projectDetail(
     startAt: instance.schedule.startsAt,
     startedAt: instance.actualStartedAt,
     botFill: instance.config.field.botFillToMinimum,
-    hostId:
-      instance.directorProfileId ?? instance.createdBy.profileId ?? '',
+    hostId: '',
     level: 1,
     paused: false,
     economyMode: instance.economyMode,
@@ -1669,7 +1673,7 @@ function projectDetail(
     entryFee: instance.config.economy.mode === 'wallet'
       ? instance.config.economy.fee
       : 0,
-    registered: myStatus !== null,
+    registered: projection.registered,
     payoutPreset: instance.config.payout.presetId,
     schedule: {
       visibleAt: instance.schedule.visibleAt,
@@ -1740,6 +1744,13 @@ function publicLifecycle(
     return 'upcoming';
   }
   return status;
+}
+
+function isActiveRegistrationStatus(status: string | null): boolean {
+  return status === 'registered'
+    || status === 'seat-claimed'
+    || status === 'late-pending'
+    || status === 'seated';
 }
 
 function legacyPhase(
@@ -2050,6 +2061,13 @@ function assertSchedule(
       economyMode === 'wallet'
       && schedule.manualStartExpiresAt - schedule.registrationOpensAt
         > WALLET_REGISTRATION_WINDOW_MS
+    ) {
+      invalid();
+    }
+    if (
+      economyMode === 'freeroll'
+      && schedule.manualStartExpiresAt - schedule.registrationOpensAt
+        > FREEROLL_MANUAL_WINDOW_MS
     ) {
       invalid();
     }
