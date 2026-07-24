@@ -32,6 +32,13 @@ Windows PowerShell 5.1에는 `RandomNumberGenerator::GetBytes(count)` 정적 메
 Gemini 대사를 쓰는 경우에만 별도로 `fly secrets set GEMINI_API_KEY=...`를 실행한다. 배포 시 HA를
 만들지 않는다.
 
+로비에서 토너먼트를 개설·운영할 프로필이 있으면 해당 프로필 ID를 쉼표로 구분해 secret으로
+등록한다. 이 값을 비워도 `DEBUG_LOG_TOKEN`으로 인증한 `/admin` 백오피스 개설·운영은 가능하다.
+
+```powershell
+fly secrets set TOURNAMENT_OPERATOR_PROFILE_IDS="<profile-id-1>,<profile-id-2>"
+```
+
 ```powershell
 fly deploy --ha=false
 fly scale count 1

@@ -175,7 +175,10 @@ npx tsc --noEmit
   `roomId`를 비운다. 그 전에 모든 휴먼이 완전히 나가면 즉시 정리한다.
 - **멀티테이블 토너먼트(MTT)**: `gameMode: 'mtt'` — **1토너 = 방 N개**를
   `src/server/tournament-manager.ts`(TournamentManager)가 오케스트레이션한다 (아레나 패턴 확장).
-  v1은 practice 전용 프리즈아웃, 개설은 누구나(로비 🏆 패널), 8~48명·6-max, 상금은 표시용.
+  프리즈아웃, 8~48명·6-max. **개설·운영은 운영자 전용**: `/admin` 백오피스 또는
+  `TOURNAMENT_OPERATOR_PROFILE_IDS`(쉼표 구분)에 등록된 프로필만 가능하다. 일반 유저는 등록·참가만
+  가능하며, 클라이언트는 세션 capability의 `createTournament`가 true일 때만 개설 버튼을 노출한다.
+  권한 판정·명령 실행 단일 소스는 `TournamentCommandService`; 소켓과 백오피스가 이를 공유한다.
   기획/리서치: `docs/spec-mtt-2026-07-23.md`, `docs/research-mtt-2026-07-23.md`.
   - **소유권 분리**: 엔진은 mtt 모드에서 테이블 로컬 우승 판정·상금풀 산정·이탈 순위를 전부
     비활성(`isMtt()` 가드 — "테이블 1명 생존=우승"은 SnG 전제)하고, 전역 순위/상금/시계는
@@ -191,9 +194,13 @@ npx tsc --noEmit
     정산 없는 이석, 칩 보존), 새 좌석은 "곧 BB가 되는 빈 좌석". 테이블 브레이크는 정원 사전
     검사 후 전원 이주+`disposeRoom('mtt-break')` — 부분 이주는 이동 핑퐁을 만든다. **생존 판정
     `isAlive`는 "칩>0 또는 (핸드 중 active/all-in)"** — chips>0만 보면 다른 테이블 라이브 핸드의
-    올인 좌석을 놓쳐 조기 브레이크가 난다 (2026-07-23 QA). 페이아웃은 `payout-table.ts` 계단표
-    (합계 보정 — 잔여는 1위). 버블(입상+1명)에선 hand-for-hand: 전 테이블 완료 배리어 후
+    올인 좌석을 놓쳐 조기 브레이크가 난다 (2026-07-23 QA). 페이아웃은 `payout-table.ts`의
+    `standard`/`flat`/`top-heavy` 프리셋 중 개설 시 선택하며, 미선택 레거시 입력은 `standard`.
+    계산 합계 보정 잔여는 1위에 준다. 버블(입상+1명)에선 hand-for-hand: 전 테이블 완료 배리어 후
     동기화 핸드 무장(h4h.armed), 같은 라운드 탈락은 테이블이 달라도 handStartChips로 동시 판정.
+    H4H 탈락 배치 전체를 확정한 뒤 잔존 인원이 입상 인원 이하로 처음 내려오면 서버가 단 한 번
+    `TournamentState.milestone(kind:'itm')`을 모든 테이블에 주입하고 시스템 메시지와 `mtt-itm`
+    감사 이벤트를 남긴다. 클라이언트는 서버 만료 시각 안에서만 4.5초 축하·색종이 연출을 재생한다.
   - **수명주기 주의**: MTT 테이블은 `getRoomList`에서 숨기고 join-room 직접 입장 차단 —
     단 **본인 생존 좌석의 재입장(게임 복귀)은 허용**(멱등 rejoin 경로, 0칩 리바이 분기는
     SnG/MTT 제외). **`sweepIdleRooms`에서 제외**(휴먼 전원 탈락 후 봇만 남아도 완주해야
@@ -210,20 +217,21 @@ npx tsc --noEmit
     통째 교체 — 이전 방 diff와 섞지 말 것), 목록은 `tournament-list` 개인화 브로드캐스트, 상세는
     get-tournament 5초 폴링. **로비 진입점은 별도 패널이 아니라 RoomList 통합** — 모드 필터에
     '토너먼트' 탭, 캐시/SnG 방 카드와 같은 테이블 카드 형태(TournamentCard)로 '전체' 탭에도
-    섞여 노출, 개설은 토너먼트 탭의 [+ 토너먼트 개설](CreateTournamentModal). 자리비움 이탈
+    섞여 노출, 운영자만 토너먼트 탭의 [+ 토너먼트 개설](CreateTournamentModal)을 본다. 자리비움 이탈
     좌석은 '내 토너먼트' 복귀 배너 (2026-07-24 피드백 — TournamentPanel 삭제). 상세 모달은
     `TournamentDetailModal`(로비 카드·**게임 중 TopBar 배지 탭** 공용 —
     `state.tournament.tournamentId`가 진입 키, 내 순위/순위표/구조/[운영]/[게임 복귀] 포함).
     탈락자는 EliminationNotice 후 8초 뒤 room-lost 로비 복귀(파이널 종료 시엔 결과 오버레이
     관람 위해 유지). 회귀: tournament-manager.test.ts · .break.test.ts(이중 브레이크/H4H+머지
     재개) · .sim.test.ts(봇 풀 런 완주+칩 보존).
-  - **디렉터 콘솔 (Phase 2)**: 개설자(hostId) 전용 `tournament-admin` 소켓 이벤트 —
+  - **디렉터 콘솔 (Phase 2)**: 운영자 전용 `tournament-admin` 소켓 이벤트 —
     pause(시계 동결 `pausedAt` + isHeld로 전 테이블 다음 핸드 보류, 진행 중 핸드는 끝까지)/
     resume(pauseAccum으로 정지 구간 제외, 브레이크 구간이면 브레이크 대기 복귀)/
     set-level(**정지 중에만** — 시계를 해당 레벨 시작점으로 리셋. 라이브 조정은 테이블별 적용
     시점이 갈려 금지)/remove-player(명시적 퇴장 경로 재사용 = 현재 순위 탈락)/cancel.
-    모든 개입은 시스템 채팅 공지 + `mtt-director-action` ops_event. UI는 TournamentPanel 상세
-    모달 [운영] 패널(위험 액션은 2탭 확인 — confirm 다이얼로그 금지). 회귀: .director.test.ts.
+    모든 개입은 시스템 채팅 공지 + `mtt-director-action` ops_event. `/admin` 토너먼트 탭은
+    개설·시작·일시정지·재개·레벨 변경·강제 제거·취소를 같은 명령 서비스로 실행한다. 게임 UI 상세
+    모달 [운영] 패널의 위험 액션은 2탭 확인(confirm 다이얼로그 금지). 회귀: .director.test.ts.
   - **wallet MTT (Phase 2)**: `economyMode:'wallet'` — 참가비(바이인 1500+수수료 150,
     `lib/economy/mtt-entry.ts`)를 **토너 단위 에스크로**로 예약. sng_entries 테이블을
     room_id=토너먼트ID 키로 재사용(마이그레이션 v26이 place CHECK 1..1000 확장 — SnG 6인
@@ -237,7 +245,7 @@ npx tsc --noEmit
   - **/admin 토너먼트 탭 (Phase 2)**: `GET /api/admin/tournaments`(adminRuntime 경유
     `getAdminTournamentSummaries`) — 테이블별 생존/보류 사유·스탠딩·일시정지/브레이크/H4H 배지.
     핸드 감사는 `table_hand.tournament_id`(v25 — v23의 game_mode CHECK가 MTT 핸드 기록을 조용히
-    거부하던 버그도 이때 수정) + `/api/admin/hands?tournament=` 필터. mtt-* 이벤트 7종은
+    거부하던 버그도 이때 수정) + `/api/admin/hands?tournament=` 필터. mtt-* 이벤트 8종은
     ops_event 화이트리스트로 영속.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
