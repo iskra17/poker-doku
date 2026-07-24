@@ -43,7 +43,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
     // 바 배경은 전체 폭, 내용물은 게임 영역 중앙 컨테이너(1100px — GameRoomView와 동일)에 정렬:
     // 광폭 화면에서 로고/블라인드/아이콘이 화면 양끝까지 벌어지지 않게 (2026-07-22 유저 피드백)
     <div className="bg-panel/80 border-b border-mystic/20 z-30 pt-safe">
-      <div className="mx-auto flex w-full max-w-[1100px] items-center justify-between gap-2 px-3 py-1.5 md:px-4 md:py-2">
+      <div className="mx-auto flex w-full max-w-[1100px] flex-wrap items-center justify-between gap-1.5 px-3 py-1.5 md:flex-nowrap md:gap-2 md:px-4 md:py-2">
       <div className="flex shrink-0 items-center gap-2 md:gap-3">
         <Button variant="secondary" size="sm" onClick={onLeave}>
           ←
@@ -52,21 +52,24 @@ export default function TopBar({ onLeave }: TopBarProps) {
           <NeonText size="sm" color="#A78BFA">POKER DOKU</NeonText>
         </span>
       </div>
-      <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5 md:gap-3">
+      <div className="contents min-w-0 flex-1 items-center justify-end gap-1.5 md:flex md:gap-3">
         {gameState?.tournament && gameState.tournament.entrants > 0 ? (
-          mttTournamentId ? (
-            // MTT: 배지 탭 → 토너 상세 (순위표·구조·내 순위 — 게임을 떠나지 않고 확인)
-            <button
-              type="button"
-              onClick={() => setTournamentOpen(true)}
-              aria-label="토너먼트 상세 보기"
-              className="min-w-0 rounded-lg px-1 py-0.5 hover:bg-white/5 active:bg-white/10 transition-colors"
-            >
-              <TournamentBadge tournament={gameState.tournament} showInfoHint />
-            </button>
-          ) : (
-            <TournamentBadge tournament={gameState.tournament} />
-          )
+          <div className="order-3 flex min-w-0 basis-full justify-center md:order-none md:basis-auto">
+            {mttTournamentId ? (
+              // MTT: 배지 탭 → 토너 상세 (순위표·구조·내 순위 — 게임을 떠나지 않고 확인)
+              <button
+                type="button"
+                onClick={() => setTournamentOpen(true)}
+                aria-label="토너먼트 상세 보기"
+                title="토너먼트 상세 보기"
+                className="min-w-0 max-w-full overflow-hidden rounded-lg px-1 py-0.5 hover:bg-white/5 active:bg-white/10 transition-colors"
+              >
+                <TournamentBadge tournament={gameState.tournament} showInfoHint />
+              </button>
+            ) : (
+              <TournamentBadge tournament={gameState.tournament} />
+            )}
+          </div>
         ) : (
           gameState && (
             <span className="text-ink-dim text-xs hidden md:inline">
@@ -83,7 +86,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           onClick={copy}
           aria-label="초대 링크 복사"
           title="초대 링크 복사"
-          className="hidden p-1 text-ink-dim hover:text-ink transition-colors sm:inline-flex"
+          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           {copied ? <span className="text-green-400 text-xs font-bold">✓</span> : <LinkIcon />}
         </button>
@@ -91,7 +94,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           onClick={toggleAllMuted}
           aria-label={allMuted ? '사운드 켜기' : '사운드 끄기'}
           title={allMuted ? '사운드 켜기 (효과음+음악)' : '사운드 끄기 (효과음+음악)'}
-          className="p-1 text-ink-dim hover:text-ink transition-colors"
+          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           <SpeakerIcon muted={allMuted} />
         </button>
@@ -99,7 +102,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           onClick={() => setHistoryOpen(true)}
           aria-label="핸드 히스토리"
           title="핸드 히스토리"
-          className="p-1 text-ink-dim hover:text-ink transition-colors"
+          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           <HistoryIcon />
         </button>
@@ -107,18 +110,19 @@ export default function TopBar({ onLeave }: TopBarProps) {
           onClick={() => setHelpOpen(true)}
           aria-label="게임 도움말"
           title="핸드 랭킹 · 용어"
-          className="hidden p-1 text-ink-dim hover:text-ink transition-colors sm:inline-flex"
+          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           <HelpIcon />
         </button>
         <button
           onClick={() => setSettingsOpen(true)}
           aria-label="설정"
-          className="p-1 text-ink-dim hover:text-ink transition-colors"
+          title="설정"
+          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           <GearIcon />
         </button>
-        <div className="flex items-center gap-1">
+        <div className="flex h-7 shrink-0 items-center gap-1">
           <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${connected ? 'bg-green-400' : 'bg-red-400'}`} />
           <span className="text-ink-dim/70 text-[10px] md:text-xs hidden md:inline">{playerName}</span>
         </div>
@@ -208,7 +212,7 @@ function TournamentBadge({
   const seconds = useCountdownTo(tournament.finished ? 0 : tournament.levelEndsAt);
 
   return (
-    <span className="flex min-w-0 items-center gap-1 text-[11px] sm:gap-1.5 sm:text-xs">
+    <span className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden text-[11px] sm:gap-1.5 sm:text-xs">
       <span className="shrink-0 font-bold text-gilded">Lv.{tournament.level}</span>
       <span className="shrink-0 text-ink-dim">
         <span className="text-gilded">

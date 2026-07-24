@@ -57,6 +57,17 @@ export function shouldBlockTournamentActions(
   return !isHandInProgress && (reasons?.length ?? 0) > 0;
 }
 
+export type TournamentActionDockMode = 'actions' | 'held' | 'held-seat-management';
+
+export function getTournamentActionDockMode(
+  reasons: TournamentHoldReason[] | undefined,
+  isHandInProgress: boolean,
+  seatManagementAvailable: boolean,
+): TournamentActionDockMode {
+  if (!shouldBlockTournamentActions(reasons, isHandInProgress)) return 'actions';
+  return seatManagementAvailable ? 'held-seat-management' : 'held';
+}
+
 export default function TournamentStatusBanner({
   reasons,
   stageEndsAt = 0,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TournamentHoldReason } from '@/lib/poker/types';
 import {
+  getTournamentActionDockMode,
   resolveTournamentStatus,
   shouldBlockTournamentActions,
 } from './TournamentStatusBanner';
@@ -32,5 +33,11 @@ describe('resolveTournamentStatus', () => {
     expect(shouldBlockTournamentActions(['scheduled-break'], false)).toBe(true);
     expect(shouldBlockTournamentActions(['director-pause'], true)).toBe(false);
     expect(shouldBlockTournamentActions([], false)).toBe(false);
+  });
+
+  it('keeps game recovery available for a sitting-out player while betting is held', () => {
+    expect(getTournamentActionDockMode(['final-intro'], false, false)).toBe('held');
+    expect(getTournamentActionDockMode(['final-intro'], false, true)).toBe('held-seat-management');
+    expect(getTournamentActionDockMode(['director-pause'], true, true)).toBe('actions');
   });
 });

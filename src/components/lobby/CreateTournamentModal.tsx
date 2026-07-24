@@ -143,7 +143,7 @@ export default function CreateTournamentModal({
       {economyMode === 'practice' ? (
         <label className="mt-2 flex items-center gap-2 text-xs text-ink">
           <input type="checkbox" checked={botFill} onChange={e => setBotFill(e.target.checked)} />
-          체크인 후 남는 자리를 봇으로 채워 최소 8명 필드 만들기
+          체크인 후 최대 인원까지 남은 자리를 봇으로 채우기
         </label>
       ) : (
         <p className="mt-2 text-[10px] text-ink-dim">

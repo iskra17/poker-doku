@@ -13,8 +13,8 @@ import Button from '../ui/Button';
 import VerticalSlider from '../ui/VerticalSlider';
 import HandStrengthBadge from './HandStrengthBadge';
 import {
+  getTournamentActionDockMode,
   resolveTournamentStatus,
-  shouldBlockTournamentActions,
 } from './TournamentStatusBanner';
 
 /**
@@ -90,27 +90,11 @@ export default function ActionBar() {
   const sittingOut = !!myPlayer && (myPlayer.sitOutNext || myPlayer.status === 'sitting-out');
   const controlsDisabled = !connected || !!pendingAction;
   const tournamentStatus = resolveTournamentStatus(gameState.tournament?.holdReasons);
-  const tournamentActionsBlocked = shouldBlockTournamentActions(
+  const tournamentDockMode = getTournamentActionDockMode(
     gameState.tournament?.holdReasons,
     gameState.isHandInProgress,
+    !!myPlayer,
   );
-
-  // 토너먼트 보류 중에는 서버가 다음 핸드/턴을 열지 않는다. 독 높이는 유지하되 모든
-  // 입력 진입점을 치워 테이블 좌표가 흔들리거나 보류 중 액션을 오입력하지 않게 한다.
-  if (tournamentStatus && tournamentActionsBlocked) {
-    return (
-      <div className={dockClass} aria-disabled="true">
-        <div
-          className="mx-auto flex w-full max-w-[1100px] flex-col items-center justify-center gap-2 px-3 text-center"
-          style={{ height: ACTION_DOCK_HEIGHT }}
-        >
-          <span className="text-lg" aria-hidden>{tournamentStatus.icon}</span>
-          <p className="text-sm font-bold text-gilded">{tournamentStatus.label}</p>
-          <p className="text-xs text-ink-dim">{tournamentStatus.detail}</p>
-        </div>
-      </div>
-    );
-  }
 
   const sitOutButton = myPlayer && (
     <button
@@ -125,6 +109,26 @@ export default function ActionBar() {
       {sittingOut ? '게임 복귀' : '자리비움'}
     </button>
   );
+
+  // 토너먼트 보류 중에는 베팅 입력만 치운다. 좌석이 있는 플레이어의 자리비움/게임 복귀는
+  // 보류와 별개인 좌석 관리이므로 계속 제공하고, 독 높이는 유지해 테이블 좌표를 고정한다.
+  if (tournamentStatus && tournamentDockMode !== 'actions') {
+    return (
+      <div className={dockClass}>
+        <div className="relative mx-auto w-full max-w-[1100px]">
+          {tournamentDockMode === 'held-seat-management' ? sitOutButton : null}
+          <div
+            className="flex flex-col items-center justify-center gap-2 px-3 text-center"
+            style={{ height: ACTION_DOCK_HEIGHT }}
+          >
+            <span className="text-lg" aria-hidden>{tournamentStatus.icon}</span>
+            <p className="text-sm font-bold text-gilded">{tournamentStatus.label}</p>
+            <p className="text-xs text-ink-dim">{tournamentStatus.detail}</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // ---- 대기 상태 ----
   // 독 배경은 전체 폭, 내용물(자리비움 버튼 포함)은 게임 영역 중앙 컨테이너(1100px)에 정렬
