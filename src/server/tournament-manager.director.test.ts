@@ -39,6 +39,19 @@ function engineOf(roomManager: RoomManager, roomId: string): PokerEngine {
   return room.engine;
 }
 
+function aliveIds(engine: PokerEngine): string[] {
+  return engine.state.players
+    .filter(player => player.chips > 0 && !player.finishPlace && !player.pendingRemoval)
+    .map(player => player.id);
+}
+
+function bust(engine: PokerEngine, playerId: string, handStartChips: number): void {
+  const player = engine.state.players.find(candidate => candidate.id === playerId);
+  if (!player) throw new Error(`player not found: ${playerId}`);
+  player.handStartChips = handStartChips;
+  player.chips = 0;
+}
+
 /** 12인(휴먼 전용) 스탠다드 토너먼트 등록·시작 (레벨 8분 — env 단축 없이 결정론) */
 function start12(h: Harness): { id: string; tables: string[] } {
   const created = h.manager.createTournament({
@@ -204,6 +217,83 @@ describe('TournamentManager 디렉터 콘솔', () => {
     expect(detail.clock!.level).toBe(5);
     // 재개 후 예약 2초 + 기존 핸드 종료 연출 6.5초 + 추가 진행 10초가 흐름
     expect(detail.clock!.segmentRemainingMs).toBe(8 * 60_000 - 18_500);
+  });
+
+  it('동일 레벨 리셋도 느린 테이블을 포함해 각 다음 핸드 경계에서 deadline을 갱신한다', () => {
+    const { id, tables } = start12(h);
+    vi.advanceTimersByTime(2_000);
+    const first = engineOf(h.roomManager, tables[0]);
+    const slow = engineOf(h.roomManager, tables[1]);
+    const oldDeadline = first.state.tournament!.levelEndsAt;
+    expect(slow.state.tournament!.levelEndsAt).toBe(oldDeadline);
+
+    expect(h.manager.directorAction(id, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(h.manager.directorAction(id, 'h1', { kind: 'set-level', level: 1 })).toBe('ok');
+
+    let guard = 0;
+    while (first.state.isHandInProgress && guard++ < 12) {
+      const actor = first.state.players[first.state.activePlayerIndex];
+      h.roomManager.processPlayerAction(tables[0], actor.id, 'fold');
+    }
+    expect(h.manager.directorAction(id, 'h1', { kind: 'resume' })).toBe('ok');
+    vi.advanceTimersByTime(2_000);
+
+    const resetDeadline = first.state.tournament!.levelEndsAt;
+    expect(first.state.handNumber).toBe(2);
+    expect(resetDeadline).toBeGreaterThan(oldDeadline);
+    expect(slow.state.handNumber).toBe(1);
+    expect(slow.state.tournament!.levelEndsAt).toBe(oldDeadline);
+
+    guard = 0;
+    while (slow.state.isHandInProgress && guard++ < 12) {
+      const actor = slow.state.players[slow.state.activePlayerIndex];
+      h.roomManager.processPlayerAction(tables[1], actor.id, 'fold');
+    }
+    vi.advanceTimersByTime(6_500);
+
+    expect(slow.state.handNumber).toBe(2);
+    expect(slow.state.tournament!.levelEndsAt).toBe(resetDeadline);
+  });
+
+  it('pending 레벨은 파이널 병합에서 해체 테이블을 제외하고 최종 테이블 경계에 적용한다', () => {
+    const { id, tables } = start12(h);
+    const [sourceRoomId, destinationRoomId] = tables;
+    const source = engineOf(h.roomManager, sourceRoomId);
+    const destination = engineOf(h.roomManager, destinationRoomId);
+    const oldDeadline = destination.state.tournament!.levelEndsAt;
+
+    expect(h.manager.directorAction(id, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(h.manager.directorAction(id, 'h1', { kind: 'set-level', level: 1 })).toBe('ok');
+
+    aliveIds(source).slice(0, 3).forEach((playerId, index) => {
+      bust(source, playerId, 100 * (index + 1));
+    });
+    expect(h.manager.roomHooks.onHandComplete(sourceRoomId)).toBe('continue');
+    aliveIds(destination).slice(0, 2).forEach((playerId, index) => {
+      bust(destination, playerId, 100 * (index + 1));
+    });
+    expect(h.manager.roomHooks.onHandComplete(destinationRoomId)).toBe('continue');
+    aliveIds(source).slice(0, 2).forEach((playerId, index) => {
+      bust(source, playerId, 50 * (index + 1));
+    });
+    expect(['hold', 'gone']).toContain(
+      h.manager.roomHooks.onHandComplete(sourceRoomId),
+    );
+
+    const [finalRoomId] = mttTableIds(h.roomManager);
+    expect(mttTableIds(h.roomManager)).toHaveLength(1);
+    const final = engineOf(h.roomManager, finalRoomId);
+    expect(final.state.tournament?.holdReasons).toEqual([
+      'director-pause',
+      'final-intro',
+    ]);
+
+    vi.advanceTimersByTime(4_500);
+    expect(h.manager.directorAction(id, 'h1', { kind: 'resume' })).toBe('ok');
+    vi.advanceTimersByTime(2_000);
+
+    expect(final.state.handNumber).toBe(1);
+    expect(final.state.tournament!.levelEndsAt).toBeGreaterThan(oldDeadline);
   });
 
   it('wallet MTT는 시작 전 취소만 허용하고 시작 후 참가자 방장의 위험 개입을 거부한다', () => {

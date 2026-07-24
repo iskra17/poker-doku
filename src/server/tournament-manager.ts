@@ -157,6 +157,12 @@ interface PendingBust {
   buttonSeatIndex: number;
 }
 
+interface PendingLevelChange {
+  levelIndex: number;
+  generation: number;
+  expectedRoomIds: Set<string>;
+}
+
 interface TournamentRuntime {
   id: string;
   config: CreateTournamentInput;
@@ -168,8 +174,12 @@ interface TournamentRuntime {
   pauseAccumMs: number; // 일시정지 누적 — clockPos가 (now - startedAt - accum)으로 시계를 계산
   /** 디렉터 일시정지 시각 — null이 아니면 시계 동결 + 전 테이블 다음 핸드 보류 */
   pausedAt: number | null;
-  /** 디렉터가 예약한 레벨 — 각 테이블의 다음 startHand 경계에서 모두 적용된 뒤 해제 */
-  pendingLevelIndex: number | null;
+  /** 디렉터 레벨 변경 세대 — 같은 레벨 재설정도 별개 경계 적용으로 식별한다. */
+  levelGeneration: number;
+  /** 각 라이브 테이블의 다음 startHand 경계 적용을 기다리는 디렉터 레벨 변경 */
+  pendingLevel: PendingLevelChange | null;
+  /** 테이블별로 마지막 적용을 마친 디렉터 레벨 변경 세대 */
+  appliedLevelGenerationByRoom: Map<string, number>;
   entrants: Map<string, MttEntrant>;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
@@ -285,7 +295,9 @@ export class TournamentManager {
       finishedAt: null,
       pauseAccumMs: 0,
       pausedAt: null,
-      pendingLevelIndex: null,
+      levelGeneration: 0,
+      pendingLevel: null,
+      appliedLevelGenerationByRoom: new Map(),
       entrants: new Map(),
       seatedCount: 0,
       tables: new Map(),
@@ -492,7 +504,13 @@ export class TournamentManager {
       : 0;
     const offset = idx * t.structure.levelDurationMs + breaks * t.structure.breakDurationMs;
     t.pauseAccumMs = t.pausedAt - t.startedAt - offset;
-    t.pendingLevelIndex = idx;
+    const generation = t.levelGeneration + 1;
+    t.levelGeneration = generation;
+    t.pendingLevel = {
+      levelIndex: idx,
+      generation,
+      expectedRoomIds: new Set(t.tables.keys()),
+    };
 
     const cur = mttLevelAt(t.structure, idx);
     for (const roomId of t.tables.keys()) {
@@ -774,7 +792,7 @@ export class TournamentManager {
       });
       // joinRoom의 tryStartGame이 만석 테이블을 조기 시작하지 못하게, 착석 전에 보류를 건다
       this.byRoom.set(roomId, t.id);
-      t.tables.set(roomId, { no: i + 1 });
+      this.addTournamentTable(t, roomId, { no: i + 1 });
       t.holds.set(roomId, new Set(['setup']));
       roomIds.push(roomId);
     }
@@ -921,6 +939,8 @@ export class TournamentManager {
     }
     t.tables.clear();
     t.holds.clear();
+    t.pendingLevel = null;
+    t.appliedLevelGenerationByRoom.clear();
     eventLog.log('mtt-cancel', { data: { tournamentId: t.id, reason } });
     this.hooks.onTournamentsChanged?.();
     // 취소 기록은 잠시 보여준 뒤 목록에서 제거
@@ -947,21 +967,22 @@ export class TournamentManager {
     const t = this.byTable(roomId);
     if (!t || t.startedAt === null || t.phase !== 'running') return;
     const pos = this.clockPos(t);
-    const pendingLevelIndex = t.pendingLevelIndex;
+    const pending = t.pendingLevel;
+    const needsPendingApplication = !!pending
+      && pending.expectedRoomIds.has(roomId)
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation;
     this.pushLevel(
       t,
       engine,
-      pendingLevelIndex === null ? pos : { ...pos, levelIndex: pendingLevelIndex },
+      needsPendingApplication && pending
+        ? { ...pos, levelIndex: pending.levelIndex }
+        : pos,
       false,
+      needsPendingApplication,
     );
-    if (
-      pendingLevelIndex !== null
-      && [...t.tables.keys()].every(id => (
-        this.roomManager.getRoom(id)?.engine.state.tournament?.level
-        === pendingLevelIndex + 1
-      ))
-    ) {
-      t.pendingLevelIndex = null;
+    if (needsPendingApplication && pending) {
+      t.appliedLevelGenerationByRoom.set(roomId, pending.generation);
+      this.reconcilePendingLevelRooms(t);
     }
   }
 
@@ -1330,7 +1351,7 @@ export class TournamentManager {
 
     for (const sourceId of sourceIds) {
       this.byRoom.delete(sourceId);
-      t.tables.delete(sourceId);
+      this.removeTournamentTable(t, sourceId);
       t.holds.delete(sourceId);
       t.h4h.armed.delete(sourceId);
       this.roomManager.disposeRoom(sourceId, 'mtt-break');
@@ -1527,7 +1548,7 @@ export class TournamentManager {
     if (stranded) return;
 
     this.byRoom.delete(roomId);
-    t.tables.delete(roomId);
+    this.removeTournamentTable(t, roomId);
     t.holds.delete(roomId);
     t.h4h.armed.delete(roomId);
     this.roomManager.disposeRoom(roomId, 'mtt-break');
@@ -1833,7 +1854,7 @@ export class TournamentManager {
       state.stageEndsAt = t.stageEndsAt
         ?? (state.holdReasons.includes('scheduled-break') ? clockDeadline : undefined);
       state.finalTheme = t.finalTheme;
-      if (pos && cur && t.pendingLevelIndex === null && !engine.state.isHandInProgress) {
+      if (pos && cur && t.pendingLevel === null && !engine.state.isHandInProgress) {
         state.level = pos.levelIndex + 1;
         state.smallBlind = cur.smallBlind;
         state.bigBlind = cur.bigBlind;
@@ -1896,11 +1917,12 @@ export class TournamentManager {
     engine: PokerEngine,
     pos: ReturnType<typeof mttClockAt>,
     initial: boolean,
+    force = false,
   ): void {
     const state = engine.state.tournament;
     if (!state) return;
     const level = pos.levelIndex + 1;
-    if (!initial && state.level === level && state.levelEndsAt !== 0) return;
+    if (!force && !initial && state.level === level && state.levelEndsAt !== 0) return;
     const cur = mttLevelAt(t.structure, pos.levelIndex);
     const next = t.structure.levels[pos.levelIndex + 1] ?? null;
     const levelEndsAt = Number.isFinite(pos.segmentRemainingMs)
@@ -1926,6 +1948,50 @@ export class TournamentManager {
   }
 
   // --- 내부 ---
+
+  private addTournamentTable(
+    t: TournamentRuntime,
+    roomId: string,
+    metadata: { no: number },
+  ): void {
+    t.tables.set(roomId, metadata);
+    const pending = t.pendingLevel;
+    if (
+      pending
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation
+    ) {
+      pending.expectedRoomIds.add(roomId);
+    }
+  }
+
+  private removeTournamentTable(t: TournamentRuntime, roomId: string): void {
+    t.tables.delete(roomId);
+    t.appliedLevelGenerationByRoom.delete(roomId);
+    t.pendingLevel?.expectedRoomIds.delete(roomId);
+    this.reconcilePendingLevelRooms(t);
+  }
+
+  private reconcilePendingLevelRooms(t: TournamentRuntime): void {
+    const pending = t.pendingLevel;
+    if (!pending) return;
+
+    for (const roomId of [...pending.expectedRoomIds]) {
+      if (t.tables.has(roomId) && this.roomManager.getRoom(roomId)) continue;
+      pending.expectedRoomIds.delete(roomId);
+      t.appliedLevelGenerationByRoom.delete(roomId);
+    }
+    for (const roomId of t.tables.keys()) {
+      if (!this.roomManager.getRoom(roomId)) continue;
+      if (t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation) {
+        pending.expectedRoomIds.add(roomId);
+      }
+    }
+    if ([...pending.expectedRoomIds].every(
+      roomId => t.appliedLevelGenerationByRoom.get(roomId) === pending.generation,
+    )) {
+      t.pendingLevel = null;
+    }
+  }
 
   private byTable(roomId: string): TournamentRuntime | undefined {
     const tid = this.byRoom.get(roomId);
