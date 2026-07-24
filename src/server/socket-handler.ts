@@ -2374,9 +2374,11 @@ export function setupSocketHandlers(
         ack?.({
           ok: false,
           code: 'action-rejected',
-          message: created.reason === 'limit'
-            ? '동시에 열 수 있는 토너먼트 수를 초과했어요. 잠시 후 다시 시도해 주세요.'
-            : '토너먼트 설정이 올바르지 않아요.',
+          message: created.reason === 'host-limit'
+            ? '한 개설자가 등록 중으로 열어둘 수 있는 토너먼트는 2개까지예요.'
+            : created.reason === 'limit'
+              ? '동시에 열 수 있는 토너먼트 수를 초과했어요. 잠시 후 다시 시도해 주세요.'
+              : '토너먼트 설정이 올바르지 않아요.',
         });
         return;
       }

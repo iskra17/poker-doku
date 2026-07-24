@@ -86,14 +86,14 @@ describe('MTT break resume', () => {
       name: '브레이크',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
     }
     expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -127,14 +127,14 @@ describe('MTT break resume', () => {
       name: '브레이크 겹침',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
     }
     expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -470,14 +470,14 @@ describe('MTT break resume', () => {
       name: '보류 공개',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
     }
     expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -505,14 +505,14 @@ describe('MTT break resume', () => {
       name: '파이널 재개',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
     }
     expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');

@@ -263,7 +263,7 @@ describe('TournamentManager', () => {
     const created = h.manager.createTournament({
       name: '체크인',
       speed: 'standard',
-      maxEntrants: 8,
+      maxEntrants: 10,
       tableSize: 6,
       startAt: null,
       botFill: false,
@@ -271,7 +271,7 @@ describe('TournamentManager', () => {
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 10; i++) {
       h.manager.register(created.tournamentId, { id: `h${i}`, name: `유저${i}`, avatar: 'ara' });
     }
     expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -280,8 +280,52 @@ describe('TournamentManager', () => {
       engineOf(h.roomManager, roomId).state.players.map(p => p.id));
     expect(seatedIds).not.toContain('h2');
     expect(seatedIds).not.toContain('h4');
-    expect(seatedIds.length).toBe(6);
-    expect(h.manager.listTournaments()[0].remaining).toBe(6);
+    expect(seatedIds.length).toBe(8);
+    expect(h.manager.listTournaments()[0].remaining).toBe(8);
+  });
+
+  it('requires eight actual starters unless practice bot fill reaches the minimum', () => {
+    const humansOnly = h.manager.createTournament({
+      name: '최소 인원',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!humansOnly.ok) throw new Error('create failed');
+    for (let i = 1; i <= 7; i++) {
+      h.manager.register(humansOnly.tournamentId, {
+        id: `h${i}`,
+        name: `유저${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(humansOnly.tournamentId, 'h1')).toBe('not-enough');
+    expect(mttTableIds(h.roomManager)).toHaveLength(0);
+
+    const botFill = h.manager.createTournament({
+      name: '봇 최소 인원 충원',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h2',
+    });
+    if (!botFill.ok) throw new Error('create failed');
+    h.manager.register(botFill.tournamentId, {
+      id: 'h8',
+      name: '유저8',
+      avatar: 'ara',
+    });
+
+    expect(h.manager.startTournament(botFill.tournamentId, 'h2')).toBe('ok');
+    expect(h.manager.listTournaments().find(t => t.id === botFill.tournamentId)?.entrantCount)
+      .toBe(8);
   });
 
   it('auto-cancels a scheduled tournament with too few checked-in entrants', () => {
@@ -439,14 +483,14 @@ describe('TournamentManager', () => {
       name: '단일 테이블 파이널',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       h.manager.register(created.tournamentId, {
         id: `h${i}`, name: `유저${i}`, avatar: 'ara',
       });
@@ -480,14 +524,14 @@ describe('TournamentManager', () => {
       name: '인트로 겹침',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       h.manager.register(created.tournamentId, {
         id: `h${i}`, name: `유저${i}`, avatar: 'ara',
       });
@@ -514,14 +558,14 @@ describe('TournamentManager', () => {
       name: '인트로 중 완료',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       h.manager.register(created.tournamentId, {
         id: `h${i}`, name: `유저${i}`, avatar: 'ara',
       });
@@ -532,7 +576,7 @@ describe('TournamentManager', () => {
     expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
     expect(engine.state.tournament?.holdReasons).toEqual(['director-pause', 'final-intro']);
 
-    aliveIds(engine).slice(0, 4).forEach((playerId, i) => bust(engine, playerId, i + 1));
+    aliveIds(engine).slice(0, 7).forEach((playerId, i) => bust(engine, playerId, i + 1));
     expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('hold');
 
     expect(engine.state.tournament?.finished).toBe(true);

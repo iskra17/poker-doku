@@ -115,6 +115,11 @@ export interface TournamentRuntimeHooks {
   economy?: MttEconomyHooks;
 }
 
+export interface TournamentManagerOptions {
+  /** 등록자가 한 명도 없는 registering 토너먼트의 자동 취소 시간 */
+  emptyTournamentTtlMs?: number;
+}
+
 type InternalHoldReason = TournamentHoldReason | 'setup' | 'complete';
 
 /** 백오피스 토너먼트 탭 뷰 (admin-http /api/admin/tournaments) */
@@ -182,6 +187,7 @@ interface StagedLevelSnapshot {
 
 interface TournamentRuntime {
   id: string;
+  hostId: string;
   config: CreateTournamentInput;
   structure: MttStructure;
   phase: TournamentPhase;
@@ -223,15 +229,27 @@ interface TournamentRuntime {
   breakAnnounced: boolean;
   finalAnnounced: boolean;
   startTimer: NodeJS.Timeout | null;
+  emptyDeadline: number | null;
+  emptyTimer: NodeJS.Timeout | null;
   cleanupTimer: NodeJS.Timeout | null;
   /** wallet 정산 재시도 (1회) — 완주 시 settle 실패하면 잠시 후 다시 시도 */
   settleRetryTimer: NodeJS.Timeout | null;
 }
 
 const MAX_TOURNAMENTS = 4; // 동시 개설 상한 (테이블 수 폭주 방지 — MAX_ROOMS와 별개 가드)
+const MAX_REGISTERING_TOURNAMENTS_PER_HOST = 2;
 const MIN_ENTRANTS_CAP = 8;
 const MAX_ENTRANTS_CAP = 48;
+const MIN_MTT_STARTERS = 8;
+const DEFAULT_EMPTY_TOURNAMENT_TTL_MS = 5 * 60_000;
 const COMPLETED_RETENTION_MS = 10 * 60_000;
+
+function configuredEmptyTournamentTtlMs(): number {
+  const configured = Number(process.env.MTT_EMPTY_TOURNAMENT_TTL_MS);
+  return Number.isSafeInteger(configured) && configured > 0
+    ? configured
+    : DEFAULT_EMPTY_TOURNAMENT_TTL_MS;
+}
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -245,13 +263,19 @@ function shuffle<T>(items: T[]): T[] {
 export class TournamentManager {
   private tournaments = new Map<string, TournamentRuntime>();
   private byRoom = new Map<string, string>();
+  private readonly emptyTournamentTtlMs: number;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
   readonly roomHooks: MttRoomHooks;
 
   constructor(
     private readonly roomManager: RoomManager,
     private readonly hooks: TournamentRuntimeHooks = {},
+    options: TournamentManagerOptions = {},
   ) {
+    this.emptyTournamentTtlMs = Number.isSafeInteger(options.emptyTournamentTtlMs)
+      && (options.emptyTournamentTtlMs ?? 0) > 0
+      ? options.emptyTournamentTtlMs!
+      : configuredEmptyTournamentTtlMs();
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
       onHandStartFailed: roomId => this.onHandStartFailed(roomId),
@@ -268,7 +292,13 @@ export class TournamentManager {
 
   createTournament(input: CreateTournamentInput):
     | { ok: true; tournamentId: string }
-    | { ok: false; reason: 'limit' | 'invalid' } {
+    | { ok: false; reason: 'limit' | 'host-limit' | 'invalid' } {
+    const hostRegisteringCount = [...this.tournaments.values()].filter(
+      t => t.phase === 'registering' && t.hostId === input.hostId,
+    ).length;
+    if (hostRegisteringCount >= MAX_REGISTERING_TOURNAMENTS_PER_HOST) {
+      return { ok: false, reason: 'host-limit' };
+    }
     const active = [...this.tournaments.values()].filter(
       t => t.phase === 'registering' || t.phase === 'running',
     );
@@ -307,6 +337,7 @@ export class TournamentManager {
     const id = `mtt-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const t: TournamentRuntime = {
       id,
+      hostId: input.hostId,
       config: { ...input, name, tableSize, maxEntrants, economyMode, entryBuyIn, entryFee },
       structure: MTT_STRUCTURES[input.speed],
       phase: 'registering',
@@ -338,6 +369,8 @@ export class TournamentManager {
       breakAnnounced: false,
       finalAnnounced: false,
       startTimer: null,
+      emptyDeadline: null,
+      emptyTimer: null,
       cleanupTimer: null,
       settleRetryTimer: null,
     };
@@ -349,6 +382,7 @@ export class TournamentManager {
       }, delay);
     }
     this.tournaments.set(id, t);
+    this.armEmptyExpiry(t);
     eventLog.log('mtt-create', {
       data: { tournamentId: id, name, speed: input.speed, maxEntrants, tableSize, hostId: input.hostId },
     });
@@ -369,6 +403,7 @@ export class TournamentManager {
       this.hooks.economy?.reserveEntry(entrant.id, t.id, t.config.maxEntrants);
     }
     t.entrants.set(entrant.id, { ...entrant, name: entrant.name.slice(0, 20) });
+    if (t.entrants.size === 1) this.clearEmptyExpiry(t);
     this.hooks.onTournamentsChanged?.();
     this.hooks.onTournamentUpdate?.(tournamentId);
     return 'ok';
@@ -388,6 +423,7 @@ export class TournamentManager {
     }
     const removed = t.entrants.delete(playerId);
     if (removed) {
+      if (t.entrants.size === 0) this.armEmptyExpiry(t);
       this.hooks.onTournamentsChanged?.();
       this.hooks.onTournamentUpdate?.(tournamentId);
     }
@@ -711,6 +747,7 @@ export class TournamentManager {
   shutdown(): void {
     for (const t of this.tournaments.values()) {
       if (t.startTimer) clearTimeout(t.startTimer);
+      this.clearEmptyExpiry(t);
       if (t.finalIntroTimer) clearTimeout(t.finalIntroTimer);
       if (t.breakTimer) clearTimeout(t.breakTimer);
       if (t.cleanupTimer) clearTimeout(t.cleanupTimer);
@@ -753,12 +790,13 @@ export class TournamentManager {
       ? Math.max(0, t.config.maxEntrants - checkedIn.length)
       : 0;
     const total = checkedIn.length + botCount;
-    if (total < 2 || checkedIn.length < 1) {
+    if (total < MIN_MTT_STARTERS || checkedIn.length < 1) {
       // 자동 시작(예약)인데 인원이 안 되면 취소한다 — 수동 시작은 에러만 반환
       // (wallet 환불은 cancelTournament의 refundAll이 담당)
       if (requesterId === null) this.cancelTournament(t, 'not-enough');
       return 'not-enough';
     }
+    this.clearEmptyExpiry(t);
 
     if (isWallet) {
       // 노쇼(미접속 등록자) 환불 — 시작 에스크로는 출석 명단과 정확히 일치해야 한다
@@ -941,6 +979,7 @@ export class TournamentManager {
     t.phase = 'cancelled';
     t.pausedAt = null;
     if (t.startTimer) { clearTimeout(t.startTimer); t.startTimer = null; }
+    this.clearEmptyExpiry(t);
     if (t.finalIntroTimer) { clearTimeout(t.finalIntroTimer); t.finalIntroTimer = null; }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
     // wallet 무효화 환불 — 등록 중(reserved)·진행 중(started) 전원 전액(수수료 포함) 반환.
@@ -971,6 +1010,24 @@ export class TournamentManager {
       this.tournaments.delete(t.id);
       this.hooks.onTournamentsChanged?.();
     }, 60_000);
+  }
+
+  private armEmptyExpiry(t: TournamentRuntime): void {
+    this.clearEmptyExpiry(t);
+    if (t.phase !== 'registering' || t.entrants.size !== 0) return;
+    t.emptyDeadline = Date.now() + this.emptyTournamentTtlMs;
+    t.emptyTimer = setTimeout(() => {
+      t.emptyTimer = null;
+      t.emptyDeadline = null;
+      if (t.phase !== 'registering' || t.entrants.size !== 0) return;
+      this.cancelTournament(t, 'empty-expired');
+    }, this.emptyTournamentTtlMs);
+  }
+
+  private clearEmptyExpiry(t: TournamentRuntime): void {
+    if (t.emptyTimer) clearTimeout(t.emptyTimer);
+    t.emptyTimer = null;
+    t.emptyDeadline = null;
   }
 
   // --- RoomManager 훅 구현 ---
@@ -1320,6 +1377,7 @@ export class TournamentManager {
     t.stageEndsAt = undefined;
     t.finishedAt = Date.now();
     t.pausedAt = null;
+    this.clearEmptyExpiry(t);
     t.h4h.active = false;
     t.h4h.roundOpen = false;
     t.h4h.armed.clear();

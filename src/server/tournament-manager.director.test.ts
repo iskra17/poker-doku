@@ -425,8 +425,13 @@ describe('TournamentManager 디렉터 콘솔', () => {
 
     const running = h.manager.createTournament(input);
     if (!running.ok) throw new Error('create failed');
-    h.manager.register(running.tournamentId, { id: 'h1', name: '방장', avatar: 'ara' });
-    h.manager.register(running.tournamentId, { id: 'h2', name: '참가자', avatar: 'hana' });
+    for (let i = 1; i <= 8; i++) {
+      h.manager.register(running.tournamentId, {
+        id: `h${i}`,
+        name: i === 1 ? '방장' : `참가자 ${i}`,
+        avatar: i === 2 ? 'hana' : 'ara',
+      });
+    }
     expect(h.manager.startTournament(running.tournamentId, 'h1')).toBe('ok');
 
     expect(h.manager.directorAction(
