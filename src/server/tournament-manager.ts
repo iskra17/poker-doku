@@ -161,6 +161,8 @@ interface PendingLevelChange {
   levelIndex: number;
   generation: number;
   expectedRoomIds: Set<string>;
+  /** 이 generation이 처음 pre-start 적용될 때 고정한 공용 absolute deadline */
+  targetLevelEndsAt: number | null;
 }
 
 interface TournamentRuntime {
@@ -510,6 +512,7 @@ export class TournamentManager {
       levelIndex: idx,
       generation,
       expectedRoomIds: new Set(t.tables.keys()),
+      targetLevelEndsAt: null,
     };
 
     const cur = mttLevelAt(t.structure, idx);
@@ -971,6 +974,15 @@ export class TournamentManager {
     const needsPendingApplication = !!pending
       && pending.expectedRoomIds.has(roomId)
       && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation;
+    if (
+      needsPendingApplication
+      && pending
+      && pending.targetLevelEndsAt === null
+    ) {
+      pending.targetLevelEndsAt = Number.isFinite(pos.segmentRemainingMs)
+        ? Date.now() + pos.segmentRemainingMs
+        : 0;
+    }
     this.pushLevel(
       t,
       engine,
@@ -979,11 +991,10 @@ export class TournamentManager {
         : pos,
       false,
       needsPendingApplication,
+      needsPendingApplication && pending
+        ? pending.targetLevelEndsAt ?? undefined
+        : undefined,
     );
-    if (needsPendingApplication && pending) {
-      t.appliedLevelGenerationByRoom.set(roomId, pending.generation);
-      this.reconcilePendingLevelRooms(t);
-    }
   }
 
   private onHandStarted(roomId: string, handNumber: number): void {
@@ -991,6 +1002,14 @@ export class TournamentManager {
     const engine = this.roomManager.getRoom(roomId)?.engine;
     if (!t || !engine || engine.state.handNumber !== handNumber) return;
     if (t.h4h.active) t.h4h.armed.delete(roomId);
+    const pending = t.pendingLevel;
+    if (
+      pending?.expectedRoomIds.has(roomId)
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation
+    ) {
+      t.appliedLevelGenerationByRoom.set(roomId, pending.generation);
+      this.reconcilePendingLevelRooms(t);
+    }
   }
 
   private onHandComplete(roomId: string): 'continue' | 'hold' | 'gone' {
@@ -1918,6 +1937,7 @@ export class TournamentManager {
     pos: ReturnType<typeof mttClockAt>,
     initial: boolean,
     force = false,
+    levelEndsAtOverride?: number,
   ): void {
     const state = engine.state.tournament;
     if (!state) return;
@@ -1925,9 +1945,11 @@ export class TournamentManager {
     if (!force && !initial && state.level === level && state.levelEndsAt !== 0) return;
     const cur = mttLevelAt(t.structure, pos.levelIndex);
     const next = t.structure.levels[pos.levelIndex + 1] ?? null;
-    const levelEndsAt = Number.isFinite(pos.segmentRemainingMs)
-      ? Date.now() + pos.segmentRemainingMs
-      : 0;
+    const levelEndsAt = levelEndsAtOverride ?? (
+      Number.isFinite(pos.segmentRemainingMs)
+        ? Date.now() + pos.segmentRemainingMs
+        : 0
+    );
     const changed = state.level !== level;
     engine.setTournamentLevel(
       level,

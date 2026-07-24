@@ -296,6 +296,46 @@ describe('TournamentManager 디렉터 콘솔', () => {
     expect(final.state.tournament!.levelEndsAt).toBeGreaterThan(oldDeadline);
   });
 
+  it('startHand 실패는 generation을 완료하지 않고 지연 재시도에 같은 target과 deadline을 쓴다', () => {
+    const { id, tables } = start12(h);
+    vi.advanceTimersByTime(2_000);
+    const retrying = engineOf(h.roomManager, tables[0]);
+    const peer = engineOf(h.roomManager, tables[1]);
+
+    expect(h.manager.directorAction(id, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(h.manager.directorAction(id, 'h1', { kind: 'set-level', level: 1 })).toBe('ok');
+
+    for (const [roomId, engine] of [[tables[0], retrying], [tables[1], peer]] as const) {
+      let guard = 0;
+      while (engine.state.isHandInProgress && guard++ < 12) {
+        const actor = engine.state.players[engine.state.activePlayerIndex];
+        h.roomManager.processPlayerAction(roomId, actor.id, 'fold');
+      }
+    }
+
+    const start = vi.spyOn(retrying, 'startHand')
+      .mockImplementationOnce(() => { throw new Error('injected start failure'); });
+    expect(h.manager.directorAction(id, 'h1', { kind: 'resume' })).toBe('ok');
+    vi.advanceTimersByTime(2_000);
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(retrying.state.handNumber).toBe(1);
+    expect(peer.state.handNumber).toBe(2);
+    expect(retrying.state.tournament!.level).toBe(1);
+    const stagedDeadline = retrying.state.tournament!.levelEndsAt;
+
+    // 재시도 타이머는 실행하지 않고 벽시계만 target 레벨 구간 너머로 이동한다.
+    vi.setSystemTime(Date.now() + 9 * 60_000);
+    vi.advanceTimersByTime(1_000);
+
+    expect(start).toHaveBeenCalledTimes(2);
+    expect(retrying.state.handNumber).toBe(2);
+    expect(retrying.state.tournament!.level).toBe(1);
+    expect(retrying.state.smallBlind).toBe(50);
+    expect(retrying.state.bigBlind).toBe(100);
+    expect(retrying.state.tournament!.levelEndsAt).toBe(stagedDeadline);
+  });
+
   it('wallet MTT는 시작 전 취소만 허용하고 시작 후 참가자 방장의 위험 개입을 거부한다', () => {
     enableWalletMtt(h);
     const input = {
