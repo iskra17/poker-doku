@@ -447,7 +447,7 @@ export function parseCreateTournamentCommand(
   now: number,
 ): CreateTournamentCommand {
   if (!isRecord(raw)) fail('create-command');
-  if (!isSafeInteger(now)) fail('server-time');
+  if (!isEpochMs(now)) fail('server-time');
   const requestId = parseUuid(raw.requestId, 'request-id');
   const economy = parseEconomy(raw.economyMode);
   const minEntrants = safeIntegerIn(raw.minEntrants, 2, 48, 'field-policy');
@@ -491,11 +491,16 @@ export function parseCreateTournamentCommand(
 export function parseRegisterTournamentCommand(
   raw: unknown,
 ): RegisterTournamentCommand {
+  if (!isRecord(raw) || typeof raw.tournamentId !== 'string') {
+    fail('register-command');
+  }
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(raw.tournamentId)) {
+    fail('register-command');
+  }
+  const tournamentId = raw.tournamentId.trim();
   if (
-    !isRecord(raw)
-    || typeof raw.tournamentId !== 'string'
-    || raw.tournamentId.length === 0
-    || raw.tournamentId.length > 128
+    tournamentId.length === 0
+    || tournamentId.length > 128
   ) {
     fail('register-command');
   }
@@ -505,5 +510,5 @@ export function parseRegisterTournamentCommand(
   } catch {
     return fail('register-command');
   }
-  return deepFreeze({ tournamentId: raw.tournamentId, requestId });
+  return deepFreeze({ tournamentId, requestId });
 }

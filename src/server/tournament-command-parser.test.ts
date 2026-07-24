@@ -314,6 +314,33 @@ describe('parseCreateTournamentCommand', () => {
       NOW,
     )).toThrow('request-id');
   });
+
+  it('rejects a negative server epoch', () => {
+    expect(() => parseCreateTournamentCommand(freeroll(), -1))
+      .toThrow('server-time');
+  });
+
+  it('deep-freezes the normalized command snapshot', () => {
+    const parsed = parseCreateTournamentCommand(freeroll({
+      structure: {
+        sourcePresetId: null,
+        startingStack: 10_000,
+        segments: LEVELS,
+      },
+    }), NOW);
+
+    expect(Object.isFrozen(parsed)).toBe(true);
+    expect(Object.isFrozen(parsed.schedule)).toBe(true);
+    expect(Object.isFrozen(parsed.config)).toBe(true);
+    expect(Object.isFrozen(parsed.config.economy)).toBe(true);
+    expect(Object.isFrozen(parsed.config.field)).toBe(true);
+    expect(Object.isFrozen(parsed.config.structure)).toBe(true);
+    expect(Object.isFrozen(parsed.config.structure.segments)).toBe(true);
+    expect(parsed.config.structure.segments.every(Object.isFrozen)).toBe(true);
+    expect(Object.isFrozen(parsed.config.prizePool)).toBe(true);
+    expect(Object.isFrozen(parsed.config.payout)).toBe(true);
+    expect(Object.isFrozen(parsed.config.lateRegistration)).toBe(true);
+  });
 });
 
 describe('parseRegisterTournamentCommand', () => {
@@ -325,9 +352,27 @@ describe('parseRegisterTournamentCommand', () => {
     })).toEqual({ tournamentId: 'mtt-2026-07-25', requestId });
   });
 
+  it('trims a bounded server-issued tournament id', () => {
+    const requestId = randomUUID();
+    expect(parseRegisterTournamentCommand({
+      tournamentId: '  mtt-2026-07-25  ',
+      requestId,
+    })).toEqual({ tournamentId: 'mtt-2026-07-25', requestId });
+  });
+
   it.each([
     { tournamentId: '', requestId: randomUUID() },
+    { tournamentId: '   ', requestId: randomUUID() },
+    { tournamentId: 'mtt-1\nforged', requestId: randomUUID() },
+    { tournamentId: 'mtt-1\n', requestId: randomUUID() },
+    { tournamentId: 'mtt-1\u0085', requestId: randomUUID() },
+    { tournamentId: `mtt-${'x'.repeat(125)}`, requestId: randomUUID() },
     { tournamentId: 'mtt-1', requestId: 'not-a-uuid' },
+    {
+      tournamentId: 'mtt-1',
+      requestId: `${randomUUID()}\n`,
+    },
+    { tournamentId: 'mtt-1', requestId: '   ' },
     { tournamentId: 123, requestId: randomUUID() },
   ])('rejects malformed registration commands %#', (command) => {
     expect(() => parseRegisterTournamentCommand(command))
@@ -336,9 +381,49 @@ describe('parseRegisterTournamentCommand', () => {
 });
 
 describe('tournament lifecycle and registration state', () => {
-  it('accepts only legal lifecycle and registration pairs', () => {
-    expect(isTournamentStatePair('running', 'open-late')).toBe(true);
-    expect(isTournamentStatePair('payout-pending', 'open-late')).toBe(false);
-    expect(isTournamentStatePair('refund-pending', 'closed')).toBe(true);
+  it('accepts exactly the legal full lifecycle and registration matrix', () => {
+    const statuses = [
+      'scheduled-hidden',
+      'scheduled-visible',
+      'registering',
+      'start-delayed',
+      'starting',
+      'running',
+      'payout-pending',
+      'refund-pending',
+      'completed',
+      'cancelled',
+    ] as const;
+    const registrationStates = [
+      'not-open',
+      'open-prestart',
+      'locked-for-start',
+      'open-late',
+      'closing',
+      'closed',
+    ] as const;
+    const legal = new Set([
+      'scheduled-hidden:not-open',
+      'scheduled-visible:not-open',
+      'registering:open-prestart',
+      'start-delayed:locked-for-start',
+      'starting:locked-for-start',
+      'running:open-late',
+      'running:closing',
+      'running:closed',
+      'payout-pending:closed',
+      'refund-pending:closed',
+      'completed:closed',
+      'cancelled:closed',
+    ]);
+
+    for (const status of statuses) {
+      for (const registrationState of registrationStates) {
+        expect(
+          isTournamentStatePair(status, registrationState),
+          `${status} × ${registrationState}`,
+        ).toBe(legal.has(`${status}:${registrationState}`));
+      }
+    }
   });
 });
