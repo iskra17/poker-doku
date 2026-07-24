@@ -219,6 +219,84 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(destinationRoomId);
   });
 
+  it('disconnected MTT 이동 뒤 old grace 만료가 목적지 좌석을 보존하고 resync한다', async () => {
+    harness = await createSocketTestHarness({ graceMs: 60 });
+    const token = 'mtt-grace-move-client';
+    const first = await harness.connect(token);
+    const sourceRoomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: 'MTT grace source',
+    });
+    const destinationRoomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: 'MTT grace destination',
+    });
+    const source = harness.runtime.roomManager.getRoom(sourceRoomId)!;
+    expect(source.engine.addPlayer(makePlayer(first.playerId, 1_500, 0, {
+      name: 'Grace Move Player',
+    }))).toBe(true);
+
+    const session = harness.runtime.sessions.getByPlayerId(first.playerId)!;
+    session.roomId = sourceRoomId;
+    await expect(withAck(done => first.socket.emit('resync', done)))
+      .resolves.toMatchObject({ ok: true });
+    expect(harness.getServerSocketRooms(first.socket.id!)).toContain(sourceRoomId);
+
+    first.socket.disconnect();
+    await waitUntil(() => (
+      source.engine.state.players.find(player => player.id === first.playerId)
+        ?.isDisconnected === true
+    ));
+
+    const managerHooks = (
+      harness.runtime.tournamentManager as unknown as {
+        hooks: Pick<TournamentRuntimeHooks, 'onPlayerMoved'>;
+      }
+    ).hooks;
+    expect(harness.runtime.roomManager.transferMttSeat(
+      sourceRoomId,
+      destinationRoomId,
+      first.playerId,
+      0,
+    )).toBe(true);
+    managerHooks.onPlayerMoved?.({
+      tournamentId: 'mtt-move-test',
+      playerId: first.playerId,
+      fromRoomId: sourceRoomId,
+      toRoomId: destinationRoomId,
+    });
+    expect(session.roomId).toBe(destinationRoomId);
+
+    await wait(90);
+
+    expect(harness.runtime.sessions.getByPlayerId(first.playerId)?.roomId)
+      .toBe(destinationRoomId);
+    expect(harness.runtime.roomManager.getRoom(destinationRoomId)!.engine.state.players)
+      .toContainEqual(expect.objectContaining({
+        id: first.playerId,
+        isDisconnected: true,
+      }));
+
+    const second = await harness.connect(token);
+    let restoredRoomId: string | null = null;
+    second.socket.on('room-joined', payload => {
+      restoredRoomId = payload.roomId;
+    });
+    await expect(withAck(done => second.socket.emit('resync', done)))
+      .resolves.toMatchObject({ ok: true });
+    await waitUntil(() => restoredRoomId !== null);
+
+    expect(second.playerId).toBe(first.playerId);
+    expect(restoredRoomId).toBe(destinationRoomId);
+    expect(harness.getServerSocketRooms(second.socket.id!)).toContain(destinationRoomId);
+    expect(harness.getServerSocketRooms(second.socket.id!)).not.toContain(sourceRoomId);
+    expect(harness.runtime.roomManager.getRoom(destinationRoomId)!.engine.state.players)
+      .toContainEqual(expect.objectContaining({
+        id: first.playerId,
+        isDisconnected: false,
+      }));
+  });
+
   it('keeps arena queue state private and blocks room entry until an explicit leave ack', async () => {
     harness = await createSocketTestHarness({ arenaEnabled: true });
     const roomId = harness.runtime.roomManager.createRoom(PRACTICE_CASH_ROOM);
