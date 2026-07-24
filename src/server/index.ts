@@ -41,6 +41,7 @@ import { eventLog } from './event-log';
 import { OpsEventRepository, shouldPersistOpsEvent } from './ops-log';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
+import { PromotionFundRepository } from './promotion-fund-repository';
 import { ProgressionRepository } from './progression-repository';
 import { ProgressionService } from './progression-service';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
@@ -237,6 +238,7 @@ async function listen(): Promise<void> {
   // 운영 이벤트 영속화 — 신호 이벤트(429·정산 실패·grace 만료 등)를 SQLite로 남겨
   // 재시작 후에도 장애를 역추적할 수 있게 한다 (/api/admin/events)
   const opsEvents = new OpsEventRepository(database);
+  const promotionFunds = new PromotionFundRepository(database);
   eventLog.setPersistentSink(event => {
     if (shouldPersistOpsEvent(event)) opsEvents.record(event);
   });
@@ -260,6 +262,7 @@ async function listen(): Promise<void> {
       runtime?.refreshPublicCosmetics(profileId, snapshot);
     },
     opsEvents,
+    promotionFunds,
     gameConfig: gameConfigService,
     adminTournamentCommands: {
       create: draft => runtime

@@ -22,6 +22,7 @@ import type {
   TransientHttpRateLimiter,
 } from './http-rate-limit';
 import type { PokerDatabase } from './persistence/database';
+import { PromotionFundRepository } from './promotion-fund-repository';
 import {
   createProfileHttpHandler,
   type EconomyHttpService,
@@ -64,6 +65,7 @@ interface HttpHandlerCommonOptions {
   adminRuntime?: () => AdminRuntimeSnapshot | null;
   adminTournamentCommands?: AdminTournamentCommands;
   adminSessions?: AdminSessionManager;
+  promotionFunds?: PromotionFundRepository;
   /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
   gameConfig?: GameConfigService;
 }
@@ -183,6 +185,8 @@ export function createHttpRequestHandler(
           sourceToken: debugToken,
           production,
         }),
+        promotionFunds: options.promotionFunds
+          ?? new PromotionFundRepository(options.database),
         production,
         now: options.now,
       })

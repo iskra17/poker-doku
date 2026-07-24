@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { UrlWithParsedQuery } from 'node:url';
 import {
   AdminSessionError,
+  type AdminPrincipal,
   type AdminSessionManager,
   isExactAdminOrigin,
   resolveAdminRequestOrigin,
@@ -15,6 +16,10 @@ import type { HandHistoryRepository, TableHandRepository } from './hand-history'
 import { drainRequest, HttpBodyError, readJsonBody } from './http-body';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
+import {
+  PromotionFundError,
+  type PromotionFundRepository,
+} from './promotion-fund-repository';
 import type { CreateTournamentRequest } from '../lib/realtime/protocol';
 import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
 import type {
@@ -99,6 +104,7 @@ export interface AdminHttpOptions {
   gameConfig?: GameConfigService;
   tournamentCommands?: AdminTournamentCommands;
   adminSessions: AdminSessionManager;
+  promotionFunds: PromotionFundRepository;
   production: boolean;
   now?: () => number;
 }
@@ -344,15 +350,21 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
       return true;
     }
 
+    let principal: AdminPrincipal;
     if (req.method === 'GET' || req.method === 'HEAD') {
-      if (!options.adminSessions.authenticate(req.headers.cookie, now())) {
+      const authenticated = options.adminSessions.authenticate(
+        req.headers.cookie,
+        now(),
+      );
+      if (!authenticated) {
         drainRequest(req);
         send(res, 401, { error: 'unauthenticated' });
         return true;
       }
+      principal = authenticated;
     } else {
       try {
-        options.adminSessions.requireMutation({
+        principal = options.adminSessions.requireMutation({
           cookieHeader: req.headers.cookie,
           csrfHeader: header(req, 'x-csrf-token'),
           origin: header(req, 'origin'),
@@ -365,6 +377,104 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         sendAdminSessionError(res, error);
         return true;
       }
+    }
+
+    if (pathname === '/api/admin/promotion-fund') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        drainRequest(req);
+        send(res, 405, { error: 'method-not-allowed', allow: 'GET' });
+        return true;
+      }
+      const limitRaw = one(query.limit);
+      const limit = limitRaw === undefined ? 50 : Number(limitRaw);
+      const before = one(query.before);
+      if (
+        !Number.isSafeInteger(limit)
+        || limit < 1
+        || limit > 100
+        || (before !== undefined && before.length === 0)
+      ) {
+        send(res, 400, { error: 'invalid-query' });
+        return true;
+      }
+      try {
+        send(res, 200, options.promotionFunds.getFundPage({
+          limit,
+          ...(before === undefined ? {} : { before }),
+        }));
+      } catch (error) {
+        send(
+          res,
+          error instanceof PromotionFundError && error.code === 'invalid-input'
+            ? 400
+            : 500,
+          {
+            error: error instanceof PromotionFundError
+              ? error.code
+              : 'internal-error',
+          },
+        );
+      }
+      return true;
+    }
+
+    if (pathname === '/api/admin/promotion-fund/adjust') {
+      if (req.method !== 'POST') {
+        drainRequest(req);
+        send(res, 405, { error: 'method-not-allowed', allow: 'POST' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        send(res, 400, { error: 'invalid-body' });
+        return true;
+      }
+      if (
+        !isRecord(body)
+        || typeof body.requestId !== 'string'
+        || !Number.isSafeInteger(body.delta)
+        || typeof body.reason !== 'string'
+      ) {
+        send(res, 400, { error: 'invalid-body' });
+        return true;
+      }
+      try {
+        const adjustment = options.promotionFunds.adjustFund({
+          requestId: body.requestId,
+          delta: body.delta as number,
+          reason: body.reason,
+          actor: { kind: 'backoffice-admin', id: principal.id },
+          at: now(),
+        });
+        eventLog.log('promotion-fund-adjust', {
+          data: {
+            requestId: adjustment.ledger.idempotencyKey,
+            delta: adjustment.ledger.delta,
+            reason: adjustment.ledger.reason,
+            balanceAfter: adjustment.ledger.balanceAfter,
+            actorKind: adjustment.ledger.actor.kind,
+            actorId: adjustment.ledger.actor.id,
+            replayed: adjustment.replayed,
+          },
+        });
+        send(res, 200, adjustment);
+      } catch (error) {
+        if (error instanceof PromotionFundError) {
+          const status = error.code === 'promotion-insufficient'
+            ? 409
+            : error.code === 'invalid-input'
+              ? 400
+              : error.code === 'idempotency-conflict'
+                ? 409
+                : 500;
+          send(res, status, { error: error.code });
+        } else {
+          send(res, 500, { error: 'internal-error' });
+        }
+      }
+      return true;
     }
 
     if (pathname === '/api/admin/feedback') {

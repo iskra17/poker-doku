@@ -48,6 +48,35 @@ describe('OpsEventRepository', () => {
     }
   });
 
+  it('promotion, scheduler, late-registration, payout 감사 이벤트를 영속한다', () => {
+    const base = { seq: 1, t: 1 };
+    for (const type of [
+      'promotion-fund-adjust',
+      'mtt-freeroll-prize-reserve',
+      'mtt-freeroll-prize-reserve-failed',
+      'mtt-freeroll-prize-settle',
+      'mtt-freeroll-prize-refund',
+      'mtt-template-create',
+      'mtt-template-update',
+      'mtt-instance-generate',
+      'mtt-registration-open',
+      'mtt-start-delayed',
+      'mtt-scheduled-start',
+      'mtt-scheduled-cancel',
+      'mtt-scheduler-reconcile',
+      'mtt-late-reg-open',
+      'mtt-late-reg-accept',
+      'mtt-late-reg-batch',
+      'mtt-late-reg-seat',
+      'mtt-late-reg-close',
+      'mtt-payout-freeze',
+      'mtt-late-reg-refund',
+      'mtt-payout-pending',
+    ]) {
+      expect(shouldPersistOpsEvent({ ...base, type })).toBe(true);
+    }
+  });
+
   it('기록·커서 조회·타입 필터·초과분 정리가 동작한다', () => {
     database = openPokerDatabase(':memory:');
     const repo = new OpsEventRepository(database);

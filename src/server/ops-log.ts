@@ -28,6 +28,27 @@ export const OPS_PERSIST_TYPES = new Set([
   'mtt-move',             // 밸런싱 이동 (선수·from→to)
   'mtt-itm',              // 버블 종료 및 전원 상금권 진입
   'mtt-director-action',  // 일시정지/재개/레벨 수정/강제 제거 등 운영 개입
+  'mtt-template-create',
+  'mtt-template-update',
+  'mtt-instance-generate',
+  'mtt-registration-open',
+  'mtt-start-delayed',
+  'mtt-scheduled-start',
+  'mtt-scheduled-cancel',
+  'mtt-scheduler-reconcile',
+  'promotion-fund-adjust',
+  'mtt-freeroll-prize-reserve',
+  'mtt-freeroll-prize-reserve-failed',
+  'mtt-freeroll-prize-settle',
+  'mtt-freeroll-prize-refund',
+  'mtt-late-reg-open',
+  'mtt-late-reg-accept',
+  'mtt-late-reg-batch',
+  'mtt-late-reg-seat',
+  'mtt-late-reg-close',
+  'mtt-payout-freeze',
+  'mtt-late-reg-refund',
+  'mtt-payout-pending',
 ]);
 
 /** settlementOk:false인 hand-end처럼 조건부로 영속할 이벤트 판정 */
