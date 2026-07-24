@@ -18,6 +18,8 @@ describe('admin game config HTTP API', () => {
   let opsEvents: OpsEventRepository;
   let baseUrl: string;
   let close: () => Promise<void>;
+  let cookie: string;
+  let csrfToken: string;
 
   beforeEach(async () => {
     database = openPokerDatabase(':memory:');
@@ -44,6 +46,17 @@ describe('admin game config HTTP API', () => {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     close = () => new Promise(resolve => server.close(() => resolve()));
+    const login = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: baseUrl,
+      },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(login.status).toBe(201);
+    cookie = login.headers.get('set-cookie')!.split(';', 1)[0];
+    csrfToken = (await login.json()).csrfToken;
   });
 
   afterEach(async () => {
@@ -53,25 +66,79 @@ describe('admin game config HTTP API', () => {
     database.close();
   });
 
-  const configUrl = (token: string | null = TOKEN) =>
-    `${baseUrl}/api/admin/config${token === null ? '' : `?token=${token}`}`;
+  const configUrl = () => `${baseUrl}/api/admin/config`;
 
-  const post = (body: unknown, token: string | null = TOKEN) =>
-    fetch(configUrl(token), {
+  const post = (body: unknown, auth = true) =>
+    fetch(configUrl(), {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        origin: baseUrl,
+        ...(auth ? { cookie, 'x-csrf-token': csrfToken } : {}),
+      },
       body: JSON.stringify(body),
     });
 
-  it('rejects requests without a valid token', async () => {
-    expect((await fetch(configUrl(null))).status).toBe(403);
-    expect((await fetch(configUrl('wrong'))).status).toBe(403);
-    expect((await post({ updates: { 'economy.dailyGrant': 1 } }, 'wrong')).status)
-      .toBe(403);
+  it('rejects requests without a valid admin session', async () => {
+    expect((await fetch(configUrl())).status).toBe(401);
+    expect((await fetch(`${configUrl()}?token=${TOKEN}`)).status).toBe(401);
+    expect((await post({ updates: { 'economy.dailyGrant': 1 } }, false)).status)
+      .toBe(401);
+  });
+
+  it('returns only the opaque session view and rate-limits login by canonical client address', async () => {
+    const session = await fetch(`${baseUrl}/api/admin/session`, {
+      headers: { cookie },
+    });
+    expect(session.status).toBe(200);
+    const sessionPayload = await session.json();
+    expect(sessionPayload).toMatchObject({
+      principal: { kind: 'backoffice-admin', id: expect.stringMatching(/^admin_/) },
+      csrfToken: expect.any(String),
+      expiresAt: NOW + 2 * 60 * 60 * 1_000,
+    });
+    expect(JSON.stringify(sessionPayload)).not.toContain(TOKEN);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const denied = await fetch(`${baseUrl}/api/admin/session`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: baseUrl,
+          'x-forwarded-for': `spoof-${attempt}, 203.0.113.90`,
+        },
+        body: JSON.stringify({ token: 'wrong' }),
+      });
+      expect(denied.status).toBe(401);
+    }
+    const limited = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: baseUrl,
+        'x-forwarded-for': 'different-spoof, 203.0.113.90',
+      },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(limited.status).toBe(429);
+    expect(limited.headers.get('retry-after')).toBe('600');
+  });
+
+  it('rejects cross-origin login before credential verification', async () => {
+    const response = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: 'https://evil.example.test',
+      },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('set-cookie')).toBeNull();
   });
 
   it('serves registry metadata with current values on GET', async () => {
-    const response = await fetch(configUrl());
+    const response = await fetch(configUrl(), { headers: { cookie } });
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.groupLabels.economy).toBe('경제');
@@ -109,7 +176,7 @@ describe('admin game config HTTP API', () => {
     expect(gameConfig.get('economy.dailyGrant')).toBe(2_000);
 
     // GET에도 오버라이드 상태 반영
-    const listed = await (await fetch(configUrl())).json();
+    const listed = await (await fetch(configUrl(), { headers: { cookie } })).json();
     const entry = listed.entries.find(
       (item: { key: string }) => item.key === 'economy.dailyGrant',
     );
@@ -166,19 +233,79 @@ describe('admin game config HTTP API', () => {
     expect(badValue.status).toBe(400);
     const noJson = await fetch(configUrl(), {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers: {
+        cookie,
+        'content-type': 'text/plain',
+        origin: baseUrl,
+        'x-csrf-token': csrfToken,
+      },
       body: 'hello',
     });
     expect(noJson.status).toBe(400);
 
-    const put = await fetch(configUrl(), { method: 'PUT' });
+    const put = await fetch(configUrl(), {
+      method: 'PUT',
+      headers: { cookie, origin: baseUrl, 'x-csrf-token': csrfToken },
+    });
     expect(put.status).toBe(405);
 
     // 조회 전용 라우트에 POST → 405
     const overviewPost = await fetch(
-      `${baseUrl}/api/admin/overview?token=${TOKEN}`,
-      { method: 'POST' },
+      `${baseUrl}/api/admin/overview`,
+      {
+        method: 'POST',
+        headers: { cookie, origin: baseUrl, 'x-csrf-token': csrfToken },
+      },
     );
     expect(overviewPost.status).toBe(405);
+  });
+
+  it('requires exact origin and csrf before an admin mutation', async () => {
+    const missingCsrf = await fetch(configUrl(), {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json', origin: baseUrl },
+      body: JSON.stringify({ updates: { 'economy.dailyGrant': 2_000 } }),
+    });
+    expect(missingCsrf.status).toBe(403);
+
+    const crossOrigin = await fetch(configUrl(), {
+      method: 'POST',
+      headers: {
+        cookie,
+        'content-type': 'application/json',
+        origin: 'https://evil.example.test',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({ updates: { 'economy.dailyGrant': 2_000 } }),
+    });
+    expect(crossOrigin.status).toBe(403);
+    expect(gameConfig.get('economy.dailyGrant')).toBe(1_000);
+  });
+
+  it('serves session-authenticated feedback while retaining the debug endpoint elsewhere', async () => {
+    database.db.prepare(`
+      INSERT INTO feedback (profile_id, alias, category, message, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(null, '테스터', 'idea', '관리자 피드백 테스트', NOW);
+
+    const response = await fetch(`${baseUrl}/api/admin/feedback?limit=10`, {
+      headers: { cookie },
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      count: 1,
+      items: [{ alias: '테스터', message: '관리자 피드백 테스트' }],
+    });
+  });
+
+  it('logs out and rejects the expired admin cookie', async () => {
+    const response = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'DELETE',
+      headers: { cookie, origin: baseUrl, 'x-csrf-token': csrfToken },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get('set-cookie')).toContain('Max-Age=0');
+    expect((await fetch(configUrl(), { headers: { cookie } })).status).toBe(401);
   });
 });

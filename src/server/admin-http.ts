@@ -1,6 +1,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { UrlWithParsedQuery } from 'node:url';
+import {
+  AdminSessionError,
+  type AdminSessionManager,
+} from './admin-session';
+import { clientAddress } from './client-address';
 import { eventLog } from './event-log';
+import { FeedbackRepository } from './feedback-http';
 import { GAME_CONFIG_GROUP_LABELS } from './game-config/registry';
 import { GameConfigValidationError, type GameConfigService } from './game-config/service';
 import type { HandHistoryRepository, TableHandRepository } from './hand-history';
@@ -90,7 +96,7 @@ export interface AdminHttpOptions {
   /** 런타임 게임 설정 (핫 컨피그) — 게임 읽기 경로(live cfg)와 같은 인스턴스여야 한다 */
   gameConfig?: GameConfigService;
   tournamentCommands?: AdminTournamentCommands;
-  debugToken?: string;
+  adminSessions: AdminSessionManager;
   now?: () => number;
 }
 
@@ -104,16 +110,175 @@ function one(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function send(res: ServerResponse, status: number, body: unknown): void {
+function send(
+  res: ServerResponse,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    ...headers,
   });
   res.end(JSON.stringify(body));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function header(req: IncomingMessage, name: string): string | undefined {
+  const value = req.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function boundedInteger(
+  raw: string | undefined,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed)
+    ? Math.min(Math.max(parsed, min), max)
+    : fallback;
+}
+
+function hasExactRequestOrigin(req: IncomingMessage): boolean {
+  const origin = header(req, 'origin');
+  const host = header(req, 'host');
+  if (!origin || !host || host !== host.trim()) return false;
+  try {
+    const parsed = new URL(origin);
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:')
+      && parsed.origin === origin
+      && parsed.host === host.toLowerCase()
+      && parsed.username === ''
+      && parsed.password === ''
+    );
+  } catch {
+    return false;
+  }
+}
+
+function sendAdminSessionError(res: ServerResponse, error: unknown): void {
+  if (!(error instanceof AdminSessionError)) {
+    send(res, 500, { error: 'internal-error' });
+    return;
+  }
+  const status = error.kind === 'unauthenticated'
+    ? 401
+    : error.kind === 'rate-limited'
+      ? 429
+      : 403;
+  send(
+    res,
+    status,
+    { error: error.kind },
+    error.retryAfterMs === undefined
+      ? {}
+      : { 'retry-after': String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))) },
+  );
+}
+
+async function handleAdminSession(
+  req: IncomingMessage,
+  res: ServerResponse,
+  sessions: AdminSessionManager,
+  now: () => number,
+): Promise<void> {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    const view = sessions.getSessionView(req.headers.cookie, now());
+    if (!view) {
+      drainRequest(req);
+      send(res, 401, { error: 'unauthenticated' });
+      return;
+    }
+    send(res, 200, view);
+    return;
+  }
+
+  if (req.method === 'POST') {
+    if (!hasExactRequestOrigin(req)) {
+      drainRequest(req);
+      send(res, 403, { error: 'origin' });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = await readJsonBody(req);
+    } catch {
+      send(res, 400, { error: 'invalid-body' });
+      return;
+    }
+    const rawToken = isRecord(body) && typeof body.token === 'string'
+      ? body.token
+      : null;
+    if (!rawToken) {
+      send(res, 400, { error: 'invalid-body' });
+      return;
+    }
+    const result = sessions.login(rawToken, clientAddress(req), now());
+    if (!result.ok) {
+      const status = result.reason === 'rate-limited'
+        ? 429
+        : result.reason === 'unavailable'
+          ? 503
+          : 401;
+      send(
+        res,
+        status,
+        { error: result.reason },
+        result.retryAfterMs === undefined
+          ? {}
+          : { 'retry-after': String(Math.max(1, Math.ceil(result.retryAfterMs / 1_000))) },
+      );
+      return;
+    }
+    send(
+      res,
+      201,
+      {
+        principal: result.principal,
+        csrfToken: result.csrfToken,
+        expiresAt: result.expiresAt,
+      },
+      { 'set-cookie': result.setCookie },
+    );
+    return;
+  }
+
+  if (req.method === 'DELETE') {
+    try {
+      sessions.requireMutation({
+        cookieHeader: req.headers.cookie,
+        csrfHeader: header(req, 'x-csrf-token'),
+        origin: header(req, 'origin'),
+        host: header(req, 'host'),
+        now: now(),
+      });
+    } catch (error) {
+      drainRequest(req);
+      sendAdminSessionError(res, error);
+      return;
+    }
+    sessions.logout(req.headers.cookie);
+    res.writeHead(204, {
+      'cache-control': 'no-store',
+      'set-cookie': sessions.clearCookie(),
+    });
+    res.end();
+    return;
+  }
+
+  drainRequest(req);
+  send(res, 405, {
+    error: 'method-not-allowed',
+    allow: 'GET, POST, DELETE',
+  });
 }
 
 function parseTournamentDraft(body: unknown, now: number): CreateTournamentRequest | null {
@@ -181,9 +346,49 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     query: UrlWithParsedQuery['query'],
   ): Promise<boolean> => {
     if (!pathname.startsWith('/api/admin/')) return false;
-    if (!options.debugToken || one(query.token) !== options.debugToken) {
-      drainRequest(req);
-      send(res, 403, { error: 'forbidden' });
+    if (pathname === '/api/admin/session') {
+      await handleAdminSession(req, res, options.adminSessions, now);
+      return true;
+    }
+
+    if (req.method === 'GET' || req.method === 'HEAD') {
+      if (!options.adminSessions.authenticate(req.headers.cookie, now())) {
+        drainRequest(req);
+        send(res, 401, { error: 'unauthenticated' });
+        return true;
+      }
+    } else {
+      try {
+        options.adminSessions.requireMutation({
+          cookieHeader: req.headers.cookie,
+          csrfHeader: header(req, 'x-csrf-token'),
+          origin: header(req, 'origin'),
+          host: header(req, 'host'),
+          now: now(),
+        });
+      } catch (error) {
+        drainRequest(req);
+        sendAdminSessionError(res, error);
+        return true;
+      }
+    }
+
+    if (pathname === '/api/admin/feedback') {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        drainRequest(req);
+        send(res, 405, { error: 'method-not-allowed', allow: 'GET' });
+        return true;
+      }
+      const limit = boundedInteger(one(query.limit), 50, 1, 200);
+      const beforeRaw = one(query.before);
+      const before = beforeRaw === undefined
+        ? undefined
+        : boundedInteger(beforeRaw, Number.NaN, 1, Number.MAX_SAFE_INTEGER);
+      const items = new FeedbackRepository(options.database).list(
+        limit,
+        Number.isSafeInteger(before) ? before : undefined,
+      );
+      send(res, 200, { count: items.length, items });
       return true;
     }
 

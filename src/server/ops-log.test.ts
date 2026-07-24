@@ -12,7 +12,7 @@ import { openPokerDatabase, type PokerDatabase } from './persistence/database';
  * 운영 이벤트 영속화 + 백오피스 API 계약:
  * - 신호 이벤트(server-start/http-reject 등)만 화이트리스트로 영속, 플레이 이벤트는 제외.
  * - hand-end는 settlementOk:false일 때만 (정산 장애 추적).
- * - /api/admin/*는 DEBUG_LOG_TOKEN 게이트 — 토큰 없이는 403, 응답에 비밀 없음.
+ * - /api/admin/*는 opaque session 게이트 — 세션 없이는 401, 응답에 원본 토큰 없음.
  */
 
 describe('OpsEventRepository', () => {
@@ -141,19 +141,49 @@ describe('/api/admin/* 백오피스 API', () => {
     servers.push(server);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
-    return { baseUrl: `http://127.0.0.1:${port}`, adminTournamentCommands };
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const login = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: baseUrl },
+      body: JSON.stringify({ token: 'admin-secret' }),
+    });
+    expect(login.status).toBe(201);
+    const cookie = login.headers.get('set-cookie')!.split(';', 1)[0];
+    const csrfToken = ((await login.json()) as { csrfToken: string }).csrfToken;
+    const adminGet = (path: string) => fetch(`${baseUrl}${path}`, {
+      headers: { cookie },
+    });
+    const adminMutation = (path: string, body: unknown) => fetch(
+      `${baseUrl}${path}`,
+      {
+        method: 'POST',
+        headers: {
+          cookie,
+          'content-type': 'application/json',
+          origin: baseUrl,
+          'x-csrf-token': csrfToken,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+    return {
+      baseUrl,
+      adminGet,
+      adminMutation,
+      adminTournamentCommands,
+    };
   }
 
-  it('토큰이 없거나 틀리면 403', async () => {
+  it('세션이 없거나 URL 토큰만 있으면 401', async () => {
     const { baseUrl } = await start();
-    expect((await fetch(`${baseUrl}/api/admin/overview`)).status).toBe(403);
-    expect((await fetch(`${baseUrl}/api/admin/overview?token=wrong`)).status).toBe(403);
-    expect((await fetch(`${baseUrl}/api/admin/profiles?token=wrong`)).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/admin/overview`)).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/admin/overview?token=wrong`)).status).toBe(401);
+    expect((await fetch(`${baseUrl}/api/admin/profiles?token=admin-secret`)).status).toBe(401);
   });
 
   it('overview는 세션/방/DB 집계를 반환한다', async () => {
-    const { baseUrl } = await start();
-    const response = await fetch(`${baseUrl}/api/admin/overview?token=admin-secret`);
+    const { adminGet } = await start();
+    const response = await adminGet('/api/admin/overview');
     expect(response.status).toBe(200);
     const body = await response.json() as {
       sessions: { sockets: number };
@@ -168,15 +198,15 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('events는 영속 이벤트를 최신순으로 반환한다', async () => {
-    const { baseUrl } = await start();
-    const response = await fetch(`${baseUrl}/api/admin/events?token=admin-secret`);
+    const { adminGet } = await start();
+    const response = await adminGet('/api/admin/events');
     expect(response.status).toBe(200);
     const body = await response.json() as { events: Array<{ type: string }> };
     expect(body.events[0].type).toBe('server-start');
   });
 
   it('profiles는 활동 지표·지갑·접속 상태를 반환한다 (비밀 컬럼 없음)', async () => {
-    const { baseUrl } = await start();
+    const { adminGet } = await start();
     // 익명 프로필 1개 시드 (스키마 필수 컬럼만)
     database!.db.prepare(`
       INSERT INTO profiles (
@@ -189,7 +219,7 @@ describe('/api/admin/* 백오피스 API', () => {
       INSERT INTO wallets (profile_id, balance, updated_at) VALUES ('p1', 8000, 1)
     `).run();
 
-    const response = await fetch(`${baseUrl}/api/admin/profiles?token=admin-secret`);
+    const response = await adminGet('/api/admin/profiles');
     expect(response.status).toBe(200);
     const body = await response.json() as {
       profiles: Array<Record<string, unknown>>;
@@ -211,7 +241,7 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('hands는 정본 목록·방 필터·상세(전체 홀카드)를 반환한다', async () => {
-    const { baseUrl } = await start();
+    const { baseUrl, adminGet } = await start();
     const tableHands = new TableHandRepository(database!);
     const record: CompletedHandRecord = {
       handNumber: 1,
@@ -244,7 +274,7 @@ describe('/api/admin/* 백오피스 API', () => {
       roomId: 'room-1', roomName: '테스트 방', gameMode: 'cash', record, playedAt: 2_000,
     });
 
-    const listResponse = await fetch(`${baseUrl}/api/admin/hands?token=admin-secret&room=room-1`);
+    const listResponse = await adminGet('/api/admin/hands?room=room-1');
     expect(listResponse.status).toBe(200);
     const listBody = await listResponse.json() as {
       mode: string;
@@ -256,10 +286,10 @@ describe('/api/admin/* 백오피스 API', () => {
     // 목록에는 홀카드가 실리지 않는다
     expect(JSON.stringify(listBody)).not.toContain('holeCards');
 
-    const emptyList = await fetch(`${baseUrl}/api/admin/hands?token=admin-secret&room=other`);
+    const emptyList = await adminGet('/api/admin/hands?room=other');
     expect(((await emptyList.json()) as { hands: unknown[] }).hands).toHaveLength(0);
 
-    const detailResponse = await fetch(`${baseUrl}/api/admin/hands/${handId}?token=admin-secret`);
+    const detailResponse = await adminGet(`/api/admin/hands/${handId}`);
     expect(detailResponse.status).toBe(200);
     const detailBody = await detailResponse.json() as {
       hand: { id: number; players: Array<{ holeCards: unknown }> };
@@ -268,14 +298,14 @@ describe('/api/admin/* 백오피스 API', () => {
     // 정본 상세는 폴드 좌석 홀카드까지 그대로 (핸드 감사 전용 계약)
     expect(detailBody.hand.players[0].holeCards).toEqual(cards('As Kd'));
 
-    expect((await fetch(`${baseUrl}/api/admin/hands/999999?token=admin-secret`)).status).toBe(404);
-    expect((await fetch(`${baseUrl}/api/admin/hands/${handId}`)).status).toBe(403);
+    expect((await adminGet('/api/admin/hands/999999')).status).toBe(404);
+    expect((await fetch(`${baseUrl}/api/admin/hands/${handId}`)).status).toBe(401);
   });
 
   it('tournaments는 런타임 토너먼트 전체 뷰를 반환한다 (Phase 2)', async () => {
-    const { baseUrl } = await start();
-    expect((await fetch(`${baseUrl}/api/admin/tournaments`)).status).toBe(403);
-    const response = await fetch(`${baseUrl}/api/admin/tournaments?token=admin-secret`);
+    const { baseUrl, adminGet } = await start();
+    expect((await fetch(`${baseUrl}/api/admin/tournaments`)).status).toBe(401);
+    const response = await adminGet('/api/admin/tournaments');
     expect(response.status).toBe(200);
     const body = await response.json() as {
       tournaments: Array<Record<string, unknown>>;
@@ -290,7 +320,7 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('creates and operates tournaments through authenticated backoffice commands', async () => {
-    const { baseUrl, adminTournamentCommands } = await start();
+    const { baseUrl, adminMutation, adminTournamentCommands } = await start();
     const draft = {
       name: '백오피스 토너먼트',
       speed: 'standard',
@@ -306,24 +336,16 @@ describe('/api/admin/* 백오피스 API', () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(draft),
-    })).status).toBe(403);
+    })).status).toBe(401);
 
-    const created = await fetch(`${baseUrl}/api/admin/tournaments?token=admin-secret`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(draft),
-    });
+    const created = await adminMutation('/api/admin/tournaments', draft);
     expect(created.status).toBe(201);
     expect(await created.json()).toMatchObject({ tournamentId: 'mtt-created' });
     expect(adminTournamentCommands.create).toHaveBeenCalledWith(draft);
 
-    const acted = await fetch(
-      `${baseUrl}/api/admin/tournaments/mtt-created/actions?token=admin-secret`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ action: 'pause' }),
-      },
+    const acted = await adminMutation(
+      '/api/admin/tournaments/mtt-created/actions',
+      { action: 'pause' },
     );
     expect(acted.status).toBe(200);
     expect(adminTournamentCommands.act).toHaveBeenCalledWith(
@@ -333,14 +355,14 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('security는 기간 내 신호 이벤트 타입별 집계를 반환한다', async () => {
-    const { baseUrl } = await start();
+    const { adminGet } = await start();
     const opsEvents = new OpsEventRepository(database!);
     const at = Date.now();
     opsEvents.record({ seq: 2, t: at - 3_000, type: 'http-reject', data: {} });
     opsEvents.record({ seq: 3, t: at - 2_000, type: 'http-reject', data: {} });
     opsEvents.record({ seq: 4, t: at - 1_000, type: 'grace-expired', data: {} });
 
-    const response = await fetch(`${baseUrl}/api/admin/security?token=admin-secret&hours=24`);
+    const response = await adminGet('/api/admin/security?hours=24');
     expect(response.status).toBe(200);
     const body = await response.json() as {
       windowHours: number;
@@ -352,8 +374,8 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('overview는 문의 알림 커서와 24h 핸드 집계를 포함한다', async () => {
-    const { baseUrl } = await start();
-    const response = await fetch(`${baseUrl}/api/admin/overview?token=admin-secret`);
+    const { adminGet } = await start();
+    const response = await adminGet('/api/admin/overview');
     const body = await response.json() as {
       latestFeedbackId: number;
       handStats24h: { hands: number; rake: number; potTotal: number };
@@ -365,8 +387,8 @@ describe('/api/admin/* 백오피스 API', () => {
   });
 
   it('overview는 same-install 리텐션 블록(일일 활성/코호트/활성화)을 포함한다', async () => {
-    const { baseUrl } = await start();
-    const response = await fetch(`${baseUrl}/api/admin/overview?token=admin-secret`);
+    const { adminGet } = await start();
+    const response = await adminGet('/api/admin/overview');
     const body = await response.json() as {
       retention: {
         daily: unknown[];

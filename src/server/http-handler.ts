@@ -7,6 +7,7 @@ import {
   type AdminTournamentCommands,
   type AdminRuntimeSnapshot,
 } from './admin-http';
+import { AdminSessionManager } from './admin-session';
 import { eventLog } from './event-log';
 import type { GameConfigService } from './game-config/service';
 import type { OpsEventRepository } from './ops-log';
@@ -62,6 +63,7 @@ interface HttpHandlerCommonOptions {
   opsEvents?: OpsEventRepository;
   adminRuntime?: () => AdminRuntimeSnapshot | null;
   adminTournamentCommands?: AdminTournamentCommands;
+  adminSessions?: AdminSessionManager;
   /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
   gameConfig?: GameConfigService;
 }
@@ -115,6 +117,7 @@ export function createHttpRequestHandler(
   options: HttpHandlerOptions = {},
 ): (req: IncomingMessage, res: ServerResponse) => void {
   const debugToken = options.debugToken ?? process.env.DEBUG_LOG_TOKEN;
+  const production = options.production ?? process.env.NODE_ENV === 'production';
   if (options.profileManager && !options.profileRateLimiter) {
     throw new Error('PROFILE_RATE_LIMITER_REQUIRED');
   }
@@ -128,7 +131,7 @@ export function createHttpRequestHandler(
         economyService: options.economyService,
         rateLimiter: options.profileRateLimiter,
         concurrencyGate: options.profileConcurrencyGate,
-        production: options.production ?? process.env.NODE_ENV === 'production',
+        production,
         onProfileRevoked: options.onProfileRevoked,
         onAvatarChanged: options.onAvatarChanged,
         // 아바타 해금 판정용 도장 레벨 — 시드는 진행도 서비스가 스타터로 보정
@@ -145,7 +148,7 @@ export function createHttpRequestHandler(
         service: options.progressionService,
         rateLimiter: options.profileRateLimiter,
         concurrencyGate: options.profileConcurrencyGate,
-        production: options.production ?? process.env.NODE_ENV === 'production',
+        production,
         now: options.now,
         onPublicCosmeticsChanged: options.onProgressionPublicCosmeticsChanged,
       })
@@ -155,7 +158,7 @@ export function createHttpRequestHandler(
         manager: options.profileManager,
         repository: new FeedbackRepository(options.database),
         rateLimiter: options.profileRateLimiter!,
-        production: options.production ?? process.env.NODE_ENV === 'production',
+        production,
         debugToken,
         now: options.now,
       })
@@ -176,7 +179,10 @@ export function createHttpRequestHandler(
         runtime: options.adminRuntime ?? (() => null),
         tournamentCommands: options.adminTournamentCommands,
         gameConfig: options.gameConfig,
-        debugToken,
+        adminSessions: options.adminSessions ?? new AdminSessionManager({
+          sourceToken: debugToken,
+          production,
+        }),
         now: options.now,
       })
     : undefined;
@@ -185,7 +191,7 @@ export function createHttpRequestHandler(
         enabled: options.arenaEnabled ?? (() => false),
         manager: options.profileManager,
         service: options.arenaHttpService,
-        production: options.production ?? process.env.NODE_ENV === 'production',
+        production,
         cursorSecret: options.arenaCursorSecret
           ?? process.env.ARENA_CURSOR_SECRET
           ?? randomBytes(32).toString('base64url'),
