@@ -16,6 +16,7 @@ import ActionBar from '@/components/table/ActionBar';
 import ActionLog from '@/components/table/ActionLog';
 import FinalTableAtmosphere from '@/components/table/FinalTableAtmosphere';
 import FinalTableIntro from '@/components/table/FinalTableIntro';
+import ItmCelebration from '@/components/table/ItmCelebration';
 import TournamentStatusBanner from '@/components/table/TournamentStatusBanner';
 import TournamentResultOverlay from '@/components/table/TournamentResultOverlay';
 import SngWaitingOverlay from '@/components/table/SngWaitingOverlay';
@@ -156,6 +157,10 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
                 <FinalTableAtmosphere theme={finalTheme} reducedMotion={reducedMotion} />
               )}
               <PokerTable finalTable={isFinalTable} />
+              <ItmCelebration
+                milestone={tournament?.milestone}
+                reducedMotion={reducedMotion}
+              />
               <ActionLog />
               <ChatPanel />
               {/* 승/패 컷인도 컨테이너 안 왼쪽(액션 로그 아래)에 — 광폭 화면에서 양끝으로

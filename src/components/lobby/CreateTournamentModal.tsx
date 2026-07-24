@@ -8,10 +8,18 @@ import {
   MTT_WALLET_ENTRY_COST,
   MTT_WALLET_ENTRY_FEE,
 } from '@/lib/economy/mtt-entry';
+import { MTT_STRUCTURES } from '@/lib/poker/mtt-structure';
+import {
+  PAYOUT_PRESET_IDS,
+  PAYOUT_PRESETS,
+  computePayouts,
+  paidPlaces,
+  type PayoutPresetId,
+} from '@/lib/poker/payout-table';
 import Button from '@/components/ui/Button';
 import { ModalShell } from './TournamentDetailModal';
 
-/** 토너먼트 개설 모달 — RoomList의 '토너먼트' 탭 [+ 개설]에서 진입. 개설자는 자동 등록. */
+/** 운영자 전용 토너먼트 개설 모달. 개설과 참가 등록은 서로 독립이다. */
 
 const SPEED_LABELS: Record<MttSpeed, string> = {
   standard: '스탠다드',
@@ -20,6 +28,11 @@ const SPEED_LABELS: Record<MttSpeed, string> = {
 };
 
 const ENTRANT_OPTIONS = [8, 12, 18, 24, 36, 48];
+const PAYOUT_DESCRIPTIONS: Record<PayoutPresetId, string> = {
+  standard: '우승과 입상 보상의 균형',
+  flat: '더 많은 참가자가 상금권 진입',
+  'top-heavy': '우승과 상위권 보상 강화',
+};
 const START_DELAY_OPTIONS: Array<[label: string, minutes: number | null]> = [
   ['수동 시작 (내가 시작 버튼)', null],
   ['3분 후 자동 시작', 3],
@@ -43,14 +56,21 @@ export default function CreateTournamentModal({
   const [turnTime, setTurnTime] = useState(15);
   const [startDelayMin, setStartDelayMin] = useState<number | null>(null);
   const [economyMode, setEconomyMode] = useState<'practice' | 'wallet'>('practice');
+  const [payoutPreset, setPayoutPreset] = useState<PayoutPresetId>('standard');
   const [busy, setBusy] = useState(false);
+  const previewPool = maxEntrants * (
+    economyMode === 'wallet'
+      ? MTT_WALLET_BUY_IN
+      : MTT_STRUCTURES[speed].startingStack
+  );
+  const previewPayouts = computePayouts(previewPool, maxEntrants, payoutPreset);
 
   const submit = async () => {
     if (busy) return;
     setBusy(true);
     const config: CreateTournamentRequest = {
       name: name.trim() || '무명 토너먼트',
-      payoutPreset: 'standard',
+      payoutPreset,
       speed,
       maxEntrants,
       startAt: startDelayMin === null ? null : Date.now() + startDelayMin * 60_000,
@@ -69,7 +89,9 @@ export default function CreateTournamentModal({
   return (
     <ModalShell title="토너먼트 개설" onClose={onClose}>
       <div className="mb-2 rounded-lg border border-mystic/25 bg-panel/70 px-2.5 py-2 text-[10px] leading-relaxed text-ink-dim">
-        <p className="font-bold text-ink">프리즈아웃 · 늦은 등록 없음 · 재등록/리엔트리 없음</p>
+        <p className="font-bold text-ink">
+          운영자 전용 · 프리즈아웃 · 늦은 등록 없음 · 재등록/리엔트리 없음
+        </p>
         <p className="mt-0.5">
           최소 8명 필드가 필요하며, 등록한 사람은 시작 시 온라인이어야 체크인되어 착석해요.
         </p>
@@ -98,6 +120,33 @@ export default function CreateTournamentModal({
           <OptionButton key={value} active={maxEntrants === value} onClick={() => setMaxEntrants(value)}>
             {value}
           </OptionButton>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-ink-dim">상금 구조</p>
+      <div className="mt-1 grid grid-cols-3 gap-1.5">
+        {PAYOUT_PRESET_IDS.map(value => (
+          <OptionButton
+            key={value}
+            active={payoutPreset === value}
+            onClick={() => setPayoutPreset(value)}
+          >
+            {PAYOUT_PRESETS[value].label}
+            <span className="block text-[9px] text-ink-dim">
+              {PAYOUT_DESCRIPTIONS[value]}
+            </span>
+          </OptionButton>
+        ))}
+      </div>
+      <div className="mt-1.5 rounded-lg border border-gilded/20 bg-gilded/5 px-2 py-1.5 text-[10px] leading-relaxed text-ink-dim">
+        <span className="font-bold text-gilded">
+          {paidPlaces(maxEntrants, payoutPreset)}명 입상
+        </span>
+        {' · '}
+        {previewPayouts.map((prize, index) => (
+          <span key={index}>
+            {index > 0 && ' · '}
+            {index + 1}위 {prize.toLocaleString()}
+          </span>
         ))}
       </div>
       <p className="mt-2 text-xs text-ink-dim">턴 시간</p>

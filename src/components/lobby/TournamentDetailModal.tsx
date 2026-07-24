@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import type { MttSpeed, TournamentDetailView } from '@/lib/realtime/protocol';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
+import { PAYOUT_PRESETS } from '@/lib/poker/payout-table';
 import Button from '@/components/ui/Button';
 import { resolveTournamentStatus } from '@/components/table/TournamentStatusBanner';
 
@@ -96,6 +97,7 @@ export default function TournamentDetailModal({
       <div className="flex items-center justify-between text-xs text-ink-dim">
         <span>
           {SPEED_LABELS[summary.speed]} · {summary.tableSize}인 테이블 ·{' '}
+          {PAYOUT_PRESETS[summary.payoutPreset].label} ·{' '}
           {summary.phase === 'registering'
             ? `등록 ${summary.entrantCount}/${summary.maxEntrants}`
             : `잔존 ${summary.remaining}/${summary.entrantCount} · 테이블 ${summary.tableCount}개`}
@@ -402,7 +404,9 @@ export default function TournamentDetailModal({
           </p>
         </div>
         <div>
-          <h3 className="text-xs font-bold text-ink">상금 분배</h3>
+          <h3 className="text-xs font-bold text-ink">
+            상금 분배 · {PAYOUT_PRESETS[summary.payoutPreset].label}
+          </h3>
           <div className="mt-1 rounded-lg border border-mystic/20">
             <table className="w-full text-[10px]">
               <tbody>

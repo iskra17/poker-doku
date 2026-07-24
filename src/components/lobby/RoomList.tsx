@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import type { TournamentSummary } from '@/lib/realtime/protocol';
+import { PAYOUT_PRESETS } from '@/lib/poker/payout-table';
 import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import Button from '../ui/Button';
@@ -458,6 +459,7 @@ function TournamentCard({
           </div>
           <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
             <span>{MTT_SPEED_LABELS[t.speed]}</span>
+            <span>{PAYOUT_PRESETS[t.payoutPreset].label}</span>
             {t.phase === 'registering' ? (
               <span>
                 등록 <span className="text-green-400">{t.entrantCount}/{t.maxEntrants}</span>
