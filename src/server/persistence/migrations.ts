@@ -4842,6 +4842,19 @@ export const migrations: readonly Migration[] = [
             AND payout_freeze_json IS NOT NULL)
         ),
         CHECK (
+          status NOT IN ('running', 'payout-pending', 'completed')
+          OR registration_state <> 'closed'
+          OR (
+            final_entrants IS NOT NULL
+            AND payout_freeze_version IS NOT NULL
+            AND payout_freeze_json IS NOT NULL
+          )
+        ),
+        CHECK (
+          status <> 'running'
+          OR initial_entrants = committed_entrants
+        ),
+        CHECK (
           payout_freeze_aborted_at IS NULL
           OR (
             payout_freeze_version IS NOT NULL
@@ -4896,10 +4909,17 @@ export const migrations: readonly Migration[] = [
       BEFORE UPDATE OF
         id, template_id, template_revision, idempotency_key, occurrence_key,
         visible_at, registration_opens_at, starts_at, manual_expires_at,
-        economy_mode, min_entrants, max_entrants, config_version, config_json
+        economy_mode, min_entrants, max_entrants, config_version, config_json,
+        created_by_kind, created_by_profile_id, created_at
       ON tournament_instance
       BEGIN
         SELECT RAISE(ABORT, 'tournament instance identity is immutable');
+      END;
+
+      CREATE TRIGGER protect_tournament_instance_delete
+      BEFORE DELETE ON tournament_instance
+      BEGIN
+        SELECT RAISE(ABORT, 'tournament instance is immutable');
       END;
 
       CREATE TRIGGER protect_tournament_instance_monotonic_state
@@ -4929,6 +4949,14 @@ export const migrations: readonly Migration[] = [
         OR NEW.start_attempt < OLD.start_attempt
         OR NEW.settlement_attempt < OLD.settlement_attempt
         OR NEW.forfeited_chips < OLD.forfeited_chips
+        OR (
+          OLD.status IN ('completed', 'cancelled')
+          AND (
+            NEW.start_attempt IS NOT OLD.start_attempt
+            OR NEW.settlement_attempt IS NOT OLD.settlement_attempt
+            OR NEW.forfeited_chips IS NOT OLD.forfeited_chips
+          )
+        )
         OR (
           OLD.status IN (
             'payout-pending', 'refund-pending', 'completed', 'cancelled'
@@ -4974,6 +5002,19 @@ export const migrations: readonly Migration[] = [
         SELECT RAISE(ABORT, 'invalid tournament lifecycle transition');
       END;
 
+      CREATE TRIGGER require_committed_start_snapshot
+      BEFORE UPDATE OF status ON tournament_instance
+      WHEN NEW.status = 'running' AND OLD.status <> 'running'
+        AND (
+          NEW.initial_entrants IS NULL
+          OR NEW.initial_bot_entrants IS NULL
+          OR NEW.committed_entrants IS NULL
+          OR NEW.initial_entrants <> NEW.committed_entrants
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'running tournament requires committed start snapshot');
+      END;
+
       CREATE TABLE tournament_registration (
         instance_id TEXT NOT NULL REFERENCES tournament_instance(id),
         profile_id TEXT NOT NULL,
@@ -5009,6 +5050,14 @@ export const migrations: readonly Migration[] = [
       BEFORE UPDATE ON tournament_registration
       WHEN
         (OLD.ever_seated = 1 AND NEW.ever_seated = 0)
+        OR (
+          NEW.registration_attempt = OLD.registration_attempt
+          AND (
+            NEW.public_player_json IS NOT OLD.public_player_json
+            OR NEW.economy_entry_attempt IS NOT OLD.economy_entry_attempt
+            OR NEW.registered_at IS NOT OLD.registered_at
+          )
+        )
         OR (
           OLD.ever_seated = 1
           AND NEW.status IN ('registered', 'late-pending')
@@ -5057,20 +5106,63 @@ export const migrations: readonly Migration[] = [
         )
         OR NEW.instance_id IS NOT OLD.instance_id
         OR NEW.profile_id IS NOT OLD.profile_id
+        OR (
+          OLD.status <> NEW.status
+          AND NOT EXISTS (
+            SELECT 1
+            FROM tournament_registration_attempt AS attempt
+            WHERE attempt.instance_id = NEW.instance_id
+              AND attempt.profile_id = NEW.profile_id
+              AND attempt.registration_attempt = NEW.registration_attempt
+              AND attempt.status = NEW.status
+              AND attempt.economy_entry_attempt
+                IS NEW.economy_entry_attempt
+          )
+        )
+        OR EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          WHERE instance.id = NEW.instance_id
+            AND instance.status IN ('completed', 'cancelled')
+        )
       BEGIN
         SELECT RAISE(ABORT, 'invalid tournament registration history');
       END;
 
       CREATE TRIGGER validate_tournament_registration_insert
       BEFORE INSERT ON tournament_registration
-      WHEN NEW.status NOT IN ('registered', 'late-pending')
+      WHEN
+        NEW.status NOT IN ('registered', 'late-pending')
+        OR NOT EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          WHERE instance.id = NEW.instance_id
+            AND instance.status NOT IN (
+              'payout-pending', 'refund-pending', 'completed', 'cancelled'
+            )
+            AND (
+              instance.economy_mode = 'wallet'
+              OR NEW.economy_entry_attempt IS NULL
+            )
+        )
       BEGIN
         SELECT RAISE(ABORT, 'registration must start open');
       END;
 
       CREATE TRIGGER freeze_tournament_registration_delete
       BEFORE DELETE ON tournament_registration
-      BEGIN SELECT RAISE(ABORT, 'tournament registration is immutable'); END;
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND instance.status IN ('completed', 'cancelled')
+          AND instance.completed_at
+            <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+              - 15552000000
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'tournament registration is immutable');
+      END;
 
       CREATE TABLE tournament_registration_attempt (
         instance_id TEXT NOT NULL,
@@ -5122,11 +5214,27 @@ export const migrations: readonly Migration[] = [
         OR NOT EXISTS (
           SELECT 1
           FROM tournament_registration AS registration
+          INNER JOIN tournament_instance AS instance
+            ON instance.id = registration.instance_id
           WHERE registration.instance_id = NEW.instance_id
             AND registration.profile_id = NEW.profile_id
-            AND registration.registration_attempt = NEW.registration_attempt
-            AND registration.status = NEW.status
-            AND registration.economy_entry_attempt IS NEW.economy_entry_attempt
+            AND instance.status NOT IN (
+              'payout-pending', 'refund-pending', 'completed', 'cancelled'
+            )
+            AND (
+              (
+                registration.registration_attempt = NEW.registration_attempt
+                AND registration.status = NEW.status
+                AND registration.economy_entry_attempt
+                  IS NEW.economy_entry_attempt
+              )
+              OR (
+                registration.status IN ('no-show', 'cancelled', 'refunded')
+                AND registration.ever_seated = 0
+                AND NEW.registration_attempt
+                  = registration.registration_attempt + 1
+              )
+            )
         )
       BEGIN
         SELECT RAISE(ABORT, 'attempt must match current open registration');
@@ -5147,6 +5255,9 @@ export const migrations: readonly Migration[] = [
           WHERE registration.instance_id = OLD.instance_id
             AND registration.profile_id = OLD.profile_id
             AND registration.registration_attempt = OLD.registration_attempt
+            AND registration.status = OLD.status
+            AND registration.economy_entry_attempt
+              IS OLD.economy_entry_attempt
         )
         OR (
           OLD.close_generation IS NOT NULL
@@ -5181,12 +5292,60 @@ export const migrations: readonly Migration[] = [
           OLD.status IN ('no-show', 'cancelled', 'refunded')
           AND NEW.status = OLD.status
         )
+        OR EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          WHERE instance.id = NEW.instance_id
+            AND instance.status IN ('completed', 'cancelled')
+        )
       BEGIN
         SELECT RAISE(ABORT, 'tournament registration attempt is immutable');
       END;
 
+      CREATE TRIGGER validate_tournament_registration_close_claim
+      BEFORE UPDATE OF close_generation, close_owner_token, close_reason
+      ON tournament_registration_attempt
+      WHEN NEW.close_generation IS NOT NULL
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          WHERE instance.id = NEW.instance_id
+            AND instance.registration_generation = NEW.close_generation
+            AND instance.registration_close_reason = NEW.close_reason
+            AND instance.registration_state = 'closing'
+            AND instance.registration_owner_token = NEW.close_owner_token
+        ) THEN RAISE(ABORT, 'registration close claim is not current')
+        END;
+      END;
+
+      CREATE TRIGGER validate_tournament_registration_close_claim_insert
+      BEFORE INSERT ON tournament_registration_attempt
+      WHEN NEW.close_generation IS NOT NULL
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          WHERE instance.id = NEW.instance_id
+            AND instance.registration_generation = NEW.close_generation
+            AND instance.registration_close_reason = NEW.close_reason
+            AND instance.registration_state = 'closing'
+            AND instance.registration_owner_token = NEW.close_owner_token
+        ) THEN RAISE(ABORT, 'registration close claim is not current')
+        END;
+      END;
+
       CREATE TRIGGER freeze_tournament_registration_attempt_delete
       BEFORE DELETE ON tournament_registration_attempt
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND instance.status IN ('completed', 'cancelled')
+          AND instance.completed_at
+            <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+              - 15552000000
+      )
       BEGIN
         SELECT RAISE(ABORT, 'tournament registration attempt is immutable');
       END;
@@ -5213,6 +5372,18 @@ export const migrations: readonly Migration[] = [
       CREATE TRIGGER freeze_tournament_forfeit_update
       BEFORE UPDATE ON tournament_forfeit
       BEGIN SELECT RAISE(ABORT, 'tournament forfeit is immutable'); END;
+
+      CREATE TRIGGER validate_tournament_forfeit_insert
+      BEFORE INSERT ON tournament_forfeit
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = NEW.instance_id
+          AND instance.status = 'running'
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'forfeit requires a live tournament');
+      END;
 
       CREATE TRIGGER freeze_tournament_forfeit_delete
       BEFORE DELETE ON tournament_forfeit
@@ -5680,7 +5851,7 @@ export const migrations: readonly Migration[] = [
               'open-prestart', 'open-late', 'closed'
             ))
           OR (OLD.registration_state = 'open-late'
-            AND NEW.registration_state IN ('closing', 'closed'))
+            AND NEW.registration_state = 'closing')
           OR (OLD.registration_state = 'closing'
             AND NEW.registration_state = 'closed')
         )
@@ -5788,6 +5959,29 @@ export const migrations: readonly Migration[] = [
                 WHERE escrow.instance_id = NEW.id
               )
             )
+            OR (
+              OLD.status = 'refund-pending'
+              AND OLD.status_reason = 'financial-invariant'
+              AND OLD.actual_started_at IS NULL
+              AND OLD.initial_entrants IS NULL
+              AND OLD.payout_freeze_version IS NULL
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tournament_prize_escrow AS escrow
+                WHERE escrow.instance_id = NEW.id
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM promotion_fund_ledger AS ledger
+                WHERE ledger.instance_id = NEW.id
+                  AND ledger.kind = 'freeroll-prize-reserve'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tournament_registration AS registration
+                WHERE registration.instance_id = NEW.id
+              )
+            )
           )
         )
       BEGIN
@@ -5814,6 +6008,38 @@ export const migrations: readonly Migration[] = [
             FROM tournament_settlement_result AS result
             WHERE result.instance_id = NEW.id
           ) <> NEW.final_entrants
+          OR (
+            SELECT COUNT(*)
+            FROM tournament_settlement_result AS result
+            WHERE result.instance_id = NEW.id
+              AND result.participant_type = 'human'
+          ) <> (
+            SELECT COUNT(*)
+            FROM tournament_registration AS registration
+            WHERE registration.instance_id = NEW.id
+              AND registration.ever_seated = 1
+          )
+          OR (
+            SELECT COUNT(*)
+            FROM tournament_settlement_result AS result
+            WHERE result.instance_id = NEW.id
+              AND result.participant_type = 'bot'
+          ) <> NEW.initial_bot_entrants
+          OR EXISTS (
+            SELECT 1
+            FROM tournament_registration AS registration
+            WHERE registration.instance_id = NEW.id
+              AND registration.ever_seated = 1
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tournament_settlement_result AS result
+                WHERE result.instance_id = registration.instance_id
+                  AND result.participant_type = 'human'
+                  AND result.profile_id = registration.profile_id
+                  AND result.registration_attempt
+                    = registration.registration_attempt
+              )
+          )
           OR (
             SELECT MIN(place)
             FROM tournament_settlement_result
@@ -5950,6 +6176,41 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX idx_sng_entries_room_status_tournament
         ON sng_entries(room_id, status, tournament_id);
 
+      CREATE TRIGGER validate_wallet_registration_economy_link_insert
+      BEFORE INSERT ON tournament_registration
+      WHEN NEW.economy_entry_attempt IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          INNER JOIN sng_entries AS entry
+            ON entry.tournament_id = instance.id
+          WHERE instance.id = NEW.instance_id
+            AND instance.economy_mode = 'wallet'
+            AND entry.profile_id = NEW.profile_id
+            AND entry.entry_attempt = NEW.economy_entry_attempt
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'registration economy entry is invalid');
+      END;
+
+      CREATE TRIGGER validate_wallet_registration_economy_link_update
+      BEFORE UPDATE OF economy_entry_attempt, registration_attempt
+      ON tournament_registration
+      WHEN NEW.economy_entry_attempt IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM tournament_instance AS instance
+          INNER JOIN sng_entries AS entry
+            ON entry.tournament_id = instance.id
+          WHERE instance.id = NEW.instance_id
+            AND instance.economy_mode = 'wallet'
+            AND entry.profile_id = NEW.profile_id
+            AND entry.entry_attempt = NEW.economy_entry_attempt
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'registration economy entry is invalid');
+      END;
+
       CREATE TRIGGER require_refunded_wallet_entries_before_cancellation
       BEFORE UPDATE OF status ON tournament_instance
       WHEN
@@ -5963,6 +6224,41 @@ export const migrations: readonly Migration[] = [
         )
       BEGIN
         SELECT RAISE(ABORT, 'wallet tournament has unresolved entries');
+      END;
+
+      CREATE TRIGGER require_settled_wallet_entries_before_completion
+      BEFORE UPDATE OF status ON tournament_instance
+      WHEN
+        NEW.status = 'completed'
+        AND NEW.economy_mode = 'wallet'
+        AND (
+          EXISTS (
+            SELECT 1
+            FROM sng_entries AS entry
+            WHERE entry.tournament_id = NEW.id
+              AND entry.status IN ('reserved', 'started')
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM tournament_registration AS registration
+            WHERE registration.instance_id = NEW.id
+              AND registration.ever_seated = 1
+              AND (
+                registration.economy_entry_attempt IS NULL
+                OR NOT EXISTS (
+                  SELECT 1
+                  FROM sng_entries AS entry
+                  WHERE entry.tournament_id = registration.instance_id
+                    AND entry.profile_id = registration.profile_id
+                    AND entry.entry_attempt
+                      = registration.economy_entry_attempt
+                    AND entry.status = 'settled'
+                )
+              )
+          )
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'wallet tournament entries are not settled');
       END;
     `,
   },
