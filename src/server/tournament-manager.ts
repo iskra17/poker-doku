@@ -65,6 +65,20 @@ export interface CreateTournamentInput {
   entryFee?: number;
 }
 
+export type TournamentDirectorAction =
+  | { kind: 'pause' }
+  | { kind: 'resume' }
+  | { kind: 'set-level'; level: number }
+  | { kind: 'remove-player'; playerId: string }
+  | { kind: 'cancel' };
+
+export type TournamentDirectorResult =
+  | 'ok'
+  | 'not-found'
+  | 'not-host'
+  | 'bad-state'
+  | 'invalid';
+
 /**
  * wallet MTT 경제 훅 — EconomyService 토너 단위 에스크로에 대한 좁은 어댑터.
  * 전부 동기·throw 계약 (EconomyDomainError) — 호출부(manager)가 흐름별로 처리한다.
@@ -472,6 +486,13 @@ export class TournamentManager {
     return this.attemptStart(t, requesterId);
   }
 
+  startTournamentAsOperator(tournamentId: string):
+    'ok' | 'not-found' | 'not-registering' | 'not-enough' | 'economy' {
+    const t = this.tournaments.get(tournamentId);
+    if (!t) return 'not-found';
+    return this.attemptStart(t, null);
+  }
+
   // --- 디렉터 콘솔 (Phase 2 — 개설자 전용 운영 개입) ---
 
   /**
@@ -486,16 +507,27 @@ export class TournamentManager {
   directorAction(
     tournamentId: string,
     requesterId: string,
-    action:
-      | { kind: 'pause' }
-      | { kind: 'resume' }
-      | { kind: 'set-level'; level: number }
-      | { kind: 'remove-player'; playerId: string }
-      | { kind: 'cancel' },
-  ): 'ok' | 'not-found' | 'not-host' | 'bad-state' | 'invalid' {
+    action: TournamentDirectorAction,
+  ): TournamentDirectorResult {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
+    return this.applyDirectorAction(t, action);
+  }
+
+  directorActionAsOperator(
+    tournamentId: string,
+    action: TournamentDirectorAction,
+  ): Exclude<TournamentDirectorResult, 'not-host'> {
+    const t = this.tournaments.get(tournamentId);
+    if (!t) return 'not-found';
+    return this.applyDirectorAction(t, action);
+  }
+
+  private applyDirectorAction(
+    t: TournamentRuntime,
+    action: TournamentDirectorAction,
+  ): Exclude<TournamentDirectorResult, 'not-found' | 'not-host'> {
     if (
       t.config.economyMode === 'wallet'
       && t.phase === 'running'
