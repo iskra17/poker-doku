@@ -16,7 +16,7 @@ import type {
   HandHistoryDetail,
   HandHistorySummary,
 } from '@/lib/poker/hand-history';
-import type { Card } from '@/lib/poker/types';
+import type { Card, GameMode } from '@/lib/poker/types';
 
 /**
  * 핸드 히스토리 (GGPoker PokerCraft + WPL 리플레이 벤치마킹):
@@ -71,6 +71,12 @@ function profitColor(amount: number): string {
   if (amount > 0) return 'text-green-400';
   if (amount < 0) return 'text-red-400';
   return 'text-ink-dim';
+}
+
+function gameModeLabel(gameMode: GameMode): string {
+  if (gameMode === 'sng') return ' · Sit & Go';
+  if (gameMode === 'mtt') return ' · 토너먼트';
+  return '';
 }
 
 function formatPlayedAt(playedAt: number): string {
@@ -154,7 +160,7 @@ function HandListRow({ item, inBB, onSelect }: {
         </span>
         <span className="block text-[10px] text-ink-dim">
           {formatPlayedAt(item.playedAt)} · BB {formatChips(item.bigBlind)}
-          {item.gameMode === 'sng' ? ' · Sit & Go' : ''}
+          {gameModeLabel(item.gameMode)}
         </span>
       </span>
       {item.board.length > 0
@@ -299,7 +305,7 @@ function HandDetailView({ hand, onBack }: { hand: HandDetail; onBack: () => void
         )}
         {hero && <span className="text-[10px] text-ink-dim">내 포지션 <b className="text-cyber">{hero.position}</b></span>}
         <span className="ml-auto text-right text-[9px] leading-tight text-ink-dim">
-          {hand.roomName} #{hand.handNumber}{hand.gameMode === 'sng' ? ' · Sit & Go' : ''}
+          {hand.roomName} #{hand.handNumber}{gameModeLabel(hand.gameMode)}
           <br />
           {formatPlayedAt(hand.playedAt)} · 블라인드 {formatChips(hand.smallBlind)}/{formatChips(hand.bigBlind)}
           {' · '}팟 {amountText(hand.potTotal)}

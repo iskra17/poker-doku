@@ -17,6 +17,7 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
 
   const results = [...tournament.results].sort((a, b) => a.place - b.place);
   const champion = results[0];
+  const isMtt = !!tournament.tournamentId;
 
   if (gameState?.economyMode === 'arena' && !arenaResult) {
     return (
@@ -92,7 +93,7 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
               backgroundClip: 'text',
             }}
           >
-            Sit &amp; Go 종료
+            {isMtt ? '토너먼트 종료' : 'Sit & Go 종료'}
           </h2>
           {champion && (
             <p className="text-ink-dim text-xs mt-1">
@@ -131,7 +132,7 @@ export default function TournamentResultOverlay({ onLeave }: { onLeave: () => vo
         </div>
 
         <Button variant="primary" size="lg" className="w-full" onClick={onLeave}>
-          로비로 나가기
+          로비로 돌아가기
         </Button>
       </motion.div>
     </div>

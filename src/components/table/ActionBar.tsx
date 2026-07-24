@@ -12,6 +12,10 @@ import { playEffect } from '@/lib/sound/effects';
 import Button from '../ui/Button';
 import VerticalSlider from '../ui/VerticalSlider';
 import HandStrengthBadge from './HandStrengthBadge';
+import {
+  resolveTournamentStatus,
+  shouldBlockTournamentActions,
+} from './TournamentStatusBanner';
 
 /**
  * 하단 액션 독 — GameRoomView flex 컬럼의 flex-none 자식.
@@ -85,6 +89,28 @@ export default function ActionBar() {
   const dockClass = 'flex-none relative bg-panel/95 backdrop-blur-md border-t border-mystic/20 z-30 pb-safe';
   const sittingOut = !!myPlayer && (myPlayer.sitOutNext || myPlayer.status === 'sitting-out');
   const controlsDisabled = !connected || !!pendingAction;
+  const tournamentStatus = resolveTournamentStatus(gameState.tournament?.holdReasons);
+  const tournamentActionsBlocked = shouldBlockTournamentActions(
+    gameState.tournament?.holdReasons,
+    gameState.isHandInProgress,
+  );
+
+  // 토너먼트 보류 중에는 서버가 다음 핸드/턴을 열지 않는다. 독 높이는 유지하되 모든
+  // 입력 진입점을 치워 테이블 좌표가 흔들리거나 보류 중 액션을 오입력하지 않게 한다.
+  if (tournamentStatus && tournamentActionsBlocked) {
+    return (
+      <div className={dockClass} aria-disabled="true">
+        <div
+          className="mx-auto flex w-full max-w-[1100px] flex-col items-center justify-center gap-2 px-3 text-center"
+          style={{ height: ACTION_DOCK_HEIGHT }}
+        >
+          <span className="text-lg" aria-hidden>{tournamentStatus.icon}</span>
+          <p className="text-sm font-bold text-gilded">{tournamentStatus.label}</p>
+          <p className="text-xs text-ink-dim">{tournamentStatus.detail}</p>
+        </div>
+      </div>
+    );
+  }
 
   const sitOutButton = myPlayer && (
     <button
