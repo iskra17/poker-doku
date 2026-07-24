@@ -242,11 +242,16 @@ const MIN_ENTRANTS_CAP = 8;
 const MAX_ENTRANTS_CAP = 48;
 const MIN_MTT_STARTERS = 8;
 const DEFAULT_EMPTY_TOURNAMENT_TTL_MS = 5 * 60_000;
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 const COMPLETED_RETENTION_MS = 10 * 60_000;
 
-function configuredEmptyTournamentTtlMs(): number {
-  const configured = Number(process.env.MTT_EMPTY_TOURNAMENT_TTL_MS);
-  return Number.isSafeInteger(configured) && configured > 0
+function normalizeEmptyTournamentTtlMs(value: unknown): number {
+  const configured = typeof value === 'string' ? Number(value) : value;
+  return typeof configured === 'number'
+    && Number.isFinite(configured)
+    && Number.isInteger(configured)
+    && configured > 0
+    && configured <= NODE_MAX_TIMEOUT_MS
     ? configured
     : DEFAULT_EMPTY_TOURNAMENT_TTL_MS;
 }
@@ -272,10 +277,9 @@ export class TournamentManager {
     private readonly hooks: TournamentRuntimeHooks = {},
     options: TournamentManagerOptions = {},
   ) {
-    this.emptyTournamentTtlMs = Number.isSafeInteger(options.emptyTournamentTtlMs)
-      && (options.emptyTournamentTtlMs ?? 0) > 0
-      ? options.emptyTournamentTtlMs!
-      : configuredEmptyTournamentTtlMs();
+    this.emptyTournamentTtlMs = normalizeEmptyTournamentTtlMs(
+      options.emptyTournamentTtlMs ?? process.env.MTT_EMPTY_TOURNAMENT_TTL_MS,
+    );
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
       onHandStartFailed: roomId => this.onHandStartFailed(roomId),
@@ -775,10 +779,6 @@ export class TournamentManager {
     requesterId: string | null,
   ): 'ok' | 'not-registering' | 'not-enough' | 'economy' {
     if (t.phase !== 'registering') return 'not-registering';
-    if (t.startTimer) {
-      clearTimeout(t.startTimer);
-      t.startTimer = null;
-    }
     const isWallet = t.config.economyMode === 'wallet';
 
     // 체크인: 시작 시점 접속 = 출석. 미접속 등록자는 착석에서 제외한다 (노쇼 방지 — 무료 등록의
@@ -822,6 +822,10 @@ export class TournamentManager {
       }
     }
 
+    if (t.startTimer) {
+      clearTimeout(t.startTimer);
+      t.startTimer = null;
+    }
     t.entrants = new Map(checkedIn.map(e => [e.id, e]));
 
     const tableCount = Math.ceil(total / t.config.tableSize);

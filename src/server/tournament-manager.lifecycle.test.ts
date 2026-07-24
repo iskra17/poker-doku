@@ -6,6 +6,8 @@ import {
 } from './tournament-manager';
 
 const EMPTY_TTL_MS = 10_000;
+const DEFAULT_EMPTY_TTL_MS = 5 * 60_000;
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 
 function tournamentInput(
   hostId: string,
@@ -42,6 +44,7 @@ describe('TournamentManager registering lifecycle', () => {
   afterEach(() => {
     manager.shutdown();
     roomManager.shutdown();
+    vi.unstubAllEnvs();
     vi.useRealTimers();
   });
 
@@ -129,5 +132,110 @@ describe('TournamentManager registering lifecycle', () => {
     manager.shutdown();
 
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('preserves a scheduled start after an early manual start lacks eight entrants', () => {
+    const scheduledAt = Date.now() + 60_000;
+    const created = manager.createTournament(tournamentInput('host-1', {
+      startAt: scheduledAt,
+    }));
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 7; i++) {
+      manager.register(created.tournamentId, {
+        id: `player-${i}`,
+        name: `플레이어 ${i}`,
+        avatar: 'ara',
+      });
+    }
+
+    vi.advanceTimersByTime(30_000);
+    expect(manager.startTournament(created.tournamentId, 'host-1')).toBe('not-enough');
+    expect(manager.register(created.tournamentId, {
+      id: 'player-8',
+      name: '플레이어 8',
+      avatar: 'ara',
+    })).toBe('ok');
+
+    vi.advanceTimersByTime(30_000);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('running');
+  });
+
+  it('preserves a scheduled start after a manual wallet escrow failure', () => {
+    let failEscrow = true;
+    manager.shutdown();
+    manager = new TournamentManager(
+      roomManager,
+      {
+        isConnected: () => true,
+        economy: {
+          reserveEntry: vi.fn(),
+          refundEntry: vi.fn(),
+          startEscrow: () => {
+            if (failEscrow) throw new Error('temporary escrow failure');
+          },
+          settle: vi.fn(),
+          refundAll: vi.fn(() => 0),
+        },
+      },
+      { emptyTournamentTtlMs: EMPTY_TTL_MS },
+    );
+    const created = manager.createTournament(tournamentInput('host-1', {
+      startAt: Date.now() + 60_000,
+      economyMode: 'wallet',
+      entryBuyIn: 1_500,
+      entryFee: 150,
+    }));
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      manager.register(created.tournamentId, {
+        id: `player-${i}`,
+        name: `플레이어 ${i}`,
+        avatar: 'ara',
+      });
+    }
+
+    vi.advanceTimersByTime(30_000);
+    expect(manager.startTournament(created.tournamentId, 'host-1')).toBe('economy');
+    failEscrow = false;
+
+    vi.advanceTimersByTime(30_000);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('running');
+  });
+
+  it.each([
+    ['non-finite', Number.POSITIVE_INFINITY],
+    ['non-integer', 1.5],
+    ['zero', 0],
+    ['negative', -1],
+    ['above Node timer maximum', NODE_MAX_TIMEOUT_MS + 1],
+  ])('falls back to the default TTL for an invalid %s option', (_label, invalidTtl) => {
+    manager.shutdown();
+    manager = new TournamentManager(
+      roomManager,
+      { isConnected: () => true },
+      { emptyTournamentTtlMs: invalidTtl },
+    );
+    const created = manager.createTournament(tournamentInput('host-1'));
+    if (!created.ok) throw new Error('create failed');
+
+    vi.advanceTimersByTime(DEFAULT_EMPTY_TTL_MS - 1);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+    vi.advanceTimersByTime(1);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('cancelled');
+  });
+
+  it('falls back to the default TTL for an oversized environment value', () => {
+    vi.stubEnv('MTT_EMPTY_TOURNAMENT_TTL_MS', String(NODE_MAX_TIMEOUT_MS + 1));
+    manager.shutdown();
+    manager = new TournamentManager(roomManager, { isConnected: () => true });
+    const created = manager.createTournament(tournamentInput('host-1'));
+    if (!created.ok) throw new Error('create failed');
+
+    vi.advanceTimersByTime(1);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+    vi.advanceTimersByTime(DEFAULT_EMPTY_TTL_MS - 2);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+    vi.advanceTimersByTime(1);
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('cancelled');
   });
 });
