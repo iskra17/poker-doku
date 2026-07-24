@@ -30,9 +30,11 @@ const CONFETTI = [
 export default function ItmCelebration({
   milestone,
   reducedMotion,
+  finishPlace,
 }: {
   milestone?: TournamentMilestone;
   reducedMotion: boolean;
+  finishPlace?: number;
 }) {
   const [active, setActive] = useState<TournamentMilestone | null>(null);
   const seenSeq = useRef<number | null>(null);
@@ -53,7 +55,7 @@ export default function ItmCelebration({
     };
     seenSeq.current = seq;
     const now = Date.now();
-    if (!shouldShowItmCelebration(candidate, now, null)) return;
+    if (!shouldShowItmCelebration(candidate, now, null, finishPlace)) return;
 
     const showTimer = setTimeout(() => setActive(candidate), 0);
     const hideTimer = setTimeout(
@@ -64,7 +66,7 @@ export default function ItmCelebration({
       clearTimeout(showTimer);
       clearTimeout(hideTimer);
     };
-  }, [expiresAt, kind, paidPlaces, reachedAt, seq]);
+  }, [expiresAt, finishPlace, kind, paidPlaces, reachedAt, seq]);
 
   return (
     <AnimatePresence>

@@ -5,6 +5,7 @@ import {
 import type { CreateTournamentRequest } from '../lib/realtime/protocol';
 import {
   TournamentManager,
+  type TournamentAuditActor,
   type TournamentDirectorAction,
   type TournamentDirectorResult,
 } from './tournament-manager';
@@ -54,15 +55,18 @@ export class TournamentCommandService {
   ): TournamentCreateResult {
     if (!this.allowed(authority)) return { ok: false, reason: 'forbidden' };
     const economyMode = draft.economyMode === 'wallet' ? 'wallet' : 'practice';
-    return this.manager.createTournament({
-      ...draft,
-      tableSize: 6,
-      botFill: economyMode === 'wallet' ? false : draft.botFill,
-      hostId: authority.kind === 'backoffice' ? 'backoffice' : authority.profileId,
-      economyMode,
-      entryBuyIn: economyMode === 'wallet' ? MTT_WALLET_BUY_IN : 0,
-      entryFee: economyMode === 'wallet' ? MTT_WALLET_ENTRY_FEE : 0,
-    });
+    return this.manager.createTournament(
+      {
+        ...draft,
+        tableSize: 6,
+        botFill: economyMode === 'wallet' ? false : draft.botFill,
+        hostId: authority.kind === 'backoffice' ? 'backoffice' : authority.profileId,
+        economyMode,
+        entryBuyIn: economyMode === 'wallet' ? MTT_WALLET_BUY_IN : 0,
+        entryFee: economyMode === 'wallet' ? MTT_WALLET_ENTRY_FEE : 0,
+      },
+      this.auditActor(authority),
+    );
   }
 
   start(
@@ -70,7 +74,10 @@ export class TournamentCommandService {
     tournamentId: string,
   ): TournamentStartResult {
     if (!this.allowed(authority)) return 'forbidden';
-    return this.manager.startTournamentAsOperator(tournamentId);
+    return this.manager.startTournamentAsOperator(
+      tournamentId,
+      this.auditActor(authority),
+    );
   }
 
   act(
@@ -79,11 +86,24 @@ export class TournamentCommandService {
     action: TournamentDirectorAction,
   ): TournamentActionResult {
     if (!this.allowed(authority)) return 'forbidden';
-    return this.manager.directorActionAsOperator(tournamentId, action);
+    return this.manager.directorActionAsOperator(
+      tournamentId,
+      action,
+      this.auditActor(authority),
+    );
   }
 
   private allowed(authority: TournamentAuthority): boolean {
     return authority.kind === 'backoffice'
       || this.canOperateProfile(authority.profileId);
+  }
+
+  private auditActor(authority: TournamentAuthority): TournamentAuditActor {
+    return authority.kind === 'backoffice'
+      ? { authorityKind: 'backoffice' }
+      : {
+          authorityKind: 'operator-profile',
+          operatorProfileId: authority.profileId,
+        };
   }
 }

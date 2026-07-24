@@ -6,6 +6,7 @@ import {
   TournamentCommandService,
   parseTournamentOperatorIds,
 } from './tournament-command-service';
+import { eventLog } from './event-log';
 
 const DRAFT: CreateTournamentRequest = {
   name: '운영 토너먼트',
@@ -62,10 +63,17 @@ describe('TournamentCommandService', () => {
 
     expect(operatorCreated.ok).toBe(true);
     expect(backofficeCreated.ok).toBe(true);
+    if (!backofficeCreated.ok) throw new Error('backoffice create failed');
     expect(manager.listTournaments()).toHaveLength(2);
     for (const summary of manager.listTournaments()) {
       expect(summary.entrantCount).toBe(0);
     }
+    expect(eventLog.recent({ type: 'mtt-create' }).at(-1)?.data).toMatchObject({
+      tournamentId: backofficeCreated.tournamentId,
+      authorityKind: 'backoffice',
+    });
+    expect(eventLog.recent({ type: 'mtt-create' }).at(-1)?.data)
+      .not.toHaveProperty('operatorProfileId');
   });
 
   it('allows a different operator to administer an existing tournament', () => {
@@ -81,6 +89,17 @@ describe('TournamentCommandService', () => {
       { kind: 'cancel' },
     )).toBe('ok');
     expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('cancelled');
+    expect(eventLog.recent({ type: 'mtt-create' }).at(-1)?.data).toMatchObject({
+      tournamentId: created.tournamentId,
+      authorityKind: 'operator-profile',
+      operatorProfileId: 'operator-1',
+    });
+    expect(eventLog.recent({ type: 'mtt-director-action' }).at(-1)?.data).toMatchObject({
+      tournamentId: created.tournamentId,
+      action: 'cancel',
+      authorityKind: 'operator-profile',
+      operatorProfileId: 'operator-2',
+    });
   });
 
   it('rejects ordinary profile start and director commands', () => {
@@ -90,6 +109,20 @@ describe('TournamentCommandService', () => {
 
     expect(service.start(guest, created.tournamentId)).toBe('forbidden');
     expect(service.act(guest, created.tournamentId, { kind: 'cancel' })).toBe('forbidden');
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+  });
+
+  it('keeps registration open when an operator starts before enough players check in', () => {
+    const created = service.create(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      { ...DRAFT, botFill: false },
+    );
+    if (!created.ok) throw new Error('create failed');
+
+    expect(service.start(
+      { kind: 'operator-profile', profileId: 'operator-2' },
+      created.tournamentId,
+    )).toBe('not-enough');
     expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
   });
 });

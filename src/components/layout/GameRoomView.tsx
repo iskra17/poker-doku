@@ -160,6 +160,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
               <ItmCelebration
                 milestone={tournament?.milestone}
                 reducedMotion={reducedMotion}
+                finishPlace={myPlayer?.finishPlace}
               />
               <ActionLog />
               <ChatPanel />

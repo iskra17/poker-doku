@@ -481,6 +481,60 @@ describe('TournamentManager', () => {
     expect(result.milestoneSeqAfterNextBust).toBe(1);
   });
 
+  it('posts one bubble message per table when paid places exceed final-table capacity', () => {
+    const created = h.manager.createTournament({
+      name: '36인 버블 메시지',
+      speed: 'standard',
+      maxEntrants: 36,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+      payoutPreset: 'standard',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 36; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `large-${i}`,
+        name: `선수${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+    while (h.manager.listTournaments()[0].remaining > 8) {
+      const roomId = mttTableIds(h.roomManager)
+        .map(id => ({ id, alive: aliveIds(engineOf(h.roomManager, id)).length }))
+        .sort((a, b) => b.alive - a.alive)[0]?.id;
+      if (!roomId) throw new Error('no live table');
+      const engine = engineOf(h.roomManager, roomId);
+      bust(engine, aliveIds(engine)[0], 100);
+      h.manager.roomHooks.onHandComplete(roomId);
+    }
+
+    const h4hTables = mttTableIds(h.roomManager);
+    for (const roomId of h4hTables) {
+      const engine = engineOf(h.roomManager, roomId);
+      engine.startHand();
+      h.manager.roomHooks.onHandStarted(roomId, engine.state.handNumber);
+    }
+    const bustRoomId = h4hTables[0];
+    bust(engineOf(h.roomManager, bustRoomId), aliveIds(engineOf(h.roomManager, bustRoomId))[0], 500);
+    for (const roomId of h4hTables) {
+      const engine = engineOf(h.roomManager, roomId);
+      engine.state.isHandInProgress = false;
+      h.manager.roomHooks.onHandComplete(roomId);
+    }
+
+    expect(h.manager.listTournaments()[0].remaining).toBe(7);
+    for (const roomId of mttTableIds(h.roomManager)) {
+      const bubbleMessages = h.roomManager.getChatHistory(roomId)
+        .filter(message => message.message.includes('버블 종료'));
+      expect(bubbleMessages).toHaveLength(1);
+    }
+  });
+
   it('merges to a final table before arming H4H when the field fits', () => {
     const { id, tables } = start12(h);
     const [t1, t2] = tables;

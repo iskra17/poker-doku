@@ -66,6 +66,11 @@ export interface CreateTournamentInput {
   entryFee?: number;
 }
 
+export interface TournamentAuditActor {
+  authorityKind: 'backoffice' | 'operator-profile';
+  operatorProfileId?: string;
+}
+
 export type TournamentDirectorAction =
   | { kind: 'pause' }
   | { kind: 'resume' }
@@ -319,7 +324,10 @@ export class TournamentManager {
 
   // --- 생성/등록 ---
 
-  createTournament(input: CreateTournamentInput):
+  createTournament(
+    input: CreateTournamentInput,
+    auditActor?: TournamentAuditActor,
+  ):
     | { ok: true; tournamentId: string }
     | { ok: false; reason: 'limit' | 'host-limit' | 'invalid' } {
     const hostRegisteringCount = [...this.tournaments.values()].filter(
@@ -422,7 +430,7 @@ export class TournamentManager {
       const delay = Math.max(1_000, input.startAt - Date.now());
       t.startTimer = setTimeout(() => {
         t.startTimer = null;
-        this.attemptStart(t, null);
+        this.attemptStart(t, true);
       }, delay);
     }
     this.tournaments.set(id, t);
@@ -436,6 +444,7 @@ export class TournamentManager {
         tableSize,
         hostId: input.hostId,
         payoutPreset,
+        ...auditActor,
       },
     });
     this.hooks.onTournamentsChanged?.();
@@ -488,14 +497,20 @@ export class TournamentManager {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
-    return this.attemptStart(t, requesterId);
+    return this.attemptStart(t, false, {
+      authorityKind: 'operator-profile',
+      operatorProfileId: requesterId,
+    });
   }
 
-  startTournamentAsOperator(tournamentId: string):
+  startTournamentAsOperator(
+    tournamentId: string,
+    auditActor?: TournamentAuditActor,
+  ):
     'ok' | 'not-found' | 'not-registering' | 'not-enough' | 'economy' {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
-    return this.attemptStart(t, null);
+    return this.attemptStart(t, false, auditActor);
   }
 
   // --- 디렉터 콘솔 (Phase 2 — 개설자 전용 운영 개입) ---
@@ -517,21 +532,26 @@ export class TournamentManager {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
-    return this.applyDirectorAction(t, action);
+    return this.applyDirectorAction(t, action, {
+      authorityKind: 'operator-profile',
+      operatorProfileId: requesterId,
+    });
   }
 
   directorActionAsOperator(
     tournamentId: string,
     action: TournamentDirectorAction,
+    auditActor?: TournamentAuditActor,
   ): Exclude<TournamentDirectorResult, 'not-host'> {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
-    return this.applyDirectorAction(t, action);
+    return this.applyDirectorAction(t, action, auditActor);
   }
 
   private applyDirectorAction(
     t: TournamentRuntime,
     action: TournamentDirectorAction,
+    auditActor?: TournamentAuditActor,
   ): Exclude<TournamentDirectorResult, 'not-found' | 'not-host'> {
     if (
       t.config.economyMode === 'wallet'
@@ -545,20 +565,24 @@ export class TournamentManager {
       return 'bad-state';
     }
     switch (action.kind) {
-      case 'pause': return this.directorPause(t);
-      case 'resume': return this.directorResume(t);
-      case 'set-level': return this.directorSetLevel(t, action.level);
-      case 'remove-player': return this.directorRemovePlayer(t, action.playerId);
+      case 'pause': return this.directorPause(t, auditActor);
+      case 'resume': return this.directorResume(t, auditActor);
+      case 'set-level': return this.directorSetLevel(t, action.level, auditActor);
+      case 'remove-player':
+        return this.directorRemovePlayer(t, action.playerId, auditActor);
       case 'cancel': {
         if (t.phase === 'completed' || t.phase === 'cancelled') return 'bad-state';
-        this.logDirectorAction(t, { action: 'cancel' });
+        this.logDirectorAction(t, { action: 'cancel' }, auditActor);
         this.cancelTournament(t, 'director');
         return 'ok';
       }
     }
   }
 
-  private directorPause(t: TournamentRuntime): 'ok' | 'bad-state' {
+  private directorPause(
+    t: TournamentRuntime,
+    auditActor?: TournamentAuditActor,
+  ): 'ok' | 'bad-state' {
     if (t.phase !== 'running' || t.pausedAt !== null) return 'bad-state';
     t.pausedAt = Date.now();
     // 브레이크 재개 타이머는 정지 중 발화하면 안 된다 — 재개 시 남은 시간으로 재무장
@@ -575,20 +599,23 @@ export class TournamentManager {
         '⏸️ 운영자가 토너먼트를 일시정지했습니다 — 진행 중인 핸드까지만 진행돼요.',
       );
     }
-    this.logDirectorAction(t, { action: 'pause' });
+    this.logDirectorAction(t, { action: 'pause' }, auditActor);
     this.hooks.onTournamentsChanged?.();
     this.hooks.onTournamentUpdate?.(t.id);
     return 'ok';
   }
 
-  private directorResume(t: TournamentRuntime): 'ok' | 'bad-state' {
+  private directorResume(
+    t: TournamentRuntime,
+    auditActor?: TournamentAuditActor,
+  ): 'ok' | 'bad-state' {
     if (t.phase !== 'running' || t.pausedAt === null) return 'bad-state';
     t.pauseAccumMs += Date.now() - t.pausedAt;
     t.pausedAt = null;
     for (const roomId of t.tables.keys()) {
       this.roomManager.postSystemChat(roomId, '▶️ 토너먼트가 재개됩니다!');
     }
-    this.logDirectorAction(t, { action: 'resume' });
+    this.logDirectorAction(t, { action: 'resume' }, auditActor);
     // 브레이크 구간에서 재개하면 브레이크 대기로 복귀, 아니면 보류 없는 테이블부터 재가동
     if (this.clockPos(t).onBreak) {
       this.batchTournamentPresentation(t, () => {
@@ -616,6 +643,7 @@ export class TournamentManager {
   private directorSetLevel(
     t: TournamentRuntime,
     level: number,
+    auditActor?: TournamentAuditActor,
   ): 'ok' | 'bad-state' | 'invalid' {
     // 정지 중에만 — 라이브 시계 밑에서 레벨을 움직이면 테이블별 적용 시점이 갈린다
     if (t.phase !== 'running' || t.pausedAt === null || t.startedAt === null) {
@@ -648,7 +676,7 @@ export class TournamentManager {
         `🛠️ 운영자가 블라인드를 조정했습니다 — 레벨 ${level}: ${cur.smallBlind}/${cur.bigBlind}${anteText}`,
       );
     }
-    this.logDirectorAction(t, { action: 'set-level', level });
+    this.logDirectorAction(t, { action: 'set-level', level }, auditActor);
     this.hooks.onTournamentUpdate?.(t.id);
     return 'ok';
   }
@@ -656,6 +684,7 @@ export class TournamentManager {
   private directorRemovePlayer(
     t: TournamentRuntime,
     playerId: string,
+    auditActor?: TournamentAuditActor,
   ): 'ok' | 'bad-state' | 'invalid' {
     if (t.phase !== 'running') return 'bad-state';
     for (const roomId of t.tables.keys()) {
@@ -668,7 +697,11 @@ export class TournamentManager {
         roomId,
         `⚠️ 운영자가 ${player.name}님을 토너먼트에서 제거했습니다.`,
       );
-      this.logDirectorAction(t, { action: 'remove-player', playerId, name: player.name });
+      this.logDirectorAction(
+        t,
+        { action: 'remove-player', playerId, name: player.name },
+        auditActor,
+      );
       // 명시적 퇴장과 같은 경로 — leaveRoom이 onPlayerLeave 훅(현재 순위 탈락 확정)을 태운다
       this.roomManager.leaveRoom(roomId, playerId);
       return 'ok';
@@ -679,9 +712,10 @@ export class TournamentManager {
   private logDirectorAction(
     t: TournamentRuntime,
     data: Record<string, unknown>,
+    auditActor?: TournamentAuditActor,
   ): void {
     eventLog.log('mtt-director-action', {
-      data: { tournamentId: t.id, ...data },
+      data: { tournamentId: t.id, ...data, ...auditActor },
     });
   }
 
@@ -845,7 +879,8 @@ export class TournamentManager {
 
   private attemptStart(
     t: TournamentRuntime,
-    requesterId: string | null,
+    automatic: boolean,
+    auditActor?: TournamentAuditActor,
   ): 'ok' | 'not-registering' | 'not-enough' | 'economy' {
     if (t.phase !== 'registering') return 'not-registering';
     const isWallet = t.config.economyMode === 'wallet';
@@ -862,7 +897,7 @@ export class TournamentManager {
     if (total < MIN_MTT_STARTERS || checkedIn.length < 1) {
       // 자동 시작(예약)인데 인원이 안 되면 취소한다 — 수동 시작은 에러만 반환
       // (wallet 환불은 cancelTournament의 refundAll이 담당)
-      if (requesterId === null) this.cancelTournament(t, 'not-enough');
+      if (automatic) this.cancelTournament(t, 'not-enough');
       return 'not-enough';
     }
     this.clearEmptyExpiry(t);
@@ -1039,7 +1074,7 @@ export class TournamentManager {
     eventLog.log('mtt-start', {
       data: {
         tournamentId: t.id, entrants: total, humans: checkedIn.length,
-        bots: botCount, tables: tableCount,
+        bots: botCount, tables: tableCount, ...auditActor,
       },
     });
     this.hooks.onTournamentsChanged?.();
@@ -2000,12 +2035,6 @@ export class TournamentManager {
       t.h4h.active = false;
       t.h4h.roundOpen = false;
       t.h4h.armed.clear();
-      for (const roomId of t.tables.keys()) {
-        this.roomManager.postSystemChat(
-          roomId,
-          '🎉 버블 종료! 남은 전원 입상이 확정됐습니다.',
-        );
-      }
     } else {
       t.h4h.roundOpen = true;
       t.h4h.armed = new Set(t.tables.keys());
