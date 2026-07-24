@@ -70,6 +70,17 @@ export interface AdminSessionManagerOptions {
   randomSecret?: () => string;
 }
 
+export interface AdminOriginRequest {
+  readonly headers: {
+    readonly host?: string | string[];
+    readonly 'x-forwarded-proto'?: string | string[];
+  };
+  readonly socket?: {
+    readonly encrypted?: boolean;
+    readonly remoteAddress?: string;
+  };
+}
+
 /**
  * Backoffice authentication is intentionally separate from player profiles and
  * their tournament-operator capability. The source credential is accepted only
@@ -164,11 +175,21 @@ export class AdminSessionManager {
     cookieHeader?: string;
     csrfHeader?: string;
     origin?: string;
-    host?: string;
+    requestOrigin?: string;
     now: number;
   }): AdminPrincipal {
     const record = this.#session(input.cookieHeader, input.now);
     if (!record) throw new AdminSessionError('unauthenticated');
+
+    if (!isExactAdminOrigin(input.origin, input.requestOrigin)) {
+      throw new AdminSessionError('origin');
+    }
+    if (
+      typeof input.csrfHeader !== 'string'
+      || !constantTimeSecretEqual(input.csrfHeader, record.csrfToken)
+    ) {
+      throw new AdminSessionError('csrf');
+    }
 
     record.mutationAttempts = this.#recentAttempts(
       record.mutationAttempts,
@@ -185,16 +206,6 @@ export class AdminSessionManager {
       );
     }
     record.mutationAttempts.push(input.now);
-
-    if (!isExactSameOrigin(input.origin, input.host)) {
-      throw new AdminSessionError('origin');
-    }
-    if (
-      typeof input.csrfHeader !== 'string'
-      || !constantTimeSecretEqual(input.csrfHeader, record.csrfToken)
-    ) {
-      throw new AdminSessionError('csrf');
-    }
     return record.principal;
   }
 
@@ -299,21 +310,86 @@ function readSessionToken(cookieHeader: string | undefined): string | null {
   return matches.length === 1 ? matches[0] : null;
 }
 
-function isExactSameOrigin(
+export function isExactAdminOrigin(
   origin: string | undefined,
-  host: string | undefined,
+  requestOrigin: string | undefined,
 ): boolean {
-  if (!origin || !host || host !== host.trim()) return false;
+  if (!origin || !requestOrigin) return false;
   try {
     const parsed = new URL(origin);
+    const request = new URL(requestOrigin);
     return (
       (parsed.protocol === 'http:' || parsed.protocol === 'https:')
-      && parsed.origin === origin
-      && parsed.host === host.toLowerCase()
       && parsed.username === ''
       && parsed.password === ''
+      && parsed.pathname === '/'
+      && parsed.search === ''
+      && parsed.hash === ''
+      && (request.protocol === 'http:' || request.protocol === 'https:')
+      && request.username === ''
+      && request.password === ''
+      && request.pathname === '/'
+      && request.search === ''
+      && request.hash === ''
+      && parsed.origin === request.origin
     );
   } catch {
     return false;
+  }
+}
+
+/**
+ * Reconstructs the request origin behind the trusted production proxy.
+ * Only the appended final X-Forwarded-Proto hop selects the scheme, while
+ * every hop must still be a well-formed http/https token.
+ */
+export function resolveAdminRequestOrigin(
+  request: AdminOriginRequest,
+  production: boolean,
+): string | null {
+  const hostValue = request.headers.host;
+  if (
+    typeof hostValue !== 'string'
+    || hostValue.length === 0
+    || hostValue !== hostValue.trim()
+  ) {
+    return null;
+  }
+
+  let scheme: 'http' | 'https';
+  const forwarded = request.headers['x-forwarded-proto'];
+  if (production && forwarded !== undefined) {
+    const combined = Array.isArray(forwarded)
+      ? forwarded.join(',')
+      : forwarded;
+    const hops = combined.split(',').map(hop => hop.trim().toLowerCase());
+    if (
+      hops.length === 0
+      || hops.some(hop => hop !== 'http' && hop !== 'https')
+    ) {
+      return null;
+    }
+    scheme = hops[hops.length - 1] as 'http' | 'https';
+  } else if (request.socket?.encrypted === true) {
+    scheme = 'https';
+  } else {
+    scheme = production ? 'https' : 'http';
+  }
+
+  try {
+    const parsed = new URL(`${scheme}://${hostValue}`);
+    if (
+      parsed.protocol !== `${scheme}:`
+      || parsed.username !== ''
+      || parsed.password !== ''
+      || parsed.pathname !== '/'
+      || parsed.search !== ''
+      || parsed.hash !== ''
+    ) {
+      return null;
+    }
+    return parsed.origin;
+  } catch {
+    return null;
   }
 }

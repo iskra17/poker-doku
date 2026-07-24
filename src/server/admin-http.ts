@@ -3,6 +3,8 @@ import type { UrlWithParsedQuery } from 'node:url';
 import {
   AdminSessionError,
   type AdminSessionManager,
+  isExactAdminOrigin,
+  resolveAdminRequestOrigin,
 } from './admin-session';
 import { clientAddress } from './client-address';
 import { eventLog } from './event-log';
@@ -97,6 +99,7 @@ export interface AdminHttpOptions {
   gameConfig?: GameConfigService;
   tournamentCommands?: AdminTournamentCommands;
   adminSessions: AdminSessionManager;
+  production: boolean;
   now?: () => number;
 }
 
@@ -146,24 +149,6 @@ function boundedInteger(
     : fallback;
 }
 
-function hasExactRequestOrigin(req: IncomingMessage): boolean {
-  const origin = header(req, 'origin');
-  const host = header(req, 'host');
-  if (!origin || !host || host !== host.trim()) return false;
-  try {
-    const parsed = new URL(origin);
-    return (
-      (parsed.protocol === 'http:' || parsed.protocol === 'https:')
-      && parsed.origin === origin
-      && parsed.host === host.toLowerCase()
-      && parsed.username === ''
-      && parsed.password === ''
-    );
-  } catch {
-    return false;
-  }
-}
-
 function sendAdminSessionError(res: ServerResponse, error: unknown): void {
   if (!(error instanceof AdminSessionError)) {
     send(res, 500, { error: 'internal-error' });
@@ -188,6 +173,7 @@ async function handleAdminSession(
   req: IncomingMessage,
   res: ServerResponse,
   sessions: AdminSessionManager,
+  production: boolean,
   now: () => number,
 ): Promise<void> {
   if (req.method === 'GET' || req.method === 'HEAD') {
@@ -202,7 +188,8 @@ async function handleAdminSession(
   }
 
   if (req.method === 'POST') {
-    if (!hasExactRequestOrigin(req)) {
+    const requestOrigin = resolveAdminRequestOrigin(req, production);
+    if (!isExactAdminOrigin(header(req, 'origin'), requestOrigin ?? undefined)) {
       drainRequest(req);
       send(res, 403, { error: 'origin' });
       return;
@@ -257,7 +244,7 @@ async function handleAdminSession(
         cookieHeader: req.headers.cookie,
         csrfHeader: header(req, 'x-csrf-token'),
         origin: header(req, 'origin'),
-        host: header(req, 'host'),
+        requestOrigin: resolveAdminRequestOrigin(req, production) ?? undefined,
         now: now(),
       });
     } catch (error) {
@@ -347,7 +334,13 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
   ): Promise<boolean> => {
     if (!pathname.startsWith('/api/admin/')) return false;
     if (pathname === '/api/admin/session') {
-      await handleAdminSession(req, res, options.adminSessions, now);
+      await handleAdminSession(
+        req,
+        res,
+        options.adminSessions,
+        options.production,
+        now,
+      );
       return true;
     }
 
@@ -363,7 +356,8 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           cookieHeader: req.headers.cookie,
           csrfHeader: header(req, 'x-csrf-token'),
           origin: header(req, 'origin'),
-          host: header(req, 'host'),
+          requestOrigin: resolveAdminRequestOrigin(req, options.production)
+            ?? undefined,
           now: now(),
         });
       } catch (error) {

@@ -137,6 +137,19 @@ describe('admin game config HTTP API', () => {
     expect(response.headers.get('set-cookie')).toBeNull();
   });
 
+  it('rejects a login origin whose scheme differs from the effective request origin', async () => {
+    const response = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        origin: baseUrl.replace('http://', 'https://'),
+      },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(response.status).toBe(403);
+    expect(response.headers.get('set-cookie')).toBeNull();
+  });
+
   it('serves registry metadata with current values on GET', async () => {
     const response = await fetch(configUrl(), { headers: { cookie } });
     expect(response.status).toBe(200);

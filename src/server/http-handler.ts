@@ -183,6 +183,7 @@ export function createHttpRequestHandler(
           sourceToken: debugToken,
           production,
         }),
+        production,
         now: options.now,
       })
     : undefined;

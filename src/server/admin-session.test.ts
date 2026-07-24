@@ -3,6 +3,8 @@ import {
   ADMIN_SESSION_COOKIE,
   AdminSessionError,
   AdminSessionManager,
+  isExactAdminOrigin,
+  resolveAdminRequestOrigin,
 } from './admin-session';
 
 const SOURCE_TOKEN = 'a-source-token-that-must-never-leak';
@@ -84,7 +86,7 @@ describe('AdminSessionManager', () => {
       cookieHeader: cookie,
       csrfHeader: result.csrfToken,
       origin: 'https://admin.example.test',
-      host: 'admin.example.test',
+      requestOrigin: 'https://admin.example.test',
       now: NOW,
     };
 
@@ -101,6 +103,70 @@ describe('AdminSessionManager', () => {
     })).toThrowError(expect.objectContaining({ kind: 'origin' }));
     expect(() => manager.requireMutation({ ...input, origin: undefined }))
       .toThrowError(expect.objectContaining({ kind: 'origin' }));
+  });
+
+  it('compares scheme host and effective default or non-default port', () => {
+    expect(isExactAdminOrigin(
+      'https://admin.example.test:443',
+      'https://admin.example.test',
+    )).toBe(true);
+    expect(isExactAdminOrigin(
+      'http://admin.example.test:80',
+      'http://admin.example.test',
+    )).toBe(true);
+    expect(isExactAdminOrigin(
+      'http://admin.example.test',
+      'https://admin.example.test',
+    )).toBe(false);
+    expect(isExactAdminOrigin(
+      'https://admin.example.test',
+      'https://admin.example.test:8443',
+    )).toBe(false);
+    expect(isExactAdminOrigin(
+      'https://admin.example.test:8443',
+      'https://admin.example.test:8443',
+    )).toBe(true);
+  });
+
+  it('resolves the trusted effective request scheme in one place', () => {
+    const request = (
+      host: string,
+      forwardedProto: string | undefined,
+      encrypted: boolean,
+    ) => ({
+      headers: {
+        host,
+        ...(forwardedProto === undefined
+          ? {}
+          : { 'x-forwarded-proto': forwardedProto }),
+      },
+      socket: { encrypted },
+    });
+
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test', 'http, https', false),
+      true,
+    )).toBe('https://admin.example.test');
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test:8443', undefined, true),
+      true,
+    )).toBe('https://admin.example.test:8443');
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test', undefined, false),
+      true,
+    )).toBe('https://admin.example.test');
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test', 'https', false),
+      false,
+    )).toBe('http://admin.example.test');
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test', 'http, ftp', false),
+      true,
+    )).toBeNull();
+    expect(resolveAdminRequestOrigin(
+      request('admin.example.test', 'https, ', false),
+      true,
+    )).toBeNull();
   });
 
   it('limits login by canonical client key to five attempts per ten minutes', () => {
@@ -136,7 +202,7 @@ describe('AdminSessionManager', () => {
       cookieHeader: cookieHeader(result.setCookie),
       csrfHeader: result.csrfToken,
       origin: 'https://admin.example.test',
-      host: 'admin.example.test',
+      requestOrigin: 'https://admin.example.test',
       now: NOW,
     };
     for (let attempt = 0; attempt < 30; attempt += 1) {
@@ -150,6 +216,42 @@ describe('AdminSessionManager', () => {
       }));
     expect(manager.requireMutation({ ...input, now: NOW + 60_000 }).id)
       .toBe(result.principal.id);
+  });
+
+  it('does not let rejected origin or csrf attempts consume mutation quota', () => {
+    const manager = new AdminSessionManager({
+      sourceToken: SOURCE_TOKEN,
+      production: false,
+    });
+    const result = manager.login(SOURCE_TOKEN, '198.51.100.12', NOW);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const valid = {
+      cookieHeader: cookieHeader(result.setCookie),
+      csrfHeader: result.csrfToken,
+      origin: 'https://admin.example.test',
+      requestOrigin: 'https://admin.example.test',
+      now: NOW,
+    };
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      expect(() => manager.requireMutation({
+        ...valid,
+        origin: 'https://evil.example.test',
+        now: NOW + attempt,
+      })).toThrowError(expect.objectContaining({ kind: 'origin' }));
+      expect(() => manager.requireMutation({
+        ...valid,
+        csrfHeader: 'wrong',
+        now: NOW + attempt,
+      })).toThrowError(expect.objectContaining({ kind: 'csrf' }));
+    }
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      expect(manager.requireMutation({ ...valid, now: NOW + attempt }).id)
+        .toBe(result.principal.id);
+    }
+    expect(() => manager.requireMutation({ ...valid, now: NOW + 30 }))
+      .toThrowError(expect.objectContaining({ kind: 'rate-limited' }));
   });
 
   it('logs out only the selected opaque session and emits an expired cookie', () => {
