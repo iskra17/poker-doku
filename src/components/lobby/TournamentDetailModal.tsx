@@ -36,6 +36,7 @@ export default function TournamentDetailModal({
   const joinRoom = useGameStore(state => state.joinRoom);
   const myPlayerId = useGameStore(state => state.myPlayerId);
   const currentRoomId = useGameStore(state => state.currentRoomId);
+  const canOperateTournament = useGameStore(state => state.canCreateTournament);
   const [detail, setDetail] = useState<TournamentDetailView | null>(null);
   const [gone, setGone] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,7 +75,6 @@ export default function TournamentDetailModal({
   }
 
   const { summary } = detail;
-  const isHost = myPlayerId === summary.hostId;
   // 내 실시간 순위 — 생존자는 칩 순 표시 순서, 탈락자는 확정 순위
   const myRow = detail.standings.find(row => row.playerId === myPlayerId);
   const myRank = myRow
@@ -187,9 +187,11 @@ export default function TournamentDetailModal({
         </Button>
       )}
 
-      {isHost && summary.phase !== 'completed' && summary.phase !== 'cancelled' && (
+      {canOperateTournament
+        && summary.phase !== 'completed'
+        && summary.phase !== 'cancelled' && (
         <div className="mt-2 rounded-lg border border-blossom/30 bg-blossom/5 p-2">
-          <p className="mb-1.5 text-[10px] font-bold text-blossom">🛠️ 운영 (개설자 전용)</p>
+          <p className="mb-1.5 text-[10px] font-bold text-blossom">🛠️ 운영자 도구</p>
           <div className="flex flex-wrap gap-1.5">
             {summary.phase === 'running' && (
               <Button
@@ -281,7 +283,7 @@ export default function TournamentDetailModal({
                 : '등록하기'}
             </Button>
           )}
-          {isHost && (
+          {canOperateTournament && (
             <Button
               size="sm"
               className="flex-1"
@@ -331,7 +333,7 @@ export default function TournamentDetailModal({
                     <td className="px-2 py-1 text-right text-ink-dim">
                       {row.tableNo !== null ? `T${row.tableNo}` : ''}
                     </td>
-                    {isHost && summary.phase === 'running' && (
+                    {canOperateTournament && summary.phase === 'running' && (
                       <td className="px-1 py-1 text-right">
                         {row.place === null && (
                           <button
