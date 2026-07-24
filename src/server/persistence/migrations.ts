@@ -4648,6 +4648,674 @@ export const migrations: readonly Migration[] = [
         ON sng_entries(room_id, status, tournament_id);
     `,
   },
+  {
+    version: 27,
+    name: 'scheduled_mtt_lifecycle_and_promotion_fund',
+    sql: `
+      CREATE TABLE tournament_template (
+        id TEXT PRIMARY KEY,
+        revision INTEGER NOT NULL CHECK (revision >= 1),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+        timezone TEXT NOT NULL CHECK (timezone = 'Asia/Seoul'),
+        recurrence_json TEXT NOT NULL,
+        visible_lead_ms INTEGER NOT NULL CHECK (visible_lead_ms >= 0),
+        registration_lead_ms INTEGER NOT NULL CHECK (registration_lead_ms >= 0),
+        config_version INTEGER NOT NULL CHECK (config_version >= 1),
+        config_json TEXT NOT NULL,
+        created_by_kind TEXT NOT NULL,
+        created_by_profile_id TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE TABLE tournament_instance (
+        id TEXT PRIMARY KEY,
+        template_id TEXT REFERENCES tournament_template(id),
+        template_revision INTEGER CHECK (
+          template_revision IS NULL OR template_revision >= 1
+        ),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        occurrence_key TEXT NOT NULL,
+        visible_at INTEGER NOT NULL,
+        registration_opens_at INTEGER NOT NULL,
+        starts_at INTEGER,
+        manual_expires_at INTEGER,
+        status TEXT NOT NULL CHECK (status IN (
+          'scheduled-hidden', 'scheduled-visible', 'registering',
+          'start-delayed', 'starting', 'running', 'payout-pending',
+          'refund-pending', 'completed', 'cancelled'
+        )),
+        status_reason TEXT CHECK (
+          status_reason IS NULL OR status_reason IN (
+            'capacity', 'restart-checkin-grace', 'not-enough', 'missed-start',
+            'promotion-insufficient', 'financial-invariant', 'invalid-config',
+            'template-superseded', 'operator-cancel',
+            'server-restart-unrecoverable', 'start-economy-failed',
+            'room-create-failed'
+          )
+        ),
+        economy_mode TEXT NOT NULL CHECK (economy_mode IN ('freeroll', 'wallet')),
+        registration_state TEXT NOT NULL CHECK (registration_state IN (
+          'not-open', 'open-prestart', 'locked-for-start',
+          'open-late', 'closing', 'closed'
+        )),
+        registration_close_reason TEXT CHECK (
+          registration_close_reason IS NULL OR registration_close_reason IN (
+            'late-reg-disabled', 'time', 'full', 'stack-floor', 'bubble',
+            'final-table', 'last-player', 'tournament-cancelled',
+            'tournament-completed'
+          )
+        ),
+        registration_generation INTEGER NOT NULL DEFAULT 0 CHECK (
+          registration_generation >= 0
+        ),
+        registration_owner_token TEXT,
+        min_entrants INTEGER NOT NULL CHECK (min_entrants BETWEEN 2 AND 48),
+        max_entrants INTEGER NOT NULL CHECK (
+          max_entrants BETWEEN min_entrants AND 48
+        ),
+        initial_entrants INTEGER CHECK (
+          initial_entrants IS NULL OR initial_entrants >= 1
+        ),
+        initial_bot_entrants INTEGER CHECK (
+          initial_bot_entrants IS NULL OR initial_bot_entrants >= 0
+        ),
+        committed_entrants INTEGER CHECK (
+          committed_entrants IS NULL OR committed_entrants >= 0
+        ),
+        pending_late_entrants INTEGER NOT NULL DEFAULT 0 CHECK (
+          pending_late_entrants >= 0
+        ),
+        final_entrants INTEGER CHECK (
+          final_entrants IS NULL OR final_entrants >= 1
+        ),
+        ever_multi_table INTEGER NOT NULL DEFAULT 0 CHECK (
+          ever_multi_table IN (0, 1)
+        ),
+        forfeited_chips INTEGER NOT NULL DEFAULT 0 CHECK (forfeited_chips >= 0),
+        payout_freeze_version INTEGER CHECK (
+          payout_freeze_version IS NULL OR payout_freeze_version >= 1
+        ),
+        payout_freeze_json TEXT,
+        payout_freeze_aborted_at INTEGER,
+        config_version INTEGER NOT NULL CHECK (config_version >= 1),
+        config_json TEXT NOT NULL,
+        created_by_kind TEXT NOT NULL,
+        created_by_profile_id TEXT,
+        director_profile_id TEXT,
+        start_attempt INTEGER NOT NULL DEFAULT 0 CHECK (start_attempt >= 0),
+        next_retry_at INTEGER,
+        start_owner_id TEXT,
+        start_lease_until INTEGER,
+        settlement_attempt INTEGER NOT NULL DEFAULT 0 CHECK (
+          settlement_attempt >= 0
+        ),
+        settlement_next_retry_at INTEGER,
+        settlement_owner_id TEXT,
+        settlement_lease_until INTEGER,
+        actual_started_at INTEGER,
+        completed_at INTEGER,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (template_id IS NULL AND template_revision IS NULL)
+          OR (template_id IS NOT NULL AND template_revision IS NOT NULL)
+        ),
+        CHECK (
+          (
+            starts_at IS NOT NULL
+            AND manual_expires_at IS NULL
+            AND visible_at <= registration_opens_at
+            AND registration_opens_at <= starts_at
+          )
+          OR (
+            starts_at IS NULL
+            AND manual_expires_at IS NOT NULL
+            AND visible_at <= registration_opens_at
+            AND registration_opens_at < manual_expires_at
+          )
+        ),
+        CHECK (
+          (status IN ('scheduled-hidden', 'scheduled-visible')
+            AND registration_state = 'not-open')
+          OR (status = 'registering' AND registration_state = 'open-prestart')
+          OR (status IN ('start-delayed', 'starting')
+            AND registration_state = 'locked-for-start')
+          OR (status = 'running'
+            AND registration_state IN ('open-late', 'closing', 'closed'))
+          OR (status IN (
+              'payout-pending', 'refund-pending', 'completed', 'cancelled'
+            ) AND registration_state = 'closed')
+        ),
+        CHECK (
+          (
+            registration_state IN ('closing', 'closed')
+            AND registration_close_reason IS NOT NULL
+          )
+          OR (
+            registration_state NOT IN ('closing', 'closed')
+            AND registration_close_reason IS NULL
+          )
+        ),
+        CHECK (
+          (registration_state = 'closing' AND registration_owner_token IS NOT NULL)
+          OR (registration_state <> 'closing' AND registration_owner_token IS NULL)
+        ),
+        CHECK (
+          committed_entrants IS NULL
+          OR committed_entrants + pending_late_entrants <= max_entrants
+        ),
+        CHECK (
+          initial_bot_entrants IS NULL
+          OR (
+            initial_entrants IS NOT NULL
+            AND committed_entrants IS NOT NULL
+            AND initial_bot_entrants <= initial_entrants
+            AND initial_entrants <= committed_entrants
+          )
+        ),
+        CHECK (
+          initial_entrants IS NULL
+          OR (
+            committed_entrants IS NOT NULL
+            AND initial_entrants <= committed_entrants
+          )
+        ),
+        CHECK (
+          final_entrants IS NULL
+          OR (
+            pending_late_entrants = 0
+            AND committed_entrants IS NOT NULL
+            AND final_entrants = committed_entrants
+          )
+        ),
+        CHECK (
+          (final_entrants IS NULL
+            AND payout_freeze_version IS NULL
+            AND payout_freeze_json IS NULL)
+          OR (final_entrants IS NOT NULL
+            AND payout_freeze_version IS NOT NULL
+            AND payout_freeze_json IS NOT NULL)
+        ),
+        CHECK (
+          payout_freeze_aborted_at IS NULL
+          OR (
+            payout_freeze_version IS NOT NULL
+            AND payout_freeze_json IS NOT NULL
+            AND final_entrants IS NOT NULL
+            AND status IN ('refund-pending', 'cancelled')
+          )
+        )
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_effective_template_occurrence
+        ON tournament_instance(template_id, occurrence_key)
+        WHERE template_id IS NOT NULL
+          AND (
+            status <> 'cancelled'
+            OR COALESCE(status_reason, '') <> 'template-superseded'
+          );
+
+      CREATE INDEX idx_tournament_instance_status_schedule
+        ON tournament_instance(status, visible_at, registration_opens_at, starts_at);
+
+      CREATE TRIGGER protect_tournament_instance_identity
+      BEFORE UPDATE OF
+        template_id, template_revision, idempotency_key, occurrence_key,
+        visible_at, registration_opens_at, starts_at, manual_expires_at,
+        economy_mode, min_entrants, max_entrants, config_version, config_json
+      ON tournament_instance
+      BEGIN
+        SELECT RAISE(ABORT, 'tournament instance identity is immutable');
+      END;
+
+      CREATE TRIGGER protect_tournament_instance_monotonic_state
+      BEFORE UPDATE ON tournament_instance
+      WHEN
+        (OLD.ever_multi_table = 1 AND NEW.ever_multi_table = 0)
+        OR (
+          OLD.payout_freeze_version IS NOT NULL
+          AND (
+            NEW.payout_freeze_version IS NOT OLD.payout_freeze_version
+            OR NEW.payout_freeze_json IS NOT OLD.payout_freeze_json
+            OR NEW.final_entrants IS NOT OLD.final_entrants
+          )
+        )
+        OR (
+          OLD.payout_freeze_aborted_at IS NOT NULL
+          AND NEW.payout_freeze_aborted_at IS NOT OLD.payout_freeze_aborted_at
+        )
+        OR (OLD.actual_started_at IS NOT NULL
+          AND NEW.actual_started_at IS NOT OLD.actual_started_at)
+        OR (OLD.completed_at IS NOT NULL
+          AND NEW.completed_at IS NOT OLD.completed_at)
+      BEGIN
+        SELECT RAISE(ABORT, 'tournament instance monotonic state is immutable');
+      END;
+
+      CREATE TRIGGER protect_tournament_instance_lifecycle
+      BEFORE UPDATE OF status ON tournament_instance
+      WHEN OLD.status <> NEW.status AND NOT (
+        (OLD.status = 'scheduled-hidden'
+          AND NEW.status IN ('scheduled-visible', 'cancelled', 'refund-pending'))
+        OR (OLD.status = 'scheduled-visible'
+          AND NEW.status IN ('registering', 'cancelled', 'refund-pending'))
+        OR (OLD.status = 'registering'
+          AND NEW.status IN (
+            'start-delayed', 'starting', 'cancelled', 'refund-pending'
+          ))
+        OR (OLD.status = 'start-delayed'
+          AND NEW.status IN ('starting', 'cancelled', 'refund-pending'))
+        OR (OLD.status = 'starting'
+          AND NEW.status IN (
+            'registering', 'start-delayed', 'running',
+            'cancelled', 'refund-pending'
+          ))
+        OR (OLD.status = 'running'
+          AND NEW.status IN ('payout-pending', 'refund-pending'))
+        OR (OLD.status = 'payout-pending' AND NEW.status = 'completed')
+        OR (OLD.status = 'refund-pending' AND NEW.status = 'cancelled')
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid tournament lifecycle transition');
+      END;
+
+      CREATE TABLE tournament_registration (
+        instance_id TEXT NOT NULL REFERENCES tournament_instance(id),
+        profile_id TEXT NOT NULL,
+        public_player_json TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN (
+          'registered', 'cancelled', 'no-show', 'seat-claimed',
+          'late-pending', 'seated', 'eliminated', 'finished', 'refunded'
+        )),
+        ever_seated INTEGER NOT NULL DEFAULT 0 CHECK (ever_seated IN (0, 1)),
+        registration_attempt INTEGER NOT NULL DEFAULT 1 CHECK (
+          registration_attempt >= 1
+        ),
+        economy_entry_attempt INTEGER CHECK (
+          economy_entry_attempt IS NULL OR economy_entry_attempt >= 1
+        ),
+        registered_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(instance_id, profile_id)
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_active_mtt_claim_per_profile
+        ON tournament_registration(profile_id)
+        WHERE status IN ('seat-claimed', 'late-pending', 'seated');
+
+      CREATE INDEX idx_tournament_registration_instance_status
+        ON tournament_registration(instance_id, status);
+
+      CREATE TRIGGER protect_tournament_registration_history
+      BEFORE UPDATE ON tournament_registration
+      WHEN
+        (OLD.ever_seated = 1 AND NEW.ever_seated = 0)
+        OR (
+          OLD.ever_seated = 1
+          AND NEW.status IN ('registered', 'late-pending')
+        )
+        OR NEW.registration_attempt < OLD.registration_attempt
+        OR NEW.instance_id IS NOT OLD.instance_id
+        OR NEW.profile_id IS NOT OLD.profile_id
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid tournament registration history');
+      END;
+
+      CREATE TABLE tournament_registration_attempt (
+        instance_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL,
+        registration_attempt INTEGER NOT NULL CHECK (registration_attempt >= 1),
+        request_id TEXT NOT NULL,
+        economy_entry_attempt INTEGER CHECK (
+          economy_entry_attempt IS NULL OR economy_entry_attempt >= 1
+        ),
+        status TEXT NOT NULL CHECK (status IN (
+          'registered', 'cancelled', 'no-show', 'seat-claimed',
+          'late-pending', 'seated', 'eliminated', 'finished', 'refunded'
+        )),
+        close_generation INTEGER CHECK (
+          close_generation IS NULL OR close_generation >= 0
+        ),
+        close_owner_token TEXT,
+        close_reason TEXT CHECK (
+          close_reason IS NULL OR close_reason IN (
+            'late-reg-disabled', 'time', 'full', 'stack-floor', 'bubble',
+            'final-table', 'last-player', 'tournament-cancelled',
+            'tournament-completed'
+          )
+        ),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        PRIMARY KEY(instance_id, profile_id, registration_attempt),
+        UNIQUE(instance_id, profile_id, request_id),
+        FOREIGN KEY(instance_id, profile_id)
+          REFERENCES tournament_registration(instance_id, profile_id),
+        CHECK (
+          (
+            close_generation IS NULL
+            AND close_owner_token IS NULL
+            AND close_reason IS NULL
+          )
+          OR (
+            close_generation IS NOT NULL
+            AND close_owner_token IS NOT NULL
+            AND close_reason IS NOT NULL
+          )
+        )
+      ) STRICT;
+
+      CREATE TABLE tournament_forfeit (
+        removal_id TEXT PRIMARY KEY,
+        instance_id TEXT NOT NULL REFERENCES tournament_instance(id),
+        player_id TEXT NOT NULL,
+        profile_id TEXT,
+        registration_attempt INTEGER CHECK (
+          registration_attempt IS NULL OR registration_attempt >= 1
+        ),
+        amount INTEGER NOT NULL CHECK (amount >= 0),
+        hand_number INTEGER NOT NULL CHECK (hand_number >= 1),
+        created_by_profile_id TEXT,
+        created_at INTEGER NOT NULL,
+        UNIQUE(instance_id, player_id),
+        CHECK (
+          (profile_id IS NULL AND registration_attempt IS NULL)
+          OR (profile_id IS NOT NULL AND registration_attempt IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE TRIGGER freeze_tournament_forfeit_update
+      BEFORE UPDATE ON tournament_forfeit
+      BEGIN SELECT RAISE(ABORT, 'tournament forfeit is immutable'); END;
+
+      CREATE TRIGGER freeze_tournament_forfeit_delete
+      BEFORE DELETE ON tournament_forfeit
+      BEGIN SELECT RAISE(ABORT, 'tournament forfeit is immutable'); END;
+
+      CREATE TABLE promotion_fund (
+        account_id TEXT PRIMARY KEY CHECK (account_id = 'global'),
+        balance INTEGER NOT NULL CHECK (balance >= 0),
+        version INTEGER NOT NULL CHECK (version >= 0),
+        updated_at INTEGER NOT NULL
+      ) STRICT;
+
+      INSERT INTO promotion_fund (account_id, balance, version, updated_at)
+      VALUES ('global', 0, 0, 0);
+
+      CREATE TABLE promotion_fund_ledger (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES promotion_fund(account_id),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'admin-adjustment', 'freeroll-prize-reserve',
+          'freeroll-bot-prize-return', 'freeroll-prize-refund'
+        )),
+        delta INTEGER NOT NULL CHECK (
+          delta <> 0
+          AND delta BETWEEN -2000000000 AND 2000000000
+        ),
+        balance_after INTEGER NOT NULL CHECK (balance_after >= 0),
+        instance_id TEXT,
+        actor_kind TEXT NOT NULL CHECK (
+          actor_kind IN ('backoffice-admin', 'operator-profile', 'system')
+        ),
+        actor_id TEXT NOT NULL,
+        reason TEXT NOT NULL CHECK (
+          length(trim(reason)) BETWEEN 5 AND 200
+          AND reason = trim(reason)
+        ),
+        idempotency_key TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL
+      ) STRICT;
+
+      CREATE INDEX idx_promotion_fund_ledger_instance
+        ON promotion_fund_ledger(instance_id, created_at);
+
+      CREATE TRIGGER freeze_promotion_fund_ledger_update
+      BEFORE UPDATE ON promotion_fund_ledger
+      BEGIN SELECT RAISE(ABORT, 'promotion fund ledger is immutable'); END;
+
+      CREATE TRIGGER freeze_promotion_fund_ledger_delete
+      BEFORE DELETE ON promotion_fund_ledger
+      BEGIN SELECT RAISE(ABORT, 'promotion fund ledger is immutable'); END;
+
+      CREATE TABLE tournament_prize_escrow (
+        instance_id TEXT PRIMARY KEY REFERENCES tournament_instance(id),
+        account_id TEXT NOT NULL CHECK (account_id = 'global'),
+        amount INTEGER NOT NULL CHECK (amount > 0),
+        status TEXT NOT NULL CHECK (status IN ('reserved', 'settled', 'refunded')),
+        human_paid INTEGER NOT NULL DEFAULT 0 CHECK (human_paid >= 0),
+        bot_returned INTEGER NOT NULL DEFAULT 0 CHECK (bot_returned >= 0),
+        settlement_fingerprint TEXT,
+        reserved_at INTEGER NOT NULL,
+        settled_at INTEGER,
+        refunded_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (status = 'reserved'
+            AND human_paid = 0
+            AND bot_returned = 0
+            AND settled_at IS NULL
+            AND refunded_at IS NULL)
+          OR (status = 'settled'
+            AND human_paid + bot_returned = amount
+            AND settlement_fingerprint IS NOT NULL
+            AND settled_at IS NOT NULL
+            AND refunded_at IS NULL)
+          OR (status = 'refunded'
+            AND human_paid = 0
+            AND bot_returned = 0
+            AND settled_at IS NULL
+            AND refunded_at IS NOT NULL)
+        )
+      ) STRICT;
+
+      CREATE TRIGGER protect_tournament_prize_escrow_update
+      BEFORE UPDATE ON tournament_prize_escrow
+      WHEN
+        NEW.instance_id IS NOT OLD.instance_id
+        OR NEW.account_id IS NOT OLD.account_id
+        OR NEW.amount IS NOT OLD.amount
+        OR NEW.reserved_at IS NOT OLD.reserved_at
+        OR OLD.status IN ('settled', 'refunded')
+        OR (
+          OLD.status = 'reserved'
+          AND NEW.status NOT IN ('reserved', 'settled', 'refunded')
+        )
+        OR (
+          OLD.settlement_fingerprint IS NOT NULL
+          AND NEW.settlement_fingerprint IS NOT OLD.settlement_fingerprint
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid tournament prize escrow transition');
+      END;
+
+      CREATE TRIGGER freeze_tournament_prize_escrow_delete
+      BEFORE DELETE ON tournament_prize_escrow
+      BEGIN SELECT RAISE(ABORT, 'tournament prize escrow is immutable'); END;
+
+      CREATE TABLE tournament_settlement (
+        instance_id TEXT PRIMARY KEY REFERENCES tournament_instance(id),
+        status TEXT NOT NULL CHECK (status IN ('pending', 'settled')),
+        payout_freeze_checksum TEXT NOT NULL,
+        final_entrants INTEGER NOT NULL CHECK (final_entrants >= 1),
+        prize_pool INTEGER NOT NULL CHECK (prize_pool > 0),
+        human_payout_total INTEGER NOT NULL CHECK (human_payout_total >= 0),
+        bot_return_total INTEGER NOT NULL CHECK (bot_return_total >= 0),
+        fingerprint TEXT NOT NULL UNIQUE,
+        created_at INTEGER NOT NULL,
+        settled_at INTEGER,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (status = 'pending' AND settled_at IS NULL)
+          OR (status = 'settled' AND settled_at IS NOT NULL)
+        ),
+        CHECK (human_payout_total + bot_return_total = prize_pool)
+      ) STRICT;
+
+      CREATE TRIGGER protect_tournament_settlement_update
+      BEFORE UPDATE ON tournament_settlement
+      WHEN
+        NEW.instance_id IS NOT OLD.instance_id
+        OR NEW.payout_freeze_checksum IS NOT OLD.payout_freeze_checksum
+        OR NEW.final_entrants IS NOT OLD.final_entrants
+        OR NEW.prize_pool IS NOT OLD.prize_pool
+        OR NEW.human_payout_total IS NOT OLD.human_payout_total
+        OR NEW.bot_return_total IS NOT OLD.bot_return_total
+        OR NEW.fingerprint IS NOT OLD.fingerprint
+        OR NEW.created_at IS NOT OLD.created_at
+        OR OLD.status = 'settled'
+        OR (OLD.status = 'pending' AND NEW.status NOT IN ('pending', 'settled'))
+      BEGIN
+        SELECT RAISE(ABORT, 'invalid tournament settlement transition');
+      END;
+
+      CREATE TRIGGER freeze_tournament_settlement_delete
+      BEFORE DELETE ON tournament_settlement
+      BEGIN SELECT RAISE(ABORT, 'tournament settlement is immutable'); END;
+
+      CREATE TABLE tournament_settlement_result (
+        instance_id TEXT NOT NULL REFERENCES tournament_settlement(instance_id),
+        place INTEGER NOT NULL CHECK (place >= 1),
+        player_id TEXT NOT NULL,
+        participant_type TEXT NOT NULL CHECK (
+          participant_type IN ('human', 'bot')
+        ),
+        profile_id TEXT,
+        registration_attempt INTEGER CHECK (
+          registration_attempt IS NULL OR registration_attempt >= 1
+        ),
+        display_name_snapshot TEXT NOT NULL,
+        prize INTEGER NOT NULL CHECK (prize >= 0),
+        disposition TEXT NOT NULL CHECK (
+          disposition IN ('wallet-credit', 'promotion-return', 'none')
+        ),
+        PRIMARY KEY(instance_id, place),
+        UNIQUE(instance_id, player_id),
+        CHECK (
+          (participant_type = 'human'
+            AND profile_id IS NOT NULL
+            AND registration_attempt IS NOT NULL)
+          OR (participant_type = 'bot'
+            AND profile_id IS NULL
+            AND registration_attempt IS NULL)
+        ),
+        CHECK (
+          (prize = 0 AND disposition = 'none')
+          OR (prize > 0
+            AND participant_type = 'human'
+            AND disposition = 'wallet-credit')
+          OR (prize > 0
+            AND participant_type = 'bot'
+            AND disposition = 'promotion-return')
+        )
+      ) STRICT;
+
+      CREATE UNIQUE INDEX one_settlement_result_per_profile
+        ON tournament_settlement_result(instance_id, profile_id)
+        WHERE profile_id IS NOT NULL;
+
+      CREATE TRIGGER freeze_tournament_settlement_result_update
+      BEFORE UPDATE ON tournament_settlement_result
+      BEGIN SELECT RAISE(ABORT, 'tournament settlement result is immutable'); END;
+
+      CREATE TRIGGER freeze_tournament_settlement_result_delete
+      BEFORE DELETE ON tournament_settlement_result
+      BEGIN SELECT RAISE(ABORT, 'tournament settlement result is immutable'); END;
+
+      CREATE TRIGGER require_tournament_settlement_plan
+      BEFORE UPDATE OF status ON tournament_instance
+      WHEN NEW.status = 'payout-pending' AND OLD.status <> 'payout-pending'
+      BEGIN
+        SELECT CASE WHEN
+          NEW.final_entrants IS NULL
+          OR NEW.payout_freeze_version IS NULL
+          OR NEW.payout_freeze_json IS NULL
+          OR NOT EXISTS (
+            SELECT 1
+            FROM tournament_settlement AS settlement
+            WHERE settlement.instance_id = NEW.id
+              AND settlement.status = 'pending'
+              AND settlement.final_entrants = NEW.final_entrants
+          )
+          OR (
+            SELECT COUNT(*)
+            FROM tournament_settlement_result AS result
+            WHERE result.instance_id = NEW.id
+          ) <> NEW.final_entrants
+        THEN RAISE(ABORT, 'complete tournament settlement plan required')
+        END;
+      END;
+
+      CREATE TRIGGER require_terminal_tournament_settlement
+      BEFORE UPDATE OF status ON tournament_instance
+      WHEN NEW.status = 'completed' AND OLD.status <> 'completed'
+      BEGIN
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1
+          FROM tournament_settlement AS settlement
+          WHERE settlement.instance_id = NEW.id
+            AND settlement.status = 'settled'
+        ) THEN RAISE(ABORT, 'settled tournament plan required')
+        END;
+        SELECT CASE WHEN
+          NEW.economy_mode = 'freeroll'
+          AND NOT EXISTS (
+            SELECT 1
+            FROM tournament_prize_escrow AS escrow
+            WHERE escrow.instance_id = NEW.id
+              AND escrow.status = 'settled'
+          )
+        THEN RAISE(ABORT, 'settled freeroll escrow required')
+        END;
+      END;
+    `,
+  },
+  {
+    version: 28,
+    name: 'mtt_entry_attempt_generations',
+    sql: `
+      ALTER TABLE sng_entries RENAME TO sng_entries_v26_backup;
+
+      CREATE TABLE sng_entries (
+        id TEXT PRIMARY KEY,
+        tournament_id TEXT NOT NULL,
+        room_id TEXT NOT NULL,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        buy_in INTEGER NOT NULL CHECK (buy_in > 0),
+        fee INTEGER NOT NULL CHECK (fee > 0),
+        status TEXT NOT NULL CHECK (
+          status IN ('reserved','started','settled','refunded')
+        ),
+        place INTEGER CHECK (place IS NULL OR place BETWEEN 1 AND 1000),
+        prize INTEGER NOT NULL DEFAULT 0 CHECK (prize >= 0),
+        start_attempt INTEGER NOT NULL DEFAULT 0 CHECK (start_attempt >= 0),
+        entry_attempt INTEGER NOT NULL DEFAULT 1 CHECK (entry_attempt >= 1),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        UNIQUE (tournament_id, profile_id, entry_attempt)
+      ) STRICT;
+
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, entry_attempt, created_at, updated_at
+      )
+      SELECT
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, 1, created_at, updated_at
+      FROM sng_entries_v26_backup;
+
+      DROP TABLE sng_entries_v26_backup;
+
+      CREATE UNIQUE INDEX one_active_sng_entry_per_profile
+        ON sng_entries(profile_id)
+        WHERE status IN ('reserved', 'started');
+
+      CREATE INDEX idx_sng_entries_room_status_tournament
+        ON sng_entries(room_id, status, tournament_id);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

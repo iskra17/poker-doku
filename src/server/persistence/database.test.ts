@@ -33,7 +33,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_season_catalog',
       'arena_season_results',
@@ -98,7 +98,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(new ArenaRepository(database)
       .requireProfile('v14-season', 'v1-marker').mmr).toBe(1_000);
     expect(database.db.prepare(`
@@ -319,7 +319,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(26);
+    expect(migration.version).toBe(28);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -453,7 +453,322 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(26);
+    expect(result.count).toBe(28);
+  });
+
+  it('adds v27 scheduled tournament and promotion fund schema', () => {
+    database = openPokerDatabase(':memory:');
+
+    expect(database.db.prepare(`
+      SELECT MAX(version) AS version FROM schema_migrations
+    `).get()).toEqual({ version: 28 });
+    const tables = database.db.prepare(`
+      SELECT name, sql FROM sqlite_schema
+      WHERE type = 'table' AND name LIKE 'tournament_%'
+         OR type = 'table' AND name LIKE 'promotion_fund%'
+    `).all() as Array<{ name: string; sql: string }>;
+    expect(tables.map(row => row.name)).toEqual(expect.arrayContaining([
+      'tournament_template',
+      'tournament_instance',
+      'tournament_registration',
+      'tournament_registration_attempt',
+      'tournament_forfeit',
+      'promotion_fund',
+      'promotion_fund_ledger',
+      'tournament_prize_escrow',
+      'tournament_settlement',
+      'tournament_settlement_result',
+    ]));
+    expect(tables.every(row => row.sql.endsWith('STRICT'))).toBe(true);
+    const partialIndexes = database.db.prepare(`
+      SELECT name, sql FROM sqlite_schema
+      WHERE type = 'index'
+        AND name IN (
+          'one_effective_template_occurrence',
+          'one_active_mtt_claim_per_profile',
+          'one_active_sng_entry_per_profile'
+        )
+    `).all() as Array<{ name: string; sql: string }>;
+    expect(partialIndexes.map(row => row.name)).toEqual(expect.arrayContaining([
+      'one_effective_template_occurrence',
+      'one_active_mtt_claim_per_profile',
+      'one_active_sng_entry_per_profile',
+    ]));
+    expect(partialIndexes.every(row => /\bWHERE\b/.test(row.sql))).toBe(true);
+    expect(database.db.prepare(`
+      SELECT account_id, balance, version FROM promotion_fund
+    `).get()).toEqual({ account_id: 'global', balance: 0, version: 0 });
+    expect(database.db.prepare(`
+      INSERT INTO tournament_template (
+        id, revision, idempotency_key, name, enabled, timezone,
+        recurrence_json, visible_lead_ms, registration_lead_ms,
+        config_version, config_json, created_by_kind,
+        created_by_profile_id, created_at, updated_at
+      ) VALUES (
+        'imported-template', 1, 'imported-template-key', 'Imported', 0,
+        'Asia/Seoul', '{}', 0, 0, 2, '{}', 'legacy-import', NULL, 1, 1
+      )
+    `).run().changes).toBe(1);
+  });
+
+  it('enforces lifecycle registration composite states and close ownership', () => {
+    database = openPokerDatabase(':memory:');
+
+    insertTournamentInstance(database.db, {
+      id: 'registering-valid',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    });
+    expect(() => insertTournamentInstance(database!.db, {
+      id: 'scheduled-invalid',
+      status: 'scheduled-visible',
+      registrationState: 'open-prestart',
+    })).toThrow();
+    expect(() => insertTournamentInstance(database!.db, {
+      id: 'closing-without-owner',
+      status: 'running',
+      registrationState: 'closing',
+      registrationCloseReason: 'time',
+    })).toThrow();
+    insertTournamentInstance(database.db, {
+      id: 'closing-valid',
+      status: 'running',
+      registrationState: 'closing',
+      registrationCloseReason: 'full',
+      registrationOwnerToken: 'owner-1',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closed'
+      WHERE id = 'closing-valid'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closed', registration_owner_token = NULL
+      WHERE id = 'closing-valid'
+    `).run().changes).toBe(1);
+  });
+
+  it('keeps ledgers settlement results and terminal identities immutable', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'planless-instance',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+    });
+    expect(() => database?.db.exec(`
+      UPDATE tournament_instance SET status = 'payout-pending'
+      WHERE id = 'planless-instance'
+    `)).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'immutable-instance',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+      economyMode: 'freeroll',
+    });
+    database.db.exec(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'ledger-1', 'global', 'freeroll-prize-reserve', -100, 0,
+        'immutable-instance', 'system', 'scheduler',
+        'reserve prize', 'ledger-key-1', 10
+      );
+      INSERT INTO tournament_forfeit (
+        removal_id, instance_id, player_id, profile_id, registration_attempt,
+        amount, hand_number, created_by_profile_id, created_at
+      ) VALUES (
+        'remove-1', 'immutable-instance', 'bot-1', NULL, NULL,
+        100, 1, NULL, 10
+      );
+      INSERT INTO tournament_prize_escrow (
+        instance_id, account_id, amount, status, human_paid, bot_returned,
+        settlement_fingerprint, reserved_at, settled_at, refunded_at, updated_at
+      ) VALUES (
+        'immutable-instance', 'global', 100, 'reserved', 0, 0,
+        NULL, 10, NULL, NULL, 10
+      );
+      INSERT INTO tournament_settlement (
+        instance_id, status, payout_freeze_checksum, final_entrants,
+        prize_pool, human_payout_total, bot_return_total, fingerprint,
+        created_at, settled_at, updated_at
+      ) VALUES (
+        'immutable-instance', 'pending', 'checksum', 1,
+        100, 100, 0, 'fingerprint-1', 10, NULL, 10
+      );
+      INSERT INTO tournament_settlement_result (
+        instance_id, place, player_id, participant_type, profile_id,
+        registration_attempt, display_name_snapshot, prize, disposition
+      ) VALUES (
+        'immutable-instance', 1, 'human-1', 'human', 'profile-1',
+        1, 'Player', 100, 'wallet-credit'
+      );
+    `);
+
+    expect(() => database?.db.exec(`
+      UPDATE promotion_fund_ledger SET reason = 'changed reason'
+      WHERE id = 'ledger-1'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      DELETE FROM promotion_fund_ledger WHERE id = 'ledger-1'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      UPDATE tournament_forfeit SET amount = 0 WHERE removal_id = 'remove-1'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      UPDATE tournament_prize_escrow SET status = 'settled'
+      WHERE instance_id = 'immutable-instance'
+    `)).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_prize_escrow
+      SET status = 'settled', human_paid = 100,
+          settlement_fingerprint = 'fingerprint-1',
+          settled_at = 20, updated_at = 20
+      WHERE instance_id = 'immutable-instance'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.exec(`
+      DELETE FROM tournament_prize_escrow
+      WHERE instance_id = 'immutable-instance'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      UPDATE tournament_settlement_result SET prize = 0
+      WHERE instance_id = 'immutable-instance' AND place = 1
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      DELETE FROM tournament_settlement_result
+      WHERE instance_id = 'immutable-instance' AND place = 1
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      UPDATE tournament_settlement SET prize_pool = 200
+      WHERE instance_id = 'immutable-instance'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      DELETE FROM tournament_settlement
+      WHERE instance_id = 'immutable-instance'
+    `)).toThrow();
+    expect(() => database?.db.exec(`
+      UPDATE tournament_instance SET config_json = '{"changed":true}'
+      WHERE id = 'immutable-instance'
+    `)).toThrow();
+  });
+
+  it('allows only one active mtt claim per profile', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, { id: 'claim-a' });
+    insertTournamentInstance(database.db, { id: 'claim-b' });
+    const insertRegistration = database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (?, 'same-profile', '{}', ?, 0, 1, NULL, 10, 10)
+    `);
+    insertRegistration.run('claim-a', 'registered');
+    insertRegistration.run('claim-b', 'registered');
+    database.db.prepare(`
+      UPDATE tournament_registration SET status = 'seat-claimed'
+      WHERE instance_id = 'claim-a' AND profile_id = 'same-profile'
+    `).run();
+
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_registration SET status = 'late-pending'
+      WHERE instance_id = 'claim-b' AND profile_id = 'same-profile'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_registration
+      WHERE profile_id = 'same-profile' AND status = 'registered'
+    `).get()).toEqual({ count: 1 });
+  });
+
+  it('rebuilds v28 sng entries with attempt generations without losing v26 rows', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createDatabaseThroughMigration(path, 26);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      INSERT INTO profiles (
+        id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+        alias, avatar_id, adult_confirmed_at, created_at, updated_at
+      ) VALUES (
+        'attempt-profile', 'attempt-hash', 'attempt-lookup',
+        'attempt-recovery', 'attempt-recovery-lookup',
+        'attempt-alias', 'sakura', 1, 1, 1
+      );
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, created_at, updated_at
+      ) VALUES (
+        'attempt-1', 'tournament-a', 'tournament-a', 'attempt-profile',
+        1500, 150, 'refunded', NULL, 0, 0, 1, 1
+      );
+    `);
+    rawDatabase.close();
+
+    database = openPokerDatabase(path);
+    expect(database.db.prepare(`
+      SELECT id, entry_attempt, status FROM sng_entries
+      WHERE id = 'attempt-1'
+    `).get()).toEqual({
+      id: 'attempt-1',
+      entry_attempt: 1,
+      status: 'refunded',
+    });
+    expect(database.db.prepare(`
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, entry_attempt, created_at, updated_at
+      ) VALUES (
+        'attempt-2', 'tournament-a', 'tournament-a', 'attempt-profile',
+        1500, 150, 'reserved', NULL, 0, 0, 2, 2, 2
+      )
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, entry_attempt, created_at, updated_at
+      ) VALUES (
+        'attempt-3', 'tournament-b', 'tournament-b', 'attempt-profile',
+        1500, 150, 'reserved', NULL, 0, 0, 1, 3, 3
+      )
+    `).run()).toThrow();
+  });
+
+  it('rolls all v27 and v28 objects back when a middle statement fails', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'poker-doku-'));
+    temporaryDirectories.push(directory);
+    const path = join(directory, 'poker.sqlite');
+    createDatabaseThroughMigration(path, 26);
+    const rawDatabase = new DatabaseSync(path);
+    rawDatabase.exec(`
+      CREATE TABLE sng_entries_v26_backup (sentinel INTEGER PRIMARY KEY) STRICT;
+    `);
+    rawDatabase.close();
+
+    expect(() => openPokerDatabase(path)).toThrowError(
+      'there is already another table or index with this name: sng_entries_v26_backup',
+    );
+    const reopened = new DatabaseSync(path);
+    try {
+      expect(reopened.prepare(`
+        SELECT MAX(version) AS version FROM schema_migrations
+      `).get()).toEqual({ version: 26 });
+      expect(reopened.prepare(`
+        SELECT COUNT(*) AS count FROM sqlite_schema
+        WHERE name IN (
+          'tournament_template', 'tournament_instance',
+          'tournament_registration', 'promotion_fund'
+        )
+      `).get()).toEqual({ count: 0 });
+      expect(reopened.prepare('PRAGMA table_info(sng_entries)').all()
+        .map(row => (row as { name: string }).name))
+        .not.toContain('entry_attempt');
+    } finally {
+      reopened.close();
+    }
   });
 
   it('upgrades V24 hand records to V25 (mtt 허용·토너먼트 링크) preserving rows and IDs', () => {
@@ -543,7 +858,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -575,7 +890,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -818,7 +1133,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(arena.requireSeason('v14-season').id).toBe('v14-season');
     expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
     expect(arena.requireMatch('v14-match').status).toBe('forming');
@@ -873,7 +1188,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(arena.requireGroup('v15-open-group').status).toBe('open');
     expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
     expect(database.db.prepare(`
@@ -1856,6 +2171,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -1883,6 +2199,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -1929,6 +2246,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
   });
 
@@ -1973,6 +2291,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -2283,6 +2602,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2541,6 +2861,7 @@ describe('PokerDatabase migrations', () => {
       { version: 16 }, { version: 17 }, { version: 18 },
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
+      { version: 27 }, { version: 28 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -2807,7 +3128,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -3150,7 +3471,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 26 });
+    `).get()).toEqual({ version: 28 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
@@ -4289,6 +4610,90 @@ function createConflictingV1Database(path: string): void {
     CREATE TABLE profiles (id TEXT PRIMARY KEY) STRICT;
   `);
   rawDatabase.close();
+}
+
+function createDatabaseThroughMigration(path: string, version: number): void {
+  const rawDatabase = new DatabaseSync(path);
+  try {
+    rawDatabase.exec(`
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at INTEGER NOT NULL
+      ) STRICT;
+      BEGIN IMMEDIATE;
+    `);
+    const record = rawDatabase.prepare(`
+      INSERT INTO schema_migrations (version, name, applied_at)
+      VALUES (?, ?, ?)
+    `);
+    for (const migration of migrations) {
+      if (migration.version > version) break;
+      rawDatabase.exec(migration.sql);
+      record.run(migration.version, migration.name, migration.version);
+    }
+    rawDatabase.exec('COMMIT');
+  } catch (error) {
+    rawDatabase.exec('ROLLBACK');
+    throw error;
+  } finally {
+    rawDatabase.close();
+  }
+}
+
+function insertTournamentInstance(
+  target: DatabaseSync,
+  options: {
+    id: string;
+    status?: string;
+    registrationState?: string;
+    registrationCloseReason?: string | null;
+    registrationOwnerToken?: string | null;
+    economyMode?: 'freeroll' | 'wallet';
+  },
+): void {
+  target.prepare(`
+    INSERT INTO tournament_instance (
+      id, template_id, template_revision, idempotency_key, occurrence_key,
+      visible_at, registration_opens_at, starts_at, manual_expires_at,
+      status, status_reason, economy_mode, registration_state,
+      registration_close_reason, registration_generation,
+      registration_owner_token, min_entrants, max_entrants,
+      initial_entrants, initial_bot_entrants, committed_entrants,
+      pending_late_entrants, final_entrants, ever_multi_table,
+      forfeited_chips, payout_freeze_version, payout_freeze_json,
+      payout_freeze_aborted_at, config_version, config_json,
+      created_by_kind, created_by_profile_id, director_profile_id,
+      start_attempt, next_retry_at, start_owner_id, start_lease_until,
+      settlement_attempt, settlement_next_retry_at, settlement_owner_id,
+      settlement_lease_until, actual_started_at, completed_at,
+      created_at, updated_at
+    ) VALUES (
+      ?, NULL, NULL, ?, ?,
+      1, 2, NULL, 200,
+      ?, NULL, ?, ?,
+      ?, 0,
+      ?, 2, 48,
+      NULL, NULL, NULL,
+      0, NULL, 0,
+      0, NULL, NULL,
+      NULL, 2, '{}',
+      'system', NULL, NULL,
+      0, NULL, NULL, NULL,
+      0, NULL, NULL,
+      NULL, NULL, NULL,
+      10, 10
+    )
+  `).run(
+    options.id,
+    `idempotency:${options.id}`,
+    options.id,
+    options.status ?? 'registering',
+    options.economyMode ?? 'wallet',
+    options.registrationState ?? 'open-prestart',
+    options.registrationCloseReason ?? null,
+    options.registrationOwnerToken ?? null,
+  );
 }
 
 function createV1Database(path: string): void {
