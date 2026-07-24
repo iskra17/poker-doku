@@ -8,6 +8,7 @@ import type {
   TournamentStage,
 } from '../poker/types';
 import type { MttSpeed } from '../poker/mtt-structure';
+import type { PayoutPresetId } from '../poker/payout-table';
 import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
@@ -172,6 +173,7 @@ export interface TournamentSummary {
   entryFee: number; // wallet 수수료 (practice는 0)
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
   myTableRoomId?: string; // 참가 중이면 내 테이블
+  payoutPreset: PayoutPresetId;
   stage?: TournamentStage;
   holdReasons?: TournamentHoldReason[];
   stageEndsAt?: number;
@@ -203,6 +205,7 @@ export interface TournamentDetailView {
 
 export interface CreateTournamentRequest {
   name: string;
+  payoutPreset: PayoutPresetId;
   speed: MttSpeed;
   maxEntrants: number; // 8~48
   startAt: number | null; // 예약 시각 (null = 호스트 수동 시작)

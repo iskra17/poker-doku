@@ -1,5 +1,6 @@
 import type { PokerEngine } from '../lib/poker/engine';
 import type { Player } from '../lib/poker/types';
+import type { PayoutPresetId } from '../lib/poker/payout-table';
 import { EconomyDomainError } from './economy-repository';
 import { ECONOMY_RULES, type EconomyService } from './economy-service';
 
@@ -50,6 +51,7 @@ export interface MttAdmissionEconomy {
   settleMttTournament(
     tournamentId: string,
     results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
+    payoutPreset: PayoutPresetId,
   ): string;
   voidMttTournament(tournamentId: string): number;
 }
@@ -80,8 +82,9 @@ export class EconomyRuntime implements
   settleMttTournament(
     tournamentId: string,
     results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
+    payoutPreset: PayoutPresetId,
   ): string {
-    return this.economy.settleMttTournament(tournamentId, results);
+    return this.economy.settleMttTournament(tournamentId, results, payoutPreset);
   }
 
   voidMttTournament(tournamentId: string): number {

@@ -507,8 +507,8 @@ export function setupSocketHandlers(
           startEscrow: (tournamentId, profileIds) => {
             economy.startMttTournament(tournamentId, profileIds);
           },
-          settle: (tournamentId, results) => {
-            economy.settleMttTournament(tournamentId, results);
+          settle: (tournamentId, results, payoutPreset) => {
+            economy.settleMttTournament(tournamentId, results, payoutPreset);
           },
           refundAll: tournamentId => economy.voidMttTournament(tournamentId),
         }

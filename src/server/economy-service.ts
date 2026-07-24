@@ -20,6 +20,7 @@ import {
   MTT_WALLET_ENTRY_FEE,
 } from '@/lib/economy/mtt-entry';
 import { cfg } from './game-config/live';
+import type { PayoutPresetId } from '@/lib/poker/payout-table';
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1_000;
 
@@ -361,6 +362,7 @@ export class EconomyService {
   settleMttTournament(
     tournamentId: string,
     results: readonly SngResult[],
+    payoutPreset: PayoutPresetId = 'standard',
     buyIn: number = MTT_WALLET_BUY_IN,
     fee: number = MTT_WALLET_ENTRY_FEE,
     at = this.clock(),
@@ -371,6 +373,7 @@ export class EconomyService {
       buyIn,
       fee,
       at,
+      payoutPreset,
     );
   }
 

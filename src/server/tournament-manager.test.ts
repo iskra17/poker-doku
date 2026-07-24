@@ -185,6 +185,27 @@ describe('TournamentManager', () => {
     vi.useRealTimers();
   });
 
+  it('publishes the selected payout preset and registration preview', () => {
+    const created = h.manager.createTournament({
+      name: '플랫 상금 테스트',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h1',
+      payoutPreset: 'flat',
+    });
+    if (!created.ok) throw new Error('create failed');
+
+    const detail = h.manager.getDetail(created.tournamentId);
+    expect(detail?.summary.payoutPreset).toBe('flat');
+    expect(detail?.payouts.map(row => row.prize)).toEqual(
+      computePayouts(detail?.summary.prizePool ?? 0, 8, 'flat'),
+    );
+  });
+
   it('seats humans round-robin and fills with bots to max entrants', () => {
     const created = h.manager.createTournament({
       name: '봇 충원 MTT',

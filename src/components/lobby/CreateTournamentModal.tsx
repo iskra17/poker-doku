@@ -51,6 +51,7 @@ export default function CreateTournamentModal({
     setBusy(true);
     const config: CreateTournamentRequest = {
       name: name.trim() || '무명 토너먼트',
+      payoutPreset: 'standard',
       speed,
       maxEntrants,
       startAt: startDelayMin === null ? null : Date.now() + startDelayMin * 60_000,

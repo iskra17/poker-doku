@@ -259,4 +259,20 @@ describe('wallet MTT 에스크로', () => {
   it('상수 무결성 — 참가비 = 바이인 + 수수료', () => {
     expect(MTT_WALLET_ENTRY_COST).toBe(MTT_WALLET_BUY_IN + MTT_WALLET_ENTRY_FEE);
   });
+
+  it('validates wallet settlement against the selected payout preset', () => {
+    const ids = seedEntrants(8);
+    service.startMttTournament(MTT_ID, ids);
+    const ladder = computePayouts(MTT_WALLET_BUY_IN * ids.length, ids.length, 'top-heavy');
+    const results = ids.map((playerId, index) => ({
+      playerId,
+      place: index + 1,
+      prize: ladder[index] ?? 0,
+    }));
+
+    expect(() => service.settleMttTournament(MTT_ID, results))
+      .toThrowError(expect.objectContaining({ code: 'SNG_SETTLEMENT_INVALID' }));
+    expect(() => service.settleMttTournament(MTT_ID, results, 'top-heavy')).not.toThrow();
+    expect(balanceOf('p1')).toBe(5_000 - MTT_WALLET_ENTRY_COST + ladder[0]);
+  });
 });

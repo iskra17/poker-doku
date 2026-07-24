@@ -181,7 +181,11 @@ describe('TournamentManager wallet MTT', () => {
   it('완주 시 settle에 전 순위와 payout-table 상금이 전달된다', () => {
     const { calls, economy } = createEconomyMock();
     manager = new TournamentManager(roomManager, { isConnected: () => true, economy });
-    const created = manager.createTournament(walletInput({ maxEntrants: 8, tableSize: 8 }));
+    const created = manager.createTournament(walletInput({
+      maxEntrants: 8,
+      tableSize: 8,
+      payoutPreset: 'top-heavy',
+    }));
     if (!created.ok) throw new Error('create failed');
     const id = created.tournamentId;
     const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
@@ -205,15 +209,17 @@ describe('TournamentManager wallet MTT', () => {
     expect(manager.listTournaments()[0].phase).toBe('completed');
     const settle = calls.find(c => c.kind === 'settle');
     expect(settle).toBeDefined();
-    const [settleId, results] = settle!.args as [
+    const [settleId, results, payoutPreset] = settle!.args as [
       string,
       Array<{ playerId: string; place: number; prize: number }>,
+      string,
     ];
     expect(settleId).toBe(id);
+    expect(payoutPreset).toBe('top-heavy');
     expect(results).toHaveLength(8);
     expect([...results.map(r => r.place)].sort((a, b) => a - b))
       .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-    const ladder = computePayouts(BUY_IN * 8, 8);
+    const ladder = computePayouts(BUY_IN * 8, 8, 'top-heavy');
     for (const result of results) {
       expect(result.prize).toBe(ladder[result.place - 1] ?? 0);
     }
