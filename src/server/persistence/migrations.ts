@@ -4851,10 +4851,6 @@ export const migrations: readonly Migration[] = [
           )
         ),
         CHECK (
-          status <> 'running'
-          OR initial_entrants = committed_entrants
-        ),
-        CHECK (
           payout_freeze_aborted_at IS NULL
           OR (
             payout_freeze_version IS NOT NULL
@@ -4918,6 +4914,12 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER protect_tournament_instance_delete
       BEFORE DELETE ON tournament_instance
+      WHEN NOT (
+        OLD.status IN ('completed', 'cancelled')
+        AND OLD.completed_at
+          <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+            - 15552000000
+      )
       BEGIN
         SELECT RAISE(ABORT, 'tournament instance is immutable');
       END;
@@ -5015,8 +5017,25 @@ export const migrations: readonly Migration[] = [
         SELECT RAISE(ABORT, 'running tournament requires committed start snapshot');
       END;
 
+      CREATE TRIGGER validate_tournament_terminal_timestamp
+      BEFORE UPDATE OF status, completed_at ON tournament_instance
+      WHEN
+        NEW.status IN ('completed', 'cancelled')
+        AND OLD.status <> NEW.status
+        AND (
+          NEW.completed_at < NEW.created_at
+          OR NEW.completed_at
+            < CAST(strftime('%s', 'now') AS INTEGER) * 1000 - 300000
+          OR NEW.completed_at
+            > CAST(strftime('%s', 'now') AS INTEGER) * 1000 + 300000
+        )
+      BEGIN
+        SELECT RAISE(ABORT, 'terminal timestamp must match transition time');
+      END;
+
       CREATE TABLE tournament_registration (
-        instance_id TEXT NOT NULL REFERENCES tournament_instance(id),
+        instance_id TEXT NOT NULL
+          REFERENCES tournament_instance(id) ON DELETE CASCADE,
         profile_id TEXT NOT NULL,
         public_player_json TEXT NOT NULL CHECK (json_valid(public_player_json)),
         status TEXT NOT NULL CHECK (status IN (
@@ -5111,12 +5130,12 @@ export const migrations: readonly Migration[] = [
           AND NOT EXISTS (
             SELECT 1
             FROM tournament_registration_attempt AS attempt
-            WHERE attempt.instance_id = NEW.instance_id
-              AND attempt.profile_id = NEW.profile_id
-              AND attempt.registration_attempt = NEW.registration_attempt
-              AND attempt.status = NEW.status
+            WHERE attempt.instance_id = OLD.instance_id
+              AND attempt.profile_id = OLD.profile_id
+              AND attempt.registration_attempt = OLD.registration_attempt
+              AND attempt.status = OLD.status
               AND attempt.economy_entry_attempt
-                IS NEW.economy_entry_attempt
+                IS OLD.economy_entry_attempt
           )
         )
         OR EXISTS (
@@ -5141,6 +5160,12 @@ export const migrations: readonly Migration[] = [
               'payout-pending', 'refund-pending', 'completed', 'cancelled'
             )
             AND (
+              (instance.status = 'registering'
+                AND instance.registration_state = 'open-prestart')
+              OR (instance.status = 'running'
+                AND instance.registration_state = 'open-late')
+            )
+            AND (
               instance.economy_mode = 'wallet'
               OR NEW.economy_entry_attempt IS NULL
             )
@@ -5151,14 +5176,16 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_registration_delete
       BEFORE DELETE ON tournament_registration
-      WHEN NOT EXISTS (
+      WHEN EXISTS (
         SELECT 1
         FROM tournament_instance AS instance
         WHERE instance.id = OLD.instance_id
-          AND instance.status IN ('completed', 'cancelled')
-          AND instance.completed_at
-            <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
-              - 15552000000
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
       )
       BEGIN
         SELECT RAISE(ABORT, 'tournament registration is immutable');
@@ -5192,7 +5219,8 @@ export const migrations: readonly Migration[] = [
         PRIMARY KEY(instance_id, profile_id, registration_attempt),
         UNIQUE(instance_id, profile_id, request_id),
         FOREIGN KEY(instance_id, profile_id)
-          REFERENCES tournament_registration(instance_id, profile_id),
+          REFERENCES tournament_registration(instance_id, profile_id)
+          ON DELETE CASCADE,
         CHECK (
           (
             close_generation IS NULL
@@ -5255,9 +5283,20 @@ export const migrations: readonly Migration[] = [
           WHERE registration.instance_id = OLD.instance_id
             AND registration.profile_id = OLD.profile_id
             AND registration.registration_attempt = OLD.registration_attempt
-            AND registration.status = OLD.status
             AND registration.economy_entry_attempt
               IS OLD.economy_entry_attempt
+        )
+        OR (
+          OLD.status <> NEW.status
+          AND NOT EXISTS (
+            SELECT 1
+            FROM tournament_registration AS registration
+            WHERE registration.instance_id = OLD.instance_id
+              AND registration.profile_id = OLD.profile_id
+              AND registration.registration_attempt
+                = OLD.registration_attempt
+              AND registration.status = NEW.status
+          )
         )
         OR (
           OLD.close_generation IS NOT NULL
@@ -5302,6 +5341,20 @@ export const migrations: readonly Migration[] = [
         SELECT RAISE(ABORT, 'tournament registration attempt is immutable');
       END;
 
+      CREATE TRIGGER sync_tournament_registration_attempt_status
+      AFTER UPDATE OF status ON tournament_registration
+      WHEN
+        OLD.status <> NEW.status
+        AND OLD.registration_attempt = NEW.registration_attempt
+      BEGIN
+        UPDATE tournament_registration_attempt
+        SET status = NEW.status,
+            updated_at = NEW.updated_at
+        WHERE instance_id = NEW.instance_id
+          AND profile_id = NEW.profile_id
+          AND registration_attempt = NEW.registration_attempt;
+      END;
+
       CREATE TRIGGER validate_tournament_registration_close_claim
       BEFORE UPDATE OF close_generation, close_owner_token, close_reason
       ON tournament_registration_attempt
@@ -5337,14 +5390,16 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_registration_attempt_delete
       BEFORE DELETE ON tournament_registration_attempt
-      WHEN NOT EXISTS (
+      WHEN EXISTS (
         SELECT 1
         FROM tournament_instance AS instance
         WHERE instance.id = OLD.instance_id
-          AND instance.status IN ('completed', 'cancelled')
-          AND instance.completed_at
-            <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
-              - 15552000000
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
       )
       BEGIN
         SELECT RAISE(ABORT, 'tournament registration attempt is immutable');
@@ -5352,7 +5407,8 @@ export const migrations: readonly Migration[] = [
 
       CREATE TABLE tournament_forfeit (
         removal_id TEXT PRIMARY KEY,
-        instance_id TEXT NOT NULL REFERENCES tournament_instance(id),
+        instance_id TEXT NOT NULL
+          REFERENCES tournament_instance(id) ON DELETE CASCADE,
         player_id TEXT NOT NULL,
         profile_id TEXT,
         registration_attempt INTEGER CHECK (
@@ -5387,6 +5443,17 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_forfeit_delete
       BEFORE DELETE ON tournament_forfeit
+      WHEN EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
+      )
       BEGIN SELECT RAISE(ABORT, 'tournament forfeit is immutable'); END;
 
       CREATE TABLE promotion_fund (
@@ -5563,7 +5630,8 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'promotion fund ledger is immutable'); END;
 
       CREATE TABLE tournament_prize_escrow (
-        instance_id TEXT PRIMARY KEY REFERENCES tournament_instance(id),
+        instance_id TEXT PRIMARY KEY
+          REFERENCES tournament_instance(id) ON DELETE CASCADE,
         account_id TEXT NOT NULL REFERENCES promotion_fund(account_id)
           CHECK (account_id = 'global'),
         amount INTEGER NOT NULL CHECK (amount > 0),
@@ -5678,10 +5746,22 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_prize_escrow_delete
       BEFORE DELETE ON tournament_prize_escrow
+      WHEN EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
+      )
       BEGIN SELECT RAISE(ABORT, 'tournament prize escrow is immutable'); END;
 
       CREATE TABLE tournament_settlement (
-        instance_id TEXT PRIMARY KEY REFERENCES tournament_instance(id),
+        instance_id TEXT PRIMARY KEY
+          REFERENCES tournament_instance(id) ON DELETE CASCADE,
         status TEXT NOT NULL CHECK (status IN ('pending', 'settled')),
         payout_freeze_checksum TEXT NOT NULL,
         final_entrants INTEGER NOT NULL CHECK (final_entrants >= 1),
@@ -5745,10 +5825,22 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_settlement_delete
       BEFORE DELETE ON tournament_settlement
+      WHEN EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
+      )
       BEGIN SELECT RAISE(ABORT, 'tournament settlement is immutable'); END;
 
       CREATE TABLE tournament_settlement_result (
-        instance_id TEXT NOT NULL REFERENCES tournament_settlement(instance_id),
+        instance_id TEXT NOT NULL
+          REFERENCES tournament_settlement(instance_id) ON DELETE CASCADE,
         place INTEGER NOT NULL CHECK (place >= 1),
         player_id TEXT NOT NULL,
         participant_type TEXT NOT NULL CHECK (
@@ -5819,6 +5911,17 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER freeze_tournament_settlement_result_delete
       BEFORE DELETE ON tournament_settlement_result
+      WHEN EXISTS (
+        SELECT 1
+        FROM tournament_instance AS instance
+        WHERE instance.id = OLD.instance_id
+          AND NOT (
+            instance.status IN ('completed', 'cancelled')
+            AND instance.completed_at
+              <= CAST(strftime('%s', 'now') AS INTEGER) * 1000
+                - 15552000000
+          )
+      )
       BEGIN SELECT RAISE(ABORT, 'tournament settlement result is immutable'); END;
 
       CREATE TRIGGER reject_terminal_tournament_instance_insert
@@ -5851,7 +5954,16 @@ export const migrations: readonly Migration[] = [
               'open-prestart', 'open-late', 'closed'
             ))
           OR (OLD.registration_state = 'open-late'
-            AND NEW.registration_state = 'closing')
+            AND (
+              NEW.registration_state = 'closing'
+              OR (
+                NEW.registration_state = 'closed'
+                AND OLD.status = 'running'
+                AND NEW.status = 'refund-pending'
+                AND NEW.status_reason IS NOT NULL
+                AND NEW.registration_close_reason = 'tournament-cancelled'
+              )
+            ))
           OR (OLD.registration_state = 'closing'
             AND NEW.registration_state = 'closed')
         )
@@ -6178,16 +6290,25 @@ export const migrations: readonly Migration[] = [
 
       CREATE TRIGGER validate_wallet_registration_economy_link_insert
       BEFORE INSERT ON tournament_registration
-      WHEN NEW.economy_entry_attempt IS NOT NULL
-        AND NOT EXISTS (
+      WHEN NOT EXISTS (
           SELECT 1
           FROM tournament_instance AS instance
-          INNER JOIN sng_entries AS entry
+          LEFT JOIN sng_entries AS entry
             ON entry.tournament_id = instance.id
-          WHERE instance.id = NEW.instance_id
-            AND instance.economy_mode = 'wallet'
             AND entry.profile_id = NEW.profile_id
             AND entry.entry_attempt = NEW.economy_entry_attempt
+          WHERE instance.id = NEW.instance_id
+            AND (
+              (
+                instance.economy_mode = 'wallet'
+                AND NEW.economy_entry_attempt IS NOT NULL
+                AND entry.status IN ('reserved', 'started')
+              )
+              OR (
+                instance.economy_mode = 'freeroll'
+                AND NEW.economy_entry_attempt IS NULL
+              )
+            )
         )
       BEGIN
         SELECT RAISE(ABORT, 'registration economy entry is invalid');
@@ -6196,16 +6317,30 @@ export const migrations: readonly Migration[] = [
       CREATE TRIGGER validate_wallet_registration_economy_link_update
       BEFORE UPDATE OF economy_entry_attempt, registration_attempt
       ON tournament_registration
-      WHEN NEW.economy_entry_attempt IS NOT NULL
-        AND NOT EXISTS (
+      WHEN NOT EXISTS (
           SELECT 1
           FROM tournament_instance AS instance
-          INNER JOIN sng_entries AS entry
+          LEFT JOIN sng_entries AS entry
             ON entry.tournament_id = instance.id
-          WHERE instance.id = NEW.instance_id
-            AND instance.economy_mode = 'wallet'
             AND entry.profile_id = NEW.profile_id
             AND entry.entry_attempt = NEW.economy_entry_attempt
+          WHERE instance.id = NEW.instance_id
+            AND (
+              (
+                instance.economy_mode = 'wallet'
+                AND NEW.economy_entry_attempt IS NOT NULL
+                AND entry.status IN ('reserved', 'started')
+                AND (
+                  NEW.registration_attempt = OLD.registration_attempt
+                  OR NEW.economy_entry_attempt
+                    IS NOT OLD.economy_entry_attempt
+                )
+              )
+              OR (
+                instance.economy_mode = 'freeroll'
+                AND NEW.economy_entry_attempt IS NULL
+              )
+            )
         )
       BEGIN
         SELECT RAISE(ABORT, 'registration economy entry is invalid');
