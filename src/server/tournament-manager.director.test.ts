@@ -18,12 +18,32 @@ import type { PokerEngine } from '../lib/poker/engine';
 interface Harness {
   roomManager: RoomManager;
   manager: TournamentManager;
+  updates: Array<{
+    roomId: string;
+    level: number;
+    smallBlind: number;
+    bigBlind: number;
+    ante: number;
+    levelEndsAt: number;
+  }>;
 }
 
 function createHarness(): Harness {
-  const roomManager = new RoomManager(() => {}, () => {});
+  const updates: Harness['updates'] = [];
+  const roomManager = new RoomManager((roomId, engine) => {
+    const tournament = engine.state.tournament;
+    if (!tournament) return;
+    updates.push({
+      roomId,
+      level: tournament.level,
+      smallBlind: engine.state.smallBlind,
+      bigBlind: engine.state.bigBlind,
+      ante: tournament.ante ?? 0,
+      levelEndsAt: tournament.levelEndsAt,
+    });
+  }, () => {});
   const manager = new TournamentManager(roomManager, { isConnected: () => true });
-  return { roomManager, manager };
+  return { roomManager, manager, updates };
 }
 
 function mttTableIds(roomManager: RoomManager): string[] {
@@ -296,14 +316,36 @@ describe('TournamentManager 디렉터 콘솔', () => {
     expect(final.state.tournament!.levelEndsAt).toBeGreaterThan(oldDeadline);
   });
 
-  it('startHand 실패는 generation을 완료하지 않고 지연 재시도에 같은 target과 deadline을 쓴다', () => {
+  it('level5 startHand 실패는 이전 값을 broadcast하고 지연 재시도에 target snapshot을 쓴다', () => {
     const { id, tables } = start12(h);
     vi.advanceTimersByTime(2_000);
-    const retrying = engineOf(h.roomManager, tables[0]);
+    const retryingRoom = h.roomManager.getRoom(tables[0])!;
+    const retrying = retryingRoom.engine;
     const peer = engineOf(h.roomManager, tables[1]);
+    const priorConfig = {
+      smallBlind: retryingRoom.config.smallBlind,
+      bigBlind: retryingRoom.config.bigBlind,
+      ante: retryingRoom.config.ante,
+    };
+    const priorTournament = {
+      level: retrying.state.tournament!.level,
+      smallBlind: retrying.state.tournament!.smallBlind,
+      bigBlind: retrying.state.tournament!.bigBlind,
+      ante: retrying.state.tournament!.ante,
+      nextSmallBlind: retrying.state.tournament!.nextSmallBlind,
+      nextBigBlind: retrying.state.tournament!.nextBigBlind,
+      levelEndsAt: retrying.state.tournament!.levelEndsAt,
+    };
+    const prior = {
+      level: retrying.state.tournament!.level,
+      smallBlind: retrying.state.smallBlind,
+      bigBlind: retrying.state.bigBlind,
+      ante: retrying.state.tournament!.ante,
+      levelEndsAt: retrying.state.tournament!.levelEndsAt,
+    };
 
     expect(h.manager.directorAction(id, 'h1', { kind: 'pause' })).toBe('ok');
-    expect(h.manager.directorAction(id, 'h1', { kind: 'set-level', level: 1 })).toBe('ok');
+    expect(h.manager.directorAction(id, 'h1', { kind: 'set-level', level: 5 })).toBe('ok');
 
     for (const [roomId, engine] of [[tables[0], retrying], [tables[1], peer]] as const) {
       let guard = 0;
@@ -315,14 +357,31 @@ describe('TournamentManager 디렉터 콘솔', () => {
 
     const start = vi.spyOn(retrying, 'startHand')
       .mockImplementationOnce(() => { throw new Error('injected start failure'); });
+    const appliedAnnouncementCount = (): number => (
+      h.roomManager.getChatHistory(tables[0])
+        .filter(message => message.message.includes('블라인드 인상')).length
+    );
+    const announcementsBeforeResume = appliedAnnouncementCount();
+    h.updates.length = 0;
     expect(h.manager.directorAction(id, 'h1', { kind: 'resume' })).toBe('ok');
     vi.advanceTimersByTime(2_000);
 
     expect(start).toHaveBeenCalledOnce();
     expect(retrying.state.handNumber).toBe(1);
     expect(peer.state.handNumber).toBe(2);
-    expect(retrying.state.tournament!.level).toBe(1);
-    const stagedDeadline = retrying.state.tournament!.levelEndsAt;
+    expect({
+      level: retrying.state.tournament!.level,
+      smallBlind: retrying.state.smallBlind,
+      bigBlind: retrying.state.bigBlind,
+      ante: retrying.state.tournament!.ante,
+      levelEndsAt: retrying.state.tournament!.levelEndsAt,
+    }).toEqual(prior);
+    expect(retryingRoom.config).toMatchObject(priorConfig);
+    expect(retrying.state.tournament).toMatchObject(priorTournament);
+    expect(appliedAnnouncementCount()).toBe(announcementsBeforeResume);
+    expect(h.updates.filter(update => update.roomId === tables[0]).at(-1))
+      .toEqual({ roomId: tables[0], ...prior });
+    const stagedDeadline = peer.state.tournament!.levelEndsAt;
 
     // 재시도 타이머는 실행하지 않고 벽시계만 target 레벨 구간 너머로 이동한다.
     vi.setSystemTime(Date.now() + 9 * 60_000);
@@ -330,10 +389,17 @@ describe('TournamentManager 디렉터 콘솔', () => {
 
     expect(start).toHaveBeenCalledTimes(2);
     expect(retrying.state.handNumber).toBe(2);
-    expect(retrying.state.tournament!.level).toBe(1);
-    expect(retrying.state.smallBlind).toBe(50);
-    expect(retrying.state.bigBlind).toBe(100);
+    expect(retrying.state.tournament!.level).toBe(5);
+    expect(retrying.state.smallBlind).toBe(200);
+    expect(retrying.state.bigBlind).toBe(400);
+    expect(retrying.state.tournament!.ante).toBe(400);
     expect(retrying.state.tournament!.levelEndsAt).toBe(stagedDeadline);
+    expect(retryingRoom.config).toMatchObject({
+      smallBlind: 200,
+      bigBlind: 400,
+      ante: 400,
+    });
+    expect(appliedAnnouncementCount()).toBe(announcementsBeforeResume + 1);
   });
 
   it('wallet MTT는 시작 전 취소만 허용하고 시작 후 참가자 방장의 위험 개입을 거부한다', () => {

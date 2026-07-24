@@ -165,6 +165,21 @@ interface PendingLevelChange {
   targetLevelEndsAt: number | null;
 }
 
+interface StagedLevelSnapshot {
+  configSmallBlind: number;
+  configBigBlind: number;
+  configAnte: number | undefined;
+  stateSmallBlind: number;
+  stateBigBlind: number;
+  level: number;
+  tournamentSmallBlind: number;
+  tournamentBigBlind: number;
+  tournamentAnte: number | undefined;
+  nextSmallBlind: number | null;
+  nextBigBlind: number | null;
+  levelEndsAt: number;
+}
+
 interface TournamentRuntime {
   id: string;
   config: CreateTournamentInput;
@@ -182,6 +197,8 @@ interface TournamentRuntime {
   pendingLevel: PendingLevelChange | null;
   /** 테이블별로 마지막 적용을 마친 디렉터 레벨 변경 세대 */
   appliedLevelGenerationByRoom: Map<string, number>;
+  /** startHand 성공 전까지만 유지하는 테이블별 레벨 rollback snapshot. */
+  stagedLevelByRoom: Map<string, StagedLevelSnapshot>;
   entrants: Map<string, MttEntrant>;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
@@ -237,6 +254,7 @@ export class TournamentManager {
   ) {
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
+      onHandStartFailed: roomId => this.onHandStartFailed(roomId),
       onHandStarted: (roomId, handNumber) => this.onHandStarted(roomId, handNumber),
       onHandComplete: roomId => this.onHandComplete(roomId),
       isHeld: roomId => this.isHeld(roomId),
@@ -300,6 +318,7 @@ export class TournamentManager {
       levelGeneration: 0,
       pendingLevel: null,
       appliedLevelGenerationByRoom: new Map(),
+      stagedLevelByRoom: new Map(),
       entrants: new Map(),
       seatedCount: 0,
       tables: new Map(),
@@ -944,6 +963,7 @@ export class TournamentManager {
     t.holds.clear();
     t.pendingLevel = null;
     t.appliedLevelGenerationByRoom.clear();
+    t.stagedLevelByRoom.clear();
     eventLog.log('mtt-cancel', { data: { tournamentId: t.id, reason } });
     this.hooks.onTournamentsChanged?.();
     // 취소 기록은 잠시 보여준 뒤 목록에서 제거
@@ -969,6 +989,25 @@ export class TournamentManager {
   private applyLevel(roomId: string, engine: PokerEngine): void {
     const t = this.byTable(roomId);
     if (!t || t.startedAt === null || t.phase !== 'running') return;
+    const room = this.roomManager.getRoom(roomId);
+    const tournament = engine.state.tournament;
+    if (!room || !tournament) return;
+    if (!t.stagedLevelByRoom.has(roomId)) {
+      t.stagedLevelByRoom.set(roomId, {
+        configSmallBlind: room.config.smallBlind,
+        configBigBlind: room.config.bigBlind,
+        configAnte: room.config.ante,
+        stateSmallBlind: engine.state.smallBlind,
+        stateBigBlind: engine.state.bigBlind,
+        level: tournament.level,
+        tournamentSmallBlind: tournament.smallBlind,
+        tournamentBigBlind: tournament.bigBlind,
+        tournamentAnte: tournament.ante,
+        nextSmallBlind: tournament.nextSmallBlind,
+        nextBigBlind: tournament.nextBigBlind,
+        levelEndsAt: tournament.levelEndsAt,
+      });
+    }
     const pos = this.clockPos(t);
     const pending = t.pendingLevel;
     const needsPendingApplication = !!pending
@@ -994,13 +1033,55 @@ export class TournamentManager {
       needsPendingApplication && pending
         ? pending.targetLevelEndsAt ?? undefined
         : undefined,
+      false,
     );
+  }
+
+  private onHandStartFailed(roomId: string): void {
+    const t = this.byTable(roomId);
+    const snapshot = t?.stagedLevelByRoom.get(roomId);
+    const room = this.roomManager.getRoom(roomId);
+    const tournament = room?.engine.state.tournament;
+    if (!t || !snapshot || !room || !tournament) {
+      t?.stagedLevelByRoom.delete(roomId);
+      return;
+    }
+
+    room.engine.setTournamentLevel(
+      snapshot.level,
+      snapshot.tournamentSmallBlind,
+      snapshot.tournamentBigBlind,
+      snapshot.nextSmallBlind,
+      snapshot.nextBigBlind,
+      snapshot.levelEndsAt,
+      snapshot.tournamentAnte ?? 0,
+    );
+    room.engine.state.smallBlind = snapshot.stateSmallBlind;
+    room.engine.state.bigBlind = snapshot.stateBigBlind;
+    tournament.ante = snapshot.tournamentAnte;
+    room.config.smallBlind = snapshot.configSmallBlind;
+    room.config.bigBlind = snapshot.configBigBlind;
+    room.config.ante = snapshot.configAnte;
+    t.stagedLevelByRoom.delete(roomId);
   }
 
   private onHandStarted(roomId: string, handNumber: number): void {
     const t = this.byTable(roomId);
     const engine = this.roomManager.getRoom(roomId)?.engine;
     if (!t || !engine || engine.state.handNumber !== handNumber) return;
+    const staged = t.stagedLevelByRoom.get(roomId);
+    t.stagedLevelByRoom.delete(roomId);
+    if (staged && staged.level !== engine.state.tournament?.level) {
+      const tournament = engine.state.tournament;
+      if (tournament) {
+        const anteText = (tournament.ante ?? 0) > 0 ? ` · 앤티 ${tournament.ante}` : '';
+        this.roomManager.postSystemChat(
+          roomId,
+          `블라인드 인상 — 레벨 ${tournament.level}: `
+          + `${tournament.smallBlind}/${tournament.bigBlind}${anteText}`,
+        );
+      }
+    }
     if (t.h4h.active) t.h4h.armed.delete(roomId);
     const pending = t.pendingLevel;
     if (
@@ -1938,6 +2019,7 @@ export class TournamentManager {
     initial: boolean,
     force = false,
     levelEndsAtOverride?: number,
+    announce = true,
   ): void {
     const state = engine.state.tournament;
     if (!state) return;
@@ -1960,7 +2042,7 @@ export class TournamentManager {
       levelEndsAt,
       cur.ante,
     );
-    if (changed && !initial) {
+    if (changed && !initial && announce) {
       const anteText = cur.ante > 0 ? ` · 앤티 ${cur.ante}` : '';
       this.roomManager.postSystemChat(
         engine.state.id,
@@ -1989,6 +2071,7 @@ export class TournamentManager {
   private removeTournamentTable(t: TournamentRuntime, roomId: string): void {
     t.tables.delete(roomId);
     t.appliedLevelGenerationByRoom.delete(roomId);
+    t.stagedLevelByRoom.delete(roomId);
     t.pendingLevel?.expectedRoomIds.delete(roomId);
     this.reconcilePendingLevelRooms(t);
   }

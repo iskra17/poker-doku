@@ -174,6 +174,8 @@ export type RoomDisposeReason =
 export interface MttRoomHooks {
   /** 핸드 사이 블라인드 레벨 적용 — 토너먼트 공용 시계 기준 (TDA Rule 23: 다음 핸드부터) */
   applyLevel(roomId: string, engine: PokerEngine): void;
+  /** startHand가 완료되지 못한 경우 pre-start로 staging한 레벨을 이전 값으로 되돌린다. */
+  onHandStartFailed(roomId: string): void;
   /** startHand 성공 후 handNumber가 증가했을 때만 호출 — H4H permit 소비 시점 */
   onHandStarted(roomId: string, handNumber: number): void;
   /**
@@ -1566,6 +1568,9 @@ export class RoomManager {
         cashHandPrepared,
         preStartState,
       );
+      if (this.isMttRoom(room)) {
+        this.mttHooks?.onHandStartFailed(roomId);
+      }
       if (classification === 'blocked') {
         this.economyBlockedRooms.add(roomId);
       } else {
@@ -1614,6 +1619,9 @@ export class RoomManager {
           cashHandPrepared,
           preStartState,
         );
+        if (this.isMttRoom(room)) {
+          this.mttHooks?.onHandStartFailed(roomId);
+        }
         if (classification === 'blocked') {
           this.economyBlockedRooms.add(roomId);
           this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
