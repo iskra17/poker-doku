@@ -174,6 +174,10 @@ export type RoomDisposeReason =
 export interface MttRoomHooks {
   /** 핸드 사이 블라인드 레벨 적용 — 토너먼트 공용 시계 기준 (TDA Rule 23: 다음 핸드부터) */
   applyLevel(roomId: string, engine: PokerEngine): void;
+  /** startHand가 완료되지 못한 경우 pre-start로 staging한 레벨을 이전 값으로 되돌린다. */
+  onHandStartFailed(roomId: string): void;
+  /** startHand 성공 후 handNumber가 증가했을 때만 호출 — H4H permit 소비 시점 */
+  onHandStarted(roomId: string, handNumber: number): void;
   /**
    * 핸드 종료 훅 — 탈락 수집/밸런싱/브레이크/H4H 처리 후 진행 지시를 반환.
    * 'continue'=다음 핸드 예약, 'hold'=보류(매니저가 나중에 resumeRoom), 'gone'=테이블 해체됨.
@@ -183,6 +187,8 @@ export interface MttRoomHooks {
   isHeld(roomId: string): boolean;
   /** 명시적 퇴장/서버 회수 직전 호출 — 매니저가 현재 순위로 탈락 확정 */
   onPlayerLeave(roomId: string, playerId: string): void;
+  /** processLeave 성공 뒤 호출 — 좌석 제거가 필요한 테이블 편성을 안전하게 마무리 */
+  onPlayerLeft(roomId: string, playerId: string): void;
 }
 
 export interface RoomManagerRuntimeStats {
@@ -610,6 +616,17 @@ export class RoomManager {
     this.tryStartGame(roomId);
   }
 
+  /**
+   * TournamentManager가 hold 해제 스냅샷을 이미 발행한 직후의 MTT 전용 재개 경로.
+   * 일반 resumeRoom의 선행 발행과 tryStartGame의 예약 전 발행만 생략하고,
+   * 동일한 예약·startNewHand·턴 타이머 순서를 유지한다.
+   */
+  resumeMttRoomAfterPresentation(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isMttRoom(room)) return;
+    this.tryStartGame(roomId, false);
+  }
+
   joinRoom(roomId: string, player: Player): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
@@ -842,6 +859,7 @@ export class RoomManager {
   leaveRoom(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return true;
+    const mttRoom = this.isMttRoom(room);
     const officialArenaPlayer = room.config.competitionMode === 'arena-official'
       && !room.engine.state.tournament?.finished
       && room.engine.state.players.some(player => (
@@ -855,7 +873,7 @@ export class RoomManager {
     }
 
     // MTT: 명시적 퇴장 = 현재 순위로 탈락 확정 (전역 순위는 매니저 소유 — 엔진 로컬 판정은 비활성)
-    if (this.isMttRoom(room)) {
+    if (mttRoom) {
       this.mttHooks?.onPlayerLeave(roomId, playerId);
     }
 
@@ -948,6 +966,7 @@ export class RoomManager {
       }
     }
     if (economicLeaveCommitted) this.resumeAfterEconomicLeave(roomId);
+    if (mttRoom && player) this.mttHooks?.onPlayerLeft(roomId, playerId);
     return true;
   }
 
@@ -1324,13 +1343,13 @@ export class RoomManager {
     );
   }
 
-  private tryStartGame(roomId: string): void {
+  private tryStartGame(roomId: string, publishBeforeSchedule = true): void {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament?.finished) return; // 토너먼트 종료 — 재시작 없음
     // MTT 보류(브레이크/H4H 배리어/종료 처리) 중엔 다음 핸드를 잡지 않는다 — 매니저가 resumeRoom으로 해제
     if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) {
-      this.onUpdate(roomId, room.engine);
+      if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
       return;
     }
 
@@ -1341,13 +1360,13 @@ export class RoomManager {
     const tournament = room.engine.state.tournament;
     if (tournament) {
       if (tournament.entrants === 0 && room.engine.state.players.length < room.config.maxPlayers) {
-        this.onUpdate(roomId, room.engine);
+        if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
         return;
       }
     } else {
       this.refreshCashBots(roomId);
     }
-    this.onUpdate(roomId, room.engine);
+    if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
 
     if (room.engine.canStartHand()) {
       const timer = setTimeout(() => {
@@ -1549,6 +1568,9 @@ export class RoomManager {
         cashHandPrepared,
         preStartState,
       );
+      if (this.isMttRoom(room)) {
+        this.mttHooks?.onHandStartFailed(roomId);
+      }
       if (classification === 'blocked') {
         this.economyBlockedRooms.add(roomId);
       } else {
@@ -1560,6 +1582,9 @@ export class RoomManager {
     }
 
     if (room.engine.state.handNumber > prevHandNumber) {
+      if (this.isMttRoom(room)) {
+        this.mttHooks?.onHandStarted(roomId, room.engine.state.handNumber);
+      }
       this.preHandStartRetryAttempts.delete(roomId);
       if (tracksProgression) {
         this.options.progression?.confirmHandStart(roomId, room.runId, nextHandNumber);
@@ -1594,6 +1619,9 @@ export class RoomManager {
           cashHandPrepared,
           preStartState,
         );
+        if (this.isMttRoom(room)) {
+          this.mttHooks?.onHandStartFailed(roomId);
+        }
         if (classification === 'blocked') {
           this.economyBlockedRooms.add(roomId);
           this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');

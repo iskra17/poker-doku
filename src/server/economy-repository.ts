@@ -1807,8 +1807,8 @@ export class EconomyRepository {
   }
 
   /**
-   * MTT 결과 검증 — 순위 1..N 완전 열거 + 상금은 payout-table 계단표(합계 보정)와
-   * 정확히 일치해야 한다. 상금표의 단일 소스는 lib/poker/payout-table (UI와 동일).
+   * MTT 결과 검증 — 전 참가자를 완전 열거하고, 공동 순위는 점유한 순위 구간의
+   * payout-table 상금을 playerId 순으로 정수 분할해야 한다.
    */
   private assertMttResults(
     results: readonly SngResult[],
@@ -1832,7 +1832,6 @@ export class EconomyRepository {
         || result.prize < 0
       ))
       || new Set(results.map(result => result.playerId)).size !== count
-      || new Set(results.map(result => result.place)).size !== count
     ) {
       throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
     }
@@ -1845,10 +1844,37 @@ export class EconomyRepository {
     if (prizes.some(prize => !Number.isSafeInteger(prize) || prize < 0)) {
       throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
     }
+
+    const byPlace = new Map<number, SngResult[]>();
     for (const result of results) {
-      if (result.prize !== prizes[result.place - 1]) {
+      const group = byPlace.get(result.place) ?? [];
+      group.push(result);
+      byPlace.set(result.place, group);
+    }
+    let expectedPlace = 1;
+    for (const [place, group] of [...byPlace.entries()].sort((a, b) => a[0] - b[0])) {
+      if (place !== expectedPlace || place + group.length - 1 > count) {
         throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
       }
+      const occupiedPrize = prizes
+        .slice(place - 1, place - 1 + group.length)
+        .reduce(
+          (sum, prize) => this.safeAdd(sum, prize, 'SNG_SETTLEMENT_INVALID'),
+          0,
+        );
+      const basePrize = Math.floor(occupiedPrize / group.length);
+      const remainder = occupiedPrize - basePrize * group.length;
+      const ordered = [...group].sort((a, b) => a.playerId.localeCompare(b.playerId));
+      for (const [index, result] of ordered.entries()) {
+        const expectedPrize = basePrize + (index < remainder ? 1 : 0);
+        if (result.prize !== expectedPrize) {
+          throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+        }
+      }
+      expectedPlace += group.length;
+    }
+    if (expectedPlace !== count + 1) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
     }
     return prizes;
   }

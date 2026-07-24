@@ -17,7 +17,7 @@ import SeatSpeechBubbles from '../characters/SeatSpeechBubble';
 import DealerCorner from '../characters/DealerCorner';
 import { getLayout, toDisplayIndex } from './table-layout';
 
-export default function PokerTable() {
+export default function PokerTable({ finalTable = false }: { finalTable?: boolean }) {
   const { gameState, myPlayerId } = useGameStore();
   const showBlindButtons = useSettingsStore(s => s.showBlindButtons);
   const isMobile = useIsMobile();
@@ -70,7 +70,7 @@ export default function PokerTable() {
   ];
 
   return (
-    <div className="relative w-full h-full">
+    <div className="relative z-10 w-full h-full">
       {/* 세로 좌표 컨테이너 — 모든 % 좌표의 기준. 데스크탑에서도 중앙 세로 컬럼 하나 */}
       <div
         className="relative h-full w-full mx-auto"
@@ -81,7 +81,9 @@ export default function PokerTable() {
           className="absolute rounded-[9999px] opacity-30"
           style={{
             left: '4%', right: '4%', top: '11%', bottom: '5%',
-            background: 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)',
+            background: finalTable
+              ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
+              : 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)',
           }}
         />
 
@@ -90,8 +92,12 @@ export default function PokerTable() {
           className="absolute rounded-[9999px] border-b-2 border-gilded/20"
           style={{
             left: '4%', right: '4%', top: 'calc(11% + 14px)', bottom: 'calc(5% - 14px)',
-            background: 'linear-gradient(180deg, var(--color-elevated) 0%, #0c0925 70%)',
-            boxShadow: '0 10px 26px rgba(0,0,0,0.6)',
+            background: finalTable
+              ? 'linear-gradient(180deg, var(--final-rail-bottom) 0%, color-mix(in srgb, black 45%, var(--final-rail-bottom)) 80%)'
+              : 'linear-gradient(180deg, var(--color-elevated) 0%, #0c0925 70%)',
+            boxShadow: finalTable
+              ? '0 12px 30px rgba(0,0,0,0.72), 0 0 30px color-mix(in srgb, var(--final-accent) 18%, transparent)'
+              : '0 10px 26px rgba(0,0,0,0.6)',
           }}
         />
 
@@ -100,11 +106,18 @@ export default function PokerTable() {
           className="absolute rounded-[9999px] border-2 border-gilded/30"
           style={{
             left: '4%', right: '4%', top: '11%', bottom: '5%',
-            background: `linear-gradient(180deg,
-              color-mix(in srgb, var(--color-mystic) 26%, var(--color-elevated)) 0%,
-              var(--color-elevated) 30%,
-              color-mix(in srgb, black 28%, var(--color-elevated)) 100%)`,
-            boxShadow: 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)',
+            background: finalTable
+              ? `linear-gradient(180deg,
+                  color-mix(in srgb, var(--final-highlight) 20%, var(--final-rail-top)) 0%,
+                  var(--final-rail-top) 27%,
+                  var(--final-rail-bottom) 100%)`
+              : `linear-gradient(180deg,
+                  color-mix(in srgb, var(--color-mystic) 26%, var(--color-elevated)) 0%,
+                  var(--color-elevated) 30%,
+                  color-mix(in srgb, black 28%, var(--color-elevated)) 100%)`,
+            boxShadow: finalTable
+              ? 'inset 0 2px 5px color-mix(in srgb, var(--final-highlight) 42%, transparent), inset 0 -7px 14px rgba(0,0,0,0.58), 0 0 42px color-mix(in srgb, var(--final-accent) 26%, transparent)'
+              : 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)',
           }}
         />
 
@@ -114,8 +127,12 @@ export default function PokerTable() {
           style={{
             left: 'calc(4% + 12px)', right: 'calc(4% + 12px)',
             top: 'calc(11% + 12px)', bottom: 'calc(5% + 12px)',
-            background: 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)',
-            boxShadow: 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)',
+            background: finalTable
+              ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
+              : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)',
+            boxShadow: finalTable
+              ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
+              : 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)',
           }}
         >
           {/* 베팅 라인 */}

@@ -449,11 +449,14 @@ export function setupSocketHandlers(
       const targetSocket = targetSession.socketId
         ? io.sockets.sockets.get(targetSession.socketId)
         : undefined;
-      if (targetSession.roomId === fromRoomId) {
-        targetSession.roomId = toRoomId;
-        targetSocket?.leave(fromRoomId);
-      }
+      targetSocket?.emit(
+        'tournament-list',
+        tournamentManager.listTournaments(playerId),
+      );
+      if (targetSession.roomId !== fromRoomId) return;
+      targetSession.roomId = toRoomId;
       if (!targetSocket) return;
+      targetSocket.leave(fromRoomId);
       targetSocket.join(toRoomId);
       const room = roomManager.getRoom(toRoomId);
       if (!room) return;
@@ -730,13 +733,23 @@ export function setupSocketHandlers(
     // grace 만료로 좌석이 제거되는 경우 클라이언트가 회수 카운트다운 타임바를 그릴 수 있게 만료 시각 전달
     roomManager.handleDisconnect(roomId, session.playerId, Date.now() + graceMs);
     sessions.startGrace(session, graceMs, () => {
-      const seatKept = roomManager.handleGraceExpired(roomId, session.playerId);
+      if (sessions.getByPlayerId(session.playerId) !== session) return;
+      const currentRoomId = session.roomId;
+      if (!currentRoomId) {
+        sessions.releaseIfIdle(session);
+        return;
+      }
+      const seatKept = roomManager.handleGraceExpired(currentRoomId, session.playerId);
       eventLog.log('grace-expired', {
-        roomId,
+        roomId: currentRoomId,
         playerId: session.playerId,
-        data: { seatKept, seats: seatSnapshot(roomId) },
+        data: { seatKept, seats: seatSnapshot(currentRoomId) },
       });
-      if (!seatKept) {
+      if (
+        !seatKept
+        && sessions.getByPlayerId(session.playerId) === session
+        && session.roomId === currentRoomId
+      ) {
         session.roomId = null;
         sessions.releaseIfIdle(session);
       }
@@ -2366,9 +2379,11 @@ export function setupSocketHandlers(
         ack?.({
           ok: false,
           code: 'action-rejected',
-          message: created.reason === 'limit'
-            ? '동시에 열 수 있는 토너먼트 수를 초과했어요. 잠시 후 다시 시도해 주세요.'
-            : '토너먼트 설정이 올바르지 않아요.',
+          message: created.reason === 'host-limit'
+            ? '한 개설자가 등록 중으로 열어둘 수 있는 토너먼트는 2개까지예요.'
+            : created.reason === 'limit'
+              ? '동시에 열 수 있는 토너먼트 수를 초과했어요. 잠시 후 다시 시도해 주세요.'
+              : '토너먼트 설정이 올바르지 않아요.',
         });
         return;
       }

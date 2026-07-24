@@ -5,12 +5,8 @@ import { motion } from 'framer-motion';
 import { useGameStore } from '@/lib/store/game-store';
 import Button from '../ui/Button';
 
-/**
- * Sit & Go 중도 탈락 안내 — 내 순위가 확정되면 1회 표시.
- * 리바이는 없으며, 닫으면 관전 모드(좌석 유지, 수신 전용)로 계속 지켜볼 수 있다.
- * 토너먼트가 끝나면 TournamentResultOverlay(z-40)가 대신 표시된다.
- */
-export default function EliminationNotice() {
+/** 토너먼트 중도 탈락 안내 — 내 순위가 확정되면 1회 표시. */
+export default function EliminationNotice({ onLeave }: { onLeave: () => void }) {
   const { gameState, myPlayerId } = useGameStore();
   const [dismissedPlace, setDismissedPlace] = useState<number | null>(null);
 
@@ -22,6 +18,7 @@ export default function EliminationNotice() {
 
   const result = tournament.results.find(r => r.playerId === myPlayerId);
   const prize = result?.prize ?? 0;
+  const isMtt = !!tournament.tournamentId;
 
   return (
     <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-[2px]">
@@ -41,15 +38,20 @@ export default function EliminationNotice() {
           <p className="text-ink-dim text-xs mb-1">아쉽지만 시상 순위엔 들지 못했어요.</p>
         )}
         <p className="text-ink-dim text-[11px] mb-4">
-          Sit &amp; Go는 리바이가 없어요 — 남은 승부를 관전으로 지켜볼 수 있어요.
+          {isMtt
+            ? '토너먼트는 프리즈아웃 방식이에요. 로비로 돌아간 뒤 최종 결과는 토너먼트 상세에서 확인할 수 있어요.'
+            : 'Sit & Go는 리바이가 없어요 — 남은 승부를 관전으로 지켜볼 수 있어요.'}
         </p>
         <Button
           variant="primary"
           size="md"
           className="w-full"
-          onClick={() => setDismissedPlace(me.finishPlace ?? null)}
+          onClick={() => {
+            if (isMtt) onLeave();
+            else setDismissedPlace(me.finishPlace ?? null);
+          }}
         >
-          👀 관전하기
+          {isMtt ? '로비로 돌아가기' : '👀 관전하기'}
         </Button>
       </motion.div>
     </div>

@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { PokerEngine } from '../lib/poker/engine';
-import type { Player } from '../lib/poker/types';
+import type {
+  FinalTableTheme,
+  Player,
+  TournamentHoldReason,
+  TournamentStage,
+} from '../lib/poker/types';
 import {
   MTT_STRUCTURES,
   mttClockAt,
@@ -110,7 +115,12 @@ export interface TournamentRuntimeHooks {
   economy?: MttEconomyHooks;
 }
 
-type HoldReason = 'setup' | 'break' | 'h4h' | 'complete';
+export interface TournamentManagerOptions {
+  /** 등록자가 한 명도 없는 registering 토너먼트의 자동 취소 시간 */
+  emptyTournamentTtlMs?: number;
+}
+
+type InternalHoldReason = TournamentHoldReason | 'setup' | 'complete';
 
 /** 백오피스 토너먼트 탭 뷰 (admin-http /api/admin/tournaments) */
 export interface AdminTournamentView {
@@ -148,10 +158,36 @@ interface PendingBust {
   playerId: string;
   name: string;
   handStartChips: number;
+  seatIndex: number;
+  buttonSeatIndex: number;
+}
+
+interface PendingLevelChange {
+  levelIndex: number;
+  generation: number;
+  expectedRoomIds: Set<string>;
+  /** 이 generation이 처음 pre-start 적용될 때 고정한 공용 absolute deadline */
+  targetLevelEndsAt: number | null;
+}
+
+interface StagedLevelSnapshot {
+  configSmallBlind: number;
+  configBigBlind: number;
+  configAnte: number | undefined;
+  stateSmallBlind: number;
+  stateBigBlind: number;
+  level: number;
+  tournamentSmallBlind: number;
+  tournamentBigBlind: number;
+  tournamentAnte: number | undefined;
+  nextSmallBlind: number | null;
+  nextBigBlind: number | null;
+  levelEndsAt: number;
 }
 
 interface TournamentRuntime {
   id: string;
+  hostId: string;
   config: CreateTournamentInput;
   structure: MttStructure;
   phase: TournamentPhase;
@@ -161,6 +197,14 @@ interface TournamentRuntime {
   pauseAccumMs: number; // 일시정지 누적 — clockPos가 (now - startedAt - accum)으로 시계를 계산
   /** 디렉터 일시정지 시각 — null이 아니면 시계 동결 + 전 테이블 다음 핸드 보류 */
   pausedAt: number | null;
+  /** 디렉터 레벨 변경 세대 — 같은 레벨 재설정도 별개 경계 적용으로 식별한다. */
+  levelGeneration: number;
+  /** 각 라이브 테이블의 다음 startHand 경계 적용을 기다리는 디렉터 레벨 변경 */
+  pendingLevel: PendingLevelChange | null;
+  /** 테이블별로 마지막 적용을 마친 디렉터 레벨 변경 세대 */
+  appliedLevelGenerationByRoom: Map<string, number>;
+  /** startHand 성공 전까지만 유지하는 테이블별 레벨 rollback snapshot. */
+  stagedLevelByRoom: Map<string, StagedLevelSnapshot>;
   entrants: Map<string, MttEntrant>;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
@@ -168,21 +212,49 @@ interface TournamentRuntime {
   remaining: number;
   prizePool: number;
   prizes: number[];
-  held: Map<string, HoldReason>;
-  h4h: { active: boolean; armed: Set<string>; busts: PendingBust[] };
+  stage: TournamentStage;
+  stageEndsAt?: number;
+  finalTheme: FinalTableTheme;
+  holds: Map<string, Set<InternalHoldReason>>;
+  presentationBatchDepth: number;
+  presentationDirtyRooms: Set<string>;
+  h4h: {
+    active: boolean;
+    roundOpen: boolean;
+    armed: Set<string>;
+    busts: PendingBust[];
+  };
+  finalIntroTimer: NodeJS.Timeout | null;
   breakTimer: NodeJS.Timeout | null;
   breakAnnounced: boolean;
   finalAnnounced: boolean;
   startTimer: NodeJS.Timeout | null;
+  emptyDeadline: number | null;
+  emptyTimer: NodeJS.Timeout | null;
   cleanupTimer: NodeJS.Timeout | null;
   /** wallet 정산 재시도 (1회) — 완주 시 settle 실패하면 잠시 후 다시 시도 */
   settleRetryTimer: NodeJS.Timeout | null;
 }
 
 const MAX_TOURNAMENTS = 4; // 동시 개설 상한 (테이블 수 폭주 방지 — MAX_ROOMS와 별개 가드)
+const MAX_REGISTERING_TOURNAMENTS_PER_HOST = 2;
 const MIN_ENTRANTS_CAP = 8;
 const MAX_ENTRANTS_CAP = 48;
+const MIN_MTT_STARTERS = 8;
+const DEFAULT_EMPTY_TOURNAMENT_TTL_MS = 5 * 60_000;
+const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 const COMPLETED_RETENTION_MS = 10 * 60_000;
+
+function normalizeEmptyTournamentTtlMs(value: unknown): number {
+  const configured = typeof value === 'string' ? Number(value) : value;
+  return typeof configured === 'number'
+    && Number.isFinite(configured)
+    && Number.isInteger(configured)
+    && configured > 0
+    && configured <= NODE_MAX_TIMEOUT_MS
+    ? configured
+    : DEFAULT_EMPTY_TOURNAMENT_TTL_MS;
+}
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -196,18 +268,26 @@ function shuffle<T>(items: T[]): T[] {
 export class TournamentManager {
   private tournaments = new Map<string, TournamentRuntime>();
   private byRoom = new Map<string, string>();
+  private readonly emptyTournamentTtlMs: number;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
   readonly roomHooks: MttRoomHooks;
 
   constructor(
     private readonly roomManager: RoomManager,
     private readonly hooks: TournamentRuntimeHooks = {},
+    options: TournamentManagerOptions = {},
   ) {
+    this.emptyTournamentTtlMs = normalizeEmptyTournamentTtlMs(
+      options.emptyTournamentTtlMs ?? process.env.MTT_EMPTY_TOURNAMENT_TTL_MS,
+    );
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
+      onHandStartFailed: roomId => this.onHandStartFailed(roomId),
+      onHandStarted: (roomId, handNumber) => this.onHandStarted(roomId, handNumber),
       onHandComplete: roomId => this.onHandComplete(roomId),
       isHeld: roomId => this.isHeld(roomId),
       onPlayerLeave: (roomId, playerId) => this.onPlayerLeave(roomId, playerId),
+      onPlayerLeft: roomId => this.onPlayerLeft(roomId),
     };
     roomManager.setMttHooks(this.roomHooks);
   }
@@ -216,7 +296,13 @@ export class TournamentManager {
 
   createTournament(input: CreateTournamentInput):
     | { ok: true; tournamentId: string }
-    | { ok: false; reason: 'limit' | 'invalid' } {
+    | { ok: false; reason: 'limit' | 'host-limit' | 'invalid' } {
+    const hostRegisteringCount = [...this.tournaments.values()].filter(
+      t => t.phase === 'registering' && t.hostId === input.hostId,
+    ).length;
+    if (hostRegisteringCount >= MAX_REGISTERING_TOURNAMENTS_PER_HOST) {
+      return { ok: false, reason: 'host-limit' };
+    }
     const active = [...this.tournaments.values()].filter(
       t => t.phase === 'registering' || t.phase === 'running',
     );
@@ -255,6 +341,7 @@ export class TournamentManager {
     const id = `mtt-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const t: TournamentRuntime = {
       id,
+      hostId: input.hostId,
       config: { ...input, name, tableSize, maxEntrants, economyMode, entryBuyIn, entryFee },
       structure: MTT_STRUCTURES[input.speed],
       phase: 'registering',
@@ -263,6 +350,10 @@ export class TournamentManager {
       finishedAt: null,
       pauseAccumMs: 0,
       pausedAt: null,
+      levelGeneration: 0,
+      pendingLevel: null,
+      appliedLevelGenerationByRoom: new Map(),
+      stagedLevelByRoom: new Map(),
       entrants: new Map(),
       seatedCount: 0,
       tables: new Map(),
@@ -270,12 +361,20 @@ export class TournamentManager {
       remaining: 0,
       prizePool: 0,
       prizes: [],
-      held: new Map(),
-      h4h: { active: false, armed: new Set(), busts: [] },
+      stage: 'multi-table',
+      stageEndsAt: undefined,
+      finalTheme: 'sakura-championship',
+      holds: new Map(),
+      presentationBatchDepth: 0,
+      presentationDirtyRooms: new Set(),
+      h4h: { active: false, roundOpen: false, armed: new Set(), busts: [] },
+      finalIntroTimer: null,
       breakTimer: null,
       breakAnnounced: false,
       finalAnnounced: false,
       startTimer: null,
+      emptyDeadline: null,
+      emptyTimer: null,
       cleanupTimer: null,
       settleRetryTimer: null,
     };
@@ -287,6 +386,7 @@ export class TournamentManager {
       }, delay);
     }
     this.tournaments.set(id, t);
+    this.armEmptyExpiry(t);
     eventLog.log('mtt-create', {
       data: { tournamentId: id, name, speed: input.speed, maxEntrants, tableSize, hostId: input.hostId },
     });
@@ -307,6 +407,7 @@ export class TournamentManager {
       this.hooks.economy?.reserveEntry(entrant.id, t.id, t.config.maxEntrants);
     }
     t.entrants.set(entrant.id, { ...entrant, name: entrant.name.slice(0, 20) });
+    if (t.entrants.size === 1) this.clearEmptyExpiry(t);
     this.hooks.onTournamentsChanged?.();
     this.hooks.onTournamentUpdate?.(tournamentId);
     return 'ok';
@@ -326,6 +427,7 @@ export class TournamentManager {
     }
     const removed = t.entrants.delete(playerId);
     if (removed) {
+      if (t.entrants.size === 0) this.armEmptyExpiry(t);
       this.hooks.onTournamentsChanged?.();
       this.hooks.onTournamentUpdate?.(tournamentId);
     }
@@ -365,6 +467,17 @@ export class TournamentManager {
     const t = this.tournaments.get(tournamentId);
     if (!t) return 'not-found';
     if (t.config.hostId !== requesterId) return 'not-host';
+    if (
+      t.config.economyMode === 'wallet'
+      && t.phase === 'running'
+      && (
+        action.kind === 'remove-player'
+        || action.kind === 'set-level'
+        || action.kind === 'cancel'
+      )
+    ) {
+      return 'bad-state';
+    }
     switch (action.kind) {
       case 'pause': return this.directorPause(t);
       case 'resume': return this.directorResume(t);
@@ -385,6 +498,11 @@ export class TournamentManager {
     // 브레이크 재개 타이머는 정지 중 발화하면 안 된다 — 재개 시 남은 시간으로 재무장
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
     t.breakAnnounced = false;
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of t.tables.keys()) {
+        this.addHold(t, roomId, 'director-pause');
+      }
+    });
     for (const roomId of t.tables.keys()) {
       this.roomManager.postSystemChat(
         roomId,
@@ -407,11 +525,21 @@ export class TournamentManager {
     this.logDirectorAction(t, { action: 'resume' });
     // 브레이크 구간에서 재개하면 브레이크 대기로 복귀, 아니면 보류 없는 테이블부터 재가동
     if (this.clockPos(t).onBreak) {
-      for (const roomId of t.tables.keys()) this.hold(t, roomId, 'break');
+      this.batchTournamentPresentation(t, () => {
+        for (const roomId of t.tables.keys()) {
+          this.removeHold(t, roomId, 'director-pause');
+          this.addHold(t, roomId, 'scheduled-break');
+        }
+      });
       this.armBreakResume(t);
     } else {
+      this.batchTournamentPresentation(t, () => {
+        for (const roomId of t.tables.keys()) {
+          this.removeHold(t, roomId, 'director-pause');
+        }
+      });
       for (const roomId of t.tables.keys()) {
-        if (!t.held.has(roomId)) this.roomManager.resumeRoom(roomId);
+        this.resumeIfUnheld(t, roomId);
       }
     }
     this.hooks.onTournamentsChanged?.();
@@ -437,13 +565,17 @@ export class TournamentManager {
       : 0;
     const offset = idx * t.structure.levelDurationMs + breaks * t.structure.breakDurationMs;
     t.pauseAccumMs = t.pausedAt - t.startedAt - offset;
+    const generation = t.levelGeneration + 1;
+    t.levelGeneration = generation;
+    t.pendingLevel = {
+      levelIndex: idx,
+      generation,
+      expectedRoomIds: new Set(t.tables.keys()),
+      targetLevelEndsAt: null,
+    };
 
-    const pos = this.clockPos(t);
-    const cur = mttLevelAt(t.structure, pos.levelIndex);
+    const cur = mttLevelAt(t.structure, idx);
     for (const roomId of t.tables.keys()) {
-      const engine = this.roomManager.getRoom(roomId)?.engine;
-      if (!engine) continue;
-      this.pushLevel(t, engine, pos, true); // initial=true — 공지는 아래 전용 문구로
       const anteText = cur.ante > 0 ? ` · 앤티 ${cur.ante}` : '';
       this.roomManager.postSystemChat(
         roomId,
@@ -535,6 +667,10 @@ export class TournamentManager {
               : null,
           }
         : null,
+      stage: t.stage,
+      holdReasons: this.publicHoldReasons(t),
+      stageEndsAt: this.presentationDeadline(t),
+      finalTheme: t.finalTheme,
     };
   }
 
@@ -562,7 +698,7 @@ export class TournamentManager {
 
   getRuntimeStats(): { tournaments: number; tables: number; held: number } {
     let held = 0;
-    for (const t of this.tournaments.values()) held += t.held.size;
+    for (const t of this.tournaments.values()) held += t.holds.size;
     return { tournaments: this.tournaments.size, tables: this.byRoom.size, held };
   }
 
@@ -604,7 +740,7 @@ export class TournamentManager {
                 ? players.filter(p => this.isAlive(engine, p)).length
                 : 0,
               handInProgress: engine?.state.isHandInProgress ?? false,
-              held: t.held.get(roomId) ?? null,
+              held: [...(t.holds.get(roomId) ?? [])].sort().join(',') || null,
             };
           }),
           standings: this.standings(t),
@@ -615,6 +751,8 @@ export class TournamentManager {
   shutdown(): void {
     for (const t of this.tournaments.values()) {
       if (t.startTimer) clearTimeout(t.startTimer);
+      this.clearEmptyExpiry(t);
+      if (t.finalIntroTimer) clearTimeout(t.finalIntroTimer);
       if (t.breakTimer) clearTimeout(t.breakTimer);
       if (t.cleanupTimer) clearTimeout(t.cleanupTimer);
       if (t.settleRetryTimer) clearTimeout(t.settleRetryTimer);
@@ -641,10 +779,6 @@ export class TournamentManager {
     requesterId: string | null,
   ): 'ok' | 'not-registering' | 'not-enough' | 'economy' {
     if (t.phase !== 'registering') return 'not-registering';
-    if (t.startTimer) {
-      clearTimeout(t.startTimer);
-      t.startTimer = null;
-    }
     const isWallet = t.config.economyMode === 'wallet';
 
     // 체크인: 시작 시점 접속 = 출석. 미접속 등록자는 착석에서 제외한다 (노쇼 방지 — 무료 등록의
@@ -656,12 +790,13 @@ export class TournamentManager {
       ? Math.max(0, t.config.maxEntrants - checkedIn.length)
       : 0;
     const total = checkedIn.length + botCount;
-    if (total < 2 || checkedIn.length < 1) {
+    if (total < MIN_MTT_STARTERS || checkedIn.length < 1) {
       // 자동 시작(예약)인데 인원이 안 되면 취소한다 — 수동 시작은 에러만 반환
       // (wallet 환불은 cancelTournament의 refundAll이 담당)
       if (requesterId === null) this.cancelTournament(t, 'not-enough');
       return 'not-enough';
     }
+    this.clearEmptyExpiry(t);
 
     if (isWallet) {
       // 노쇼(미접속 등록자) 환불 — 시작 에스크로는 출석 명단과 정확히 일치해야 한다
@@ -687,6 +822,10 @@ export class TournamentManager {
       }
     }
 
+    if (t.startTimer) {
+      clearTimeout(t.startTimer);
+      t.startTimer = null;
+    }
     t.entrants = new Map(checkedIn.map(e => [e.id, e]));
 
     const tableCount = Math.ceil(total / t.config.tableSize);
@@ -717,8 +856,8 @@ export class TournamentManager {
       });
       // joinRoom의 tryStartGame이 만석 테이블을 조기 시작하지 못하게, 착석 전에 보류를 건다
       this.byRoom.set(roomId, t.id);
-      t.tables.set(roomId, { no: i + 1 });
-      t.held.set(roomId, 'setup');
+      this.addTournamentTable(t, roomId, { no: i + 1 });
+      t.holds.set(roomId, new Set(['setup']));
       roomIds.push(roomId);
     }
 
@@ -800,7 +939,7 @@ export class TournamentManager {
       if (engine.state.tournament) engine.state.tournament.tournamentId = t.id;
       this.pushLevel(t, engine, pos, true);
     }
-    this.syncRemaining(t);
+    this.syncTournamentPresentation(t);
 
     // 착석 통지 (소켓 계층이 세션 전환 + room-joined) → 보류 해제 → 각 테이블 진행
     for (let i = 0; i < shuffled.length; i++) {
@@ -811,13 +950,21 @@ export class TournamentManager {
       });
     }
     for (const roomId of roomIds) {
-      t.held.delete(roomId);
       this.roomManager.postSystemChat(
         roomId,
         `🏆 ${t.config.name} 시작! 참가 ${total}명 · 테이블 ${tableCount}개 · `
         + `${paidPlaces(total)}명 입상 · 우승 상금 ${t.prizes[0].toLocaleString()}`,
       );
-      this.roomManager.resumeRoom(roomId);
+    }
+    let formingFinal = false;
+    this.batchTournamentPresentation(t, () => {
+      formingFinal = this.beginFinalFormation(t);
+      for (const roomId of roomIds) this.removeHold(t, roomId, 'setup');
+    });
+    if (formingFinal) {
+      this.finishFinalFormation(t);
+    } else {
+      for (const roomId of roomIds) this.resumeIfUnheld(t, roomId);
     }
 
     eventLog.log('mtt-start', {
@@ -836,6 +983,8 @@ export class TournamentManager {
     t.phase = 'cancelled';
     t.pausedAt = null;
     if (t.startTimer) { clearTimeout(t.startTimer); t.startTimer = null; }
+    this.clearEmptyExpiry(t);
+    if (t.finalIntroTimer) { clearTimeout(t.finalIntroTimer); t.finalIntroTimer = null; }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
     // wallet 무효화 환불 — 등록 중(reserved)·진행 중(started) 전원 전액(수수료 포함) 반환.
     // 프리즈아웃 중도 취소는 순위 확정이 불가능하므로 전원 환불이 유일하게 공정하다.
@@ -854,7 +1003,10 @@ export class TournamentManager {
       this.roomManager.disposeRoom(roomId, 'mtt-cancel');
     }
     t.tables.clear();
-    t.held.clear();
+    t.holds.clear();
+    t.pendingLevel = null;
+    t.appliedLevelGenerationByRoom.clear();
+    t.stagedLevelByRoom.clear();
     eventLog.log('mtt-cancel', { data: { tournamentId: t.id, reason } });
     this.hooks.onTournamentsChanged?.();
     // 취소 기록은 잠시 보여준 뒤 목록에서 제거
@@ -864,6 +1016,24 @@ export class TournamentManager {
     }, 60_000);
   }
 
+  private armEmptyExpiry(t: TournamentRuntime): void {
+    this.clearEmptyExpiry(t);
+    if (t.phase !== 'registering' || t.entrants.size !== 0) return;
+    t.emptyDeadline = Date.now() + this.emptyTournamentTtlMs;
+    t.emptyTimer = setTimeout(() => {
+      t.emptyTimer = null;
+      t.emptyDeadline = null;
+      if (t.phase !== 'registering' || t.entrants.size !== 0) return;
+      this.cancelTournament(t, 'empty-expired');
+    }, this.emptyTournamentTtlMs);
+  }
+
+  private clearEmptyExpiry(t: TournamentRuntime): void {
+    if (t.emptyTimer) clearTimeout(t.emptyTimer);
+    t.emptyTimer = null;
+    t.emptyDeadline = null;
+  }
+
   // --- RoomManager 훅 구현 ---
 
   private isHeld(roomId: string): boolean {
@@ -871,7 +1041,7 @@ export class TournamentManager {
     if (!t) return false;
     // 디렉터 일시정지 — 진행 중 핸드는 끝까지, 다음 핸드는 전 테이블 보류
     if (t.pausedAt !== null) return true;
-    if (t.held.has(roomId)) return true;
+    if (this.hasHolds(t, roomId)) return true;
     // H4H 중에는 배리어 해제 시 무장(armed)된 테이블만 다음 핸드를 시작할 수 있다
     if (t.h4h.active && !t.h4h.armed.has(roomId)) return true;
     return false;
@@ -880,9 +1050,108 @@ export class TournamentManager {
   private applyLevel(roomId: string, engine: PokerEngine): void {
     const t = this.byTable(roomId);
     if (!t || t.startedAt === null || t.phase !== 'running') return;
-    // H4H 동기화 핸드 시작 — 무장 소모 (이 핸드가 끝나면 다시 배리어 대기)
+    const room = this.roomManager.getRoom(roomId);
+    const tournament = engine.state.tournament;
+    if (!room || !tournament) return;
+    if (!t.stagedLevelByRoom.has(roomId)) {
+      t.stagedLevelByRoom.set(roomId, {
+        configSmallBlind: room.config.smallBlind,
+        configBigBlind: room.config.bigBlind,
+        configAnte: room.config.ante,
+        stateSmallBlind: engine.state.smallBlind,
+        stateBigBlind: engine.state.bigBlind,
+        level: tournament.level,
+        tournamentSmallBlind: tournament.smallBlind,
+        tournamentBigBlind: tournament.bigBlind,
+        tournamentAnte: tournament.ante,
+        nextSmallBlind: tournament.nextSmallBlind,
+        nextBigBlind: tournament.nextBigBlind,
+        levelEndsAt: tournament.levelEndsAt,
+      });
+    }
+    const pos = this.clockPos(t);
+    const pending = t.pendingLevel;
+    const needsPendingApplication = !!pending
+      && pending.expectedRoomIds.has(roomId)
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation;
+    if (
+      needsPendingApplication
+      && pending
+      && pending.targetLevelEndsAt === null
+    ) {
+      pending.targetLevelEndsAt = Number.isFinite(pos.segmentRemainingMs)
+        ? Date.now() + pos.segmentRemainingMs
+        : 0;
+    }
+    this.pushLevel(
+      t,
+      engine,
+      needsPendingApplication && pending
+        ? { ...pos, levelIndex: pending.levelIndex }
+        : pos,
+      false,
+      needsPendingApplication,
+      needsPendingApplication && pending
+        ? pending.targetLevelEndsAt ?? undefined
+        : undefined,
+      false,
+    );
+  }
+
+  private onHandStartFailed(roomId: string): void {
+    const t = this.byTable(roomId);
+    const snapshot = t?.stagedLevelByRoom.get(roomId);
+    const room = this.roomManager.getRoom(roomId);
+    const tournament = room?.engine.state.tournament;
+    if (!t || !snapshot || !room || !tournament) {
+      t?.stagedLevelByRoom.delete(roomId);
+      return;
+    }
+
+    room.engine.setTournamentLevel(
+      snapshot.level,
+      snapshot.tournamentSmallBlind,
+      snapshot.tournamentBigBlind,
+      snapshot.nextSmallBlind,
+      snapshot.nextBigBlind,
+      snapshot.levelEndsAt,
+      snapshot.tournamentAnte ?? 0,
+    );
+    room.engine.state.smallBlind = snapshot.stateSmallBlind;
+    room.engine.state.bigBlind = snapshot.stateBigBlind;
+    tournament.ante = snapshot.tournamentAnte;
+    room.config.smallBlind = snapshot.configSmallBlind;
+    room.config.bigBlind = snapshot.configBigBlind;
+    room.config.ante = snapshot.configAnte;
+    t.stagedLevelByRoom.delete(roomId);
+  }
+
+  private onHandStarted(roomId: string, handNumber: number): void {
+    const t = this.byTable(roomId);
+    const engine = this.roomManager.getRoom(roomId)?.engine;
+    if (!t || !engine || engine.state.handNumber !== handNumber) return;
+    const staged = t.stagedLevelByRoom.get(roomId);
+    t.stagedLevelByRoom.delete(roomId);
+    if (staged && staged.level !== engine.state.tournament?.level) {
+      const tournament = engine.state.tournament;
+      if (tournament) {
+        const anteText = (tournament.ante ?? 0) > 0 ? ` · 앤티 ${tournament.ante}` : '';
+        this.roomManager.postSystemChat(
+          roomId,
+          `블라인드 인상 — 레벨 ${tournament.level}: `
+          + `${tournament.smallBlind}/${tournament.bigBlind}${anteText}`,
+        );
+      }
+    }
     if (t.h4h.active) t.h4h.armed.delete(roomId);
-    this.pushLevel(t, engine, this.clockPos(t), false);
+    const pending = t.pendingLevel;
+    if (
+      pending?.expectedRoomIds.has(roomId)
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation
+    ) {
+      t.appliedLevelGenerationByRoom.set(roomId, pending.generation);
+      this.reconcilePendingLevelRooms(t);
+    }
   }
 
   private onHandComplete(roomId: string): 'continue' | 'hold' | 'gone' {
@@ -901,15 +1170,10 @@ export class TournamentManager {
     // 같은 동기화 핸드의 탈락은 테이블이 달라도 "같은 핸드"로 순위를 판정한다 (Stars 2.2)
     if (t.h4h.active) {
       for (const p of busted) {
-        t.h4h.busts.push({
-          roomId,
-          playerId: p.id,
-          name: p.name,
-          handStartChips: p.handStartChips ?? 0,
-        });
+        t.h4h.busts.push(this.pendingBust(roomId, engine, p));
         p.pendingRemoval = true;
       }
-      this.hold(t, roomId, 'h4h');
+      this.addHold(t, roomId, 'h4h-barrier');
       this.tryReleaseH4h(t);
       return 'hold';
     }
@@ -917,28 +1181,45 @@ export class TournamentManager {
     if (busted.length > 0) {
       this.assignEliminations(
         t,
-        busted
-          .map(p => ({ roomId, playerId: p.id, name: p.name, handStartChips: p.handStartChips ?? 0 })),
+        busted.map(p => this.pendingBust(roomId, engine, p)),
       );
     }
 
     if (this.checkCompletion(t)) return 'hold';
 
+    if (this.beginFinalFormation(t) || t.stage === 'final-forming') {
+      this.finishFinalFormation(t);
+      return this.roomManager.getRoom(roomId) ? 'hold' : 'gone';
+    }
+
+    const enteringH4h = (
+      !t.h4h.active
+      && t.tables.size > 1
+      && t.remaining === paidPlaces(t.seatedCount) + 1
+    );
+    // 파이널 전환이 아니면 테이블 브레이크/밸런싱을 먼저 확정한 뒤 다음 H4H를 무장한다.
+    // H4H 진입 경계에서는 방금 끝난 테이블이 숏이어도 전역 최다 테이블에서 이동할 수 있다.
+    const balance = this.balanceAfterHand(t, roomId, enteringH4h);
+    if (balance === 'gone') {
+      if (
+        enteringH4h
+        && t.tables.size > 1
+        && t.remaining === paidPlaces(t.seatedCount) + 1
+      ) {
+        this.enterH4hBarrier(t);
+      }
+      return 'gone';
+    }
+
     // 버블(입상 1명 전) 도달 → hand-for-hand 발동 (테이블 2개 이상일 때만 의미)
     if (!t.h4h.active && t.tables.size > 1 && t.remaining === paidPlaces(t.seatedCount) + 1) {
-      this.activateH4h(t);
-      this.hold(t, roomId, 'h4h');
-      this.tryReleaseH4h(t);
+      this.enterH4hBarrier(t);
       return 'hold';
     }
 
-    // 밸런싱/테이블 브레이크 — 이 테이블은 방금 핸드를 끝냈으므로 이동/해체 안전 구간
-    const balance = this.balanceAfterHand(t, roomId);
-    if (balance === 'gone') return 'gone';
-
     // 브레이크 — 시계가 휴식 구간이면 전 테이블이 핸드를 끝내는 대로 정지
     if (this.clockPos(t).onBreak) {
-      this.hold(t, roomId, 'break');
+      this.addHold(t, roomId, 'scheduled-break');
       this.armBreakResume(t);
       return 'hold';
     }
@@ -953,55 +1234,134 @@ export class TournamentManager {
     const player = engine?.state.players.find(p => p.id === playerId);
     if (!engine || !player || player.finishPlace || player.pendingRemoval) return;
     // 명시적 퇴장 = 현재 순위로 탈락 확정 (SnG 계약 승계)
-    this.assignEliminations(t, [{
-      roomId,
-      playerId,
-      name: player.name,
-      handStartChips: player.handStartChips ?? player.chips,
-    }]);
-    this.checkCompletion(t);
+    this.batchTournamentPresentation(t, () => {
+      this.assignEliminations(t, [{
+        roomId,
+        playerId,
+        name: player.name,
+        handStartChips: player.handStartChips ?? player.chips,
+        seatIndex: player.seatIndex,
+        buttonSeatIndex: engine.state.players[engine.state.dealerIndex]?.seatIndex ?? 0,
+      }]);
+      if (!this.checkCompletion(t)) this.beginFinalFormation(t);
+    });
+  }
+
+  private onPlayerLeft(roomId: string): void {
+    const t = this.byTable(roomId);
+    if (!t || t.phase !== 'running') return;
+    if (t.stage !== 'final-forming' && !this.beginFinalFormation(t)) return;
+    this.finishFinalFormation(t);
   }
 
   // --- 탈락/순위 ---
 
-  /** 같은 배치 내 동시 탈락은 핸드 시작 스택 오름차순으로 낮은 순위부터 부여 */
-  private assignEliminations(t: TournamentRuntime, busts: PendingBust[]): void {
-    if (busts.length === 0) return;
-    const ordered = [...busts].sort((a, b) => a.handStartChips - b.handStartChips);
-    for (const bust of ordered) {
-      const place = t.remaining;
-      const prize = t.prizes[place - 1] ?? 0;
-      t.remaining -= 1;
-      t.results.push({ playerId: bust.playerId, name: bust.name, place, prize });
+  private pendingBust(roomId: string, engine: PokerEngine, player: Player): PendingBust {
+    return {
+      roomId,
+      playerId: player.id,
+      name: player.name,
+      handStartChips: player.handStartChips ?? 0,
+      seatIndex: player.seatIndex,
+      buttonSeatIndex: engine.state.players[engine.state.dealerIndex]?.seatIndex ?? 0,
+    };
+  }
 
-      const room = this.roomManager.getRoom(bust.roomId);
-      if (room) {
-        room.engine.applyTournamentEliminations([{ playerId: bust.playerId, place, prize }]);
-        const player = room.engine.state.players.find(p => p.id === bust.playerId);
-        if (player) {
-          player.pendingRemoval = true;
-          if (player.type === 'human') {
-            this.hooks.onEliminated?.({
-              tournamentId: t.id,
-              roomId: bust.roomId,
-              playerId: bust.playerId,
-              place,
-              prize,
-            });
-          }
-        }
-        const prizeText = prize > 0 ? ` — 상금 ${prize.toLocaleString()} 획득!` : '';
-        this.roomManager.postSystemChat(
-          bust.roomId,
-          `${bust.name}님이 ${place}위로 탈락했습니다${prizeText} (남은 인원 ${t.remaining}명)`,
-        );
+  private buttonLeftDistance(t: TournamentRuntime, bust: PendingBust): number {
+    const distance = (
+      bust.seatIndex - bust.buttonSeatIndex + t.config.tableSize
+    ) % t.config.tableSize;
+    return distance === 0 ? t.config.tableSize : distance;
+  }
+
+  /**
+   * 높은 시작 스택부터 순위 그룹을 만든다. 같은 테이블의 동일 스택은 버튼 왼쪽
+   * 좌석 순으로 개별 순위를 받고, H4H의 서로 다른 테이블에서 같은 순번인 버스트는
+   * 공동 순위가 된다.
+   */
+  private eliminationGroups(
+    t: TournamentRuntime,
+    busts: readonly PendingBust[],
+  ): PendingBust[][] {
+    const byStack = new Map<number, PendingBust[]>();
+    for (const bust of busts) {
+      const group = byStack.get(bust.handStartChips) ?? [];
+      group.push(bust);
+      byStack.set(bust.handStartChips, group);
+    }
+
+    const groups: PendingBust[][] = [];
+    const stacks = [...byStack.keys()].sort((a, b) => b - a);
+    for (const stack of stacks) {
+      const byRoom = new Map<string, PendingBust[]>();
+      for (const bust of byStack.get(stack) ?? []) {
+        const roomBusts = byRoom.get(bust.roomId) ?? [];
+        roomBusts.push(bust);
+        byRoom.set(bust.roomId, roomBusts);
+      }
+      const roomGroups = [...byRoom.values()].map(roomBusts => (
+        roomBusts.sort((a, b) => (
+          this.buttonLeftDistance(t, a) - this.buttonLeftDistance(t, b)
+          || a.playerId.localeCompare(b.playerId)
+        ))
+      ));
+      const largestRoomGroup = Math.max(...roomGroups.map(group => group.length));
+      for (let index = 0; index < largestRoomGroup; index++) {
+        const tied = roomGroups
+          .map(group => group[index])
+          .filter((bust): bust is PendingBust => bust !== undefined)
+          .sort((a, b) => a.playerId.localeCompare(b.playerId));
+        groups.push(tied);
       }
     }
-    // 탈락 확정(finishPlace)·잔존 인원이 실린 스냅샷을 즉시 재브로드캐스트 — EliminationNotice 표시 계약
-    this.syncRemaining(t);
-    for (const roomId of new Set(ordered.map(b => b.roomId))) {
-      this.roomManager.broadcastRoom(roomId);
+    return groups;
+  }
+
+  /** 같은 배치의 탈락을 결정론적 순위 그룹으로 확정하고 점유 순위 상금을 분할한다. */
+  private assignEliminations(t: TournamentRuntime, busts: PendingBust[]): void {
+    if (busts.length === 0) return;
+    const groups = this.eliminationGroups(t, busts);
+    let place = t.remaining - busts.length + 1;
+    for (const group of groups) {
+      const occupiedPrize = Array.from(
+        { length: group.length },
+        (_, index) => t.prizes[place + index - 1] ?? 0,
+      ).reduce((sum, prize) => sum + prize, 0);
+      const basePrize = Math.floor(occupiedPrize / group.length);
+      const remainder = occupiedPrize - basePrize * group.length;
+
+      for (const [index, bust] of group.entries()) {
+        const prize = basePrize + (index < remainder ? 1 : 0);
+        t.remaining -= 1;
+        t.results.push({ playerId: bust.playerId, name: bust.name, place, prize });
+
+        const room = this.roomManager.getRoom(bust.roomId);
+        if (room) {
+          room.engine.applyTournamentEliminations([{ playerId: bust.playerId, place, prize }]);
+          const player = room.engine.state.players.find(p => p.id === bust.playerId);
+          if (player) {
+            player.pendingRemoval = true;
+            if (player.type === 'human') {
+              this.hooks.onEliminated?.({
+                tournamentId: t.id,
+                roomId: bust.roomId,
+                playerId: bust.playerId,
+                place,
+                prize,
+              });
+            }
+          }
+          const prizeText = prize > 0 ? ` — 상금 ${prize.toLocaleString()} 획득!` : '';
+          this.roomManager.postSystemChat(
+            bust.roomId,
+            `${bust.name}님이 ${place}위로 탈락했습니다${prizeText} (남은 인원 ${t.remaining}명)`,
+          );
+        }
+      }
+      place += group.length;
     }
+    // 탈락 확정(finishPlace)·잔존 인원이 실린 스냅샷을 즉시 재브로드캐스트 — EliminationNotice 표시 계약
+    this.syncTournamentPresentation(t);
     this.hooks.onTournamentUpdate?.(t.id);
     this.hooks.onTournamentsChanged?.();
   }
@@ -1017,7 +1377,20 @@ export class TournamentManager {
     }
 
     t.phase = 'completed';
+    t.stage = 'complete';
+    t.stageEndsAt = undefined;
     t.finishedAt = Date.now();
+    t.pausedAt = null;
+    this.clearEmptyExpiry(t);
+    t.h4h.active = false;
+    t.h4h.roundOpen = false;
+    t.h4h.armed.clear();
+    t.h4h.busts = [];
+    t.holds.clear();
+    if (t.finalIntroTimer) {
+      clearTimeout(t.finalIntroTimer);
+      t.finalIntroTimer = null;
+    }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
 
     if (winner) {
@@ -1033,10 +1406,16 @@ export class TournamentManager {
       .join(' · ');
 
     for (const roomId of t.tables.keys()) {
-      this.hold(t, roomId, 'complete');
       const engine = this.roomManager.getRoom(roomId)?.engine;
       engine?.setTournamentField(t.seatedCount, t.prizes, true, results);
       this.roomManager.postSystemChat(roomId, `🏆 ${t.config.name} 종료! ${podium}`);
+    }
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of t.tables.keys()) {
+        this.addHold(t, roomId, 'complete');
+      }
+    });
+    for (const roomId of t.tables.keys()) {
       // 종료 상태 브로드캐스트 (tryStartGame은 finished/held 게이트로 조기 반환)
       this.roomManager.resumeRoom(roomId);
       // 결과 확인을 위해 10분 보존 후 정리 (SnG retention 계약 재사용)
@@ -1080,6 +1459,117 @@ export class TournamentManager {
     return true;
   }
 
+  // --- 파이널 테이블 배리어 ---
+
+  private beginFinalFormation(t: TournamentRuntime): boolean {
+    if (t.remaining > t.config.tableSize || t.stage !== 'multi-table') return false;
+    t.stage = 'final-forming';
+    t.stageEndsAt = undefined;
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of t.tables.keys()) {
+        this.addHold(t, roomId, 'final-forming');
+      }
+    });
+    this.hooks.onTournamentUpdate?.(t.id);
+    return true;
+  }
+
+  /** 모든 소스 테이블이 핸드 사이일 때만 전원을 한 테이블로 옮기고 인트로를 건다. */
+  private finishFinalFormation(t: TournamentRuntime): boolean {
+    if (t.stage !== 'final-forming' || t.tables.size === 0) return false;
+    for (const roomId of t.tables.keys()) {
+      if (this.roomManager.getRoom(roomId)?.engine.state.isHandInProgress) return false;
+    }
+
+    const destination = [...t.tables.entries()]
+      .map(([roomId, meta]) => ({
+        roomId,
+        no: meta.no,
+        alive: this.aliveCounts(t).get(roomId) ?? 0,
+      }))
+      .sort((a, b) => b.alive - a.alive || a.no - b.no)[0]?.roomId;
+    if (!destination) return false;
+
+    // 핸드 사이이므로 확정 탈락 좌석을 먼저 비워 파이널 수용 공간을 만든다.
+    for (const roomId of t.tables.keys()) {
+      this.roomManager.getRoom(roomId)?.engine.removePendingPlayers();
+    }
+
+    const sourceIds = [...t.tables.keys()].filter(roomId => roomId !== destination);
+    for (const sourceId of sourceIds) {
+      const source = this.roomManager.getRoom(sourceId);
+      if (!source) return false;
+      const movers = source.engine.state.players.filter(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      );
+      for (const mover of movers) {
+        this.moveSeat(t, sourceId, destination, mover.id, false);
+      }
+      const stranded = source.engine.state.players.some(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      );
+      if (stranded) return false;
+    }
+
+    for (const sourceId of sourceIds) {
+      this.byRoom.delete(sourceId);
+      this.removeTournamentTable(t, sourceId);
+      t.holds.delete(sourceId);
+      t.h4h.armed.delete(sourceId);
+      this.roomManager.disposeRoom(sourceId, 'mtt-break');
+    }
+
+    t.h4h.active = false;
+    t.h4h.roundOpen = false;
+    t.h4h.armed.clear();
+    t.h4h.busts = [];
+    t.stage = 'final-intro';
+    t.stageEndsAt = Date.now() + 4_500;
+    const onBreak = this.clockPos(t).onBreak;
+    this.batchTournamentPresentation(t, () => {
+      this.removeHold(t, destination, 'h4h-barrier');
+      this.removeHold(t, destination, 'final-forming');
+      this.removeHold(t, destination, 'setup');
+      this.addHold(t, destination, 'final-intro');
+      if (onBreak) this.addHold(t, destination, 'scheduled-break');
+    });
+
+    if (onBreak) {
+      this.armBreakResume(t);
+    }
+
+    if (!t.finalAnnounced) {
+      t.finalAnnounced = true;
+      this.roomManager.postSystemChat(
+        destination,
+        `🔥 파이널 테이블! 남은 ${t.remaining}명이 우승 상금 `
+        + `${t.prizes[0]?.toLocaleString() ?? 0}을 놓고 겨룹니다.`,
+      );
+    }
+    this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
+
+    if (t.finalIntroTimer) clearTimeout(t.finalIntroTimer);
+    const introDelay = Math.max(0, (t.stageEndsAt ?? Date.now()) - Date.now());
+    t.finalIntroTimer = setTimeout(() => {
+      t.finalIntroTimer = null;
+      this.finishFinalIntro(t);
+    }, introDelay);
+    return true;
+  }
+
+  private finishFinalIntro(t: TournamentRuntime): void {
+    if (t.phase !== 'running' || t.stage !== 'final-intro') return;
+    t.stage = 'final-playing';
+    t.stageEndsAt = undefined;
+    const [roomId] = t.tables.keys();
+    if (!roomId) return;
+    this.removeHold(t, roomId, 'final-intro');
+    this.resumeIfUnheld(t, roomId);
+    this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
+  }
+
   // --- 밸런싱/브레이크 ---
 
   /**
@@ -1107,7 +1597,11 @@ export class TournamentManager {
     return counts;
   }
 
-  private balanceAfterHand(t: TournamentRuntime, roomId: string): 'kept' | 'gone' {
+  private balanceAfterHand(
+    t: TournamentRuntime,
+    roomId: string,
+    useGlobalExtremes = false,
+  ): 'kept' | 'gone' {
     let counts = this.aliveCounts(t);
     const totalAlive = [...counts.values()].reduce((s, v) => s + v, 0);
     const target = Math.max(1, Math.ceil(totalAlive / t.config.tableSize));
@@ -1126,20 +1620,27 @@ export class TournamentManager {
       counts = this.aliveCounts(t);
     }
 
-    // 개별 이동 — 이 테이블이 최다이고 최소 테이블과 격차 > 1이면 다음 BB 좌석을 이동
+    // 개별 이동 — 평상시는 기존처럼 방금 끝난 테이블에서만 이동한다.
+    // H4H 진입 경계는 1대4처럼 숏 테이블에서 탈락해도 전역 최다→최소로 먼저 맞춘다.
     counts = this.aliveCounts(t);
-    const myCount = counts.get(roomId) ?? 0;
     let minRoom: string | null = null;
     let minCount = Infinity;
+    let maxRoom: string | null = useGlobalExtremes ? null : roomId;
+    let maxCount = useGlobalExtremes ? -1 : (counts.get(roomId) ?? 0);
     for (const [rid, count] of counts) {
-      if (rid === roomId) continue;
+      if (!useGlobalExtremes && rid === roomId) continue;
       if (count < minCount) { minCount = count; minRoom = rid; }
+      if (useGlobalExtremes && count > maxCount) { maxCount = count; maxRoom = rid; }
     }
-    if (minRoom && myCount - minCount > 1) {
-      this.moveOnePlayer(t, roomId, minRoom);
+    const maxEngine = maxRoom ? this.roomManager.getRoom(maxRoom)?.engine : undefined;
+    if (
+      minRoom && maxRoom && minRoom !== maxRoom
+      && maxCount - minCount > 1
+      && maxEngine && !maxEngine.state.isHandInProgress
+    ) {
+      this.moveOnePlayer(t, maxRoom, minRoom);
     }
 
-    this.announceFinalIfReady(t);
     return 'kept';
   }
 
@@ -1209,8 +1710,8 @@ export class TournamentManager {
     if (stranded) return;
 
     this.byRoom.delete(roomId);
-    t.tables.delete(roomId);
-    t.held.delete(roomId);
+    this.removeTournamentTable(t, roomId);
+    t.holds.delete(roomId);
     t.h4h.armed.delete(roomId);
     this.roomManager.disposeRoom(roomId, 'mtt-break');
     for (const rid of t.tables.keys()) {
@@ -1219,8 +1720,8 @@ export class TournamentManager {
     eventLog.log('mtt-table-break', {
       data: { tournamentId: t.id, tableNo, remainingTables: t.tables.size },
     });
-    this.announceFinalIfReady(t);
     this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
   }
 
   /** 이동자 선정(다음 BB — TDA Rule 11) 후 한 명을 이동 */
@@ -1251,6 +1752,7 @@ export class TournamentManager {
     fromRoomId: string,
     toRoomId: string,
     playerId: string,
+    resumeDestination = true,
   ): void {
     const destRoom = this.roomManager.getRoom(toRoomId);
     if (!destRoom) return;
@@ -1280,7 +1782,7 @@ export class TournamentManager {
       });
     }
     // 목적지가 핸드 사이면 재가동 (1인 고립 테이블 소생 경로)
-    if (!destRoom.engine.state.isHandInProgress) {
+    if (resumeDestination && !destRoom.engine.state.isHandInProgress) {
       this.roomManager.resumeRoom(toRoomId);
     }
   }
@@ -1307,22 +1809,11 @@ export class TournamentManager {
     return empty[0];
   }
 
-  private announceFinalIfReady(t: TournamentRuntime): void {
-    if (t.finalAnnounced || t.tables.size !== 1) return;
-    if (t.remaining > t.config.tableSize) return;
-    t.finalAnnounced = true;
-    const [finalRoomId] = t.tables.keys();
-    this.roomManager.postSystemChat(
-      finalRoomId,
-      `🔥 파이널 테이블! 남은 ${t.remaining}명이 우승 상금 ${t.prizes[0]?.toLocaleString() ?? 0}을 놓고 겨룹니다.`,
-    );
-    this.hooks.onTournamentUpdate?.(t.id);
-  }
-
   // --- hand-for-hand ---
 
   private activateH4h(t: TournamentRuntime): void {
     t.h4h.active = true;
+    t.h4h.roundOpen = false;
     t.h4h.armed.clear();
     t.h4h.busts = [];
     for (const roomId of t.tables.keys()) {
@@ -1333,13 +1824,33 @@ export class TournamentManager {
     }
   }
 
+  /** 다음 H4H 라운드가 열리기 전 모든 잔존 테이블의 다음 핸드를 먼저 동기적으로 막는다. */
+  private enterH4hBarrier(t: TournamentRuntime): void {
+    if (!t.h4h.active) this.activateH4h(t);
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of t.tables.keys()) {
+        this.addHold(t, roomId, 'h4h-barrier');
+      }
+    });
+    this.tryReleaseH4h(t);
+  }
+
   /** 전 테이블이 핸드 사이가 되면 라운드 버스트 순위 확정 + 다음 동기화 핸드 무장 */
   private tryReleaseH4h(t: TournamentRuntime): void {
     if (!t.h4h.active) return;
+    for (const roomId of [...t.h4h.armed]) {
+      if (!t.tables.has(roomId) || !this.roomManager.getRoom(roomId)) {
+        t.h4h.armed.delete(roomId);
+      }
+    }
+    // 초기 배리어(roundOpen=false)는 바로 무장할 수 있다. 이미 해제된 라운드는 모든
+    // 참가 테이블이 실제 startHand에 성공해 permit을 소비하기 전에는 완료할 수 없다.
+    if (t.h4h.roundOpen && t.h4h.armed.size > 0) return;
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;
       if (engine?.state.isHandInProgress) return; // 아직 도는 테이블이 있다 — 배리어 유지
     }
+    t.h4h.roundOpen = false;
 
     const roundBusts = t.h4h.busts;
     t.h4h.busts = [];
@@ -1348,9 +1859,37 @@ export class TournamentManager {
     }
     if (this.checkCompletion(t)) return;
 
+    // 버블 붕괴가 파이널 정원 이하를 만들면 다음 H4H 라운드보다 병합 배리어가 우선한다.
+    if (this.beginFinalFormation(t) || t.stage === 'final-forming') {
+      t.h4h.active = false;
+      t.h4h.roundOpen = false;
+      t.h4h.armed.clear();
+      this.batchTournamentPresentation(t, () => {
+        for (const roomId of t.tables.keys()) {
+          this.removeHold(t, roomId, 'h4h-barrier');
+        }
+      });
+      this.finishFinalFormation(t);
+      return;
+    }
+
+    // H4H 진입 시 최다 테이블이 아직 핸드 중이었다면 이 배리어 지점에서 처음 안전하게
+    // 1대4→2대3 밸런싱할 수 있다. permit을 만들기 전에 반드시 재시도한다.
+    if (t.tables.size > 1) {
+      const anchor = [...this.aliveCounts(t).entries()]
+        .sort((a, b) => b[1] - a[1])[0]?.[0];
+      if (anchor) this.balanceAfterHand(t, anchor, true);
+    }
+
+    // Scheduled breaks remain tournament-wide barriers during H4H. Record the
+    // break before releasing the synchronized-round barrier so no table can
+    // receive its next-hand permit inside the break window.
+    const onBreak = this.clockPos(t).onBreak;
+
     // 버블이 터졌으면 H4H 종료
     if (t.remaining <= paidPlaces(t.seatedCount)) {
       t.h4h.active = false;
+      t.h4h.roundOpen = false;
       t.h4h.armed.clear();
       for (const roomId of t.tables.keys()) {
         this.roomManager.postSystemChat(
@@ -1359,30 +1898,147 @@ export class TournamentManager {
         );
       }
     } else {
+      t.h4h.roundOpen = true;
       t.h4h.armed = new Set(t.tables.keys());
     }
 
-    for (const roomId of [...t.held.keys()]) {
-      if (t.held.get(roomId) === 'h4h') {
-        t.held.delete(roomId);
-        this.roomManager.resumeRoom(roomId);
-      }
-    }
-    // 배리어 없이 유휴 상태로 대기하던 테이블(1인 고립 등)도 재가동
-    if (t.h4h.active) {
+    this.batchTournamentPresentation(t, () => {
       for (const roomId of t.tables.keys()) {
-        const engine = this.roomManager.getRoom(roomId)?.engine;
-        if (engine && !engine.state.isHandInProgress) {
-          this.roomManager.resumeRoom(roomId);
-        }
+        if (onBreak) this.addHold(t, roomId, 'scheduled-break');
+        this.removeHold(t, roomId, 'h4h-barrier');
+      }
+    });
+    if (onBreak) this.armBreakResume(t);
+    // 배리어 해제 뒤 모든 유휴 테이블을 한 번씩만 재가동한다.
+    for (const roomId of t.tables.keys()) {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      if (engine && !engine.state.isHandInProgress) {
+        this.resumeIfUnheld(t, roomId);
       }
     }
   }
 
   // --- 브레이크/시계 ---
 
-  private hold(t: TournamentRuntime, roomId: string, reason: HoldReason): void {
-    if (!t.held.has(roomId)) t.held.set(roomId, reason);
+  private addHold(
+    t: TournamentRuntime,
+    roomId: string,
+    reason: InternalHoldReason,
+  ): void {
+    const reasons = t.holds.get(roomId) ?? new Set<InternalHoldReason>();
+    if (reasons.has(reason)) return;
+    reasons.add(reason);
+    t.holds.set(roomId, reasons);
+    this.syncTournamentPresentation(t, [roomId]);
+  }
+
+  private removeHold(
+    t: TournamentRuntime,
+    roomId: string,
+    reason: InternalHoldReason,
+  ): void {
+    const reasons = t.holds.get(roomId);
+    if (!reasons?.has(reason)) return;
+    reasons.delete(reason);
+    if (reasons.size === 0) t.holds.delete(roomId);
+    this.syncTournamentPresentation(t, [roomId]);
+  }
+
+  private hasHolds(t: TournamentRuntime, roomId: string): boolean {
+    return (t.holds.get(roomId)?.size ?? 0) > 0;
+  }
+
+  private resumeIfUnheld(t: TournamentRuntime, roomId: string): void {
+    if (!this.hasHolds(t, roomId)) {
+      this.roomManager.resumeMttRoomAfterPresentation(roomId);
+    }
+  }
+
+  private publicHoldReasons(
+    t: TournamentRuntime,
+    roomId?: string,
+  ): TournamentHoldReason[] {
+    const reasons = new Set<TournamentHoldReason>();
+    const roomReasons = roomId === undefined
+      ? t.holds.values()
+      : [t.holds.get(roomId) ?? new Set<InternalHoldReason>()];
+    for (const entries of roomReasons) {
+      for (const reason of entries) {
+        if (reason !== 'setup' && reason !== 'complete') reasons.add(reason);
+      }
+    }
+    return [...reasons].sort();
+  }
+
+  private presentationDeadline(t: TournamentRuntime): number | undefined {
+    if (t.stageEndsAt !== undefined) return t.stageEndsAt;
+    if (!this.publicHoldReasons(t).includes('scheduled-break')) return undefined;
+    const pos = this.clockPos(t);
+    return Number.isFinite(pos.segmentRemainingMs)
+      ? (t.pausedAt ?? Date.now()) + pos.segmentRemainingMs
+      : undefined;
+  }
+
+  /** 서버 권위 MTT 표시 상태를 모든 살아 있는 테이블에 동일한 시계 기준으로 미러한다. */
+  private batchTournamentPresentation(
+    t: TournamentRuntime,
+    mutate: () => void,
+  ): void {
+    t.presentationBatchDepth += 1;
+    try {
+      mutate();
+    } finally {
+      t.presentationBatchDepth -= 1;
+      if (t.presentationBatchDepth === 0 && t.presentationDirtyRooms.size > 0) {
+        this.flushTournamentPresentation(t);
+      }
+    }
+  }
+
+  private syncTournamentPresentation(
+    t: TournamentRuntime,
+    roomIds: Iterable<string> = t.tables.keys(),
+  ): void {
+    for (const roomId of roomIds) t.presentationDirtyRooms.add(roomId);
+    if (t.presentationBatchDepth === 0) this.flushTournamentPresentation(t);
+  }
+
+  private flushTournamentPresentation(t: TournamentRuntime): void {
+    const dirtyRoomIds = [...t.presentationDirtyRooms];
+    t.presentationDirtyRooms.clear();
+    const pos = t.startedAt !== null && t.phase === 'running'
+      ? this.clockPos(t)
+      : null;
+    const cur = pos ? mttLevelAt(t.structure, pos.levelIndex) : null;
+    const next = pos ? t.structure.levels[pos.levelIndex + 1] ?? null : null;
+    const clockDeadline = pos && Number.isFinite(pos.segmentRemainingMs)
+      ? (t.pausedAt ?? Date.now()) + pos.segmentRemainingMs
+      : 0;
+    for (const roomId of t.tables.keys()) {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      const state = engine?.state.tournament;
+      if (!engine || !state) continue;
+      state.fieldRemaining = t.remaining;
+      state.stage = t.stage;
+      state.holdReasons = this.publicHoldReasons(t, roomId);
+      state.stageEndsAt = t.stageEndsAt
+        ?? (state.holdReasons.includes('scheduled-break') ? clockDeadline : undefined);
+      state.finalTheme = t.finalTheme;
+      if (pos && cur && t.pendingLevel === null && !engine.state.isHandInProgress) {
+        state.level = pos.levelIndex + 1;
+        state.smallBlind = cur.smallBlind;
+        state.bigBlind = cur.bigBlind;
+        state.ante = cur.ante;
+        state.nextSmallBlind = next?.smallBlind ?? null;
+        state.nextBigBlind = next?.bigBlind ?? null;
+        state.levelEndsAt = clockDeadline;
+      }
+    }
+    for (const roomId of dirtyRoomIds) {
+      if (t.tables.has(roomId) && this.roomManager.getRoom(roomId)) {
+        this.roomManager.broadcastRoom(roomId);
+      }
+    }
   }
 
   private armBreakResume(t: TournamentRuntime): void {
@@ -1402,12 +2058,17 @@ export class TournamentManager {
     t.breakTimer = setTimeout(() => {
       t.breakTimer = null;
       t.breakAnnounced = false;
-      for (const roomId of [...t.held.keys()]) {
-        if (t.held.get(roomId) === 'break') {
-          t.held.delete(roomId);
-          this.roomManager.postSystemChat(roomId, '휴식이 끝났어요 — 게임을 재개합니다!');
-          this.roomManager.resumeRoom(roomId);
+      const releasedRoomIds = [...t.holds.keys()].filter(
+        roomId => t.holds.get(roomId)?.has('scheduled-break'),
+      );
+      this.batchTournamentPresentation(t, () => {
+        for (const roomId of releasedRoomIds) {
+          this.removeHold(t, roomId, 'scheduled-break');
         }
+      });
+      for (const roomId of releasedRoomIds) {
+        this.roomManager.postSystemChat(roomId, '휴식이 끝났어요 — 게임을 재개합니다!');
+        this.resumeIfUnheld(t, roomId);
       }
       this.hooks.onTournamentUpdate?.(t.id);
     }, pos.segmentRemainingMs + 250);
@@ -1420,30 +2081,27 @@ export class TournamentManager {
     return mttClockAt(t.structure, elapsed);
   }
 
-  /** 각 테이블의 tournament 미러에 전체 잔존 인원을 반영 (HUD 표시용) */
-  private syncRemaining(t: TournamentRuntime): void {
-    for (const roomId of t.tables.keys()) {
-      const state = this.roomManager.getRoom(roomId)?.engine.state.tournament;
-      if (state) state.fieldRemaining = t.remaining;
-    }
-  }
-
   /** 엔진에 현재 레벨 반영 (변화가 있을 때만) + 테이블 채팅 공지 */
   private pushLevel(
     t: TournamentRuntime,
     engine: PokerEngine,
     pos: ReturnType<typeof mttClockAt>,
     initial: boolean,
+    force = false,
+    levelEndsAtOverride?: number,
+    announce = true,
   ): void {
     const state = engine.state.tournament;
     if (!state) return;
     const level = pos.levelIndex + 1;
-    if (!initial && state.level === level && state.levelEndsAt !== 0) return;
+    if (!force && !initial && state.level === level && state.levelEndsAt !== 0) return;
     const cur = mttLevelAt(t.structure, pos.levelIndex);
     const next = t.structure.levels[pos.levelIndex + 1] ?? null;
-    const levelEndsAt = Number.isFinite(pos.segmentRemainingMs)
-      ? Date.now() + pos.segmentRemainingMs
-      : 0;
+    const levelEndsAt = levelEndsAtOverride ?? (
+      Number.isFinite(pos.segmentRemainingMs)
+        ? Date.now() + pos.segmentRemainingMs
+        : 0
+    );
     const changed = state.level !== level;
     engine.setTournamentLevel(
       level,
@@ -1454,7 +2112,7 @@ export class TournamentManager {
       levelEndsAt,
       cur.ante,
     );
-    if (changed && !initial) {
+    if (changed && !initial && announce) {
       const anteText = cur.ante > 0 ? ` · 앤티 ${cur.ante}` : '';
       this.roomManager.postSystemChat(
         engine.state.id,
@@ -1464,6 +2122,51 @@ export class TournamentManager {
   }
 
   // --- 내부 ---
+
+  private addTournamentTable(
+    t: TournamentRuntime,
+    roomId: string,
+    metadata: { no: number },
+  ): void {
+    t.tables.set(roomId, metadata);
+    const pending = t.pendingLevel;
+    if (
+      pending
+      && t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation
+    ) {
+      pending.expectedRoomIds.add(roomId);
+    }
+  }
+
+  private removeTournamentTable(t: TournamentRuntime, roomId: string): void {
+    t.tables.delete(roomId);
+    t.appliedLevelGenerationByRoom.delete(roomId);
+    t.stagedLevelByRoom.delete(roomId);
+    t.pendingLevel?.expectedRoomIds.delete(roomId);
+    this.reconcilePendingLevelRooms(t);
+  }
+
+  private reconcilePendingLevelRooms(t: TournamentRuntime): void {
+    const pending = t.pendingLevel;
+    if (!pending) return;
+
+    for (const roomId of [...pending.expectedRoomIds]) {
+      if (t.tables.has(roomId) && this.roomManager.getRoom(roomId)) continue;
+      pending.expectedRoomIds.delete(roomId);
+      t.appliedLevelGenerationByRoom.delete(roomId);
+    }
+    for (const roomId of t.tables.keys()) {
+      if (!this.roomManager.getRoom(roomId)) continue;
+      if (t.appliedLevelGenerationByRoom.get(roomId) !== pending.generation) {
+        pending.expectedRoomIds.add(roomId);
+      }
+    }
+    if ([...pending.expectedRoomIds].every(
+      roomId => t.appliedLevelGenerationByRoom.get(roomId) === pending.generation,
+    )) {
+      t.pendingLevel = null;
+    }
+  }
 
   private byTable(roomId: string): TournamentRuntime | undefined {
     const tid = this.byRoom.get(roomId);
@@ -1547,6 +2250,10 @@ export class TournamentManager {
       economyMode: t.config.economyMode ?? 'practice',
       entryBuyIn: t.config.entryBuyIn ?? 0,
       entryFee: t.config.entryFee ?? 0,
+      stage: t.stage,
+      holdReasons: this.publicHoldReasons(t),
+      stageEndsAt: this.presentationDeadline(t),
+      finalTheme: t.finalTheme,
       ...(forPlayerId
         ? { registered: t.entrants.has(forPlayerId) }
         : {}),

@@ -5,6 +5,7 @@ import {
   type TournamentRuntimeHooks,
 } from './tournament-manager';
 import type { PokerEngine } from '../lib/poker/engine';
+import { computePayouts } from '../lib/poker/payout-table';
 
 /**
  * MTT 오케스트레이션 통합 테스트.
@@ -87,6 +88,87 @@ function start12(h: Harness): { id: string; tables: string[] } {
   const tables = mttTableIds(h.roomManager);
   expect(tables.length).toBe(2);
   return { id: created.tournamentId, tables };
+}
+
+function prepareFourMaxH4hBubble(h: Harness): { id: string; tables: string[] } {
+  const created = h.manager.createTournament({
+    name: '동률 H4H',
+    speed: 'standard',
+    maxEntrants: 12,
+    tableSize: 4,
+    startAt: null,
+    botFill: false,
+    turnTime: 15,
+    hostId: 'h1',
+  });
+  if (!created.ok) throw new Error('create failed');
+  for (let i = 1; i <= 12; i++) {
+    h.manager.register(created.tournamentId, {
+      id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+    });
+  }
+  expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+  while (h.manager.listTournaments()[0].remaining > 6) {
+    const candidates = mttTableIds(h.roomManager)
+      .map(id => ({ id, alive: aliveIds(engineOf(h.roomManager, id)).length }))
+      .sort((a, b) => b.alive - a.alive);
+    const roomId = candidates[0]?.id;
+    if (!roomId || candidates[0].alive === 0) {
+      throw new Error(
+        `no live H4H candidate: remaining=${h.manager.listTournaments()[0].remaining} `
+        + `${JSON.stringify(candidates)}`,
+      );
+    }
+    const engine = engineOf(h.roomManager, roomId);
+    bust(engine, aliveIds(engine)[0], 100);
+    h.manager.roomHooks.onHandComplete(roomId);
+  }
+
+  return { id: created.tournamentId, tables: mttTableIds(h.roomManager) };
+}
+
+function runCrossTableTie(
+  callbackOrder: 'forward' | 'reverse',
+): Array<{ playerId: string; place: number; prize: number }> {
+  const local = createHarness();
+  try {
+    const { tables } = prepareFourMaxH4hBubble(local);
+    const [firstRoomId, secondRoomId] = tables;
+    const first = engineOf(local.roomManager, firstRoomId);
+    const second = engineOf(local.roomManager, secondRoomId);
+
+    // 6 → 5명: 버블 H4H를 무장한 뒤 두 테이블이 같은 라운드를 시작한다.
+    bust(first, aliveIds(first)[0], 100);
+    expect(local.manager.roomHooks.onHandComplete(firstRoomId)).toBe('hold');
+    for (const [roomId, engine] of [
+      [firstRoomId, first],
+      [secondRoomId, second],
+    ] as const) {
+      engine.startHand();
+      local.manager.roomHooks.onHandStarted(roomId, engine.state.handNumber);
+    }
+
+    const firstPlayerId = aliveIds(first)[0];
+    const secondPlayerId = aliveIds(second)[0];
+    bust(first, firstPlayerId, 777);
+    bust(second, secondPlayerId, 777);
+
+    const callbacks = callbackOrder === 'forward'
+      ? [[firstRoomId, first], [secondRoomId, second]] as const
+      : [[secondRoomId, second], [firstRoomId, first]] as const;
+    for (const [roomId, engine] of callbacks) {
+      engine.state.isHandInProgress = false;
+      local.manager.roomHooks.onHandComplete(roomId);
+    }
+
+    return local.events.eliminated
+      .filter(event => event.playerId === firstPlayerId || event.playerId === secondPlayerId)
+      .sort((a, b) => a.playerId.localeCompare(b.playerId));
+  } finally {
+    local.manager.shutdown();
+    local.roomManager.shutdown();
+  }
 }
 
 describe('TournamentManager', () => {
@@ -181,7 +263,7 @@ describe('TournamentManager', () => {
     const created = h.manager.createTournament({
       name: '체크인',
       speed: 'standard',
-      maxEntrants: 8,
+      maxEntrants: 10,
       tableSize: 6,
       startAt: null,
       botFill: false,
@@ -189,7 +271,7 @@ describe('TournamentManager', () => {
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 8; i++) {
+    for (let i = 1; i <= 10; i++) {
       h.manager.register(created.tournamentId, { id: `h${i}`, name: `유저${i}`, avatar: 'ara' });
     }
     expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -198,8 +280,52 @@ describe('TournamentManager', () => {
       engineOf(h.roomManager, roomId).state.players.map(p => p.id));
     expect(seatedIds).not.toContain('h2');
     expect(seatedIds).not.toContain('h4');
-    expect(seatedIds.length).toBe(6);
-    expect(h.manager.listTournaments()[0].remaining).toBe(6);
+    expect(seatedIds.length).toBe(8);
+    expect(h.manager.listTournaments()[0].remaining).toBe(8);
+  });
+
+  it('requires eight actual starters unless practice bot fill reaches the minimum', () => {
+    const humansOnly = h.manager.createTournament({
+      name: '최소 인원',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!humansOnly.ok) throw new Error('create failed');
+    for (let i = 1; i <= 7; i++) {
+      h.manager.register(humansOnly.tournamentId, {
+        id: `h${i}`,
+        name: `유저${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(humansOnly.tournamentId, 'h1')).toBe('not-enough');
+    expect(mttTableIds(h.roomManager)).toHaveLength(0);
+
+    const botFill = h.manager.createTournament({
+      name: '봇 최소 인원 충원',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h2',
+    });
+    if (!botFill.ok) throw new Error('create failed');
+    h.manager.register(botFill.tournamentId, {
+      id: 'h8',
+      name: '유저8',
+      avatar: 'ara',
+    });
+
+    expect(h.manager.startTournament(botFill.tournamentId, 'h2')).toBe('ok');
+    expect(h.manager.listTournaments().find(t => t.id === botFill.tournamentId)?.entrantCount)
+      .toBe(8);
   });
 
   it('auto-cancels a scheduled tournament with too few checked-in entrants', () => {
@@ -254,7 +380,43 @@ describe('TournamentManager', () => {
     expect(moved.chips).toBe(10000);
   });
 
-  it('runs hand-for-hand at the bubble and breaks tables to a final table', () => {
+  it('breaks same-table equal-stack eliminations by seat order left of the button', () => {
+    const { tables: [roomId] } = start12(h);
+    const engine = engineOf(h.roomManager, roomId);
+    engine.state.dealerIndex = 0;
+    const firstLeft = engine.state.players[1];
+    const fartherLeft = engine.state.players[3];
+
+    bust(engine, firstLeft.id, 500);
+    bust(engine, fartherLeft.id, 500);
+    expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('continue');
+
+    expect(firstLeft.finishPlace).toBe(11);
+    expect(fartherLeft.finishPlace).toBe(12);
+  });
+
+  it('gives cross-table equal-stack H4H busts identical results regardless of callback order', () => {
+    let randomCall = 0;
+    const random = vi.spyOn(Math, 'random').mockImplementation(
+      () => ((randomCall++ % 997) + 1) / 1_000,
+    );
+    try {
+      randomCall = 0;
+      const forward = runCrossTableTie('forward');
+      randomCall = 0;
+      const reverse = runCrossTableTie('reverse');
+      const ladder = computePayouts(120_000, 12);
+
+      expect(reverse).toEqual(forward);
+      expect(forward.map(result => result.place)).toEqual([4, 4]);
+      expect(forward.reduce((sum, result) => sum + result.prize, 0))
+        .toBe((ladder[3] ?? 0) + (ladder[4] ?? 0));
+    } finally {
+      random.mockRestore();
+    }
+  });
+
+  it('merges to a final table before arming H4H when the field fits', () => {
     const { id, tables } = start12(h);
     const [t1, t2] = tables;
     const e1 = engineOf(h.roomManager, t1);
@@ -270,28 +432,190 @@ describe('TournamentManager', () => {
     expect(h.manager.roomHooks.onHandComplete(t2)).toBe('continue');
     expect(h.manager.listTournaments()[0].remaining).toBe(7);
 
-    // 2명 더 탈락 → remaining 5 = 버블 → H4H 발동
+    // 2명 더 탈락 → remaining 5 = 버블이지만 6-max 정원 안이므로 파이널 병합이 우선
     const more = aliveIds(e1).slice(0, 2);
     more.forEach((pid, i) => bust(e1, pid, 50 * (i + 1)));
-    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('hold');
-    // 전 테이블이 핸드 사이 → 즉시 무장되어 다음 동기화 핸드 허용
-    expect(h.manager.roomHooks.isHeld(t1)).toBe(false);
-    expect(h.manager.roomHooks.isHeld(t2)).toBe(false);
-
-    // 동기화 핸드에서 버블 보이 탈락 → 순위 확정 + H4H 종료
-    const bubbleBoy = aliveIds(e1)[0];
-    bust(e1, bubbleBoy, 200);
-    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('hold');
-    const bubblePlayer = e1.state.players.find(p => p.id === bubbleBoy)!;
-    expect(bubblePlayer.finishPlace).toBe(5);
-    expect(h.manager.listTournaments()[0].remaining).toBe(4);
-
-    // t1은 1명만 남음 → t2가 핸드를 끝내면 테이블 브레이크 → 파이널 테이블
-    expect(h.manager.roomHooks.onHandComplete(t2)).toBe('continue');
+    expect(['hold', 'gone']).toContain(h.manager.roomHooks.onHandComplete(t1));
     expect(h.roomManager.getRoom(t1)).toBeUndefined();
     expect(h.manager.listTournaments()[0].tableCount).toBe(1);
-    expect(aliveIds(e2).length).toBe(4);
+    expect(aliveIds(e2).length).toBe(5);
+    expect(e2.state.tournament?.stage).toBe('final-intro');
     expect(h.manager.getTournamentIdForRoom(t2)).toBe(id);
+  });
+
+  it('forms a 1-versus-4 final table before H4H can start another hand', () => {
+    const { id, tables } = start12(h);
+    const [t1, t2] = tables;
+    const e1 = engineOf(h.roomManager, t1);
+    const e2 = engineOf(h.roomManager, t2);
+
+    aliveIds(e1).slice(0, 5).forEach((pid, i) => bust(e1, pid, 100 * (i + 1)));
+    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('continue');
+    expect(aliveIds(e1)).toHaveLength(1);
+
+    aliveIds(e2).slice(0, 2).forEach((pid, i) => bust(e2, pid, 100 * (i + 1)));
+    const resume = vi.spyOn(h.roomManager, 'resumeMttRoomAfterPresentation');
+    resume.mockClear();
+    expect(h.manager.roomHooks.onHandComplete(t2)).toBe('hold');
+
+    const finalTables = mttTableIds(h.roomManager);
+    expect(finalTables).toHaveLength(1);
+    const finalRoomId = finalTables[0];
+    const finalEngine = engineOf(h.roomManager, finalRoomId);
+    expect(h.manager.getTournamentIdForRoom(finalRoomId)).toBe(id);
+    expect(aliveIds(finalEngine)).toHaveLength(5);
+    expect(finalEngine.state.handNumber).toBe(0);
+    expect(finalEngine.state.tournament?.stage).toBe('final-intro');
+    expect(finalEngine.state.tournament?.holdReasons).toEqual(['final-intro']);
+    expect(finalEngine.state.tournament?.stageEndsAt).toBe(Date.now() + 4_500);
+    expect(resume).not.toHaveBeenCalledWith(finalRoomId);
+
+    vi.advanceTimersByTime(4_499);
+    expect(finalEngine.state.handNumber).toBe(0);
+    expect(finalEngine.state.tournament?.stage).toBe('final-intro');
+    vi.advanceTimersByTime(1);
+    expect(finalEngine.state.tournament?.stage).toBe('final-playing');
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs the final intro once before the first hand of a single-table MTT', () => {
+    const created = h.manager.createTournament({
+      name: '단일 테이블 파이널',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [roomId] = mttTableIds(h.roomManager);
+    const engine = engineOf(h.roomManager, roomId);
+
+    expect(engine.state.handNumber).toBe(0);
+    expect(engine.state.tournament?.stage).toBe('final-intro');
+    expect(engine.state.tournament?.holdReasons).toEqual(['final-intro']);
+    expect(engine.state.tournament?.stageEndsAt).toBe(Date.now() + 4_500);
+
+    h.roomManager.resumeRoom(roomId);
+    vi.advanceTimersByTime(4_499);
+    expect(engine.state.handNumber).toBe(0);
+    expect(engine.state.tournament?.stage).toBe('final-intro');
+
+    vi.advanceTimersByTime(1);
+    expect(engine.state.tournament?.stage).toBe('final-playing');
+    vi.advanceTimersByTime(2_000);
+    expect(engine.state.handNumber).toBe(1);
+
+    // 재동기화성 resume은 파이널 인트로를 다시 만들지 않는다.
+    h.roomManager.resumeRoom(roomId);
+    expect(engine.state.tournament?.stage).toBe('final-playing');
+  });
+
+  it('expires only the final-intro hold while a director pause remains', () => {
+    const created = h.manager.createTournament({
+      name: '인트로 겹침',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [roomId] = mttTableIds(h.roomManager);
+    const engine = engineOf(h.roomManager, roomId);
+    expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(engine.state.tournament?.holdReasons).toEqual(['director-pause', 'final-intro']);
+
+    const resume = vi.spyOn(h.roomManager, 'resumeMttRoomAfterPresentation');
+    vi.advanceTimersByTime(4_500);
+    expect(engine.state.tournament?.stage).toBe('final-playing');
+    expect(engine.state.tournament?.holdReasons).toEqual(['director-pause']);
+    expect(resume).not.toHaveBeenCalled();
+
+    expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
+    expect(engine.state.tournament?.holdReasons).toEqual([]);
+    expect(resume).toHaveBeenCalledWith(roomId);
+  });
+
+  it('clears lower-priority holds when the tournament completes during final intro', () => {
+    const created = h.manager.createTournament({
+      name: '인트로 중 완료',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`, name: `유저${i}`, avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [roomId] = mttTableIds(h.roomManager);
+    const engine = engineOf(h.roomManager, roomId);
+    expect(h.manager.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(engine.state.tournament?.holdReasons).toEqual(['director-pause', 'final-intro']);
+
+    aliveIds(engine).slice(0, 7).forEach((playerId, i) => bust(engine, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('hold');
+
+    expect(engine.state.tournament?.finished).toBe(true);
+    expect(engine.state.tournament?.stage).toBe('complete');
+    expect(engine.state.tournament?.holdReasons).toEqual([]);
+    expect(engine.state.tournament?.stageEndsAt).toBeUndefined();
+    expect(h.manager.getDetail(created.tournamentId)?.holdReasons).toEqual([]);
+    expect(h.manager.listTournaments()[0].holdReasons).toEqual([]);
+  });
+
+  it('arms final intro for only the time remaining on its published deadline', () => {
+    let shiftedClock = false;
+    h = createHarness({
+      onTournamentUpdate: tournamentId => {
+        if (!shiftedClock && h.manager.getDetail(tournamentId)?.stage === 'final-intro') {
+          shiftedClock = true;
+          vi.setSystemTime(Date.now() + 1_000);
+        }
+      },
+    });
+    const { tables } = start12(h);
+    const [t1, t2] = tables;
+    const e1 = engineOf(h.roomManager, t1);
+    const e2 = engineOf(h.roomManager, t2);
+
+    aliveIds(e1).slice(0, 5).forEach((playerId, i) => bust(e1, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(t1)).toBe('continue');
+    aliveIds(e2).slice(0, 2).forEach((playerId, i) => bust(e2, playerId, i + 1));
+    expect(h.manager.roomHooks.onHandComplete(t2)).toBe('hold');
+
+    const [finalRoomId] = mttTableIds(h.roomManager);
+    const finalEngine = engineOf(h.roomManager, finalRoomId);
+    expect(shiftedClock).toBe(true);
+    expect(finalEngine.state.tournament?.stageEndsAt).toBe(Date.now() + 3_500);
+
+    vi.advanceTimersByTime(3_499);
+    expect(finalEngine.state.tournament?.stage).toBe('final-intro');
+    vi.advanceTimersByTime(1);
+    expect(finalEngine.state.tournament?.stage).toBe('final-playing');
   });
 
   it('completes the tournament and pays the ladder exactly', () => {
@@ -366,6 +690,44 @@ describe('TournamentManager', () => {
     expect(aliveRows.length).toBe(12);
     const t2Rows = aliveRows.filter(r => r.tableNo === 2);
     expect(t2Rows.every(r => r.chips === 10000)).toBe(true);
+  });
+
+  it('publishes the reduced table count after a non-final table break', () => {
+    h.manager.shutdown();
+    h.roomManager.shutdown();
+    const onTournamentsChanged = vi.fn();
+    h = createHarness({ onTournamentsChanged });
+
+    const created = h.manager.createTournament({
+      name: 'Table count refresh',
+      speed: 'standard',
+      maxEntrants: 18,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 18; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`,
+        name: `u${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [sourceRoomId] = mttTableIds(h.roomManager);
+    const source = engineOf(h.roomManager, sourceRoomId);
+
+    onTournamentsChanged.mockClear();
+    aliveIds(source).forEach((playerId, index) => {
+      bust(source, playerId, index + 1);
+    });
+    expect(h.manager.roomHooks.onHandComplete(sourceRoomId)).toBe('gone');
+
+    expect(h.manager.listTournaments()[0].tableCount).toBe(2);
+    expect(onTournamentsChanged).toHaveBeenCalledTimes(2);
   });
 
   it('aborts a table break entirely when destinations lack capacity', () => {

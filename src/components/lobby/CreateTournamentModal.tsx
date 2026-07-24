@@ -69,6 +69,12 @@ export default function CreateTournamentModal({
 
   return (
     <ModalShell title="토너먼트 개설" onClose={onClose}>
+      <div className="mb-2 rounded-lg border border-mystic/25 bg-panel/70 px-2.5 py-2 text-[10px] leading-relaxed text-ink-dim">
+        <p className="font-bold text-ink">프리즈아웃 · 늦은 등록 없음 · 재등록/리엔트리 없음</p>
+        <p className="mt-0.5">
+          최소 8명 필드가 필요하며, 등록한 사람은 시작 시 온라인이어야 체크인되어 착석해요.
+        </p>
+      </div>
       <label className="block text-xs text-ink-dim">
         이름
         <input
@@ -137,7 +143,7 @@ export default function CreateTournamentModal({
       {economyMode === 'practice' ? (
         <label className="mt-2 flex items-center gap-2 text-xs text-ink">
           <input type="checkbox" checked={botFill} onChange={e => setBotFill(e.target.checked)} />
-          시작 시 남는 자리를 봇으로 채우기 (혼자여도 풀필드!)
+          체크인 후 최대 인원까지 남은 자리를 봇으로 채우기
         </label>
       ) : (
         <p className="mt-2 text-[10px] text-ink-dim">

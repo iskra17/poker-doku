@@ -80,6 +80,8 @@ export class PokerEngine {
   private config: RoomConfig;
   private readonly runtimeHooks: EngineRuntimeHooks;
   state: GameState;
+  /** rebuildPots가 만든 각 팟 계층의 실제 기여자 — 정산 시 solo-eligible 팟 검증용 */
+  private potContributorIds: string[][] = [[]];
   /** 진행 중 핸드의 히스토리 초안 — startHand가 열고 endHand가 완성한다 */
   private handRecordDraft: HandRecordDraft | null = null;
   /**
@@ -704,7 +706,7 @@ export class PokerEngine {
     });
 
     player.hasActed = true;
-    this.state.lastAction = action;
+    this.state.lastAction = { ...action, amount: recordedAmount };
     this.state.actionSeq++;
     this.rebuildPots();
 
@@ -721,12 +723,14 @@ export class PokerEngine {
     // Check if only one player remains (everyone else folded)
     const remaining = this.getActivePlayers();
     if (remaining.length <= 1) {
+      this.returnUncalledBet(false);
       this.endHand();
       return { handComplete: true };
     }
 
     // Check if betting round is complete
     if (this.isBettingRoundComplete()) {
+      this.returnUncalledBet(true);
       const handComplete = this.advanceStreet();
       return { handComplete };
     }
@@ -758,6 +762,47 @@ export class PokerEngine {
   }
 
   /**
+   * 닫힌 베팅 라운드에서 두 번째로 높은 스트리트 베팅을 초과한 유일 고액 베팅을 반환한다.
+   * 앤티는 currentBet에 포함되지 않으므로 deadContributed는 건드리지 않는다.
+   */
+  private returnUncalledBet(includeForcedBet: boolean): void {
+    const ordered = [...this.state.players].sort((a, b) => b.currentBet - a.currentBet);
+    if (ordered.length < 2 || ordered[0].currentBet === ordered[1].currentBet) return;
+
+    const player = ordered[0];
+    // 폴드한 플레이어의 베팅은 dead money다. 폴드 승리에서는 강제 블라인드 차액도 팟에 남긴다.
+    if (
+      (player.status !== 'active' && player.status !== 'all-in')
+      || (!includeForcedBet && player.id !== this.state.lastAggressorId)
+    ) return;
+
+    const amount = player.currentBet - ordered[1].currentBet;
+    const chips = player.chips + amount;
+    const currentBet = player.currentBet - amount;
+    const totalContributed = player.totalContributed - amount;
+
+    this.sumSettlementAmounts(
+      [amount, chips, currentBet, totalContributed],
+      'uncalled return',
+    );
+    if (totalContributed < (player.deadContributed ?? 0)) {
+      throw new Error('settlement invariant failed: uncalled return consumes dead contribution');
+    }
+
+    player.chips = chips;
+    player.currentBet = currentBet;
+    player.totalContributed = totalContributed;
+    this.state.currentBet = Math.max(0, ...this.state.players.map(p => p.currentBet));
+    this.handRecordDraft?.actions.push({
+      street: this.state.street,
+      playerId: player.id,
+      kind: 'uncalled-return',
+      amount,
+    });
+    this.rebuildPots();
+  }
+
+  /**
    * 팟 재유도: 플레이어별 핸드 누적 기여금(totalContributed)에서 팟 계층 전체를 매번 다시 계산한다.
    * 스트리트 경계(currentBet 리셋)와 무관하므로 멀티 스트리트 사이드팟 금액 소실이 구조적으로 불가능.
    * 폴드한 플레이어의 기여금(dead money)도 자동 포함된다.
@@ -766,13 +811,16 @@ export class PokerEngine {
    */
   private rebuildPots(): void {
     const contributors = this.state.players.filter(p => p.totalContributed > 0);
+    // BB ante가 숏스택의 전액을 소진하면 상대는 uncalled blind를 전부 반환받아 기여금이 0이 될 수
+    // 있지만, 여전히 딜인된 생존자로서 dead money 팟을 다툰다.
     const contenders = this.state.players.filter(
-      p => (p.status === 'active' || p.status === 'all-in') && p.totalContributed > 0
+      p => p.status === 'active' || p.status === 'all-in'
     );
     const total = contributors.reduce((s, p) => s + p.totalContributed, 0);
 
     if (total === 0 || contenders.length === 0) {
       this.state.pots = [{ amount: total, eligiblePlayerIds: contenders.map(p => p.id) }];
+      this.potContributorIds = [contributors.map(p => p.id)];
       return;
     }
 
@@ -790,9 +838,15 @@ export class PokerEngine {
     const levels: number[] = [...allInLevels, Infinity];
 
     const pots: Pot[] = [];
+    const potContributorIds: string[][] = [];
     let prev = 0;
     let deadRemaining = deadTotal;
     for (const level of levels) {
+      const layerContributorIds = contributors
+        .filter(p =>
+          Math.max(0, Math.min(live(p), level) - prev) > 0
+          || (deadRemaining > 0 && (p.deadContributed ?? 0) > 0))
+        .map(p => p.id);
       const liveAmount = contributors.reduce(
         (s, p) => s + Math.max(0, Math.min(live(p), level) - prev), 0);
       const amount = liveAmount + deadRemaining;
@@ -806,17 +860,25 @@ export class PokerEngine {
       if (eligible.length === 0 && pots.length > 0) {
         // 자격자 없는 잔여분(예: 올인 캡 초과 dead money)은 직전 팟에 귀속
         pots[pots.length - 1].amount += amount;
+        potContributorIds[potContributorIds.length - 1] = [
+          ...new Set([
+            ...potContributorIds[potContributorIds.length - 1],
+            ...layerContributorIds,
+          ]),
+        ];
       } else {
         pots.push({
           amount,
           eligiblePlayerIds: (eligible.length > 0 ? eligible : contenders).map(p => p.id),
         });
+        potContributorIds.push(layerContributorIds);
       }
       deadRemaining = 0;
       prev = level;
     }
 
     this.state.pots = pots;
+    this.potContributorIds = potContributorIds;
   }
 
   private advanceStreet(): boolean {
@@ -948,11 +1010,23 @@ export class PokerEngine {
         });
       }
 
-      // Handle remainder (odd chips go to first position)
+      // Handle remainder (odd chips go to the first tied winner left of the button)
       const remainder = pot.amount - share * potWinners.length;
       if (remainder > 0) {
-        potWinners[0].player.chips += remainder;
-        winners[winners.length - potWinners.length].amount += remainder;
+        const oddChipWinners = [...potWinners].sort(
+          (a, b) => this.distanceLeftOfButton(a.player) - this.distanceLeftOfButton(b.player),
+        ).slice(0, remainder);
+        const potWinResults = winners.slice(winners.length - potWinners.length);
+        for (const oddChipWinner of oddChipWinners) {
+          oddChipWinner.player.chips += 1;
+          const winResult = potWinResults.find(
+            result => result.playerId === oddChipWinner.player.id,
+          );
+          if (!winResult) {
+            throw new Error('settlement invariant failed: odd-chip winner has no payout entry');
+          }
+          winResult.amount += 1;
+        }
       }
     }
 
@@ -960,6 +1034,16 @@ export class PokerEngine {
     this.assertSettlementInvariant(payoutPots);
     this.finalizeTournamentHand();
     this.finalizeHandRecord();
+  }
+
+  private distanceLeftOfButton(player: Player): number {
+    const n = this.state.players.length;
+    const index = this.state.players.findIndex(p => p.id === player.id);
+    if (index < 0 || n === 0) {
+      throw new Error('settlement invariant failed: odd-chip winner is not seated');
+    }
+    const distance = (index - this.state.dealerIndex + n) % n;
+    return distance === 0 ? n : distance;
   }
 
   /** 핸드 히스토리 초안 개시 — startHand에서 딜러 확정 직후·블라인드 포스팅 직전에 호출 */
@@ -1054,6 +1138,21 @@ export class PokerEngine {
   }
 
   private preparePayoutPots(): Pot[] {
+    const foldedWin = this.getActivePlayers().length === 1;
+    if (!foldedWin) {
+      const soloPot = this.state.pots.find(
+        (pot, index) =>
+          pot.amount > 0
+          && pot.eligiblePlayerIds.length < 2
+          && (this.potContributorIds[index]?.length ?? 0) < 2,
+      );
+      if (soloPot) {
+        throw new Error(
+          'settlement invariant failed: contested positive pot has fewer than two contributors',
+        );
+      }
+    }
+
     const grossTotal = this.sumSettlementAmounts(
       this.state.pots.map(pot => pot.amount),
       'gross pots',

@@ -145,6 +145,25 @@ export interface GameState {
   hostId?: string; // 방 생성자 playerId — Sit & Go 봇 채우기 권한 판단용
 }
 
+export type TournamentStage =
+  | 'multi-table'
+  | 'final-forming'
+  | 'final-intro'
+  | 'final-playing'
+  | 'complete';
+
+export type TournamentHoldReason =
+  | 'director-pause'
+  | 'scheduled-break'
+  | 'h4h-barrier'
+  | 'final-forming'
+  | 'final-intro';
+
+export type FinalTableTheme =
+  | 'sakura-championship'
+  | 'gold-spotlight'
+  | 'neon-arena';
+
 /** 시트앤고/MTT 진행 상태 — getPublicState로 자동 브로드캐스트 */
 export interface TournamentState {
   /** MTT 전용 — 소속 토너먼트 ID (게임 중 상세 조회/HUD 진입점의 키, 매니저가 주입) */
@@ -160,6 +179,14 @@ export interface TournamentState {
   entrants: number; // 시작 인원 (0 = 아직 미시작). MTT는 전체 필드 인원 (매니저가 주입)
   /** MTT 전용 — 전체 필드 잔존 인원 (매니저가 탈락마다 갱신, HUD 표시용) */
   fieldRemaining?: number;
+  /** MTT 전용 — 멀티테이블부터 파이널/완료까지의 서버 권위 단계 */
+  stage?: TournamentStage;
+  /** MTT 전용 — 다음 핸드를 막는 합성 가능한 서버 권위 보류 사유 */
+  holdReasons?: TournamentHoldReason[];
+  /** final-intro/브레이크 표시용 서버 deadline (epoch ms) */
+  stageEndsAt?: number;
+  /** 파이널 테이블 표현 테마 */
+  finalTheme?: FinalTableTheme;
   prizes: number[]; // 순위별 상금 (1위부터)
   finished: boolean;
   results: TournamentResult[];

@@ -176,6 +176,53 @@ describe('wallet MTT 에스크로', () => {
       .toThrowError(expect.objectContaining({ code: 'SNG_SETTLEMENT_CONFLICT' }));
   });
 
+  it('공동 순위의 점유 상금을 나누고 같은 결과 재정산은 멱등이다', () => {
+    const ids = seedEntrants(35);
+    service.startMttTournament(MTT_ID, ids);
+
+    const pool = MTT_WALLET_BUY_IN * ids.length;
+    const ladder = computePayouts(pool, ids.length);
+    const sharedPool = (ladder[5] ?? 0) + (ladder[6] ?? 0);
+    const sharedBase = Math.floor(sharedPool / 2);
+    const sharedRemainder = sharedPool - sharedBase * 2;
+    const tiedIds = ['p6', 'p7'].sort((a, b) => a.localeCompare(b));
+    expect(sharedRemainder).toBe(1);
+    const results = ids.map((playerId, index) => {
+      if (index < 5) {
+        return { playerId, place: index + 1, prize: ladder[index] ?? 0 };
+      }
+      if (index < 7) {
+        const tieIndex = tiedIds.indexOf(playerId);
+        return {
+          playerId,
+          place: 6,
+          prize: sharedBase + (tieIndex < sharedRemainder ? 1 : 0),
+        };
+      }
+      return { playerId, place: index + 1, prize: ladder[index] ?? 0 };
+    });
+
+    expect(results.reduce((sum, result) => sum + result.prize, 0)).toBe(pool);
+    service.settleMttTournament(MTT_ID, results);
+    for (const playerId of tiedIds) {
+      const tieIndex = tiedIds.indexOf(playerId);
+      expect(balanceOf(playerId)).toBe(
+        5_000 - MTT_WALLET_ENTRY_COST
+        + sharedBase
+        + (tieIndex < sharedRemainder ? 1 : 0),
+      );
+    }
+
+    const balancesAfterFirstSettlement = ids.map(balanceOf);
+    expect(() => service.settleMttTournament(MTT_ID, results)).not.toThrow();
+    expect(ids.map(balanceOf)).toEqual(balancesAfterFirstSettlement);
+    expect(database.db.prepare(`
+      SELECT place FROM sng_entries
+      WHERE room_id = ? AND profile_id IN ('p6', 'p7')
+      ORDER BY profile_id
+    `).all(MTT_ID)).toEqual([{ place: 6 }, { place: 6 }]);
+  });
+
   it('무효화는 reserved/started 혼재 전원에게 전액(수수료 포함) 환불한다', () => {
     const ids = seedEntrants(4);
     // 2명만 시작 명단이 아닌 케이스는 없다 — 시작 전 취소(전원 reserved) 경로

@@ -10,7 +10,12 @@ import type {
  */
 
 /** 블라인드/앤티 포스팅도 액션 타임라인에 포함해 리플레이를 완결시킨다 */
-export type HandHistoryActionKind = ActionType | 'post-sb' | 'post-bb' | 'post-ante';
+export type HandHistoryActionKind =
+  | ActionType
+  | 'post-sb'
+  | 'post-bb'
+  | 'post-ante'
+  | 'uncalled-return';
 
 export interface HandHistoryAction {
   street: Street;

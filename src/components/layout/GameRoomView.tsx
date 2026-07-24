@@ -3,12 +3,20 @@
 import { useEffect, useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
+import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { initSoundSystem } from '@/lib/sound/sound-manager';
 import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
 import { initSessionRecap } from '@/lib/session-recap';
+import {
+  finalTableThemeStyle,
+  resolveFinalTableTheme,
+} from '@/lib/tournament/final-table-themes';
 import PokerTable from '@/components/table/PokerTable';
 import ActionBar from '@/components/table/ActionBar';
 import ActionLog from '@/components/table/ActionLog';
+import FinalTableAtmosphere from '@/components/table/FinalTableAtmosphere';
+import FinalTableIntro from '@/components/table/FinalTableIntro';
+import TournamentStatusBanner from '@/components/table/TournamentStatusBanner';
 import TournamentResultOverlay from '@/components/table/TournamentResultOverlay';
 import SngWaitingOverlay from '@/components/table/SngWaitingOverlay';
 import EliminationNotice from '@/components/table/EliminationNotice';
@@ -31,10 +39,25 @@ interface GameRoomViewProps {
 
 /** 인룸 뷰 공용 컴포넌트 — page.tsx와 table/[id]/page.tsx가 공유 */
 export default function GameRoomView({ onLeave }: GameRoomViewProps) {
-  const { gameState, myPlayerId, connectionState, tableNotice, reserveLeave } = useGameStore();
+  const {
+    gameState,
+    myPlayerId,
+    connectionState,
+    tableNotice,
+    reserveLeave,
+    tournaments,
+  } = useGameStore();
   const isMobile = useIsMobile();
+  const reducedMotion = usePrefersReducedMotion();
   const [leaveOpen, setLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
+  const tournament = gameState?.tournament;
+  const isFinalTable = !!tournament?.tournamentId
+    && (tournament.stage === 'final-intro'
+      || tournament.stage === 'final-playing'
+      || tournament.stage === 'complete');
+  const finalTheme = resolveFinalTableTheme(tournament?.finalTheme);
+  const tournamentName = tournaments.find(item => item.id === tournament?.tournamentId)?.name;
   const connectionNotice = connectionState === 'reconnecting'
     ? '연결이 끊겼어요. 다시 연결하는 중…'
     : connectionState === 'replaced'
@@ -73,13 +96,20 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   }, [tournamentFinished]);
 
   return (
-    <div className="h-dvh flex flex-col bg-abyss overflow-hidden">
+    <div
+      className={`h-dvh flex flex-col overflow-hidden ${isFinalTable ? 'bg-[var(--final-stage)]' : 'bg-abyss'}`}
+      style={isFinalTable ? finalTableThemeStyle(finalTheme) : undefined}
+    >
       <TopBar onLeave={handleLeaveClick} />
       {visibleNotice && (
         <div className="flex-none border-b border-gilded/30 bg-elevated/95 px-3 py-1.5 text-center text-xs text-gilded">
           {visibleNotice}
         </div>
       )}
+      <TournamentStatusBanner
+        reasons={tournament?.holdReasons}
+        stageEndsAt={tournament?.stageEndsAt}
+      />
       {/* 착석 대기 배너 — 봇이 자리를 비워줄 때까지 관전 (나가기 ←로 대기 취소) */}
       {waitingForSeat && (
         <div className="flex-none border-b border-cyber/30 bg-elevated/95 px-3 py-1.5 text-center text-xs text-cyber">
@@ -121,8 +151,11 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             {/* 데스크탑 광폭 화면에서 액션 로그(좌)/채팅(우)이 화면 양끝까지 벌어지지 않게
                 테이블 기준 중앙 컨테이너에 함께 묶는다 — 전체 화면을 덮어야 하는
                 오버레이(컷인·모달·백드롭)는 바깥에 남긴다 */}
-            <div className="relative mx-auto h-full w-full max-w-[1100px]">
-              <PokerTable />
+            <div className="relative isolate mx-auto h-full w-full max-w-[1100px]">
+              {isFinalTable && (
+                <FinalTableAtmosphere theme={finalTheme} reducedMotion={reducedMotion} />
+              )}
+              <PokerTable finalTable={isFinalTable} />
               <ActionLog />
               <ChatPanel />
               {/* 승/패 컷인도 컨테이너 안 왼쪽(액션 로그 아래)에 — 광폭 화면에서 양끝으로
@@ -136,9 +169,19 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <Coachmarks />
             <BondSceneUnlockWatcher />
             <SngWaitingOverlay />
-            <EliminationNotice />
+            <EliminationNotice onLeave={onLeave} />
             <BustNotice onLeave={onLeave} />
             <TournamentResultOverlay onLeave={onLeave} />
+            {tournament?.stage === 'final-intro' && (
+              <FinalTableIntro
+                tournamentName={tournamentName}
+                remaining={tournament.fieldRemaining ?? gameState.players.length}
+                firstPrize={tournament.prizes[0]}
+                stageEndsAt={tournament.stageEndsAt ?? 0}
+                theme={finalTheme}
+                reducedMotion={reducedMotion}
+              />
+            )}
           </>
         ) : (
           <div className="h-full flex items-center justify-center">

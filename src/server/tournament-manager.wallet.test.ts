@@ -116,7 +116,7 @@ describe('TournamentManager wallet MTT', () => {
   });
 
   it('시작: 노쇼 환불 → 출석 명단 startEscrow, 실패 시 economy + 등록 유지', () => {
-    const offline = new Set(['p3']);
+    const offline = new Set(['p9']);
     let failStart = true;
     const { calls, economy } = createEconomyMock({
       startEscrow: () => {
@@ -131,35 +131,60 @@ describe('TournamentManager wallet MTT', () => {
     const created = manager.createTournament(walletInput());
     if (!created.ok) throw new Error('create failed');
     const id = created.tournamentId;
-    for (const pid of ['p1', 'p2', 'p3']) {
+    const registered = Array.from({ length: 9 }, (_, index) => `p${index + 1}`);
+    for (const pid of registered) {
       manager.register(id, { id: pid, name: pid, avatar: 'ara' });
     }
 
     expect(manager.startTournament(id, 'h1')).toBe('economy');
-    // 노쇼 p3는 환불·제외, 출석자는 등록 유지 (재시도 가능)
-    expect(calls.filter(c => c.kind === 'refund').map(c => c.args[0])).toEqual(['p3']);
+    // 노쇼 p9는 환불·제외, 출석자는 등록 유지 (재시도 가능)
+    expect(calls.filter(c => c.kind === 'refund').map(c => c.args[0])).toEqual(['p9']);
     const detail = manager.getDetail(id)!;
     expect(detail.summary.phase).toBe('registering');
-    expect(detail.entrants.map(e => e.id).sort()).toEqual(['p1', 'p2']);
+    expect(detail.entrants.map(e => e.id).sort())
+      .toEqual(registered.slice(0, 8).sort());
 
     failStart = false;
     expect(manager.startTournament(id, 'h1')).toBe('ok');
     expect(calls.some(c => c.kind === 'start-ok')).toBe(true);
-    // 풀 = 바이인 × 출석 2명 (수수료 제외), 봇 없음
+    // 풀 = 바이인 × 출석 8명 (수수료 제외), 봇 없음
     const summary = manager.listTournaments()[0];
     expect(summary.phase).toBe('running');
-    expect(summary.entrantCount).toBe(2);
-    expect(summary.prizePool).toBe(BUY_IN * 2);
+    expect(summary.entrantCount).toBe(8);
+    expect(summary.prizePool).toBe(BUY_IN * 8);
     expect(summary.economyMode).toBe('wallet');
+  });
+
+  it('접속 중인 wallet 참가자가 8명 미만이면 시작하지 않는다', () => {
+    const offline = new Set(['p8']);
+    const { calls, economy } = createEconomyMock();
+    manager = new TournamentManager(roomManager, {
+      isConnected: id => !offline.has(id),
+      economy,
+    });
+    const created = manager.createTournament(walletInput({ maxEntrants: 8, tableSize: 8 }));
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      manager.register(created.tournamentId, {
+        id: `p${i}`,
+        name: `p${i}`,
+        avatar: 'ara',
+      });
+    }
+
+    expect(manager.startTournament(created.tournamentId, 'h1')).toBe('not-enough');
+    expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+    expect(calls.some(call => call.kind === 'start')).toBe(false);
+    expect(calls.some(call => call.kind === 'refund')).toBe(false);
   });
 
   it('완주 시 settle에 전 순위와 payout-table 상금이 전달된다', () => {
     const { calls, economy } = createEconomyMock();
     manager = new TournamentManager(roomManager, { isConnected: () => true, economy });
-    const created = manager.createTournament(walletInput({ maxEntrants: 8 }));
+    const created = manager.createTournament(walletInput({ maxEntrants: 8, tableSize: 8 }));
     if (!created.ok) throw new Error('create failed');
     const id = created.tournamentId;
-    const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6'];
+    const ids = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
     for (const pid of ids) manager.register(id, { id: pid, name: pid, avatar: 'ara' });
     expect(manager.startTournament(id, 'h1')).toBe('ok');
 
@@ -168,9 +193,9 @@ describe('TournamentManager wallet MTT', () => {
       .filter(room => room.mode === 'mtt')
       .map(room => room.id);
     const engine = engineOf(roomManager, roomId);
-    // 5명을 순차 버스트 — 스택 차이로 순위 결정
+    // 7명을 순차 버스트 — 스택 차이로 순위 결정
     const alive = engine.state.players.map(p => p.id);
-    alive.slice(0, 5).forEach((pid, i) => {
+    alive.slice(0, 7).forEach((pid, i) => {
       const player = engine.state.players.find(p => p.id === pid)!;
       player.handStartChips = 100 * (i + 1);
       player.chips = 0;
@@ -185,15 +210,15 @@ describe('TournamentManager wallet MTT', () => {
       Array<{ playerId: string; place: number; prize: number }>,
     ];
     expect(settleId).toBe(id);
-    expect(results).toHaveLength(6);
+    expect(results).toHaveLength(8);
     expect([...results.map(r => r.place)].sort((a, b) => a - b))
-      .toEqual([1, 2, 3, 4, 5, 6]);
-    const ladder = computePayouts(BUY_IN * 6, 6);
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    const ladder = computePayouts(BUY_IN * 8, 8);
     for (const result of results) {
       expect(result.prize).toBe(ladder[result.place - 1] ?? 0);
     }
     // 우승자 = 마지막 생존자
-    expect(results.find(r => r.place === 1)!.playerId).toBe(alive[5]);
+    expect(results.find(r => r.place === 1)!.playerId).toBe(alive[7]);
   });
 
   it('취소는 refundAll을 태운다 (등록 중·진행 중 공통)', () => {

@@ -5,6 +5,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import type { MttSpeed, TournamentDetailView } from '@/lib/realtime/protocol';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import Button from '@/components/ui/Button';
+import { resolveTournamentStatus } from '@/components/table/TournamentStatusBanner';
 
 /**
  * 토너먼트 상세 모달 — 로비(TournamentPanel)와 게임 중(TopBar 배지 탭) 공용.
@@ -78,6 +79,10 @@ export default function TournamentDetailModal({
   const myRank = myRow
     ? myRow.place ?? detail.standings.indexOf(myRow) + 1
     : null;
+  const tournamentStatus = resolveTournamentStatus(
+    detail.holdReasons ?? summary.holdReasons,
+  );
+  const finalPlaying = (detail.stage ?? summary.stage) === 'final-playing';
   const act = async (fn: () => Promise<boolean>) => {
     if (busy) return;
     setBusy(true);
@@ -97,6 +102,29 @@ export default function TournamentDetailModal({
         </span>
         <span className="font-bold text-gilded">풀 {summary.prizePool.toLocaleString()}</span>
       </div>
+
+      <div className="mt-2 rounded-lg border border-mystic/20 bg-panel/65 px-2.5 py-2 text-[10px] leading-relaxed text-ink-dim">
+        <p className="font-bold text-ink">
+          프리즈아웃 · 늦은 등록 없음 · 재등록/리엔트리 없음
+        </p>
+        <p className="mt-0.5">
+          시작 필드는 최소 8명이며, 등록한 사람은 시작 시 온라인이어야 체크인되어 착석해요.
+          연습 모드의 봇 채우기는 체크인 후 빈자리를 채워요.
+        </p>
+      </div>
+
+      {(tournamentStatus || finalPlaying) && (
+        <div className="mt-2 rounded-lg border border-gilded/30 bg-gilded/10 px-2 py-1.5 text-center text-xs">
+          <span className="font-bold text-gilded">
+            {tournamentStatus
+              ? `${tournamentStatus.icon} ${tournamentStatus.label}`
+              : '🏆 파이널 테이블'}
+          </span>
+          {tournamentStatus && (
+            <span className="ml-1.5 text-ink-dim">· {tournamentStatus.detail}</span>
+          )}
+        </div>
+      )}
 
       {summary.phase === 'running' && myRank !== null && (
         <div className="mt-2 rounded-lg border border-blossom/30 bg-blossom/10 px-2 py-1.5 text-center text-xs">

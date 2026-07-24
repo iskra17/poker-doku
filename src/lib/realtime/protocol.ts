@@ -1,5 +1,12 @@
 import type { Socket } from 'socket.io-client';
-import type { ActionType, ChatMessage, GameState } from '../poker/types';
+import type {
+  ActionType,
+  ChatMessage,
+  FinalTableTheme,
+  GameState,
+  TournamentHoldReason,
+  TournamentStage,
+} from '../poker/types';
 import type { MttSpeed } from '../poker/mtt-structure';
 import type {
   ProgressionRewardSummary,
@@ -165,6 +172,10 @@ export interface TournamentSummary {
   entryFee: number; // wallet 수수료 (practice는 0)
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
   myTableRoomId?: string; // 참가 중이면 내 테이블
+  stage?: TournamentStage;
+  holdReasons?: TournamentHoldReason[];
+  stageEndsAt?: number;
+  finalTheme?: FinalTableTheme;
 }
 
 export interface TournamentStandingRow {
@@ -184,6 +195,10 @@ export interface TournamentDetailView {
   entrants: Array<{ id: string; name: string; avatar: string }>;
   standings: TournamentStandingRow[];
   clock: { level: number; onBreak: boolean; segmentRemainingMs: number | null } | null;
+  stage?: TournamentStage;
+  holdReasons?: TournamentHoldReason[];
+  stageEndsAt?: number;
+  finalTheme?: FinalTableTheme;
 }
 
 export interface CreateTournamentRequest {

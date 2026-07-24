@@ -227,8 +227,8 @@ const SUIT_CLASS: Record<CardData['suit'], string> = {
 };
 
 const ACTION_LABEL: Record<string, string> = {
-  'post-sb': 'SB', 'post-bb': 'BB', fold: '폴드', check: '체크',
-  call: '콜', raise: '레이즈', 'all-in': '올인',
+  'post-ante': '앤티', 'post-sb': 'SB', 'post-bb': 'BB', fold: '폴드', check: '체크',
+  call: '콜', raise: '레이즈', 'all-in': '올인', 'uncalled-return': '미응수 반환',
 };
 
 const STREET_LABEL: Record<string, string> = {

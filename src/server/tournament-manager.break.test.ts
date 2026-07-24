@@ -2,6 +2,53 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { RoomManager } from './room-manager';
 import { TournamentManager } from './tournament-manager';
 import { MTT_STRUCTURES } from '../lib/poker/mtt-structure';
+import type { GameState } from '../lib/poker/types';
+
+function prepareH4hBubble(
+  tm: TournamentManager,
+  rm: RoomManager,
+): { tournamentId: string; tables: string[] } {
+  const created = tm.createTournament({
+    name: 'H4H 준비',
+    speed: 'standard',
+    maxEntrants: 12,
+    tableSize: 4,
+    startAt: null,
+    botFill: false,
+    turnTime: 15,
+    hostId: 'h1',
+  });
+  if (!created.ok) throw new Error('create failed');
+  for (let i = 1; i <= 12; i++) {
+    tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+  }
+  expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+
+  while (tm.listTournaments()[0].remaining > 6) {
+    const roomId = rm.getAdminRoomSummaries()
+      .filter(r => r.mode === 'mtt')
+      .map(r => ({
+        id: r.id,
+        alive: rm.getRoom(r.id)!.engine.state.players.filter(
+          p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+        ).length,
+      }))
+      .sort((a, b) => b.alive - a.alive)[0].id;
+    const engine = rm.getRoom(roomId)!.engine;
+    const player = engine.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    );
+    if (!player) throw new Error('no player to bust');
+    player.handStartChips = player.chips;
+    player.chips = 0;
+    tm.roomHooks.onHandComplete(roomId);
+  }
+
+  return {
+    tournamentId: created.tournamentId,
+    tables: rm.getAdminRoomSummaries().filter(r => r.mode === 'mtt').map(r => r.id),
+  };
+}
 
 /**
  * 브레이크 배리어 회귀 — 특히 "두 번째 브레이크" 후 재개 (2026-07-23 라이브 QA에서
@@ -10,10 +57,20 @@ import { MTT_STRUCTURES } from '../lib/poker/mtt-structure';
 describe('MTT break resume', () => {
   let rm: RoomManager;
   let tm: TournamentManager;
+  let publicSnapshots: Array<{ roomId: string; state: GameState }>;
 
   beforeEach(() => {
     vi.useFakeTimers();
-    rm = new RoomManager(() => {}, () => {});
+    publicSnapshots = [];
+    rm = new RoomManager((roomId, engine) => {
+      publicSnapshots.push({
+        roomId,
+        state: JSON.parse(JSON.stringify({
+          ...engine.getPublicState(),
+          turnTimeRemaining: rm.getTurnTimeRemaining(roomId),
+        })) as GameState,
+      });
+    }, () => {});
     tm = new TournamentManager(rm, { isConnected: () => true });
   });
 
@@ -29,14 +86,14 @@ describe('MTT break resume', () => {
       name: '브레이크',
       speed: 'standard',
       maxEntrants: 8,
-      tableSize: 6,
+      tableSize: 8,
       startAt: null,
       botFill: false,
       turnTime: 15,
       hostId: 'h1',
     });
     if (!created.ok) throw new Error('create failed');
-    for (let i = 1; i <= 5; i++) {
+    for (let i = 1; i <= 8; i++) {
       tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
     }
     expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
@@ -64,8 +121,50 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.onHandComplete(roomId)).toBe('continue');
   });
 
-  it('resumes after break 2 even with an H4H episode and a table merge before it', () => {
-    // 2026-07-23 라이브 교착 재현 형태: 2테이블 → 버블 H4H → 버블 붕괴 → 테이블 통합 →
+  it('keeps a scheduled break held when a director pause is released first', () => {
+    const s = MTT_STRUCTURES.standard;
+    const created = tm.createTournament({
+      name: '브레이크 겹침',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(r => r.mode === 'mtt')!.id;
+    vi.advanceTimersByTime(4_500);
+    vi.advanceTimersByTime(s.levelDurationMs * s.breakEveryLevels + 1_000);
+    expect(tm.roomHooks.onHandComplete(roomId)).toBe('hold');
+
+    expect(tm.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(rm.getRoom(roomId)!.engine.state.tournament?.holdReasons).toEqual([
+      'director-pause',
+      'scheduled-break',
+    ]);
+    expect(tm.getDetail(created.tournamentId)?.holdReasons).toEqual([
+      'director-pause',
+      'scheduled-break',
+    ]);
+
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    expect(tm.directorAction(created.tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
+    expect(tm.roomHooks.isHeld(roomId)).toBe(true);
+    expect(resume).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(s.breakDurationMs + 1_000);
+    expect(tm.roomHooks.isHeld(roomId)).toBe(false);
+    expect(resume).toHaveBeenCalledWith(roomId);
+  });
+
+  it('resumes after break 2 even after a final-table merge', () => {
+    // 2026-07-23 라이브 교착 재현 형태: 2테이블 → 파이널 통합 →
     // 헤즈업 진행 중 두 번째 브레이크 도달
     const s = MTT_STRUCTURES.standard;
     const created = tm.createTournament({
@@ -103,23 +202,15 @@ describe('MTT break resume', () => {
     bustAt(t2, 2);
     expect(tm.roomHooks.onHandComplete(t2)).toBe('continue'); // 7명 (3v4)
 
-    // remaining 5 도달 → H4H 발동 (아직 2테이블 — 밸런싱보다 먼저 판정)
+    // remaining 5 도달 → H4H보다 파이널 병합이 우선
     bustAt(t2, 2);
-    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
-    expect(tm.roomHooks.isHeld(t1)).toBe(false); // 무장됨 — 동기화 핸드 허용
-
-    // 동기화 핸드에서 버블 붕괴 (t1에서 1명 탈락 → remaining 4)
-    bustAt(t1, 1);
-    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
-    expect(tm.roomHooks.isHeld(t1)).toBe(false);
-    expect(tm.roomHooks.isHeld(t2)).toBe(false);
-
-    // H4H 해제 후 다음 핸드 종료에서 통합 (2v2 → target 1)
-    const verdict = tm.roomHooks.onHandComplete(t2);
-    expect(['continue', 'gone']).toContain(verdict);
+    expect(['hold', 'gone']).toContain(tm.roomHooks.onHandComplete(t2));
     const remainingTables = rm.getAdminRoomSummaries().filter(r => r.mode === 'mtt').map(r => r.id);
     expect(remainingTables.length).toBe(1);
     const finalTable = remainingTables[0];
+    expect(engine(finalTable).state.tournament?.stage).toBe('final-intro');
+    vi.advanceTimersByTime(4_500);
+    expect(engine(finalTable).state.tournament?.stage).toBe('final-playing');
 
     // 두 번째 브레이크 구간으로 시계 이동 → 핸드 종료 → 보류 → 휴식 종료 후 재개
     const playMs = s.levelDurationMs * s.breakEveryLevels;
@@ -129,5 +220,400 @@ describe('MTT break resume', () => {
     vi.advanceTimersByTime(s.breakDurationMs + 1_000);
     expect(tm.roomHooks.isHeld(finalTable)).toBe(false);
     expect(tm.roomHooks.onHandComplete(finalTable)).toBe('continue');
+  });
+
+  it('does not resume an H4H-held table while a director pause still applies', () => {
+    const { tournamentId, tables: [t1, t2] } = prepareH4hBubble(tm, rm);
+    const engine = (roomId: string) => rm.getRoom(roomId)!.engine;
+
+    // 버블 도달 시 다른 테이블이 아직 핸드 중이면 H4H 배리어가 유지된다.
+    engine(t2).state.isHandInProgress = true;
+    const bubble = engine(t1).state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    engine(t2).state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
+
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(true);
+    expect(resume).not.toHaveBeenCalled();
+
+    publicSnapshots = [];
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
+    expect(resume).toHaveBeenCalledWith(t1);
+    expect(resume).toHaveBeenCalledWith(t2);
+    for (const roomId of [t1, t2]) {
+      const released = publicSnapshots.filter(snapshot => (
+        snapshot.roomId === roomId
+        && snapshot.state.tournament?.holdReasons?.length === 0
+      ));
+      expect(released).toHaveLength(1);
+    }
+    expect(rm.getRuntimeStats().pendingStartTimers).toBe(2);
+  });
+
+  it('consumes an H4H permit only after a hand actually starts', () => {
+    const { tables: [t1] } = prepareH4hBubble(tm, rm);
+    const engine = (roomId: string) => rm.getRoom(roomId)!.engine;
+    const bubble = engine(t1).state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+
+    tm.roomHooks.applyLevel(t1, engine(t1));
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+
+    const previousHandNumber = engine(t1).state.handNumber;
+    engine(t1).startHand();
+    expect(engine(t1).state.handNumber).toBe(previousHandNumber + 1);
+    tm.roomHooks.onHandStarted(t1, engine(t1).state.handNumber);
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+  });
+
+  it('waits for every released H4H permit to start and finish before rearming', () => {
+    const { tables: [t1, t2] } = prepareH4hBubble(tm, rm);
+    const first = rm.getRoom(t1)!.engine;
+    const second = rm.getRoom(t2)!.engine;
+    const bubble = first.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    first.startHand();
+    tm.roomHooks.onHandStarted(t1, first.state.handNumber);
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    first.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    expect(resume).not.toHaveBeenCalled();
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    second.startHand();
+    tm.roomHooks.onHandStarted(t2, second.state.handNumber);
+    second.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
+    expect(resume).toHaveBeenCalledWith(t1);
+    expect(resume).toHaveBeenCalledWith(t2);
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+  });
+
+  it('keeps a completed H4H table blocked when a director hold prevented its peer from starting', () => {
+    const { tournamentId, tables: [t1, t2] } = prepareH4hBubble(tm, rm);
+    const first = rm.getRoom(t1)!.engine;
+    const second = rm.getRoom(t2)!.engine;
+    const bubble = first.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+
+    first.startHand();
+    tm.roomHooks.onHandStarted(t1, first.state.handNumber);
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    vi.advanceTimersByTime(2_000);
+    expect(second.state.handNumber).toBe(0);
+
+    first.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t1)).toBe('hold');
+    const resume = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+    expect(tm.directorAction(tournamentId, 'h1', { kind: 'resume' })).toBe('ok');
+    expect(resume).not.toHaveBeenCalledWith(t1);
+    expect(resume).toHaveBeenCalledWith(t2);
+    expect(tm.roomHooks.isHeld(t1)).toBe(true);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+
+    second.startHand();
+    tm.roomHooks.onHandStarted(t2, second.state.handNumber);
+    second.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(t2)).toBe('hold');
+    expect(tm.roomHooks.isHeld(t1)).toBe(false);
+    expect(tm.roomHooks.isHeld(t2)).toBe(false);
+  });
+
+  it('balances a 4-max 1-versus-4 bubble before arming H4H', () => {
+    const { tables: [shortRoomId, fullRoomId] } = prepareH4hBubble(tm, rm);
+    const short = rm.getRoom(shortRoomId)!.engine;
+    const full = rm.getRoom(fullRoomId)!.engine;
+    short.removePendingPlayers();
+    full.removePendingPlayers();
+
+    // remaining 6을 의도적으로 2대4로 만든 뒤 숏 테이블에서 한 명이 탈락해 1대4 버블이 된다.
+    const mover = short.state.players.find(p => p.chips > 0)!;
+    const occupied = new Set(full.state.players.map(p => p.seatIndex));
+    const emptySeat = [0, 1, 2, 3].find(seat => !occupied.has(seat));
+    if (emptySeat === undefined) throw new Error('missing destination seat');
+    expect(rm.transferMttSeat(shortRoomId, fullRoomId, mover.id, emptySeat)).toBe(true);
+
+    const bubble = short.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(shortRoomId)).toBe('hold');
+
+    const counts = [shortRoomId, fullRoomId]
+      .map(roomId => rm.getRoom(roomId)!.engine.state.players.filter(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      ).length)
+      .sort((a, b) => a - b);
+    expect(counts).toEqual([2, 3]);
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(false);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
+  });
+
+  it('retries 1-versus-4 balance when the large table finishes later', () => {
+    const { tables: [shortRoomId, fullRoomId] } = prepareH4hBubble(tm, rm);
+    const short = rm.getRoom(shortRoomId)!.engine;
+    const full = rm.getRoom(fullRoomId)!.engine;
+    short.removePendingPlayers();
+    full.removePendingPlayers();
+
+    const mover = short.state.players.find(p => p.chips > 0)!;
+    const occupied = new Set(full.state.players.map(p => p.seatIndex));
+    const emptySeat = [0, 1, 2, 3].find(seat => !occupied.has(seat));
+    if (emptySeat === undefined) throw new Error('missing destination seat');
+    expect(rm.transferMttSeat(shortRoomId, fullRoomId, mover.id, emptySeat)).toBe(true);
+
+    full.state.isHandInProgress = true;
+    const bubble = short.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(shortRoomId)).toBe('hold');
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(true);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(true);
+
+    full.state.isHandInProgress = false;
+    expect(tm.roomHooks.onHandComplete(fullRoomId)).toBe('hold');
+
+    const counts = [shortRoomId, fullRoomId]
+      .map(roomId => rm.getRoom(roomId)!.engine.state.players.filter(
+        p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+      ).length)
+      .sort((a, b) => a - b);
+    expect(counts).toEqual([2, 3]);
+    expect(tm.roomHooks.isHeld(shortRoomId)).toBe(false);
+    expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
+  });
+
+  it('holds every table for a scheduled break before releasing the next H4H round', () => {
+    const { tables } = prepareH4hBubble(tm, rm);
+    expect(tables).toHaveLength(2);
+
+    const triggerRoom = rm.getRoom(tables[0])!.engine;
+    const bubblePlayer = triggerRoom.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubblePlayer.handStartChips = bubblePlayer.chips;
+    bubblePlayer.chips = 0;
+    expect(tm.roomHooks.onHandComplete(tables[0])).toBe('hold');
+    expect(tm.getAdminSummaries()[0].h4hActive).toBe(true);
+
+    const structure = MTT_STRUCTURES.standard;
+    vi.setSystemTime(
+      Date.now() + structure.levelDurationMs * structure.breakEveryLevels + 1,
+    );
+    const resumeSpy = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+
+    for (const roomId of tables) {
+      const engine = rm.getRoom(roomId)!.engine;
+      engine.state.isHandInProgress = true;
+      tm.roomHooks.onHandStarted(roomId, engine.state.handNumber);
+      engine.state.isHandInProgress = false;
+      expect(tm.roomHooks.onHandComplete(roomId)).toBe('hold');
+    }
+
+    for (const roomId of tables) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(true);
+      expect(
+        rm.getRoom(roomId)!.engine.state.tournament?.holdReasons,
+      ).toContain('scheduled-break');
+    }
+    expect(resumeSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(structure.breakDurationMs + 1_000);
+
+    for (const roomId of tables) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(false);
+      expect(resumeSpy).toHaveBeenCalledWith(roomId);
+    }
+  });
+
+  it('arms H4H on remaining tables when bubble balancing breaks the completed table', () => {
+    const created = tm.createTournament({
+      name: 'gone 뒤 H4H',
+      speed: 'standard',
+      maxEntrants: 12,
+      tableSize: 4,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 12; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [t1, t2, completedRoomId] = rm.getAdminRoomSummaries()
+      .filter(r => r.mode === 'mtt')
+      .map(r => r.id);
+    const eliminate = (roomId: string, count: number) => {
+      const players = rm.getRoom(roomId)!.engine.state.players
+        .filter(p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval)
+        .slice(0, count);
+      for (const player of players) tm.roomHooks.onPlayerLeave(roomId, player.id);
+    };
+    eliminate(t1, 2);
+    eliminate(t2, 1);
+    eliminate(completedRoomId, 3);
+    expect(tm.listTournaments()[0].remaining).toBe(6);
+
+    const completed = rm.getRoom(completedRoomId)!.engine;
+    const bubble = completed.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubble.handStartChips = bubble.chips;
+    bubble.chips = 0;
+    expect(tm.roomHooks.onHandComplete(completedRoomId)).toBe('gone');
+
+    expect(rm.getRoom(completedRoomId)).toBeUndefined();
+    const remainingRooms = rm.getAdminRoomSummaries()
+      .filter(r => r.mode === 'mtt')
+      .map(r => r.id);
+    expect(remainingRooms).toHaveLength(2);
+    expect(tm.getAdminSummaries()[0].h4hActive).toBe(true);
+    for (const roomId of remainingRooms) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(false);
+    }
+  });
+
+  it('broadcasts one public snapshot per hold batch when another hold remains', () => {
+    const created = tm.createTournament({
+      name: '보류 공개',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(r => r.mode === 'mtt')!.id;
+
+    publicSnapshots = [];
+    expect(tm.directorAction(created.tournamentId, 'h1', { kind: 'pause' })).toBe('ok');
+    expect(publicSnapshots).toHaveLength(1);
+    expect(publicSnapshots[0].roomId).toBe(roomId);
+    expect(publicSnapshots[0].state.tournament?.stage).toBe('final-intro');
+    expect(publicSnapshots[0].state.tournament?.holdReasons).toEqual([
+      'director-pause',
+      'final-intro',
+    ]);
+
+    publicSnapshots = [];
+    vi.advanceTimersByTime(4_500);
+    expect(publicSnapshots).toHaveLength(1);
+    expect(publicSnapshots[0].state.tournament?.stage).toBe('final-playing');
+    expect(publicSnapshots[0].state.tournament?.holdReasons).toEqual(['director-pause']);
+  });
+
+  it('publishes final-intro release once and still starts the hand after the normal delay', () => {
+    const created = tm.createTournament({
+      name: '파이널 재개',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      tm.register(created.tournamentId, { id: `h${i}`, name: `u${i}`, avatar: 'ara' });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(r => r.mode === 'mtt')!.id;
+    const engine = rm.getRoom(roomId)!.engine;
+
+    publicSnapshots = [];
+    vi.advanceTimersByTime(4_500);
+
+    const releaseSnapshots = publicSnapshots.filter(({ state }) => (
+      state.handNumber === 0
+      && state.tournament?.stage === 'final-playing'
+      && state.tournament.holdReasons?.length === 0
+    ));
+    expect(releaseSnapshots).toHaveLength(1);
+    expect(rm.getRuntimeStats().pendingStartTimers).toBe(1);
+
+    vi.advanceTimersByTime(1_999);
+    expect(engine.state.handNumber).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(engine.state.handNumber).toBe(1);
+    expect(engine.state.isHandInProgress).toBe(true);
+    const handStartSnapshot = publicSnapshots.find(({ state }) => state.handNumber === 1);
+    expect(handStartSnapshot?.state.turnTimeRemaining).toBeGreaterThan(0);
+  });
+
+  it('enters final-forming before an idle removal and finishes after the seat is removed', () => {
+    const { tournamentId, tables } = prepareH4hBubble(tm, rm);
+    const [sourceRoomId] = tables;
+    const source = rm.getRoom(sourceRoomId)!.engine;
+    source.removePendingPlayers();
+
+    const first = source.state.players.find(p => p.chips > 0)!;
+    expect(rm.leaveRoom(sourceRoomId, first.id)).toBe(true);
+    expect(tm.getDetail(tournamentId)?.summary.remaining).toBe(5);
+    expect(tm.getDetail(tournamentId)?.stage).toBe('multi-table');
+
+    const target = source.state.players.find(p => p.chips > 0)!;
+    const originalProcessLeave = source.processLeave.bind(source);
+    let stageBeforeRemoval: string | undefined;
+    let holdsBeforeRemoval: string[] | undefined;
+    vi.spyOn(source, 'processLeave').mockImplementation(playerId => {
+      if (playerId === target.id) {
+        stageBeforeRemoval = source.state.tournament?.stage;
+        holdsBeforeRemoval = source.state.tournament?.holdReasons;
+      }
+      return originalProcessLeave(playerId);
+    });
+
+    expect(rm.leaveRoom(sourceRoomId, target.id)).toBe(true);
+    expect(stageBeforeRemoval).toBe('final-forming');
+    expect(holdsBeforeRemoval).toEqual(['final-forming']);
+
+    const finalRooms = rm.getAdminRoomSummaries().filter(r => r.mode === 'mtt').map(r => r.id);
+    expect(finalRooms).toHaveLength(1);
+    const final = rm.getRoom(finalRooms[0])!.engine;
+    expect(final.state.players.filter(p => p.chips > 0 && !p.pendingRemoval)).toHaveLength(4);
+    expect(final.state.tournament?.stage).toBe('final-intro');
+    expect(final.state.tournament?.holdReasons).toEqual(['final-intro']);
   });
 });
