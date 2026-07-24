@@ -4,11 +4,14 @@ import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import {
   TournamentInstanceRepository,
   TournamentPersistenceError,
+  computeTournamentPayoutFreezeChecksum,
+  computeTournamentSettlementFingerprint,
   type CreateInstanceCommand,
   type CreateTemplateCommand,
+  type TournamentPayoutFreezePlan,
 } from './tournament-instance-repository';
 
-const NOW = 1_800_000_000_000;
+const NOW = Date.now() - 10_000;
 
 function config(
   economy: 'freeroll' | 'wallet' = 'wallet',
@@ -62,7 +65,7 @@ function templateCommand(
     timezone: 'Asia/Seoul',
     recurrence: { kind: 'weekly', weekday: 6, hour: 20, minute: 0 },
     visibleLeadMs: 86_400_000,
-    registrationLeadMs: 3_600_000,
+    registrationLeadMs: 20 * 60_000,
     config: config(),
     createdBy: { kind: 'backoffice-admin', profileId: 'admin-1' },
     now: NOW,
@@ -82,7 +85,7 @@ function instanceCommand(
     occurrenceKey: id,
     schedule: {
       visibleAt: NOW + 60_000,
-      registrationOpensAt: NOW + 120_000,
+      registrationOpensAt: NOW + 2_400_000,
       startsAt: NOW + 3_600_000,
       manualStartExpiresAt: null,
     },
@@ -91,6 +94,29 @@ function instanceCommand(
     now: NOW,
     ...overrides,
   };
+}
+
+function recurringInstanceCommand(
+  id: string,
+  templateId: string,
+  templateRevision: number,
+  startsAt: number,
+  overrides: Partial<CreateInstanceCommand> = {},
+): CreateInstanceCommand {
+  return instanceCommand(id, {
+    templateId,
+    templateRevision,
+    idempotencyKey:
+      `template:${templateId}:r${templateRevision}:${startsAt}`,
+    occurrenceKey: String(startsAt),
+    schedule: {
+      visibleAt: startsAt - 86_400_000,
+      registrationOpensAt: startsAt - 20 * 60_000,
+      startsAt,
+      manualStartExpiresAt: null,
+    },
+    ...overrides,
+  });
 }
 
 describe('TournamentInstanceRepository', () => {
@@ -116,8 +142,14 @@ describe('TournamentInstanceRepository', () => {
     const recurring = instanceCommand('weekly-1', {
       templateId: template.id,
       templateRevision: template.revision,
-      idempotencyKey: 'template:template-main:r1:1800003600000',
-      occurrenceKey: '1800003600000',
+      idempotencyKey: `template:template-main:r1:${NOW + 3_600_000}`,
+      occurrenceKey: String(NOW + 3_600_000),
+      schedule: {
+        visibleAt: NOW + 3_600_000 - 86_400_000,
+        registrationOpensAt: NOW + 3_600_000 - 20 * 60_000,
+        startsAt: NOW + 3_600_000,
+        manualStartExpiresAt: null,
+      },
     });
     expect(repository.createInstance(recurring)).toEqual(
       repository.createInstance(recurring),
@@ -130,6 +162,50 @@ describe('TournamentInstanceRepository', () => {
     expect(() => repository.createInstance({
       ...standalone,
       schedule: { ...standalone.schedule, startsAt: NOW + 7_200_000 },
+    })).toThrowError(TournamentPersistenceError);
+  });
+
+  it('derives recurring identity and immutable config from the current template', () => {
+    const original = repository.createTemplate(templateCommand());
+    repository.patchTemplateIfRevision(original.id, 1, {
+      name: '새 메인',
+      config: { ...config(), name: '새 메인' },
+      updatedAt: NOW + 1,
+    });
+    const startsAt = NOW + 7_200_000;
+    const canonical = instanceCommand('recurring-v2', {
+      templateId: original.id,
+      templateRevision: 2,
+      idempotencyKey: `template:${original.id}:r2:${startsAt}`,
+      occurrenceKey: String(startsAt),
+      schedule: {
+        visibleAt: startsAt - 86_400_000,
+        registrationOpensAt: startsAt - 20 * 60_000,
+        startsAt,
+        manualStartExpiresAt: null,
+      },
+      config: { ...config(), name: '새 메인' },
+    });
+    expect(repository.createInstance(canonical)).toMatchObject({
+      id: 'recurring-v2',
+      templateRevision: 2,
+      occurrenceKey: String(startsAt),
+      config: { name: '새 메인' },
+    });
+
+    for (const invalid of [
+      { ...canonical, id: 'stale', templateRevision: 1 },
+      { ...canonical, id: 'wrong-key', occurrenceKey: 'arbitrary' },
+      { ...canonical, id: 'wrong-idem', idempotencyKey: 'arbitrary' },
+      { ...canonical, id: 'stale-config', config: config() },
+    ]) {
+      expect(() => repository.createInstance(invalid)).toThrowError(
+        TournamentPersistenceError,
+      );
+    }
+    expect(() => repository.createInstance({
+      ...canonical,
+      id: 'duplicate-same-time',
     })).toThrowError(TournamentPersistenceError);
   });
 
@@ -160,18 +236,18 @@ describe('TournamentInstanceRepository', () => {
 
   it('replaces hidden old-revision occurrences but preserves visible occupancy', () => {
     const template = repository.createTemplate(templateCommand());
-    repository.createInstance(instanceCommand('hidden-old', {
-      templateId: template.id,
-      templateRevision: 1,
-      occurrenceKey: '1800003600000',
-      idempotencyKey: 'template:template-main:r1:1800003600000',
-    }));
-    repository.createInstance(instanceCommand('visible-old', {
-      templateId: template.id,
-      templateRevision: 1,
-      occurrenceKey: '1800007200000',
-      idempotencyKey: 'template:template-main:r1:1800007200000',
-    }));
+    repository.createInstance(recurringInstanceCommand(
+      'hidden-old',
+      template.id,
+      1,
+      NOW + 3_600_000,
+    ));
+    repository.createInstance(recurringInstanceCommand(
+      'visible-old',
+      template.id,
+      1,
+      NOW + 7_200_000,
+    ));
     database.db.prepare(`
       UPDATE tournament_instance
       SET status = 'scheduled-visible', updated_at = ?
@@ -186,20 +262,24 @@ describe('TournamentInstanceRepository', () => {
       template.id,
       1,
       [
-        instanceCommand('hidden-new', {
-          templateId: template.id,
-          templateRevision: 2,
-          occurrenceKey: '1800003600000',
-          idempotencyKey: 'template:template-main:r2:1800003600000',
+        recurringInstanceCommand(
+          'hidden-new',
+          template.id,
+          2,
+          NOW + 3_600_000,
+          {
           now: NOW + 2,
-        }),
-        instanceCommand('visible-new', {
-          templateId: template.id,
-          templateRevision: 2,
-          occurrenceKey: '1800007200000',
-          idempotencyKey: 'template:template-main:r2:1800007200000',
+          },
+        ),
+        recurringInstanceCommand(
+          'visible-new',
+          template.id,
+          2,
+          NOW + 7_200_000,
+          {
           now: NOW + 2,
-        }),
+          },
+        ),
       ],
       NOW + 2,
     );
@@ -323,7 +403,7 @@ describe('TournamentInstanceRepository', () => {
     )).toMatchObject({ status: 'not-claimable' });
     expect(() => repository.finishCancellation(
       'wallet-liability',
-      'cancel-a',
+      999,
       NOW + 10,
     )).toThrowError(TournamentPersistenceError);
 
@@ -334,7 +414,7 @@ describe('TournamentInstanceRepository', () => {
     `).run(NOW + 11);
     expect(repository.finishCancellation(
       'wallet-liability',
-      'cancel-a',
+      1,
       NOW + 12,
     )).toMatchObject({ status: 'cancelled' });
   });
@@ -359,16 +439,125 @@ describe('TournamentInstanceRepository', () => {
     });
   });
 
+  it('atomically releases active registrations and pending capacity on refund claim', () => {
+    repository.createInstance(instanceCommand('late-refund'));
+    seedProfileAndWalletEntry(database, 'late-refund');
+    makeRunningOpenLate(database, 'late-refund');
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET pending_late_entrants = 1
+      WHERE id = 'late-refund'
+    `).run();
+    database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'late-refund', 'profile-a',
+        '{"id":"player-a","name":"A","avatar":"sakura"}',
+        'late-pending', 0, 1, 1, ?, ?
+      )
+    `).run(NOW, NOW);
+    database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'late-refund', 'profile-a', 1, 'late-request', 1, 'late-pending',
+        NULL, NULL, NULL, ?, ?
+      )
+    `).run(NOW, NOW);
+
+    const claim = repository.claimRefundPending(
+      'late-refund',
+      'operator-cancel',
+      'late-cancel',
+    );
+    expect(claim).toMatchObject({
+      status: 'claimed',
+      claimGeneration: 1,
+      instance: { pendingLateEntrants: 0 },
+    });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration
+      WHERE instance_id = 'late-refund'
+    `).get()).toEqual({ status: 'refunded' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration_attempt
+      WHERE instance_id = 'late-refund'
+    `).get()).toEqual({ status: 'refunded' });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_registration
+      WHERE profile_id = 'profile-a'
+        AND status IN ('registered', 'seat-claimed', 'late-pending', 'seated')
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('atomically cancels registration attempts on direct cancellation', () => {
+    repository.createInstance(instanceCommand('direct-release'));
+    seedProfileAndWalletEntry(database, 'direct-release');
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'registering',
+          registration_state = 'open-prestart',
+          updated_at = ?
+      WHERE id = 'direct-release'
+    `).run(NOW + 1);
+    database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'direct-release', 'profile-a',
+        '{"id":"direct","name":"Direct","avatar":"sakura"}',
+        'registered', 0, 1, 1, ?, ?
+      )
+    `).run(NOW, NOW);
+    database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'direct-release', 'profile-a', 1, 'direct-request',
+        1, 'registered', NULL, NULL, NULL, ?, ?
+      )
+    `).run(NOW, NOW);
+    database.db.prepare(`
+      UPDATE sng_entries
+      SET status = 'refunded', updated_at = ?
+      WHERE tournament_id = 'direct-release'
+    `).run(NOW + 1);
+
+    expect(repository.claimDirectCancellation(
+      'direct-release',
+      'operator-cancel',
+      'direct-owner',
+      NOW + 2,
+    )).toMatchObject({
+      status: 'claimed',
+      instance: { status: 'cancelled' },
+    });
+    expect(database.db.prepare(`
+      SELECT registration.status AS registration_status,
+             attempt.status AS attempt_status
+      FROM tournament_registration registration
+      JOIN tournament_registration_attempt attempt
+        ON attempt.instance_id = registration.instance_id
+       AND attempt.profile_id = registration.profile_id
+      WHERE registration.instance_id = 'direct-release'
+    `).get()).toEqual({
+      registration_status: 'cancelled',
+      attempt_status: 'cancelled',
+    });
+  });
+
   it('blocks payout-pending cancellation and refund transitions', () => {
     repository.createInstance(instanceCommand('payout'));
     makeRunningClosed(database, 'payout');
 
-    const result = repository.claimPayoutPending('payout', {
-      version: 1,
-      checksum: 'freeze-checksum',
-      prizePool: 1_000,
-      fingerprint: 'settlement-fingerprint',
-      results: [
+    const plan = payoutPlan('payout', [
         {
           place: 1,
           playerId: 'player-a',
@@ -379,11 +568,14 @@ describe('TournamentInstanceRepository', () => {
           prize: 1_000,
           disposition: 'wallet-credit',
         },
-      ],
-      now: NOW + 20,
-    });
+      ], 1_000);
+    const result = repository.claimPayoutPending('payout', plan);
     expect(result).toMatchObject({
       status: 'claimed',
+      instance: { status: 'payout-pending' },
+    });
+    expect(repository.claimPayoutPending('payout', plan)).toMatchObject({
+      status: 'already-pending',
       instance: { status: 'payout-pending' },
     });
 
@@ -407,12 +599,7 @@ describe('TournamentInstanceRepository', () => {
     fundFreeroll(database, 'freeroll-payout', 100_000);
     makeFreerollRunningClosed(database, 'freeroll-payout');
 
-    expect(repository.claimPayoutPending('freeroll-payout', {
-      version: 1,
-      checksum: 'freeroll-freeze',
-      prizePool: 100_000,
-      fingerprint: 'freeroll-settlement',
-      results: [
+    const plan = payoutPlan('freeroll-payout', [
         {
           place: 1,
           playerId: 'bot-a',
@@ -423,9 +610,8 @@ describe('TournamentInstanceRepository', () => {
           prize: 100_000,
           disposition: 'promotion-return',
         },
-      ],
-      now: NOW + 20,
-    })).toMatchObject({
+      ], 100_000);
+    expect(repository.claimPayoutPending('freeroll-payout', plan)).toMatchObject({
       status: 'claimed',
       instance: { status: 'payout-pending' },
     });
@@ -433,7 +619,36 @@ describe('TournamentInstanceRepository', () => {
       SELECT settlement_fingerprint AS fingerprint
       FROM tournament_prize_escrow
       WHERE instance_id = 'freeroll-payout'
-    `).get()).toEqual({ fingerprint: 'freeroll-settlement' });
+    `).get()).toEqual({ fingerprint: plan.fingerprint });
+  });
+
+  it('rejects a settlement checksum or fingerprint that differs from the freeze', () => {
+    repository.createInstance(instanceCommand('payout-mismatch'));
+    makeRunningClosed(database, 'payout-mismatch');
+    const valid = payoutPlan('payout-mismatch', [
+      {
+        place: 1,
+        playerId: 'player-a',
+        participantType: 'human',
+        profileId: 'profile-a',
+        registrationAttempt: 1,
+        displayName: 'A',
+        prize: 1_000,
+        disposition: 'wallet-credit',
+      },
+    ], 1_000);
+    expect(() => repository.claimPayoutPending('payout-mismatch', {
+      ...valid,
+      checksum: 'wrong-checksum',
+    })).toThrowError(TournamentPersistenceError);
+    expect(() => repository.claimPayoutPending('payout-mismatch', {
+      ...valid,
+      fingerprint: 'wrong-fingerprint',
+    })).toThrowError(TournamentPersistenceError);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_settlement
+      WHERE instance_id = 'payout-mismatch'
+    `).get()).toEqual({ count: 0 });
   });
 
   it('never exposes hidden or unfunded freerolls publicly and warns admins', () => {
@@ -460,26 +675,97 @@ describe('TournamentInstanceRepository', () => {
     expect(repository.listPublicProjections(undefined, NOW + 3).map(row => row.id))
       .toEqual(['hidden-freeroll', 'hidden-wallet']);
 
-    database.db.exec(`
-      DROP TRIGGER require_tournament_financial_lifecycle;
-      DROP TRIGGER protect_tournament_prize_escrow_update;
-      UPDATE tournament_prize_escrow
-      SET status = 'refunded', refunded_at = ${NOW + 4}, updated_at = ${NOW + 4}
-      WHERE instance_id = 'hidden-freeroll';
-    `);
-    expect(repository.getPublicProjection(
-      'hidden-freeroll',
-      undefined,
-      NOW + 5,
-    )).toBeNull();
+  });
 
-    const admin = repository.getAdminProjection('hidden-freeroll', NOW + 5);
-    expect(admin).toMatchObject({
-      id: 'hidden-freeroll',
-      funding: { status: 'refunded', amount: 100_000 },
-      registrationGeneration: 0,
+  it('requires exact freeroll funding and returns the canonical detail projection', () => {
+    repository.createInstance(instanceCommand('detail-freeroll', {
+      config: config('freeroll'),
+    }));
+    fundFreeroll(database, 'detail-freeroll', 99_999);
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible', updated_at = ?
+      WHERE id = 'detail-freeroll'
+    `).run(NOW + 2);
+
+    expect(repository.getPublicProjection(
+      'detail-freeroll',
+      undefined,
+      NOW + 3,
+    )).toBeNull();
+    expect(repository.getAdminProjection(
+      'detail-freeroll',
+      NOW + 3,
+    )?.invariantWarnings).toContain('PROMOTION_ESCROW_AMOUNT_MISMATCH');
+
+    repository.createInstance(instanceCommand('detail-funded', {
+      config: config('freeroll'),
+    }));
+    fundFreeroll(database, 'detail-funded', 100_000, 'detail-funded-seed');
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible', updated_at = ?
+      WHERE id = 'detail-funded'
+    `).run(NOW + 3);
+    const detail = repository.getPublicProjection(
+      'detail-funded',
+      undefined,
+      NOW + 4,
+    );
+    expect(detail).toMatchObject({
+      serverNow: NOW + 4,
+      summary: {
+        id: 'detail-funded',
+        lifecycle: 'upcoming',
+        economyMode: 'freeroll',
+        registrationState: 'not-open',
+        canRegister: false,
+        mySeat: null,
+        schedule: {
+          scheduledStartsAt: NOW + 3_600_000,
+        },
+        structure: {
+          sourcePresetId: 'standard',
+          startingStack: 1_500,
+        },
+        payout: {
+          totalPrize: 100_000,
+          fundingStatus: 'promotion-reserved',
+        },
+      },
+      entrants: [],
+      standings: [],
     });
-    expect(admin?.invariantWarnings).toContain('PUBLIC_FREEROLL_NOT_RESERVED');
+  });
+
+  it('enforces template lead and wallet registration window bounds', () => {
+    expect(() => repository.createTemplate(templateCommand({
+      visibleLeadMs: 31 * 86_400_000,
+    }))).toThrowError(TournamentPersistenceError);
+    expect(() => repository.createTemplate(templateCommand({
+      visibleLeadMs: 60_000,
+      registrationLeadMs: 120_000,
+    }))).toThrowError(TournamentPersistenceError);
+    expect(() => repository.createTemplate(templateCommand({
+      registrationLeadMs: 20 * 60_000 + 1,
+    }))).toThrowError(TournamentPersistenceError);
+
+    expect(() => repository.createInstance(instanceCommand('wallet-long-auto', {
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: NOW + 20 * 60_000 + 1,
+        manualStartExpiresAt: null,
+      },
+    }))).toThrowError(TournamentPersistenceError);
+    expect(() => repository.createInstance(instanceCommand('wallet-long-manual', {
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: null,
+        manualStartExpiresAt: NOW + 20 * 60_000 + 1,
+      },
+    }))).toThrowError(TournamentPersistenceError);
   });
 
   it('rejects malformed persisted JSON instead of returning a partial record', () => {
@@ -535,6 +821,30 @@ function makeRunningClosed(database: PokerDatabase, instanceId: string): void {
     WHERE id = ?
   `).run(NOW + 1, instanceId);
   database.db.prepare(`
+    INSERT INTO tournament_registration (
+      instance_id, profile_id, public_player_json, status, ever_seated,
+      registration_attempt, economy_entry_attempt, registered_at, updated_at
+    ) VALUES (?, 'profile-a', '{"id":"player-a"}', 'registered', 0, 1, 1, ?, ?)
+  `).run(instanceId, NOW, NOW);
+  database.db.prepare(`
+    INSERT INTO tournament_registration_attempt (
+      instance_id, profile_id, registration_attempt, request_id,
+      economy_entry_attempt, status, close_generation, close_owner_token,
+      close_reason, created_at, updated_at
+    ) VALUES (?, 'profile-a', 1, 'request-a', 1, 'registered',
+      NULL, NULL, NULL, ?, ?)
+  `).run(instanceId, NOW, NOW);
+  database.db.prepare(`
+    UPDATE tournament_registration
+    SET status = 'seat-claimed', updated_at = ?
+    WHERE instance_id = ? AND profile_id = 'profile-a'
+  `).run(NOW + 2, instanceId);
+  database.db.prepare(`
+    UPDATE tournament_registration
+    SET status = 'seated', ever_seated = 1, updated_at = ?
+    WHERE instance_id = ? AND profile_id = 'profile-a'
+  `).run(NOW + 3, instanceId);
+  database.db.prepare(`
     UPDATE tournament_instance
     SET status = 'starting',
         registration_state = 'locked-for-start',
@@ -543,7 +853,7 @@ function makeRunningClosed(database: PokerDatabase, instanceId: string): void {
         start_lease_until = ?,
         updated_at = ?
     WHERE id = ?
-  `).run(NOW + 30_000, NOW + 2, instanceId);
+  `).run(NOW + 30_000, NOW + 4, instanceId);
   database.db.prepare(`
     UPDATE tournament_instance
     SET status = 'running',
@@ -561,41 +871,7 @@ function makeRunningClosed(database: PokerDatabase, instanceId: string): void {
         actual_started_at = ?,
         updated_at = ?
     WHERE id = ?
-  `).run(NOW + 3, NOW + 3, instanceId);
-  database.db.prepare(`
-    INSERT INTO tournament_registration (
-      instance_id, profile_id, public_player_json, status, ever_seated,
-      registration_attempt, economy_entry_attempt, registered_at, updated_at
-    ) VALUES (?, 'profile-a', '{"id":"player-a"}', 'registered', 0, 1, 1, ?, ?)
-  `).run(instanceId, NOW, NOW);
-  database.db.prepare(`
-    INSERT INTO tournament_registration_attempt (
-      instance_id, profile_id, registration_attempt, request_id,
-      economy_entry_attempt, status, close_generation, close_owner_token,
-      close_reason, created_at, updated_at
-    ) VALUES (?, 'profile-a', 1, 'request-a', 1, 'registered',
-      NULL, NULL, NULL, ?, ?)
-  `).run(instanceId, NOW, NOW);
-  database.db.prepare(`
-    UPDATE tournament_registration_attempt
-    SET status = 'seat-claimed', updated_at = ?
-    WHERE instance_id = ? AND profile_id = 'profile-a'
-  `).run(NOW + 1, instanceId);
-  database.db.prepare(`
-    UPDATE tournament_registration
-    SET status = 'seat-claimed', updated_at = ?
-    WHERE instance_id = ? AND profile_id = 'profile-a'
-  `).run(NOW + 2, instanceId);
-  database.db.prepare(`
-    UPDATE tournament_registration_attempt
-    SET status = 'seated', updated_at = ?
-    WHERE instance_id = ? AND profile_id = 'profile-a'
-  `).run(NOW + 2, instanceId);
-  database.db.prepare(`
-    UPDATE tournament_registration
-    SET status = 'seated', ever_seated = 1, updated_at = ?
-    WHERE instance_id = ? AND profile_id = 'profile-a'
-  `).run(NOW + 3, instanceId);
+  `).run(NOW + 5, NOW + 5, instanceId);
 }
 
 function makeFreerollRunningClosed(
@@ -676,17 +952,18 @@ function fundFreeroll(
   database: PokerDatabase,
   instanceId: string,
   amount: number,
+  seedKey = 'fund-seed',
 ): void {
   database.db.prepare(`
     INSERT INTO promotion_fund_ledger (
       id, account_id, kind, delta, balance_after, instance_id,
       actor_kind, actor_id, reason, idempotency_key, created_at
     ) VALUES (
-      'fund-seed', 'global', 'admin-adjustment', ?, ?, NULL,
+      ?, 'global', 'admin-adjustment', ?, ?, NULL,
       'backoffice-admin', 'admin-1', 'test promotion seed',
-      'fund-seed-request', ?
+      ?, ?
     )
-  `).run(amount, amount, NOW);
+  `).run(seedKey, amount, amount, `${seedKey}-request`, NOW);
   database.db.prepare(`
     INSERT INTO promotion_fund_ledger (
       id, account_id, kind, delta, balance_after, instance_id,
@@ -709,4 +986,28 @@ function fundFreeroll(
       settlement_fingerprint, reserved_at, settled_at, refunded_at, updated_at
     ) VALUES (?, 'global', ?, 'reserved', 0, 0, NULL, ?, NULL, NULL, ?)
   `).run(instanceId, amount, NOW + 1, NOW + 1);
+}
+
+function payoutPlan(
+  instanceId: string,
+  results: TournamentPayoutFreezePlan['results'],
+  prizePool: number,
+): TournamentPayoutFreezePlan {
+  const checksum = computeTournamentPayoutFreezeChecksum({ version: 1 });
+  const fingerprint = computeTournamentSettlementFingerprint({
+    instanceId,
+    configVersion: 2,
+    payoutFreezeVersion: 1,
+    payoutFreezeChecksum: checksum,
+    prizePool,
+    results,
+  });
+  return {
+    version: 1,
+    checksum,
+    prizePool,
+    fingerprint,
+    results,
+    now: NOW + 20,
+  };
 }

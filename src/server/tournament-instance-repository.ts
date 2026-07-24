@@ -1,4 +1,14 @@
+import { createHash } from 'node:crypto';
 import type { PokerDatabase } from './persistence/database';
+import {
+  computePayouts,
+  payoutPercents,
+} from '@/lib/poker/payout-table';
+import type {
+  PublicTournamentLifecycle,
+  TournamentDetailView,
+  TournamentSummary,
+} from '@/lib/realtime/protocol';
 import type {
   TournamentConfigSnapshotV2,
   TournamentRecurrence,
@@ -12,6 +22,12 @@ import type {
 } from '@/lib/tournament/tournament-state';
 
 type SqliteRow = Record<string, unknown>;
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+const WALLET_REGISTRATION_WINDOW_MS = 20 * MINUTE_MS;
+const MAX_VISIBLE_LEAD_MS = 30 * DAY_MS;
+const MAX_FREEROLL_REGISTRATION_LEAD_MS = 7 * DAY_MS;
 
 const INSTANCE_STATUSES: readonly TournamentInstanceStatus[] = [
   'scheduled-hidden',
@@ -234,8 +250,9 @@ export type CloseClaim =
 
 export type RefundClaim =
   | {
-      readonly status: 'claimed' | 'already-pending';
+      readonly status: 'claimed';
       readonly ownerToken: string;
+      readonly claimGeneration: number;
       readonly instance: TournamentInstanceRecord;
     }
   | { readonly status: 'not-found' | 'not-claimable' };
@@ -258,6 +275,15 @@ export interface TournamentPayoutFreezePlan {
   readonly fingerprint: string;
   readonly results: readonly TournamentPayoutResult[];
   readonly now: number;
+}
+
+export interface TournamentSettlementFingerprintInput {
+  readonly instanceId: string;
+  readonly configVersion: number;
+  readonly payoutFreezeVersion: number;
+  readonly payoutFreezeChecksum: string;
+  readonly prizePool: number;
+  readonly results: readonly TournamentPayoutResult[];
 }
 
 export type PayoutClaim =
@@ -303,6 +329,10 @@ export interface TournamentInstancePublicProjection {
   readonly registered: boolean;
   readonly myRegistrationStatus: string | null;
   readonly funding: TournamentFundingProjection;
+  readonly serverNow: number;
+}
+
+export interface TournamentPublicDetailView extends TournamentDetailView {
   readonly serverNow: number;
 }
 
@@ -436,9 +466,26 @@ export class TournamentInstanceRepository {
     }
     if (command.templateId !== null) {
       const template = this.#templateById(command.templateId);
-      if (!template || template.revision < (command.templateRevision ?? 0)) {
+      const startsAt = command.schedule.startsAt;
+      const expectedIdempotencyKey = startsAt === null
+        ? null
+        : `template:${template?.id}:r${template?.revision}:${startsAt}`;
+      if (
+        !template
+        || template.revision !== command.templateRevision
+        || startsAt === null
+        || command.schedule.manualStartExpiresAt !== null
+        || command.occurrenceKey !== String(startsAt)
+        || command.idempotencyKey !== expectedIdempotencyKey
+        || command.schedule.visibleAt !== startsAt - template.visibleLeadMs
+        || command.schedule.registrationOpensAt
+          !== startsAt - template.registrationLeadMs
+        || canonicalJson(command.config) !== canonicalJson(template.config)
+      ) {
         throw new TournamentPersistenceError('INVALID_INPUT');
       }
+    } else if (command.occurrenceKey !== command.id) {
+      throw new TournamentPersistenceError('INVALID_INPUT');
     }
     try {
       this.database.db.prepare(`
@@ -772,6 +819,11 @@ export class TournamentInstanceRepository {
         return { status: 'not-claimable' };
       }
 
+      this.#releaseRegistrationsForCancellation(
+        instanceId,
+        'refunded',
+        this.now(),
+      );
       const closeGenerationIncrement = current.registrationState === 'closing'
         ? 0
         : 1;
@@ -786,6 +838,7 @@ export class TournamentInstanceRepository {
             ),
             registration_generation = registration_generation + ?,
             registration_owner_token = NULL,
+            pending_late_entrants = 0,
             start_owner_id = NULL,
             start_lease_until = NULL,
             next_retry_at = NULL,
@@ -800,6 +853,7 @@ export class TournamentInstanceRepository {
           AND registration_state = ?
           AND registration_generation = ?
           AND registration_owner_token IS ?
+          AND pending_late_entrants = ?
           AND settlement_owner_id IS NULL
           AND settlement_lease_until IS NULL
       `).run(
@@ -812,23 +866,28 @@ export class TournamentInstanceRepository {
         current.registrationState,
         current.registrationGeneration,
         current.registrationOwnerToken,
+        current.pendingLateEntrants,
       );
-      if (result.changes !== 1) return { status: 'not-claimable' };
+      if (result.changes !== 1) {
+        throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
+      }
+      const instance = this.#requireInstance(instanceId);
       return {
         status: 'claimed',
         ownerToken,
-        instance: this.#requireInstance(instanceId),
+        claimGeneration: instance.registrationGeneration,
+        instance,
       };
     });
   }
 
   finishCancellation(
     instanceId: string,
-    ownerToken: string,
+    claimGeneration: number,
     completedAt: number,
   ): TournamentInstanceRecord {
     assertIdentifier(instanceId);
-    assertIdentifier(ownerToken);
+    assertPositiveInteger(claimGeneration);
     assertTimestamp(completedAt);
     const current = this.getInstance(instanceId);
     if (!current || current.status !== 'refund-pending') {
@@ -849,7 +908,7 @@ export class TournamentInstanceRepository {
         completedAt,
         completedAt,
         instanceId,
-        current.registrationGeneration,
+        claimGeneration,
       );
       if (result.changes !== 1) {
         throw new TournamentPersistenceError('INVALID_INPUT');
@@ -910,9 +969,13 @@ export class TournamentInstanceRepository {
       ) {
         return { status: 'not-claimable' };
       }
+      this.#releaseRegistrationsForCancellation(
+        instanceId,
+        'cancelled',
+        completedAt,
+      );
       const generationIncrement = current.registrationState === 'closing' ? 0 : 1;
-      try {
-        const result = this.database.db.prepare(`
+      const result = this.database.db.prepare(`
           UPDATE tournament_instance
           SET status = 'cancelled',
               status_reason = ?,
@@ -923,6 +986,7 @@ export class TournamentInstanceRepository {
               ),
               registration_generation = registration_generation + ?,
               registration_owner_token = NULL,
+              pending_late_entrants = 0,
               start_owner_id = NULL,
               start_lease_until = NULL,
               completed_at = ?,
@@ -932,9 +996,10 @@ export class TournamentInstanceRepository {
             AND registration_state = ?
             AND registration_generation = ?
             AND registration_owner_token IS ?
+            AND pending_late_entrants = ?
             AND settlement_owner_id IS NULL
             AND settlement_lease_until IS NULL
-        `).run(
+      `).run(
           reason,
           generationIncrement,
           completedAt,
@@ -944,10 +1009,10 @@ export class TournamentInstanceRepository {
           current.registrationState,
           current.registrationGeneration,
           current.registrationOwnerToken,
-        );
-        if (result.changes !== 1) return { status: 'not-claimable' };
-      } catch {
-        return { status: 'not-claimable' };
+          current.pendingLateEntrants,
+      );
+      if (result.changes !== 1) {
+        throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
       }
       return { status: 'claimed', instance: this.#requireInstance(instanceId) };
     });
@@ -960,13 +1025,32 @@ export class TournamentInstanceRepository {
     assertIdentifier(instanceId);
     assertPayoutPlan(freeze);
     return this.database.transaction((): PayoutClaim => {
-      let current = this.getInstance(instanceId);
+      const current = this.getInstance(instanceId);
       if (!current) return { status: 'not-found' };
       if (current.status === 'payout-pending') {
         const settlement = this.database.db.prepare(`
-          SELECT fingerprint FROM tournament_settlement WHERE instance_id = ?
+          SELECT fingerprint, payout_freeze_checksum, final_entrants, prize_pool
+          FROM tournament_settlement
+          WHERE instance_id = ?
         `).get(instanceId) as SqliteRow | undefined;
-        if (settlement?.fingerprint === freeze.fingerprint) {
+        if (
+          settlement?.fingerprint === freeze.fingerprint
+          && settlement.payout_freeze_checksum === freeze.checksum
+          && settlement.final_entrants === freeze.results.length
+          && settlement.prize_pool === freeze.prizePool
+          && current.payoutFreezeVersion === freeze.version
+          && current.payoutFreeze !== null
+          && computeTournamentPayoutFreezeChecksum(current.payoutFreeze)
+            === freeze.checksum
+          && computeTournamentSettlementFingerprint({
+            instanceId,
+            configVersion: current.config.version,
+            payoutFreezeVersion: freeze.version,
+            payoutFreezeChecksum: freeze.checksum,
+            prizePool: freeze.prizePool,
+            results: freeze.results,
+          }) === freeze.fingerprint
+        ) {
           return { status: 'already-pending', instance: current };
         }
         throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
@@ -983,41 +1067,27 @@ export class TournamentInstanceRepository {
         return { status: 'not-claimable' };
       }
 
-      if (current.payoutFreezeVersion === null) {
-        const freezeJson = canonicalJson({
-          version: freeze.version,
-          checksum: freeze.checksum,
-          finalEntrants,
-        });
-        const update = this.database.db.prepare(`
-          UPDATE tournament_instance
-          SET final_entrants = ?,
-              payout_freeze_version = ?,
-              payout_freeze_json = ?,
-              updated_at = ?
-          WHERE id = ?
-            AND status = 'running'
-            AND registration_state = 'closed'
-            AND final_entrants IS NULL
-            AND payout_freeze_version IS NULL
-            AND payout_freeze_json IS NULL
-            AND committed_entrants = ?
-            AND pending_late_entrants = 0
-        `).run(
-          finalEntrants,
-          freeze.version,
-          freezeJson,
-          freeze.now,
-          instanceId,
-          finalEntrants,
-        );
-        if (update.changes !== 1) return { status: 'not-claimable' };
-        current = this.#requireInstance(instanceId);
-      }
       if (
         current.finalEntrants !== finalEntrants
         || current.payoutFreezeVersion !== freeze.version
+        || current.payoutFreeze === null
       ) {
+        throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+      }
+      const persistedFreezeChecksum =
+        computeTournamentPayoutFreezeChecksum(current.payoutFreeze);
+      if (persistedFreezeChecksum !== freeze.checksum) {
+        throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+      }
+      const expectedFingerprint = computeTournamentSettlementFingerprint({
+        instanceId,
+        configVersion: current.config.version,
+        payoutFreezeVersion: freeze.version,
+        payoutFreezeChecksum: freeze.checksum,
+        prizePool: freeze.prizePool,
+        results: freeze.results,
+      });
+      if (expectedFingerprint !== freeze.fingerprint) {
         throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
       }
 
@@ -1143,7 +1213,7 @@ export class TournamentInstanceRepository {
     instanceId: string,
     forPlayerId: string | undefined,
     now: number,
-  ): TournamentInstancePublicProjection | null {
+  ): TournamentPublicDetailView | null {
     assertIdentifier(instanceId);
     assertTimestamp(now);
     const row = this.#projectionRow(instanceId, forPlayerId);
@@ -1154,16 +1224,15 @@ export class TournamentInstanceRepository {
       !PUBLIC_STATUSES.has(instance.status)
       || (
         instance.economyMode === 'freeroll'
-        && funding.status !== 'reserved'
-        && !(
-          instance.status === 'completed'
-          && funding.status === 'settled'
-        )
+        && !hasExactFreerollFunding(instance, funding)
       )
     ) {
       return null;
     }
-    return projectPublic(instance, row, funding, now);
+    return {
+      ...projectDetail(instance, row, funding, now),
+      entrants: this.#publicEntrants(instanceId),
+    };
   }
 
   listPublicProjections(
@@ -1178,7 +1247,7 @@ export class TournamentInstanceRepository {
       ORDER BY COALESCE(starts_at, manual_expires_at), id
     `).all() as SqliteRow[];
     return ids.flatMap(row => {
-      const projection = this.getPublicProjection(
+      const projection = this.#getPublicSummaryProjection(
         stringValue(row.id),
         forPlayerId,
         now,
@@ -1202,10 +1271,20 @@ export class TournamentInstanceRepository {
       instance.economyMode === 'freeroll'
       && instance.status !== 'scheduled-hidden'
       && instance.status !== 'cancelled'
-      && funding.status !== 'reserved'
-      && !(instance.status === 'completed' && funding.status === 'settled')
+      && !hasExactFreerollFunding(instance, funding)
     ) {
       warnings.push('PUBLIC_FREEROLL_NOT_RESERVED');
+    }
+    if (
+      instance.economyMode === 'freeroll'
+      && funding.status !== 'missing'
+      && funding.amount !== (
+        instance.config.prizePool.kind === 'promotion-funded'
+          ? instance.config.prizePool.totalPrize
+          : null
+      )
+    ) {
+      warnings.push('PROMOTION_ESCROW_AMOUNT_MISMATCH');
     }
     if (
       instance.economyMode === 'wallet'
@@ -1259,6 +1338,53 @@ export class TournamentInstanceRepository {
     });
   }
 
+  #releaseRegistrationsForCancellation(
+    instanceId: string,
+    targetStatus: 'cancelled' | 'refunded',
+    updatedAt: number,
+  ): void {
+    this.database.assertTransactionActive();
+    const activeStatuses = [
+      'registered',
+      'seat-claimed',
+      'late-pending',
+      'seated',
+    ] as const;
+    const placeholders = activeStatuses.map(() => '?').join(', ');
+    this.database.db.prepare(`
+      UPDATE tournament_registration
+      SET status = ?, updated_at = ?
+      WHERE instance_id = ?
+        AND status IN (${placeholders})
+    `).run(
+      targetStatus,
+      updatedAt,
+      instanceId,
+      ...activeStatuses,
+    );
+    const survivors = this.database.db.prepare(`
+      SELECT (
+        SELECT COUNT(*)
+        FROM tournament_registration
+        WHERE instance_id = ?
+          AND status IN (${placeholders})
+      ) + (
+        SELECT COUNT(*)
+        FROM tournament_registration_attempt
+        WHERE instance_id = ?
+          AND status IN (${placeholders})
+      ) AS count
+    `).get(
+      instanceId,
+      ...activeStatuses,
+      instanceId,
+      ...activeStatuses,
+    ) as SqliteRow;
+    if (integerValue(survivors.count) !== 0) {
+      throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
+    }
+  }
+
   #templateById(id: string): TournamentTemplateRecord | null {
     const row = this.database.db.prepare(`
       SELECT * FROM tournament_template WHERE id = ?
@@ -1308,6 +1434,55 @@ export class TournamentInstanceRepository {
     return integerValue(row.liability) === 1;
   }
 
+  #getPublicSummaryProjection(
+    instanceId: string,
+    forPlayerId: string | undefined,
+    now: number,
+  ): TournamentInstancePublicProjection | null {
+    const row = this.#projectionRow(instanceId, forPlayerId);
+    if (!row) return null;
+    const instance = decodeInstance(row);
+    const funding = decodeFunding(row, instance.economyMode);
+    if (
+      !PUBLIC_STATUSES.has(instance.status)
+      || (
+        instance.economyMode === 'freeroll'
+        && !hasExactFreerollFunding(instance, funding)
+      )
+    ) {
+      return null;
+    }
+    return projectPublic(instance, row, funding, now);
+  }
+
+  #publicEntrants(
+    instanceId: string,
+  ): Array<{ id: string; name: string; avatar: string }> {
+    const rows = this.database.db.prepare(`
+      SELECT public_player_json
+      FROM tournament_registration
+      WHERE instance_id = ?
+        AND status NOT IN ('cancelled', 'no-show', 'refunded')
+      ORDER BY registered_at, profile_id
+    `).all(instanceId) as SqliteRow[];
+    return rows.map(row => {
+      const player = parseJson(row.public_player_json);
+      if (
+        !isRecord(player)
+        || typeof player.id !== 'string'
+        || typeof player.name !== 'string'
+        || typeof player.avatar !== 'string'
+      ) {
+        persistedInvalid();
+      }
+      return {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+      };
+    });
+  }
+
   #projectionRow(
     instanceId: string,
     forPlayerId: string | undefined,
@@ -1322,10 +1497,16 @@ export class TournamentInstanceRepository {
           FROM tournament_registration registration
           WHERE registration.instance_id = instance.id
             AND registration.status IN (
-              'registered', 'seat-claimed', 'late-pending',
+              'registered', 'seat-claimed',
               'seated', 'eliminated', 'finished'
             )
         ) AS accepted_entrants,
+        (
+          SELECT COUNT(*)
+          FROM tournament_registration seated
+          WHERE seated.instance_id = instance.id
+            AND seated.status = 'seated'
+        ) AS alive_seated,
         registration.status AS my_registration_status
       FROM tournament_instance instance
       LEFT JOIN tournament_prize_escrow escrow
@@ -1379,6 +1560,238 @@ function projectPublic(
   };
 }
 
+function projectDetail(
+  instance: TournamentInstanceRecord,
+  row: SqliteRow,
+  funding: TournamentFundingProjection,
+  now: number,
+): TournamentPublicDetailView {
+  const projection = projectPublic(instance, row, funding, now);
+  const lifecycle = publicLifecycle(instance.status);
+  const aliveSeated = integerValue(row.alive_seated);
+  const entrantBasis = Math.max(
+    2,
+    instance.finalEntrants
+      ?? instance.committedEntrants
+      ?? (
+        projection.acceptedEntrants > 0
+          ? projection.acceptedEntrants
+          : instance.minEntrants
+      ),
+  );
+  const totalPrize = projection.prizePool;
+  const payoutAmounts = computePayouts(
+    totalPrize,
+    entrantBasis,
+    instance.config.payout.presetId,
+  );
+  const percents = payoutPercents(
+    entrantBasis,
+    instance.config.payout.presetId,
+  );
+  const payoutRows = payoutAmounts.map((amount, index) => ({
+    place: index + 1,
+    percent: percents[index],
+    amount,
+  }));
+  const myStatus = projection.myRegistrationStatus as
+    | TournamentSummary['myRegistrationStatus'];
+  const capacityAvailable = (
+    projection.acceptedEntrants + projection.pendingLateEntrants
+    < instance.maxEntrants
+  );
+  const preStartDeadline = instance.schedule.startsAt
+    ?? instance.schedule.manualStartExpiresAt;
+  const preStartWindowOpen = (
+    now >= instance.schedule.registrationOpensAt
+    && preStartDeadline !== null
+    && now < preStartDeadline
+  );
+  const lateClosesAt = lateRegistrationClosesAt(instance);
+  const canRegister = (
+    myStatus === null
+    && capacityAvailable
+    && (
+      (
+        instance.status === 'registering'
+        && instance.registrationState === 'open-prestart'
+        && preStartWindowOpen
+      )
+      || (
+        instance.status === 'running'
+        && instance.registrationState === 'open-late'
+        && lateClosesAt !== null
+        && now < lateClosesAt
+      )
+    )
+  );
+  const canCancelRegistration = (
+    myStatus === 'registered'
+    && (
+      instance.status === 'registering'
+      || instance.status === 'start-delayed'
+    )
+  );
+  const sourcePresetId = instance.config.structure.sourcePresetId;
+  const speed = sourcePresetId ?? 'standard';
+  const firstLevel = instance.config.structure.segments.find(
+    segment => segment.kind === 'level',
+  );
+  const levelDurationMs = firstLevel?.durationMs ?? 0;
+  const summary: TournamentSummary = {
+    id: instance.id,
+    name: instance.config.name,
+    lifecycle,
+    statusReason: instance.statusReason,
+    phase: legacyPhase(lifecycle),
+    speed,
+    entrantCount: projection.acceptedEntrants,
+    maxEntrants: instance.maxEntrants,
+    tableSize: instance.config.tableSize,
+    remaining: instance.status === 'running'
+      ? aliveSeated
+      : projection.acceptedEntrants,
+    tableCount: instance.status === 'running'
+      ? Math.ceil(aliveSeated / instance.config.tableSize)
+      : 0,
+    prizePool: totalPrize,
+    startAt: instance.schedule.startsAt,
+    startedAt: instance.actualStartedAt,
+    botFill: instance.config.field.botFillToMinimum,
+    hostId:
+      instance.directorProfileId ?? instance.createdBy.profileId ?? '',
+    level: 1,
+    paused: false,
+    economyMode: instance.economyMode,
+    entryBuyIn: instance.config.economy.mode === 'wallet'
+      ? instance.config.economy.buyIn
+      : 0,
+    entryFee: instance.config.economy.mode === 'wallet'
+      ? instance.config.economy.fee
+      : 0,
+    registered: myStatus !== null,
+    payoutPreset: instance.config.payout.presetId,
+    schedule: {
+      visibleAt: instance.schedule.visibleAt,
+      registrationOpensAt: instance.schedule.registrationOpensAt,
+      scheduledStartsAt: instance.schedule.startsAt,
+      manualStartExpiresAt: instance.schedule.manualStartExpiresAt,
+      actualStartedAt: instance.actualStartedAt,
+    },
+    structure: {
+      sourcePresetId,
+      startingStack: instance.config.structure.startingStack,
+      segments: instance.config.structure.segments,
+      currentSegmentIndex: null,
+      currentSegmentEndsAt: null,
+    },
+    payout: {
+      tableVersion: instance.config.payout.tableVersion,
+      presetId: instance.config.payout.presetId,
+      paidFieldPercent: instance.config.payout.paidFieldPercent,
+      status: instance.finalEntrants === null ? 'provisional' : 'final',
+      totalPrize,
+      payouts: payoutRows,
+      fundingStatus: payoutFundingStatus(instance),
+    },
+    registrationState: instance.registrationState,
+    registrationCloseReason: instance.registrationCloseReason,
+    lateRegistrationClosesAt: lateClosesAt,
+    minEntrants: instance.minEntrants,
+    initialEntrants: instance.initialEntrants ?? 0,
+    acceptedEntrants: projection.acceptedEntrants,
+    pendingLateEntrants: instance.pendingLateEntrants,
+    aliveSeated,
+    finalEntrants: instance.finalEntrants,
+    botFillToMinimum: instance.config.field.botFillToMinimum,
+    myRegistrationStatus: myStatus,
+    mySeat: null,
+    canRegister,
+    canCancelRegistration,
+  };
+  return {
+    serverNow: now,
+    summary,
+    levels: instance.config.structure.segments.flatMap(segment => (
+      segment.kind === 'level'
+        ? [{
+            level: 0,
+            smallBlind: segment.smallBlind,
+            bigBlind: segment.bigBlind,
+            ante: segment.bigBlindAnte,
+          }]
+        : []
+    )).map((level, index) => ({ ...level, level: index + 1 })),
+    levelDurationMs,
+    payouts: payoutAmounts.map((prize, index) => ({
+      place: index + 1,
+      prize,
+    })),
+    entrants: [],
+    standings: [],
+    clock: null,
+  };
+}
+
+function publicLifecycle(
+  status: TournamentInstanceStatus,
+): PublicTournamentLifecycle {
+  if (status === 'scheduled-hidden' || status === 'scheduled-visible') {
+    return 'upcoming';
+  }
+  return status;
+}
+
+function legacyPhase(
+  lifecycle: PublicTournamentLifecycle,
+): TournamentSummary['phase'] {
+  if (
+    lifecycle === 'upcoming'
+    || lifecycle === 'registering'
+    || lifecycle === 'start-delayed'
+    || lifecycle === 'starting'
+  ) {
+    return 'registering';
+  }
+  if (
+    lifecycle === 'running'
+    || lifecycle === 'payout-pending'
+    || lifecycle === 'refund-pending'
+  ) {
+    return 'running';
+  }
+  return lifecycle;
+}
+
+function payoutFundingStatus(
+  instance: TournamentInstanceRecord,
+): NonNullable<TournamentSummary['payout']>['fundingStatus'] {
+  if (instance.status === 'payout-pending') return 'payout-pending';
+  if (instance.status === 'completed') return 'settled';
+  return instance.economyMode === 'wallet'
+    ? 'entry-funded'
+    : 'promotion-reserved';
+}
+
+function lateRegistrationClosesAt(
+  instance: TournamentInstanceRecord,
+): number | null {
+  if (
+    instance.actualStartedAt === null
+    || !instance.config.lateRegistration.enabled
+  ) {
+    return null;
+  }
+  let levels = 0;
+  let duration = 0;
+  for (const segment of instance.config.structure.segments) {
+    duration += segment.durationMs;
+    if (segment.kind === 'level') levels += 1;
+    if (levels >= instance.config.lateRegistration.durationLevels) break;
+  }
+  return instance.actualStartedAt + duration;
+}
+
 function decodeFunding(
   row: SqliteRow,
   economyMode: 'freeroll' | 'wallet',
@@ -1393,6 +1806,18 @@ function decodeFunding(
     status: status as 'reserved' | 'settled' | 'refunded',
     amount: nullableInteger(row.funding_amount),
   };
+}
+
+function hasExactFreerollFunding(
+  instance: TournamentInstanceRecord,
+  funding: TournamentFundingProjection,
+): boolean {
+  const expectedStatus = instance.status === 'completed'
+    ? 'settled'
+    : 'reserved';
+  return instance.config.prizePool.kind === 'promotion-funded'
+    && funding.status === expectedStatus
+    && funding.amount === instance.config.prizePool.totalPrize;
 }
 
 function decodeTemplate(row: SqliteRow): TournamentTemplateRecord {
@@ -1563,6 +1988,16 @@ function assertTemplateMutableValues(values: {
   assertTimestamp(values.visibleLeadMs);
   assertTimestamp(values.registrationLeadMs);
   assertConfig(values.config);
+  const registrationLeadLimit = values.config.economy.mode === 'wallet'
+    ? WALLET_REGISTRATION_WINDOW_MS
+    : MAX_FREEROLL_REGISTRATION_LEAD_MS;
+  if (
+    values.visibleLeadMs > MAX_VISIBLE_LEAD_MS
+    || values.registrationLeadMs > registrationLeadLimit
+    || values.visibleLeadMs < values.registrationLeadMs
+  ) {
+    invalid();
+  }
 }
 
 function assertInstanceCommand(command: CreateInstanceCommand): void {
@@ -1578,14 +2013,17 @@ function assertInstanceCommand(command: CreateInstanceCommand): void {
   }
   assertActor(command.createdBy);
   assertTimestamp(command.now);
-  assertSchedule(command.schedule);
+  assertSchedule(command.schedule, command.config.economy.mode);
   assertConfig(command.config);
   if (command.directorProfileId !== undefined && command.directorProfileId !== null) {
     assertIdentifier(command.directorProfileId);
   }
 }
 
-function assertSchedule(schedule: TournamentSchedule): void {
+function assertSchedule(
+  schedule: TournamentSchedule,
+  economyMode: 'freeroll' | 'wallet',
+): void {
   assertTimestamp(schedule.visibleAt);
   assertTimestamp(schedule.registrationOpensAt);
   if (schedule.visibleAt > schedule.registrationOpensAt) invalid();
@@ -1597,10 +2035,24 @@ function assertSchedule(schedule: TournamentSchedule): void {
   if (schedule.startsAt !== null) {
     assertTimestamp(schedule.startsAt);
     if (schedule.registrationOpensAt > schedule.startsAt) invalid();
+    if (
+      economyMode === 'wallet'
+      && schedule.startsAt - schedule.registrationOpensAt
+        > WALLET_REGISTRATION_WINDOW_MS
+    ) {
+      invalid();
+    }
   }
   if (schedule.manualStartExpiresAt !== null) {
     assertTimestamp(schedule.manualStartExpiresAt);
     if (schedule.registrationOpensAt >= schedule.manualStartExpiresAt) invalid();
+    if (
+      economyMode === 'wallet'
+      && schedule.manualStartExpiresAt - schedule.registrationOpensAt
+        > WALLET_REGISTRATION_WINDOW_MS
+    ) {
+      invalid();
+    }
   }
 }
 
@@ -1791,6 +2243,38 @@ function sameInstanceCreation(
     && record.createdBy.profileId === command.createdBy.profileId
     && record.directorProfileId === (command.directorProfileId ?? null)
     && record.createdAt === command.now;
+}
+
+export function computeTournamentPayoutFreezeChecksum(freeze: unknown): string {
+  return createHash('sha256').update(canonicalJson(freeze)).digest('hex');
+}
+
+export function computeTournamentSettlementFingerprint(
+  input: TournamentSettlementFingerprintInput,
+): string {
+  assertIdentifier(input.instanceId);
+  assertPositiveInteger(input.configVersion);
+  assertPositiveInteger(input.payoutFreezeVersion);
+  assertIdentifier(input.payoutFreezeChecksum);
+  assertPositiveInteger(input.prizePool);
+  return createHash('sha256').update(canonicalJson({
+    instanceId: input.instanceId,
+    configVersion: input.configVersion,
+    payoutFreezeVersion: input.payoutFreezeVersion,
+    payoutFreezeChecksum: input.payoutFreezeChecksum,
+    prizePool: input.prizePool,
+    finalEntrants: input.results.length,
+    results: input.results.map(result => ({
+      place: result.place,
+      playerId: result.playerId,
+      participantType: result.participantType,
+      profileId: result.profileId,
+      registrationAttempt: result.registrationAttempt,
+      displayName: result.displayName,
+      prize: result.prize,
+      disposition: result.disposition,
+    })),
+  })).digest('hex');
 }
 
 function canonicalJson(value: unknown): string {
