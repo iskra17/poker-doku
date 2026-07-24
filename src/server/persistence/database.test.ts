@@ -556,6 +556,7 @@ describe('PokerDatabase migrations', () => {
       status: 'running',
       registrationState: 'closed',
       registrationCloseReason: 'late-reg-disabled',
+      entrantCount: 1,
     });
     expect(() => database?.db.exec(`
       UPDATE tournament_instance SET status = 'payout-pending'
@@ -564,20 +565,34 @@ describe('PokerDatabase migrations', () => {
 
     insertTournamentInstance(database.db, {
       id: 'immutable-instance',
-      status: 'running',
-      registrationState: 'closed',
-      registrationCloseReason: 'late-reg-disabled',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
       economyMode: 'freeroll',
+      entrantCount: 1,
     });
+    fundAndReserveTournamentPrize(database.db, 'immutable-instance', 100);
     database.db.exec(`
-      INSERT INTO promotion_fund_ledger (
-        id, account_id, kind, delta, balance_after, instance_id,
-        actor_kind, actor_id, reason, idempotency_key, created_at
-      ) VALUES (
-        'ledger-1', 'global', 'freeroll-prize-reserve', -100, 0,
-        'immutable-instance', 'system', 'scheduler',
-        'reserve prize', 'ledger-key-1', 10
-      );
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible'
+      WHERE id = 'immutable-instance';
+      UPDATE tournament_instance
+      SET status = 'registering', registration_state = 'open-prestart'
+      WHERE id = 'immutable-instance';
+      UPDATE tournament_instance
+      SET status = 'starting', registration_state = 'locked-for-start',
+          start_attempt = 1, start_owner_id = 'start-owner',
+          start_lease_until = 100
+      WHERE id = 'immutable-instance';
+      UPDATE tournament_instance
+      SET status = 'running', registration_state = 'closed',
+          registration_close_reason = 'late-reg-disabled',
+          registration_generation = 1,
+          initial_entrants = 1, initial_bot_entrants = 0,
+          committed_entrants = 1, final_entrants = 1,
+          payout_freeze_version = 1, payout_freeze_json = '{}',
+          actual_started_at = 20,
+          start_owner_id = NULL, start_lease_until = NULL
+      WHERE id = 'immutable-instance';
       INSERT INTO tournament_forfeit (
         removal_id, instance_id, player_id, profile_id, registration_attempt,
         amount, hand_number, created_by_profile_id, created_at
@@ -585,13 +600,14 @@ describe('PokerDatabase migrations', () => {
         'remove-1', 'immutable-instance', 'bot-1', NULL, NULL,
         100, 1, NULL, 10
       );
-      INSERT INTO tournament_prize_escrow (
-        instance_id, account_id, amount, status, human_paid, bot_returned,
-        settlement_fingerprint, reserved_at, settled_at, refunded_at, updated_at
-      ) VALUES (
-        'immutable-instance', 'global', 100, 'reserved', 0, 0,
-        NULL, 10, NULL, NULL, 10
-      );
+    `);
+    insertFinishedTournamentRegistration(
+      database.db,
+      'immutable-instance',
+      'profile-1',
+      'immutable-request',
+    );
+    database.db.exec(`
       INSERT INTO tournament_settlement (
         instance_id, status, payout_freeze_checksum, final_entrants,
         prize_pool, human_payout_total, bot_return_total, fingerprint,
@@ -607,14 +623,21 @@ describe('PokerDatabase migrations', () => {
         'immutable-instance', 1, 'human-1', 'human', 'profile-1',
         1, 'Player', 100, 'wallet-credit'
       );
+      UPDATE tournament_prize_escrow
+      SET settlement_fingerprint = 'fingerprint-1', updated_at = 20
+      WHERE instance_id = 'immutable-instance';
+      UPDATE tournament_instance
+      SET status = 'payout-pending'
+      WHERE id = 'immutable-instance';
     `);
 
     expect(() => database?.db.exec(`
       UPDATE promotion_fund_ledger SET reason = 'changed reason'
-      WHERE id = 'ledger-1'
+      WHERE id = 'reserve-ledger:immutable-instance'
     `)).toThrow();
     expect(() => database?.db.exec(`
-      DELETE FROM promotion_fund_ledger WHERE id = 'ledger-1'
+      DELETE FROM promotion_fund_ledger
+      WHERE id = 'reserve-ledger:immutable-instance'
     `)).toThrow();
     expect(() => database?.db.exec(`
       UPDATE tournament_forfeit SET amount = 0 WHERE removal_id = 'remove-1'
@@ -710,13 +733,32 @@ describe('PokerDatabase migrations', () => {
 
     database = openPokerDatabase(path);
     expect(database.db.prepare(`
-      SELECT id, entry_attempt, status FROM sng_entries
+      SELECT id, tournament_id, room_id, profile_id, buy_in, fee, status,
+             place, prize, start_attempt, entry_attempt, created_at, updated_at
+      FROM sng_entries
       WHERE id = 'attempt-1'
     `).get()).toEqual({
       id: 'attempt-1',
+      tournament_id: 'tournament-a',
+      room_id: 'tournament-a',
+      profile_id: 'attempt-profile',
+      buy_in: 1500,
+      fee: 150,
       entry_attempt: 1,
       status: 'refunded',
+      place: null,
+      prize: 0,
+      start_attempt: 0,
+      created_at: 1,
+      updated_at: 1,
     });
+    const activeIndex = database.db.prepare(`
+      SELECT sql FROM sqlite_schema
+      WHERE type = 'index' AND name = 'one_active_sng_entry_per_profile'
+    `).get() as { sql: string };
+    expect(activeIndex.sql.replace(/\s+/g, ' ')).toContain(
+      "WHERE status IN ('reserved', 'started')",
+    );
     expect(database.db.prepare(`
       INSERT INTO sng_entries (
         id, tournament_id, room_id, profile_id, buy_in, fee, status,
@@ -735,6 +777,13 @@ describe('PokerDatabase migrations', () => {
         1500, 150, 'reserved', NULL, 0, 0, 1, 3, 3
       )
     `).run()).toThrow();
+    expect(database.db.prepare(`
+      DELETE FROM profiles WHERE id = 'attempt-profile'
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM sng_entries
+      WHERE profile_id = 'attempt-profile'
+    `).get()).toEqual({ count: 0 });
   });
 
   it('rolls all v27 and v28 objects back when a middle statement fails', () => {
@@ -744,12 +793,28 @@ describe('PokerDatabase migrations', () => {
     createDatabaseThroughMigration(path, 26);
     const rawDatabase = new DatabaseSync(path);
     rawDatabase.exec(`
-      CREATE TABLE sng_entries_v26_backup (sentinel INTEGER PRIMARY KEY) STRICT;
+      INSERT INTO profiles (
+        id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+        alias, avatar_id, adult_confirmed_at, created_at, updated_at
+      ) VALUES (
+        'rollback-profile', 'rollback-hash', 'rollback-lookup',
+        'rollback-recovery', 'rollback-recovery-lookup',
+        'rollback-alias', 'sakura', 1, 1, 1
+      );
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, created_at, updated_at
+      ) VALUES (
+        'rollback-entry', 'rollback-tournament', 'rollback-room',
+        'rollback-profile', 1500, 150, 'refunded', NULL, 0, 0, 1, 1
+      );
+      DROP INDEX one_active_sng_entry_per_profile;
+      CREATE UNIQUE INDEX one_active_sng_entry_per_profile ON profiles(id);
     `);
     rawDatabase.close();
 
     expect(() => openPokerDatabase(path)).toThrowError(
-      'there is already another table or index with this name: sng_entries_v26_backup',
+      'index one_active_sng_entry_per_profile already exists',
     );
     const reopened = new DatabaseSync(path);
     try {
@@ -766,9 +831,758 @@ describe('PokerDatabase migrations', () => {
       expect(reopened.prepare('PRAGMA table_info(sng_entries)').all()
         .map(row => (row as { name: string }).name))
         .not.toContain('entry_attempt');
+      expect(reopened.prepare(`
+        SELECT id, tournament_id, profile_id FROM sng_entries
+        WHERE id = 'rollback-entry'
+      `).get()).toEqual({
+        id: 'rollback-entry',
+        tournament_id: 'rollback-tournament',
+        profile_id: 'rollback-profile',
+      });
+      expect(reopened.prepare(`
+        SELECT COUNT(*) AS count FROM sqlite_schema
+        WHERE type = 'table' AND name = 'sng_entries_v26_backup'
+      `).get()).toEqual({ count: 0 });
     } finally {
       reopened.close();
     }
+  });
+
+  it('enforces registration state generation and close-owner CAS transitions', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'registration-cas',
+      status: 'running',
+      registrationState: 'open-late',
+    });
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closing',
+          registration_close_reason = 'time',
+          registration_generation = 1,
+          registration_owner_token = 'close-owner-1'
+      WHERE id = 'registration-cas'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_owner_token = 'close-owner-2'
+      WHERE id = 'registration-cas'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_close_reason = 'full',
+          registration_generation = 2,
+          registration_owner_token = 'close-owner-2'
+      WHERE id = 'registration-cas'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_generation = 0
+      WHERE id = 'registration-cas'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closed',
+          registration_owner_token = NULL
+      WHERE id = 'registration-cas'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'open-late',
+          registration_close_reason = NULL
+      WHERE id = 'registration-cas'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'registration-skip',
+      status: 'running',
+      registrationState: 'open-late',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closed',
+          registration_close_reason = 'time'
+      WHERE id = 'registration-skip'
+    `).run()).toThrow();
+  });
+
+  it('supports scheduler catch-up but blocks cancellation with live liabilities', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'catch-up-registering',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+    });
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'registering', registration_state = 'open-prestart'
+      WHERE id = 'catch-up-registering'
+    `).run().changes).toBe(1);
+
+    insertTournamentInstance(database.db, {
+      id: 'catch-up-delayed',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+    });
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'start-delayed',
+          status_reason = 'capacity',
+          registration_state = 'locked-for-start'
+      WHERE id = 'catch-up-delayed'
+    `).run().changes).toBe(1);
+
+    insertProfile(database, 'liability-profile');
+    insertTournamentInstance(database.db, {
+      id: 'wallet-liability',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    });
+    database.db.exec(`
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee, status,
+        place, prize, start_attempt, entry_attempt, created_at, updated_at
+      ) VALUES (
+        'liability-entry', 'wallet-liability', 'wallet-liability',
+        'liability-profile', 1500, 150, 'reserved',
+        NULL, 0, 0, 1, 10, 10
+      );
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'cancelled',
+          status_reason = 'operator-cancel',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1,
+          completed_at = 20
+      WHERE id = 'wallet-liability'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'refund-pending',
+          status_reason = 'operator-cancel',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1
+      WHERE id = 'wallet-liability'
+    `).run().changes).toBe(1);
+
+    insertTournamentInstance(database.db, {
+      id: 'unsafe-hidden-cancel',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+      economyMode: 'freeroll',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'cancelled',
+          status_reason = 'not-enough',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1,
+          completed_at = 20
+      WHERE id = 'unsafe-hidden-cancel'
+    `).run()).toThrow();
+  });
+
+  it('keeps terminal registration attempts and close claims immutable', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, { id: 'history-instance' });
+    database.db.exec(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'history-instance', 'history-profile', '{}', 'registered',
+        0, 1, NULL, 10, 10
+      );
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'history-instance', 'history-profile', 1, 'request-1',
+        NULL, 'registered', NULL, NULL, NULL, 10, 10
+      );
+      UPDATE tournament_registration
+      SET status = 'no-show', updated_at = 20
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile';
+      UPDATE tournament_registration_attempt
+      SET status = 'no-show', updated_at = 20
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile'
+        AND registration_attempt = 1;
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_registration
+      SET status = 'registered', updated_at = 30
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_registration_attempt
+      SET status = 'registered', updated_at = 30
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile'
+        AND registration_attempt = 1
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_registration
+      SET status = 'registered', registration_attempt = 2, updated_at = 30
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile'
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'history-instance', 'history-profile', 2, 'request-2',
+        NULL, 'registered', NULL, NULL, NULL, 30, 30
+      )
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_registration_attempt
+      SET request_id = 'rewritten-request'
+      WHERE instance_id = 'history-instance' AND profile_id = 'history-profile'
+        AND registration_attempt = 1
+    `).run()).toThrow();
+
+    database.db.exec(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'history-instance', 'close-profile', '{}', 'late-pending',
+        0, 1, NULL, 10, 10
+      );
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'history-instance', 'close-profile', 1, 'close-request',
+        NULL, 'late-pending', 1, 'close-owner', 'full', 10, 10
+      );
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_registration_attempt
+      SET close_owner_token = 'different-owner'
+      WHERE instance_id = 'history-instance' AND profile_id = 'close-profile'
+        AND registration_attempt = 1
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'history-instance', 'terminal-insert', '{}', 'refunded',
+        0, 1, NULL, 10, 10
+      )
+    `).run()).toThrow();
+  });
+
+  it('requires freeroll escrow before public and terminal lifecycle states', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'unfunded-freeroll',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+      economyMode: 'freeroll',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible'
+      WHERE id = 'unfunded-freeroll'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'funded-freeroll',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+      economyMode: 'freeroll',
+    });
+    fundAndReserveTournamentPrize(database.db, 'funded-freeroll', 100);
+    database.db.exec(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible'
+      WHERE id = 'funded-freeroll';
+      UPDATE tournament_instance
+      SET status = 'registering', registration_state = 'open-prestart'
+      WHERE id = 'funded-freeroll';
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'cancelled',
+          status_reason = 'operator-cancel',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1,
+          completed_at = 20
+      WHERE id = 'funded-freeroll'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'refund-pending',
+          status_reason = 'operator-cancel',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1
+      WHERE id = 'funded-freeroll'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_prize_escrow
+      SET status = 'refunded', refunded_at = 30, updated_at = 30
+      WHERE instance_id = 'funded-freeroll'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'refund-ledger:funded-freeroll', 'global',
+        'freeroll-prize-refund', 100, 100, 'funded-freeroll',
+        'system', 'scheduler', 'refund prize',
+        'refund-key:funded-freeroll', 30
+      )
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      UPDATE tournament_prize_escrow
+      SET status = 'refunded', refunded_at = 30, updated_at = 30
+      WHERE instance_id = 'funded-freeroll'
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'cancelled', completed_at = 30
+      WHERE id = 'funded-freeroll'
+    `).run().changes).toBe(1);
+  });
+
+  it('rejects direct terminal escrow and settlement inserts', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'terminal-escrow-insert',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+      economyMode: 'freeroll',
+    });
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_prize_escrow (
+        instance_id, account_id, amount, status, human_paid, bot_returned,
+        settlement_fingerprint, reserved_at, settled_at, refunded_at, updated_at
+      ) VALUES (
+        'terminal-escrow-insert', 'global', 100, 'refunded', 0, 0,
+        NULL, 10, NULL, 10, 10
+      )
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'terminal-settlement-insert',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+      entrantCount: 1,
+    });
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_settlement (
+        instance_id, status, payout_freeze_checksum, final_entrants,
+        prize_pool, human_payout_total, bot_return_total, fingerprint,
+        created_at, settled_at, updated_at
+      ) VALUES (
+        'terminal-settlement-insert', 'settled', 'checksum', 1,
+        100, 100, 0, 'terminal-fingerprint', 10, 10, 10
+      )
+    `).run()).toThrow();
+  });
+
+  it('requires a complete contiguous and mode-correct settlement plan', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'non-contiguous-plan',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+    });
+    insertFinishedTournamentRegistration(
+      database.db, 'non-contiguous-plan', 'profile-1', 'non-contiguous-1',
+    );
+    insertFinishedTournamentRegistration(
+      database.db, 'non-contiguous-plan', 'profile-2', 'non-contiguous-2',
+    );
+    database.db.exec(`
+      UPDATE tournament_instance
+      SET initial_entrants = 2, initial_bot_entrants = 0,
+          committed_entrants = 2, final_entrants = 2,
+          payout_freeze_version = 1, payout_freeze_json = '{}'
+      WHERE id = 'non-contiguous-plan';
+      INSERT INTO tournament_settlement VALUES (
+        'non-contiguous-plan', 'pending', 'checksum', 2,
+        100, 100, 0, 'non-contiguous-fingerprint', 10, NULL, 10
+      );
+      INSERT INTO tournament_settlement_result VALUES
+        ('non-contiguous-plan', 1, 'player-1', 'human', 'profile-1',
+          1, 'One', 60, 'wallet-credit'),
+        ('non-contiguous-plan', 3, 'player-2', 'human', 'profile-2',
+          1, 'Two', 40, 'wallet-credit');
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET status = 'payout-pending'
+      WHERE id = 'non-contiguous-plan'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'wrong-sum-plan',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+    });
+    insertFinishedTournamentRegistration(
+      database.db, 'wrong-sum-plan', 'profile-a', 'wrong-sum-a',
+    );
+    insertFinishedTournamentRegistration(
+      database.db, 'wrong-sum-plan', 'profile-b', 'wrong-sum-b',
+    );
+    database.db.exec(`
+      UPDATE tournament_instance
+      SET initial_entrants = 2, initial_bot_entrants = 0,
+          committed_entrants = 2, final_entrants = 2,
+          payout_freeze_version = 1, payout_freeze_json = '{}'
+      WHERE id = 'wrong-sum-plan';
+      INSERT INTO tournament_settlement VALUES (
+        'wrong-sum-plan', 'pending', 'checksum', 2,
+        100, 100, 0, 'wrong-sum-fingerprint', 10, NULL, 10
+      );
+      INSERT INTO tournament_settlement_result VALUES
+        ('wrong-sum-plan', 1, 'player-a', 'human', 'profile-a',
+          1, 'A', 60, 'wallet-credit'),
+        ('wrong-sum-plan', 2, 'player-b', 'human', 'profile-b',
+          1, 'B', 30, 'wallet-credit');
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET status = 'payout-pending'
+      WHERE id = 'wrong-sum-plan'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'wallet-bot-plan',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+    });
+    insertFinishedTournamentRegistration(
+      database.db, 'wallet-bot-plan', 'wallet-profile', 'wallet-bot-human',
+    );
+    database.db.exec(`
+      UPDATE tournament_instance
+      SET initial_entrants = 2, initial_bot_entrants = 0,
+          committed_entrants = 2, final_entrants = 2,
+          payout_freeze_version = 1, payout_freeze_json = '{}'
+      WHERE id = 'wallet-bot-plan';
+      INSERT INTO tournament_settlement VALUES (
+        'wallet-bot-plan', 'pending', 'checksum', 2,
+        100, 50, 50, 'wallet-bot-fingerprint', 10, NULL, 10
+      );
+      INSERT INTO tournament_settlement_result VALUES
+        ('wallet-bot-plan', 1, 'wallet-human', 'human', 'wallet-profile',
+          1, 'Human', 50, 'wallet-credit'),
+        ('wallet-bot-plan', 2, 'wallet-bot', 'bot', NULL,
+          NULL, 'Bot', 50, 'promotion-return');
+    `);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET status = 'payout-pending'
+      WHERE id = 'wallet-bot-plan'
+    `).run()).toThrow();
+  });
+
+  it('couples runtime timestamps and owners to immutable lifecycle fields', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'early-start-time',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET actual_started_at = 10
+      WHERE id = 'early-start-time'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'starting-owner',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'starting', registration_state = 'locked-for-start'
+      WHERE id = 'starting-owner'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'starting', registration_state = 'locked-for-start',
+          start_attempt = 1, start_owner_id = 'start-owner',
+          start_lease_until = 100
+      WHERE id = 'starting-owner'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'running', registration_state = 'open-late',
+          initial_entrants = 2, initial_bot_entrants = 0,
+          committed_entrants = 2
+      WHERE id = 'starting-owner'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'running', registration_state = 'open-late',
+          initial_entrants = 2, initial_bot_entrants = 0,
+          committed_entrants = 2, actual_started_at = 20,
+          start_owner_id = NULL, start_lease_until = NULL
+      WHERE id = 'starting-owner'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET initial_entrants = 3
+      WHERE id = 'starting-owner'
+    `).run()).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'terminal-time',
+      status: 'scheduled-hidden',
+      registrationState: 'not-open',
+    });
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'cancelled',
+          status_reason = 'operator-cancel',
+          registration_state = 'closed',
+          registration_close_reason = 'tournament-cancelled',
+          registration_generation = 1
+      WHERE id = 'terminal-time'
+    `).run()).toThrow();
+  });
+
+  it('reconciles every promotion ledger write with the protected fund balance', () => {
+    database = openPokerDatabase(':memory:');
+    expect(() => database?.db.prepare(`
+      UPDATE promotion_fund
+      SET balance = 100, version = 1, updated_at = 10
+      WHERE account_id = 'global'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'bad-balance-ledger', 'global', 'admin-adjustment', 100, 99, NULL,
+        'backoffice-admin', 'admin-1', 'fund seed',
+        'bad-balance-key', 10
+      )
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'fund-ledger-1', 'global', 'admin-adjustment', 100, 100, NULL,
+        'backoffice-admin', 'admin-1', 'fund seed',
+        'fund-ledger-key-1', 10
+      )
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      SELECT balance, version, updated_at FROM promotion_fund
+      WHERE account_id = 'global'
+    `).get()).toEqual({ balance: 100, version: 1, updated_at: 10 });
+    expect(() => database?.db.prepare(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'orphan-reserve', 'global', 'freeroll-prize-reserve', -10, 90,
+        'missing-instance', 'system', 'scheduler', 'orphan reserve',
+        'orphan-reserve-key', 15
+      )
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      INSERT INTO promotion_fund_ledger (
+        id, account_id, kind, delta, balance_after, instance_id,
+        actor_kind, actor_id, reason, idempotency_key, created_at
+      ) VALUES (
+        'overdraw-ledger', 'global', 'admin-adjustment', -101, 0, NULL,
+        'backoffice-admin', 'admin-1', 'bad debit',
+        'overdraw-key', 20
+      )
+    `).run()).toThrow();
+  });
+
+  it('locks settlement results to pending plans and matching registrations', () => {
+    database = openPokerDatabase(':memory:');
+    insertTournamentInstance(database.db, {
+      id: 'result-lock-instance',
+      status: 'running',
+      registrationState: 'closed',
+      registrationCloseReason: 'late-reg-disabled',
+      entrantCount: 1,
+    });
+    database.db.exec(`
+      UPDATE tournament_instance
+      SET initial_entrants = 1, initial_bot_entrants = 0,
+          committed_entrants = 1, final_entrants = 1,
+          payout_freeze_version = 1, payout_freeze_json = '{}'
+      WHERE id = 'result-lock-instance';
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'result-lock-instance', 'result-profile', '{}', 'registered',
+        0, 1, NULL, 10, 10
+      );
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'result-lock-instance', 'result-profile', 1, 'result-request',
+        NULL, 'registered', NULL, NULL, NULL, 10, 10
+      );
+      UPDATE tournament_registration
+      SET status = 'seat-claimed', updated_at = 11
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      UPDATE tournament_registration_attempt
+      SET status = 'seat-claimed', updated_at = 11
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      UPDATE tournament_registration
+      SET status = 'seated', ever_seated = 1, updated_at = 12
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      UPDATE tournament_registration_attempt
+      SET status = 'seated', updated_at = 12
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      UPDATE tournament_registration
+      SET status = 'finished', updated_at = 13
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      UPDATE tournament_registration_attempt
+      SET status = 'finished', updated_at = 13
+      WHERE instance_id = 'result-lock-instance' AND profile_id = 'result-profile';
+      INSERT INTO tournament_settlement VALUES (
+        'result-lock-instance', 'pending', 'checksum', 1,
+        100, 100, 0, 'result-lock-fingerprint', 10, NULL, 10
+      );
+    `);
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_settlement_result VALUES (
+        'result-lock-instance', 1, 'wrong-player', 'human', 'wrong-profile',
+        1, 'Wrong', 100, 'wallet-credit'
+      )
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      INSERT INTO tournament_settlement_result VALUES (
+        'result-lock-instance', 1, 'right-player', 'human', 'result-profile',
+        1, 'Right', 100, 'wallet-credit'
+      )
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_settlement
+      SET status = 'settled', settled_at = 20, updated_at = 20
+      WHERE instance_id = 'result-lock-instance'
+    `).run()).toThrow();
+    expect(database.db.prepare(`
+      UPDATE tournament_instance SET status = 'payout-pending'
+      WHERE id = 'result-lock-instance'
+    `).run().changes).toBe(1);
+    expect(database.db.prepare(`
+      UPDATE tournament_settlement
+      SET status = 'settled', settled_at = 20, updated_at = 20
+      WHERE instance_id = 'result-lock-instance'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_settlement_result VALUES (
+        'result-lock-instance', 2, 'late-player', 'bot', NULL,
+        NULL, 'Late', 0, 'none'
+      )
+    `).run()).toThrow();
+  });
+
+  it('rejects terminal instance insertion and freezes monotonic audit fields', () => {
+    database = openPokerDatabase(':memory:');
+    expect(() => insertTournamentInstance(database!.db, {
+      id: 'inserted-cancelled',
+      status: 'cancelled',
+      registrationState: 'closed',
+      registrationCloseReason: 'tournament-cancelled',
+    })).toThrow();
+    expect(() => insertTournamentInstance(database!.db, {
+      id: 'inserted-public-freeroll',
+      status: 'running',
+      registrationState: 'open-late',
+      economyMode: 'freeroll',
+    })).toThrow();
+
+    insertTournamentInstance(database.db, {
+      id: 'monotonic-instance',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    });
+    expect(database.db.prepare(`
+      UPDATE tournament_instance
+      SET start_attempt = 2, settlement_attempt = 2, forfeited_chips = 100
+      WHERE id = 'monotonic-instance'
+    `).run().changes).toBe(1);
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET start_attempt = 1
+      WHERE id = 'monotonic-instance'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET settlement_attempt = 1
+      WHERE id = 'monotonic-instance'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      UPDATE tournament_instance SET forfeited_chips = 99
+      WHERE id = 'monotonic-instance'
+    `).run()).toThrow();
+  });
+
+  it('validates contractual JSON and prevents registration history deletion', () => {
+    database = openPokerDatabase(':memory:');
+    expect(() => database?.db.prepare(`
+      INSERT INTO tournament_template (
+        id, revision, idempotency_key, name, enabled, timezone,
+        recurrence_json, visible_lead_ms, registration_lead_ms,
+        config_version, config_json, created_by_kind,
+        created_by_profile_id, created_at, updated_at
+      ) VALUES (
+        'invalid-json-template', 1, 'invalid-json-key', 'Invalid', 1,
+        'Asia/Seoul', '{', 1, 1, 2, '{}', 'system', NULL, 1, 1
+      )
+    `).run()).toThrow();
+    expect(() => insertTournamentInstance(database!.db, {
+      id: 'invalid-json-instance',
+      status: 'registering',
+      registrationState: 'open-prestart',
+    }, '{')).toThrow();
+
+    insertTournamentInstance(database.db, { id: 'delete-history-instance' });
+    database.db.exec(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (
+        'delete-history-instance', 'delete-profile', '{}', 'registered',
+        0, 1, NULL, 10, 10
+      );
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        'delete-history-instance', 'delete-profile', 1, 'delete-request',
+        NULL, 'registered', NULL, NULL, NULL, 10, 10
+      );
+    `);
+    expect(() => database?.db.prepare(`
+      DELETE FROM tournament_registration_attempt
+      WHERE instance_id = 'delete-history-instance'
+        AND profile_id = 'delete-profile'
+    `).run()).toThrow();
+    expect(() => database?.db.prepare(`
+      DELETE FROM tournament_registration
+      WHERE instance_id = 'delete-history-instance'
+        AND profile_id = 'delete-profile'
+    `).run()).toThrow();
   });
 
   it('upgrades V24 hand records to V25 (mtt 허용·토너먼트 링크) preserving rows and IDs', () => {
@@ -4641,6 +5455,80 @@ function createDatabaseThroughMigration(path: string, version: number): void {
   }
 }
 
+function fundAndReserveTournamentPrize(
+  target: DatabaseSync,
+  instanceId: string,
+  amount: number,
+): void {
+  const { balance } = target.prepare(`
+    SELECT balance FROM promotion_fund WHERE account_id = 'global'
+  `).get() as { balance: number };
+  target.exec(`
+    INSERT INTO promotion_fund_ledger (
+      id, account_id, kind, delta, balance_after, instance_id,
+      actor_kind, actor_id, reason, idempotency_key, created_at
+    ) VALUES (
+      'adjust-ledger:${instanceId}', 'global', 'admin-adjustment',
+      ${amount}, ${balance + amount}, NULL,
+      'backoffice-admin', 'test-admin', 'fund prize',
+      'adjust-key:${instanceId}', 5
+    );
+    INSERT INTO promotion_fund_ledger (
+      id, account_id, kind, delta, balance_after, instance_id,
+      actor_kind, actor_id, reason, idempotency_key, created_at
+    ) VALUES (
+      'reserve-ledger:${instanceId}', 'global', 'freeroll-prize-reserve',
+      -${amount}, ${balance}, '${instanceId}',
+      'system', 'scheduler', 'reserve prize',
+      'reserve-key:${instanceId}', 10
+    );
+    INSERT INTO tournament_prize_escrow (
+      instance_id, account_id, amount, status, human_paid, bot_returned,
+      settlement_fingerprint, reserved_at, settled_at, refunded_at, updated_at
+    ) VALUES (
+      '${instanceId}', 'global', ${amount}, 'reserved', 0, 0,
+      NULL, 10, NULL, NULL, 10
+    );
+  `);
+}
+
+function insertFinishedTournamentRegistration(
+  target: DatabaseSync,
+  instanceId: string,
+  profileId: string,
+  requestId: string,
+): void {
+  target.prepare(`
+    INSERT INTO tournament_registration (
+      instance_id, profile_id, public_player_json, status, ever_seated,
+      registration_attempt, economy_entry_attempt, registered_at, updated_at
+    ) VALUES (?, ?, '{}', 'registered', 0, 1, NULL, 10, 10)
+  `).run(instanceId, profileId);
+  target.prepare(`
+    INSERT INTO tournament_registration_attempt (
+      instance_id, profile_id, registration_attempt, request_id,
+      economy_entry_attempt, status, close_generation, close_owner_token,
+      close_reason, created_at, updated_at
+    ) VALUES (?, ?, 1, ?, NULL, 'registered', NULL, NULL, NULL, 10, 10)
+  `).run(instanceId, profileId, requestId);
+  for (const [status, everSeated, at] of [
+    ['seat-claimed', 0, 11],
+    ['seated', 1, 12],
+    ['finished', 1, 13],
+  ] as const) {
+    target.prepare(`
+      UPDATE tournament_registration
+      SET status = ?, ever_seated = ?, updated_at = ?
+      WHERE instance_id = ? AND profile_id = ?
+    `).run(status, everSeated, at, instanceId, profileId);
+    target.prepare(`
+      UPDATE tournament_registration_attempt
+      SET status = ?, updated_at = ?
+      WHERE instance_id = ? AND profile_id = ? AND registration_attempt = 1
+    `).run(status, at, instanceId, profileId);
+  }
+}
+
 function insertTournamentInstance(
   target: DatabaseSync,
   options: {
@@ -4650,8 +5538,17 @@ function insertTournamentInstance(
     registrationCloseReason?: string | null;
     registrationOwnerToken?: string | null;
     economyMode?: 'freeroll' | 'wallet';
+    entrantCount?: number;
   },
+  configJson = '{}',
 ): void {
+  const status = options.status ?? 'registering';
+  const registrationState = options.registrationState ?? 'open-prestart';
+  const started = ['running', 'payout-pending', 'completed'].includes(status);
+  const entrantCount = options.entrantCount ?? 2;
+  const frozen = started && registrationState === 'closed';
+  const starting = status === 'starting';
+  const terminal = status === 'completed' || status === 'cancelled';
   target.prepare(`
     INSERT INTO tournament_instance (
       id, template_id, template_revision, idempotency_key, occurrence_key,
@@ -4674,25 +5571,36 @@ function insertTournamentInstance(
       ?, NULL, ?, ?,
       ?, 0,
       ?, 2, 48,
-      NULL, NULL, NULL,
-      0, NULL, 0,
-      0, NULL, NULL,
-      NULL, 2, '{}',
+      ?, ?, ?,
+      0, ?, 0,
+      0, ?, ?,
+      NULL, 2, ?,
       'system', NULL, NULL,
-      0, NULL, NULL, NULL,
+      0, NULL, ?, ?,
       0, NULL, NULL,
-      NULL, NULL, NULL,
+      NULL, ?, ?,
       10, 10
     )
   `).run(
     options.id,
     `idempotency:${options.id}`,
     options.id,
-    options.status ?? 'registering',
+    status,
     options.economyMode ?? 'wallet',
-    options.registrationState ?? 'open-prestart',
+    registrationState,
     options.registrationCloseReason ?? null,
     options.registrationOwnerToken ?? null,
+    started ? entrantCount : null,
+    started ? 0 : null,
+    started ? entrantCount : null,
+    frozen ? entrantCount : null,
+    frozen ? 1 : null,
+    frozen ? '{}' : null,
+    configJson,
+    starting ? 'test-start-owner' : null,
+    starting ? 100 : null,
+    started ? 10 : null,
+    terminal ? 10 : null,
   );
 }
 
