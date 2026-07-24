@@ -1880,6 +1880,11 @@ export class TournamentManager {
       if (anchor) this.balanceAfterHand(t, anchor, true);
     }
 
+    // Scheduled breaks remain tournament-wide barriers during H4H. Record the
+    // break before releasing the synchronized-round barrier so no table can
+    // receive its next-hand permit inside the break window.
+    const onBreak = this.clockPos(t).onBreak;
+
     // 버블이 터졌으면 H4H 종료
     if (t.remaining <= paidPlaces(t.seatedCount)) {
       t.h4h.active = false;
@@ -1898,9 +1903,11 @@ export class TournamentManager {
 
     this.batchTournamentPresentation(t, () => {
       for (const roomId of t.tables.keys()) {
+        if (onBreak) this.addHold(t, roomId, 'scheduled-break');
         this.removeHold(t, roomId, 'h4h-barrier');
       }
     });
+    if (onBreak) this.armBreakResume(t);
     // 배리어 해제 뒤 모든 유휴 테이블을 한 번씩만 재가동한다.
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;

@@ -416,6 +416,42 @@ describe('MTT break resume', () => {
     expect(tm.roomHooks.isHeld(fullRoomId)).toBe(false);
   });
 
+  it('holds every table for a scheduled break before releasing the next H4H round', () => {
+    const { tables } = prepareH4hBubble(tm, rm);
+    expect(tables).toHaveLength(2);
+
+    const triggerRoom = rm.getRoom(tables[0])!.engine;
+    const bubblePlayer = triggerRoom.state.players.find(
+      p => p.chips > 0 && !p.finishPlace && !p.pendingRemoval,
+    )!;
+    bubblePlayer.handStartChips = bubblePlayer.chips;
+    bubblePlayer.chips = 0;
+    expect(tm.roomHooks.onHandComplete(tables[0])).toBe('hold');
+    expect(tm.getAdminSummaries()[0].h4hActive).toBe(true);
+
+    const structure = MTT_STRUCTURES.standard;
+    vi.setSystemTime(
+      Date.now() + structure.levelDurationMs * structure.breakEveryLevels + 1,
+    );
+    const resumeSpy = vi.spyOn(rm, 'resumeMttRoomAfterPresentation');
+
+    for (const roomId of tables) {
+      const engine = rm.getRoom(roomId)!.engine;
+      engine.state.isHandInProgress = true;
+      tm.roomHooks.onHandStarted(roomId, engine.state.handNumber);
+      engine.state.isHandInProgress = false;
+      expect(tm.roomHooks.onHandComplete(roomId)).toBe('hold');
+    }
+
+    for (const roomId of tables) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(true);
+      expect(
+        rm.getRoom(roomId)!.engine.state.tournament?.holdReasons,
+      ).toContain('scheduled-break');
+    }
+    expect(resumeSpy).not.toHaveBeenCalled();
+  });
+
   it('arms H4H on remaining tables when bubble balancing breaks the completed table', () => {
     const created = tm.createTournament({
       name: 'gone 뒤 H4H',
