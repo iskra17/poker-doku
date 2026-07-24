@@ -124,6 +124,9 @@ export default function ItmCelebration({
             >
               축하합니다!
             </h2>
+            <p className="mt-1 text-xs font-bold text-blossom">
+              딜러 미야코가 축하드려요
+            </p>
             <p className="mt-3 text-sm font-semibold leading-relaxed text-white/85">
               버블이 종료되었습니다.
               <br />

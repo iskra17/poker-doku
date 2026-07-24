@@ -195,7 +195,8 @@ npx tsc --noEmit
     검사 후 전원 이주+`disposeRoom('mtt-break')` — 부분 이주는 이동 핑퐁을 만든다. **생존 판정
     `isAlive`는 "칩>0 또는 (핸드 중 active/all-in)"** — chips>0만 보면 다른 테이블 라이브 핸드의
     올인 좌석을 놓쳐 조기 브레이크가 난다 (2026-07-23 QA). 페이아웃은 `payout-table.ts`의
-    `standard`/`flat`/`top-heavy` 프리셋 중 개설 시 선택하며, 미선택 레거시 입력은 `standard`.
+    `standard`/`flat`/`top-heavy` 프리셋 중 개설 시 선택하고 시작 후 변경하지 않으며,
+    미선택 레거시 입력은 `standard`.
     계산 합계 보정 잔여는 1위에 준다. 버블(입상+1명)에선 hand-for-hand: 전 테이블 완료 배리어 후
     동기화 핸드 무장(h4h.armed), 같은 라운드 탈락은 테이블이 달라도 handStartChips로 동시 판정.
     H4H 탈락 배치 전체를 확정한 뒤 잔존 인원이 입상 인원 이하로 처음 내려오면 서버가 단 한 번
