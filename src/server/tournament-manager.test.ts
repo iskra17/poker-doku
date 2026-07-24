@@ -692,6 +692,44 @@ describe('TournamentManager', () => {
     expect(t2Rows.every(r => r.chips === 10000)).toBe(true);
   });
 
+  it('publishes the reduced table count after a non-final table break', () => {
+    h.manager.shutdown();
+    h.roomManager.shutdown();
+    const onTournamentsChanged = vi.fn();
+    h = createHarness({ onTournamentsChanged });
+
+    const created = h.manager.createTournament({
+      name: 'Table count refresh',
+      speed: 'standard',
+      maxEntrants: 18,
+      tableSize: 6,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 18; i++) {
+      h.manager.register(created.tournamentId, {
+        id: `h${i}`,
+        name: `u${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const [sourceRoomId] = mttTableIds(h.roomManager);
+    const source = engineOf(h.roomManager, sourceRoomId);
+
+    onTournamentsChanged.mockClear();
+    aliveIds(source).forEach((playerId, index) => {
+      bust(source, playerId, index + 1);
+    });
+    expect(h.manager.roomHooks.onHandComplete(sourceRoomId)).toBe('gone');
+
+    expect(h.manager.listTournaments()[0].tableCount).toBe(2);
+    expect(onTournamentsChanged).toHaveBeenCalledTimes(2);
+  });
+
   it('aborts a table break entirely when destinations lack capacity', () => {
     const { tables } = start12(h);
     const [t1, t2] = tables;

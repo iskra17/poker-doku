@@ -1721,6 +1721,7 @@ export class TournamentManager {
       data: { tournamentId: t.id, tableNo, remainingTables: t.tables.size },
     });
     this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
   }
 
   /** 이동자 선정(다음 BB — TDA Rule 11) 후 한 명을 이동 */

@@ -450,6 +450,13 @@ describe('MTT break resume', () => {
       ).toContain('scheduled-break');
     }
     expect(resumeSpy).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(structure.breakDurationMs + 1_000);
+
+    for (const roomId of tables) {
+      expect(tm.roomHooks.isHeld(roomId)).toBe(false);
+      expect(resumeSpy).toHaveBeenCalledWith(roomId);
+    }
   });
 
   it('arms H4H on remaining tables when bubble balancing breaks the completed table', () => {
