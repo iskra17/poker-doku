@@ -53,4 +53,33 @@ describe('payout table', () => {
     expect(() => computePayouts(-1, 10)).toThrow();
     expect(() => computePayouts(1.5, 10)).toThrow();
   });
+
+  it('exposes the approved 8-player structures', () => {
+    expect(payoutPercents(8, 'standard')).toEqual([50, 30, 20]);
+    expect(payoutPercents(8, 'flat')).toEqual([40, 28, 19, 13]);
+    expect(payoutPercents(8, 'top-heavy')).toEqual([65, 35]);
+  });
+
+  it.each(['standard', 'flat', 'top-heavy'] as const)(
+    '%s stays valid for 2..48 entrants',
+    preset => {
+    for (let entrants = 2; entrants <= 48; entrants += 1) {
+      const percents = payoutPercents(entrants, preset);
+      expect(percents.length).toBeLessThanOrEqual(entrants);
+      expect(percents.reduce((sum, value) => sum + value, 0)).toBeCloseTo(100, 8);
+
+      const payouts = computePayouts(480_001, entrants, preset);
+      expect(payouts).toHaveLength(paidPlaces(entrants, preset));
+      expect(payouts.reduce((sum, value) => sum + value, 0)).toBe(480_001);
+      for (let index = 1; index < payouts.length; index += 1) {
+        expect(payouts[index]).toBeLessThanOrEqual(payouts[index - 1]);
+      }
+    }
+    },
+  );
+
+  it('rejects invalid entrant counts', () => {
+    expect(() => payoutPercents(1)).toThrow();
+    expect(() => payoutPercents(2.5)).toThrow();
+  });
 });
