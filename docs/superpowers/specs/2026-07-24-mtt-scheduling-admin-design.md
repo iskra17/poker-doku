@@ -1,12 +1,15 @@
 # MTT 운영 백오피스·예약/반복 개설 설계
 
 **작성일:** 2026-07-24
-**상태:** 상위 방향 승인, 상세 설계 검토 대기
+**상태:** 승인됨
 **대상:** Poker Doku 멀티테이블 토너먼트(MTT)
 
 이 문서와 `2026-07-24-mtt-late-registration-design.md`는 한 구현 배치의 두 설계다.
 여기서는 영속 설정·일정·개설 UI를, 두 번째 문서에서는 실제 진행 중 등록·좌석·순위 계약을 정의한다.
 두 번째 문서의 `LateRegistrationPolicy`를 공용 설정 타입으로 사용한다.
+2026-07-25에 승인된 `2026-07-25-mtt-freeroll-promotion-fund-design.md`가
+이 문서의 MTT `practice` 경제 모드를 `freeroll`로 교체하고 공용 운영 원장·실제 지갑 상금 계약을
+추가한다. 두 문서가 충돌하면 2026-07-25 문서가 우선한다.
 
 ## 1. 목표
 
@@ -33,7 +36,8 @@
 - 한국 표준시 기준 서버 시계와 모든 계산 결과 표시
 - 로비 노출·등록 시작·토너먼트 시작의 독립 설정
 - 최소 인원과 최대 인원의 분리
-- practice 토너먼트의 최소 인원까지만 봇 충원
+- 프리롤 토너먼트의 최소 인원까지만 선택적 봇 충원
+- 프리롤 고정 총상금의 공용 운영 원장 예약과 실제 지갑 지급
 - wallet 토너먼트의 인원 미달 취소·전액 환불
 - 스탠다드·터보·하이퍼 프리셋 설명
 - 커스텀 블라인드 구조 편집
@@ -108,12 +112,13 @@ interface TournamentFieldPolicy {
   - `minEntrants` 이상 48명 이하이고, 기본값은 48명이다.
   - 시작 시 최소 인원을 넘은 참가자는 상한까지 모두 수용한다.
 - `botFillToMinimum`
-  - practice에서만 사용할 수 있다.
+  - 프리롤에서만 사용할 수 있다.
   - 실제 체크인 인원이 최소 인원보다 적을 때 `minEntrants`까지만 봇을 채운다.
   - `maxEntrants`까지 봇으로 채우지 않는다.
-  - wallet에서는 서버가 항상 `false`로 정규화한다.
+  - 휴먼이 0명이면 봇을 채우지 않고 회차를 취소한다.
+  - wallet의 `true` 입력은 서버가 조용히 바꾸지 않고 잘못된 설정으로 거절한다.
 
-상한에는 시작 시 착석한 봇도 포함한다. 예를 들어 최소 8명, 상한 24명인 practice에
+상한에는 시작 시 착석한 봇도 포함한다. 예를 들어 최소 8명, 상한 24명인 프리롤에
 휴먼 5명과 봇 3명이 시작하면 레이트 레지로 추가 수용할 수 있는 자리는 16개다.
 최소와 상한을 같은 값으로 두면 봇 충원 후 필드가 가득 차므로 레이트 레지는 즉시 닫힌다.
 
@@ -124,7 +129,10 @@ interface TournamentConfigSnapshotV2 {
   version: 2;
   name: string;
   economy:
-    | { mode: 'practice' }
+    | {
+        mode: 'freeroll';
+        promotionAccountId: 'global';
+      }
     | {
         mode: 'wallet';
         productVersion: number;
@@ -139,7 +147,9 @@ interface TournamentConfigSnapshotV2 {
     startingStack: number;
     segments: TournamentStructureSegment[];
   };
-  prizePool: PrizePoolPolicy;
+  prizePool:
+    | { kind: 'promotion-funded'; totalPrize: number }
+    | { kind: 'entry-pool' };
   payout:
     | { tableVersion: 2; presetId: 'top-heavy'; paidFieldPercent: 10 }
     | { tableVersion: 2; presetId: 'standard'; paidFieldPercent: 15 }
@@ -147,6 +157,9 @@ interface TournamentConfigSnapshotV2 {
   lateRegistration: LateRegistrationPolicy;
 }
 ```
+
+이 v2 예약·반복 스냅샷은 아직 구현·배포되지 않았으므로 이번 개정 내용이 첫 영속 v2 정의다.
+배포된 v2 데이터를 덮어쓰는 변경이 아니다.
 
 - v1 공개 테이블 레이아웃 계약을 유지해 `tableSize`는 6으로 고정한다.
 - 커스텀 시작 스택은 1,000~1,000,000의 안전한 정수다.
@@ -163,7 +176,7 @@ interface TournamentConfigSnapshotV2 {
   새 표는 새 버전으로만 추가한다.
 
 뒤 절에서 선언하는 타입을 포함해 이 스냅샷 하나가 백오피스 미리보기, 공개 상세,
-스케줄러 복구, 게임 런타임, wallet 정산의 공통 입력이다.
+스케줄러 복구, 게임 런타임과 모드별 정산의 공통 입력이다.
 
 ## 5. 예약 모델
 
@@ -196,9 +209,9 @@ manualStartExpiresAt == null
 수동 모집 회차는 생성 즉시 노출·등록을 기본값으로 한다.
 `startsAt == null`, `manualStartExpiresAt != null`,
 `registrationOpensAt < manualStartExpiresAt`을 강제한다.
-practice는 6시간 뒤, wallet은 20분 뒤를 자동 만료로 하며
+프리롤은 6시간 뒤, wallet은 20분 뒤를 자동 만료로 하며
 wallet은 `manualStartExpiresAt - registrationOpensAt <= 20분`을 서버가 강제한다.
-운영자가 만료 전에 직접 시작하거나 취소할 수 있고, 만료되면 practice 등록은 취소,
+운영자가 만료 전에 직접 시작하거나 취소할 수 있고, 만료되면 프리롤은 예약 상금을 반환하고,
 active wallet 경제 책임이 있는 회차는 `refund-pending`으로 잠근 뒤 전액 환불에 성공해야 닫는다.
 wallet 모드여도 active 경제 행이 전혀 없으면 등록·attempt·counter와 instance를 한 transaction에서
 바로 `cancelled`로 닫는다.
@@ -230,7 +243,7 @@ type TournamentRecurrence =
 - `daily`: 매일 지정 시각에 시작한다.
 - `weekly`: 매주 지정 요일·시각에 시작한다.
 - 반복 회차는 반드시 자동 시작이며 `startsAt=null` 수동 모드와 조합할 수 없다.
-- `visibleLeadMs`는 0~30일, practice `registrationLeadMs`는 0~7일,
+- `visibleLeadMs`는 0~30일, 프리롤 `registrationLeadMs`는 0~7일,
   wallet `registrationLeadMs`는 앞 절의 경제 잠금 정책에 따라 0~20분이며
   항상 `visibleLeadMs >= registrationLeadMs`다.
 - 반복 템플릿의 생성 horizon은 다음 셋 중 가장 먼 시각까지다.
@@ -309,6 +322,7 @@ type TournamentInstanceStatus =
   | 'start-delayed'
   | 'starting'
   | 'running'
+  | 'payout-pending'
   | 'refund-pending'
   | 'completed'
   | 'cancelled';
@@ -319,22 +333,25 @@ scheduled-hidden
   → scheduled-visible
   → registering
   → start-delayed ─┐
-                   ├→ starting → running → completed
+                   ├→ starting → running → payout-pending → completed
                    │     ├────→ 원래 registering 또는 start-delayed
                    │     │       // 수동 start preflight 최소 미달
                    │     └────→ cancelled 또는 refund-pending → cancelled
                    └──────────→ cancelled 또는 refund-pending → cancelled
 ```
 
-위 forward 흐름과 별개로 모든 비종결 상태의 취소는 다음 경제 책임 분기를 탄다.
+위 forward 흐름과 별개로 최종 결과가 아직 없는
+`scheduled-hidden|scheduled-visible|registering|start-delayed|starting|running`의 취소는
+다음 경제 책임 분기를 탄다.
 
 ```text
-practice 또는 wallet 경제 행이 전혀 없음 → cancelled
-wallet reserved/started 등 경제 책임 존재 → refund-pending → cancelled
+상금 미예약 숨은 프리롤 또는 wallet 경제 행이 전혀 없음 → cancelled
+프리롤 reserved 상금 또는 wallet reserved/started 책임 존재 → refund-pending → cancelled
 ```
 
-practice는 `cancelled` CAS 뒤 남은 runtime/room 정리를 멱등 재시도한다.
-wallet은 전액 환불이 모두 성공하기 전에는 `cancelled`로 전이하지 않는다.
+프리롤과 wallet 모두 자금 반환이 성공하기 전에는 `cancelled`로 전이하지 않는다.
+`payout-pending`은 이미 immutable settlement plan이 생긴 상태이므로 취소·환불을 거절하고
+오직 정산 재시도 뒤 `completed`로만 전이한다.
 
 - `scheduled-hidden`: DB와 백오피스에만 존재
 - `scheduled-visible`: 로비에는 보이지만 등록 버튼은 잠김
@@ -342,7 +359,8 @@ wallet은 전액 환불이 모두 성공하기 전에는 `cancelled`로 전이�
 - `start-delayed`: 실행 슬롯 부족으로 예정 시각을 넘겨 대기
 - `starting`: DB에서 시작 소유권을 획득했고 경제·방 생성을 처리 중
 - `running`: 실제 테이블이 생성되어 플레이 중
-- `refund-pending`: 취소는 확정됐지만 wallet 환불 재시도가 남음
+- `payout-pending`: 결과와 상금표는 고정됐지만 지갑 지급·봇 상금 반환 재시도가 남음
+- `refund-pending`: 취소는 확정됐지만 프리롤 상금 반환 또는 wallet 환불 재시도가 남음
 - `completed|cancelled`: 종결 상태
 
 `actualStartedAt`은 `running` 전이 성공 순간에 한 번 기록한다.
@@ -365,6 +383,8 @@ type TournamentInstanceStatusReason =
   | 'restart-checkin-grace'
   | 'not-enough'
   | 'missed-start'
+  | 'promotion-insufficient'
+  | 'financial-invariant'
   | 'invalid-config'
   | 'template-superseded'
   | 'operator-cancel'
@@ -378,6 +398,11 @@ type TournamentInstanceStatusReason =
 ## 6. 영속화
 
 SQLite 마이그레이션 v27에 다음 STRICT 테이블을 추가한다.
+같은 미배포 v27/v28 묶음에
+`2026-07-25-mtt-freeroll-promotion-fund-design.md`의 `promotion_fund`,
+`promotion_fund_ledger`, `tournament_prize_escrow`도 추가한다.
+프리롤 회차는 상금 예약 성공 뒤에만 `scheduled-visible|registering`이 될 수 있고,
+`payout-pending` 결과는 정산이 끝나기 전까지 정리 대상이 아니다.
 
 ### 6.1 `tournament_template`
 
@@ -413,6 +438,7 @@ starts_at               INTEGER
 manual_expires_at       INTEGER
 status                  TEXT NOT NULL
 status_reason           TEXT
+economy_mode            TEXT NOT NULL CHECK (economy_mode IN ('freeroll', 'wallet'))
 registration_state      TEXT NOT NULL
 registration_close_reason TEXT
 registration_generation INTEGER NOT NULL DEFAULT 0 CHECK (registration_generation >= 0)
@@ -438,6 +464,10 @@ start_attempt           INTEGER NOT NULL DEFAULT 0
 next_retry_at           INTEGER
 start_owner_id          TEXT
 start_lease_until       INTEGER
+settlement_attempt      INTEGER NOT NULL DEFAULT 0 CHECK (settlement_attempt >= 0)
+settlement_next_retry_at INTEGER
+settlement_owner_id     TEXT
+settlement_lease_until  INTEGER
 created_at              INTEGER NOT NULL
 updated_at              INTEGER NOT NULL
 ```
@@ -452,6 +482,7 @@ updated_at              INTEGER NOT NULL
 `starts_at IS NULL AND manual_expires_at IS NOT NULL AND visible_at <= registration_opens_at < manual_expires_at`
 중 정확히 하나로 제한한다. wallet의 20분 상한은 검증된 `config_json`의 economy mode와
 정규화 열을 함께 보는 생성 repository가 강제한다.
+`economy_mode`는 검증된 config snapshot과 같은 transaction에서 펼쳐 저장하고 이후 변경을 금지한다.
 `registration_close_reason`은 등록 상태가 `closing|closed`일 때만 정규 enum 값을 가질 수 있고,
 그 외에는 null이어야 한다.
 `registration_generation/owner_token`은 open→closing·cancel 같은 장기 작업의 DB CAS 세대다.
@@ -476,6 +507,10 @@ freeze 뒤 토너먼트가 취소되면 내용을 지우지 않고 `payout_freez
 `payout_freeze_aborted_at IS NOT NULL`이면 freeze 세 열이 모두 존재하고 instance가
 `refund-pending|cancelled`여야 하며, 정상 running/completed 회차에는 abort marker를 허용하지 않는다.
 정산과 공개 payout은 이 값이 null인 freeze만 유효한 것으로 인정한다.
+`payout-pending` 전이는 같은 transaction에서 immutable settlement header와 전체 결과 행이
+생성될 때만 허용한다. settlement owner/lease는 스케줄러 tick과 재시작 복구의 동시 정산을 막고,
+성공한 `completed` 전이에서 null로 지운다. `completed`는 모드별 경제 정산과 settlement가 모두
+terminal일 때만 허용한다.
 `forfeited_chips`는 디렉터 강제 퇴장으로 플레이에서 제거한 잔여 스택의 누적 원장이다.
 일반 탈락·테이블 이동·레이트 레지 실패에서는 바꾸지 않는다.
 
@@ -515,7 +550,7 @@ PRIMARY KEY(instance_id, profile_id)
 `public_player_json`에는 현재 `MttEntrant`의 이름·아바타처럼 재구성에 필요한 공개 정보만 담는다.
 세션 토큰, 소켓 ID, 인증 쿠키, 비밀번호는 절대 저장하지 않는다.
 wallet 금액 정본은 기존 에스크로 저장소이며 이 테이블은 등록 오케스트레이션 상태만 가진다.
-`registration_attempt`는 practice와 wallet 모두 재등록할 때 단조 증가해 stale 좌석/보상 callback을 막고,
+`registration_attempt`는 프리롤과 wallet 모두 재등록할 때 단조 증가해 stale 좌석/보상 callback을 막고,
 `economy_entry_attempt`는 wallet일 때만 현재 `sng_entries.entry_attempt`를 가리킨다.
 
 등록 상태는 다음 값만 허용한다.
@@ -543,7 +578,7 @@ late-pending → refunded
 registered|seat-claimed|late-pending|seated|eliminated|finished → refunded
                                                 // wallet 토너먼트 abort
 registered|seat-claimed|late-pending|seated|eliminated|finished → cancelled
-                                                // practice 토너먼트 abort
+                                                // 프리롤 토너먼트 abort
 ```
 
 한 번이라도 `seated`가 된 프로필은 같은 회차에서 다시 `registered|late-pending`으로 돌아갈 수 없다.
@@ -552,7 +587,7 @@ registered|seat-claimed|late-pending|seated|eliminated|finished → cancelled
 `no-show|cancelled|refunded`에서 새 등록을 받으면 `registration_attempt`를 반드시 1 올리고,
 모든 비동기 좌석·commit·release 작업은 자신이 캡처한 attempt가 현재 행과 일치할 때만 상태를 바꾼다.
 
-practice는 여러 미래 회차의 pre-start `registered`를 허용하되
+프리롤은 여러 미래 회차의 pre-start `registered`를 허용하되
 실제 게임 좌석 claim은 프로필당 하나만 허용한다.
 
 ```sql
@@ -570,7 +605,7 @@ WHERE status IN ('seat-claimed', 'late-pending', 'seated');
   다른 active claim 없음이 모두 참이어야 한다.
 - 시작 실패가 경제·방 단계 전이면 `seat-claimed → registered`, 취소면 환불 상태로 전이한다.
 - 우승자를 포함해 정상 완료까지 남은 좌석은 정산 transaction에서 `finished`로 바꿔 active claim을 해제한다.
-- 이 계약은 wallet의 우연한 active escrow 가드에 의존하지 않으므로 practice에도 동일하게 적용된다.
+- 이 계약은 wallet의 우연한 active escrow 가드에 의존하지 않으므로 프리롤에도 동일하게 적용된다.
 
 wallet v1은 기존 `one_active_sng_entry_per_profile`과 active `seat_escrows` 계약을 유지한다.
 
@@ -657,17 +692,54 @@ UNIQUE(instance_id, player_id)
 
 - `config_version`별 서버 검증 함수가 전체 스키마를 검사한다.
 - 읽기 실패나 미지원 버전은 템플릿을 비활성화하고 서버 전체를 막지 않는다.
-  - wallet 경제 행이 전혀 없는 회차: 등록 행을 취소하고 `cancelled/invalid-config`
-  - `reserved|started` wallet 경제 행이 하나라도 있는 회차:
-    `refund-pending/invalid-config`, 경제 행 자체의 금액으로 전액 환불한 뒤에만 `cancelled`
+  - 정규화 `economy_mode`와 실제 경제 행으로 아래 공통 `hasFinancialLiability`를 계산한다.
+  - 책임이 있으면 `refund-pending/invalid-config`를 먼저 영속하고,
+    wallet 경제 행 또는 프리롤 상금 에스크로 자체의 금액을 반환한 뒤에만 `cancelled`
+  - 책임이 없는 wallet 또는 아직 상금을 예약하지 않은 유효 `scheduled-hidden` 프리롤만
+    등록 행과 함께 `cancelled/invalid-config`
+  - 공개 프리롤인데 에스크로가 없거나 원장과 금액이 다르면 direct cancel하지 않고
+    `refund-pending/financial-invariant`로 격리해 운영 경보를 낸다.
 - 숫자 범위, 문자열 길이, enum, 구조 행 수를 생성 시와 복구 시 모두 검증한다.
 - 인스턴스 생성 뒤 `config_json`과 정규화된 일정 열은 어느 상태에서도 UPDATE하지 않는다.
 - DB 트리거도 모든 회차의 `config_version`, `config_json`, `visible_at`,
   `registration_opens_at`, `starts_at`, `manual_expires_at`, `template_id`, `idempotency_key`,
-  `min_entrants`, `max_entrants` 변경을 거절한다.
+  `economy_mode`, `min_entrants`, `max_entrants` 변경을 거절한다.
 
 종결 회차와 등록 행은 운영 조회를 위해 180일 보존한 뒤 정리한다.
-템플릿과 wallet 경제 원장은 이 정리 대상이 아니다.
+템플릿, wallet 경제 원장과 `promotion_fund_ledger`는 이 정리 대상이 아니다.
+
+취소·복구의 경제 책임 판정은 모든 경로에서 다음 단일 함수를 사용한다.
+
+```text
+hasFinancialLiability(instance)
+  = reserved tournament_prize_escrow가 존재
+    OR reserved|started wallet entry가 하나 이상 존재
+```
+
+이 함수를 호출하기 전에 `assertFinancialState(instance)`가 정규화 mode, lifecycle,
+registration/attempt와 실제 wallet entry·prize escrow 상태의 허용 행렬을 검사한다.
+다른 mode의 경제 행, 공개 프리롤의 escrow 누락·금액/상태 불일치,
+비종결 회차에 붙은 허용되지 않은 terminal 경제 행처럼 행렬 밖인 상태는
+`refund-pending/financial-invariant`로 격리하고 자동 debit·credit·direct cancel을 금지한다.
+wallet의 정상 no-show 환불처럼 registration attempt와 정확히 맞는 terminal 행은 손상으로 보지 않는다.
+
+설정 mode만 보고 책임이 없다고 추정하지 않는다.
+`assertFinancialState`가 성공하고 위 함수도 false인 허용 상태만 direct cancel할 수 있다.
+
+### 6.7 최종 정산 영속화
+
+`payout_freeze_json`은 등록 마감 때 고정되는 최종 필드와 place별 상금표다.
+아직 생존한 참가자의 최종 순위나 휴먼·봇별 지급 귀속은 이 값에 넣지 않는다.
+
+마지막 생존자 확정 시에는 별도 `tournament_settlement` header와
+`tournament_settlement_result` 전체 순위 행을 저장하고, 같은 transaction에서 instance를
+`payout-pending`으로 전이한다. 정산·재시작·순위표는 runtime 배열이 아니라 이 행들을 정본으로
+사용한다. wallet 결과에는 휴먼만, 프리롤 결과에는 휴먼과 봇이 모두 포함된다.
+정확한 열, 합계 불변식과 fingerprint 계약은
+`2026-07-25-mtt-freeroll-promotion-fund-design.md` 6.4절을 따른다.
+
+두 정산 테이블은 `pending`인 동안 정리하지 않는다. `completed` 뒤에도 순위·경제 감사 이력으로
+인스턴스와 같은 180일을 보존하며 UPDATE/DELETE로 결과를 바꾸지 않는다.
 
 ## 7. 스케줄러와 런타임 경계
 
@@ -690,16 +762,19 @@ TournamentManager ── RoomManager
 ### 7.1 스케줄러 책임
 
 - 반복 템플릿에서 미래 회차를 멱등 생성
-- `visibleAt` 도달 회차를 로비 목록에 노출
+- `visibleAt` 도달 프리롤의 funding CAS를 수행하고 성공한 회차만 로비 목록에 노출
 - `registrationOpensAt` 도달 회차의 등록 허용
 - `startsAt` 도달 회차를 명령 서비스로 시작
 - 수동 회차 만료
 - 프로세스 시작 시 예약 회차와 등록 명단 재구성
+- `refund-pending`의 wallet 환불·프리롤 상금 반환 재시도
+- `payout-pending`의 영속 settlement plan 정산 재시도
 - 실패 이유와 다음 재시도 시각 기록
 
 공개 `tournament-list`는 `TournamentManager`의 live runtime만 읽지 않는다.
-저장소의 `scheduled-visible|registering|start-delayed|starting|refund-pending` 회차와
-매니저의 `running` 회차를 ID 기준으로 합친 뒤 개인 등록·복귀 정보를 덧붙인다.
+저장소의 `scheduled-visible|registering|start-delayed|starting|payout-pending|refund-pending` 및
+보존 기한 안의 `completed|cancelled` 회차와 매니저의 `running` 회차를 ID 기준으로 합친 뒤
+개인 등록·복귀 정보를 덧붙인다.
 따라서 아직 방이 없는 예정 회차도 카드에 나타나고 시작 saga·환불 중 카드도 사라지지 않는다.
 
 ### 7.2 매니저 책임
@@ -710,7 +785,8 @@ TournamentManager ── RoomManager
 - 봇 충원, 테이블 생성, 게임 진행
 - 레이트 레지와 좌석 배정
 - 전역 순위·상금·H4H·파이널 테이블
-- 완료·취소·wallet 정산
+- 완료·취소와 immutable settlement plan 생성
+- 실제 wallet·프리롤 자금 정산은 command/enrollment repository에 위임
 
 ### 7.3 pre-start 등록의 정본
 
@@ -770,7 +846,7 @@ instance 상태·등록 상한 확인
 - 기존 `EconomyRepository.reserveMttEntry()`의 SQL 핵심은 transaction 내부에서 호출 가능한
   좁은 내부 메서드로 분리하고, 외부 공개 메서드는 계속 자체 transaction wrapper를 가진다.
 - 등록 행 commit 전에는 매니저 큐나 소켓 상태를 바꾸지 않는다.
-- practice는 경제 SQL이 없지만 같은 등록 transaction과 상태 가드를 사용한다.
+- 프리롤 등록은 참가자 debit이 없지만 같은 등록 transaction과 상태 가드를 사용한다.
 - ack 유실 재요청은 `(instance_id, profile_id, request_id)` attempt 이력을 먼저 읽어
   저장된 reserved/seated/terminal 결과를 반환한다.
 - 경제 원장만 성공하거나 등록 행만 성공하는 부분 결과는 허용하지 않는다.
@@ -800,41 +876,45 @@ instance 상태·등록 상한 확인
 1. 등록을 잠그고 중복 시작을 막는 `starting` CAS/lease를 획득한다.
    CAS 결과의 source lifecycle·registration state·reason·retry deadline을 `StartClaim`에 캡처한다.
    수동 시작 claim transaction은 `now < manualStartExpiresAt`을 함께 조건으로 검사한다.
-   이미 만료됐으면 start claim을 만들지 않고 `expireManualInstance()`로 넘겨
-   active wallet 경제 책임이 없으면 등록·attempt·counter와 instance를 atomic cancel하고,
-   하나라도 있으면 `refund-pending`→instance-wide void를 실행한다.
-2. 현재 접속 세션, 등록 명단, 다른 방·MTT active claim을 한 스냅샷으로 대조한다.
-3. enrollment preflight transaction에서 실제 시작 가능한 휴먼만 `seat-claimed`로 claim하고,
+   이미 만료됐으면 start claim을 만들지 않고 `expireManualInstance()`로 넘긴다.
+   공통 `hasFinancialLiability`가 false인 wallet 또는 미예약 숨은 프리롤만
+   등록·attempt·counter와 instance를 atomic cancel한다. 책임이 있으면
+   `refund-pending`을 먼저 영속한 뒤 wallet instance-wide void 또는 프리롤 상금 반환을 실행한다.
+2. 프리롤이면 exact `reserved` 상금 에스크로와 immutable config `totalPrize`가 일치하는지,
+   wallet이면 등록 경제 행이 상품 스냅샷과 일치하는지 검증한다.
+3. 현재 접속 세션, 등록 명단, 다른 방·MTT active claim을 한 스냅샷으로 대조한다.
+4. enrollment preflight transaction에서 실제 시작 가능한 휴먼만 `seat-claimed`로 claim하고,
    충돌한 등록자는 시작 가능 인원에서 제외한다.
-4. claim된 휴먼 수와 practice 봇 충원 가능 수로 최소 시작 조건을 계산한다.
-5. 운영자의 수동 시작이 최소 미달이면 같은 transaction에서 방금 만든 claim만
+5. claim된 휴먼 수와 프리롤 봇 충원 가능 수로 최소 시작 조건을 계산한다.
+6. 운영자의 수동 시작이 최소 미달이면 같은 transaction에서 방금 만든 claim만
    `seat-claimed → registered`로 되돌리고 instance를 `StartClaim`의 정확한 source pair로 복원하며
    lease를 함께 해제한다.
    이 경로에서는 노쇼·환불·경제 원장을 전혀 바꾸지 않는다.
-6. 자동 시작이 최소 미달이거나 수동 회차가 만료된 경우에만 미접속·충돌 등록자를 노쇼 처리하고
+7. 자동 시작이 최소 미달이거나 수동 회차가 만료된 경우에만 미접속·충돌 등록자를 노쇼 처리하고
    회차를 취소한다.
    - wallet: 시작 에스크로 확정 전에 전액 환불
-   - practice: 등록 행만 `no-show`로 변경
-7. 시작 조건이 충족되면 미접속·충돌 등록자를 같은 방식으로 노쇼 처리하고
+   - 프리롤: 등록 행을 `no-show`로 바꾸고 취소 시 예약 상금을 운영 원장에 반환
+8. 시작 조건이 충족되면 미접속·충돌 등록자를 같은 방식으로 노쇼 처리하고
    claim된 휴먼 전원을 확정 체크인 명단으로 삼는다.
-8. 휴먼이 `minEntrants` 이상이면 봇을 추가하지 않는다.
-9. 휴먼이 최소보다 적고 practice + `botFillToMinimum=true`이면 부족분만 봇으로 채운다.
-10. 휴먼이 1명도 없거나 봇 충원 후에도 최소를 만족할 수 없으면 취소한다.
-11. wallet은 봇을 허용하지 않으므로 최소 미달이면 취소·전액 환불한다.
-12. `initialEntrants`와 설정 스냅샷을 기록하고 테이블을 만든다.
-13. 레이트 레지가 활성화된 경우 등록 창만 계속 열어 둔다.
+9. 휴먼이 `minEntrants` 이상이면 봇을 추가하지 않는다.
+10. 휴먼이 최소보다 적고 프리롤 + `botFillToMinimum=true`이면 부족분만 봇으로 채운다.
+11. 프리롤 휴먼이 1명도 없거나 봇 충원 후에도 최소를 만족할 수 없으면 예약 상금을 반환하고 취소한다.
+12. wallet은 사람만으로 최소를 채워야 하며 미달이면 참가비·수수료 전액 환불 후 취소한다.
+13. `initialEntrants`와 설정 스냅샷을 기록하고 테이블을 만든다.
+14. 레이트 레지가 활성화된 경우 등록 창만 계속 열어 둔다.
 
 `initialEntrants`는 시작 시 착석한 휴먼+봇 수이며 이후 변하지 않는다.
 레이트 레지가 활성화된 회차의 최종 필드는 두 번째 설계에서 등록 마감 시 별도로 고정한다.
 
-- 예약 자동 시작이 최소 인원을 만족하지 못하면 `not-enough` 취소·wallet 전액 환불한다.
+- 예약 자동 시작이 최소 인원을 만족하지 못하면 `not-enough`로 취소한다.
+  프리롤은 예약 상금을 공용 운영 원장에 반환하고 wallet은 참가비·수수료를 전액 환불한다.
 - 운영자의 수동 시작 시도가 최소 인원을 만족하지 못하면 `not-enough`만 반환하고
   source가 `registering`이면 그대로 모집을 유지하고, `start-delayed`면 등록이 잠긴 지연 상태와
   기존 retry deadline을 유지한다. 위 preflight의 임시 claim 외 등록·경제 상태를 바꾸지 않는다.
 - claim 획득과 인원 판정은 같은 `BEGIN IMMEDIATE` transaction에서 수행해,
   두 회차가 같은 프로필을 동시에 시작 명단에 넣지 못하게 한다.
 - 수동 회차의 만료는 자동 취소이므로 인원과 무관하게 환불한다.
-  practice 기본 만료는 등록 오픈 후 6시간, wallet 기본·최대 만료는 등록 오픈 후 20분이다.
+  프리롤 기본 만료는 등록 오픈 후 6시간, wallet 기본·최대 만료는 등록 오픈 후 20분이다.
 - 수동 만료 timer와 scheduler tick은 callback 실행 시 `now >= manualStartExpiresAt`을 다시 검사한다.
   timer가 늦거나 운영자 수동 시작과 경합해도 expiry/start composite CAS 중 하나만 이기며,
   expiry가 이긴 뒤에는 새 등록·start claim이 모두 거절된다.
@@ -895,18 +975,19 @@ type TournamentStructureSegment =
 ```ts
 type PrizePoolPolicy =
   | { kind: 'entry-pool' }
-  | { kind: 'fixed-practice'; totalPrize: number };
+  | { kind: 'promotion-funded'; totalPrize: number };
 ```
 
 - wallet은 항상 `entry-pool`이다.
   - 총상금 = 실제 유료 참가자의 바이인 합계
   - 수수료는 총상금에 포함하지 않는다.
   - 운영자가 자금 출처 없이 임의의 보장 상금을 입력할 수 없다.
-- practice는 v1에서 항상 `fixed-practice`다.
-  - 1~2,000,000,000 범위의 표시용 칩이다.
-  - 기본값은 `시작 스택 × minEntrants`이고 운영자가 직접 바꿀 수 있다.
-  - 지갑에 입금되지 않으며 UI에 `연습용 상금`이라고 명시한다.
-- wallet 보장 상금은 운영 자금 원장과 부족분 에스크로가 마련된 뒤 별도 프로젝트로 추가한다.
+- 프리롤은 항상 `promotion-funded`다.
+  - 총상금은 1~2,000,000,000 범위의 실제 지갑 칩이다.
+  - 로비 노출 전에 공용 `promotion` 운영 원장에서 회차별로 전액 예약한다.
+  - 휴먼 입상분은 지갑에 지급하고 봇 입상분은 공용 운영 원장으로 반환한다.
+  - 잔액 부족 회차는 공개하지 않고 `cancelled/promotion-insufficient`로 남긴다.
+- 공용 운영 원장은 프리롤 전용이다. wallet 보장 상금은 별도 자금 승인·부족분 규칙을 설계한 뒤 추가한다.
 
 ### 10.2 세 프리셋의 의미
 
@@ -952,11 +1033,11 @@ paidPlaces = clamp(ceil(finalEntrants × paidFieldPercent / 100), 1, finalEntran
 정수 칩 반올림 후 남는 칩은 기존 계약대로 잔여 전부를 1위에 더해
 `sum(payouts) === totalPrize`를 보장한다.
 
-wallet 정산 저장소도 단순 `payoutPreset` 문자열만 받지 않고
-`{ version, presetId, paidFieldPercent }` 스냅샷을 받는다.
-저장소는 최종 참가 인원과 바이인 합계로 같은 v2 표를 다시 계산해,
-매니저가 임의 금액을 넘기거나 구버전 표로 정산하는 것을 거절한다.
-멱등 재호출은 설정 버전·최종 순위·상금이 모두 같을 때만 성공한다.
+공통 정산 저장소는 단순 `payoutPreset` 문자열이나 runtime이 넘긴 임의 금액을 신뢰하지 않는다.
+`{ version, presetId, paidFieldPercent }`, `finalEntrants`와 모드별 prize pool 정본으로 같은 v2 표를
+다시 계산한 뒤 immutable settlement plan의 모든 순위·상금을 검증한다.
+wallet은 started entry의 바이인 합계, 프리롤은 reserved 상금 에스크로를 prize pool 정본으로 쓴다.
+멱등 재호출은 설정 버전·최종 순위·상금·participant 귀속의 fingerprint가 모두 같을 때만 성공한다.
 
 ### 10.3 미리보기
 
@@ -968,6 +1049,8 @@ wallet 정산 저장소도 단순 `payoutPreset` 문자열만 받지 않고
 - 순위별 상금
 - 순위별 총상금 대비 비율
 - wallet 모집 중에는 `현재 등록 기준 예상`, 레이트 레지 중에는 `마감 전 변동 가능`
+- 프리롤은 공개 순간부터 `총상금 예약 완료 · 총액 고정`으로 표시하고,
+  레이트 레지 중에는 입상 인원과 순위별 배분만 `마감 전 변동 가능`
 - 상금이 고정된 뒤에는 `확정`
 
 운영 UI와 참가자 UI가 별도의 계산을 구현하지 않는다.
@@ -980,6 +1063,9 @@ wallet 정산 저장소도 단순 `payoutPreset` 문자열만 받지 않고
 - 버튼을 누르면 데스크톱에서는 중앙 모달, 좁은 화면에서는 전체 화면 시트가 열린다.
 - 현재의 긴 인라인 개설 폼은 제거한다.
 - 기존 운영 중 토너먼트 목록과 디렉터 액션은 그대로 유지한다.
+- 같은 탭에 공용 운영 자금의 사용 가능 잔액·프리롤 예약액·최근 원장을 표시한다.
+  백오피스 관리자는 금액과 사유를 입력하고 화면 내부 2단계 확인으로 잔액을 조정할 수 있다.
+  프로필 운영자는 토너먼트를 운영할 수 있어도 공용 자금을 조정할 수 없다.
 
 ### 11.2 설정 순서
 
@@ -1026,9 +1112,9 @@ wallet 정산 저장소도 단순 `payoutPreset` 문자열만 받지 않고
 
 ```text
 7월 25일 00:00 KST 시작 · 23:30 로비 노출 · 23:40 등록 시작
-최소 8명 / 최대 48명 · 연습 모드 · 최소 인원까지 봇 충원
+최소 8명 / 최대 48명 · 프리롤 · 최소 인원까지 봇 충원
 스탠다드 8분 · 15초 액션 · 표준형 약 15% 입상
-총상금 180,000 연습 칩 · 레이트 레지 2레벨
+총상금 180,000 프리롤 상금 · 운영 자금 예약 · 레이트 레지 2레벨
 매시간 반복 · 다음 회차 01:00
 ```
 
@@ -1041,6 +1127,8 @@ wallet 정산 저장소도 단순 `payoutPreset` 문자열만 받지 않고
 ```text
 GET    /api/admin/tournaments
 POST   /api/admin/tournaments
+GET    /api/admin/promotion-fund
+POST   /api/admin/promotion-fund/adjust
 GET    /api/admin/tournament-templates
 POST   /api/admin/tournament-templates
 PATCH  /api/admin/tournament-templates/:id
@@ -1053,6 +1141,7 @@ POST   /api/admin/tournaments/:id/actions
 
 - 일반 프로필의 직접 호출은 계속 `forbidden`이다.
 - 운영자 프로필과 백오피스만 개설할 수 있다.
+- 공용 운영 자금 조회·조정은 backoffice admin session만 허용하고 프로필 운영자 capability에는 주지 않는다.
 - 권한 검사는 payload 파싱과 상태 변경·로그 기록보다 먼저 수행한다.
 - 요청 본문 크기와 커스텀 구조 행 수를 제한한다.
 - API는 모든 응답에 `serverNow`를 포함한다.
@@ -1091,6 +1180,7 @@ type PublicTournamentLifecycle =
   | 'start-delayed'
   | 'starting'
   | 'running'
+  | 'payout-pending'
   | 'refund-pending'
   | 'completed'
   | 'cancelled';
@@ -1118,6 +1208,7 @@ interface PublicTournamentPayout {
   status: 'provisional' | 'final';
   totalPrize: number;
   payouts: Array<{ place: number; percent: number; amount: number }>;
+  fundingStatus: 'entry-funded' | 'promotion-reserved' | 'payout-pending' | 'settled';
 }
 ```
 
@@ -1130,6 +1221,7 @@ interface PublicTournamentPayout {
 - `minEntrants`, `maxEntrants`, `initialEntrants`, `acceptedEntrants`,
   `pendingLateEntrants`, `aliveSeated`, `finalEntrants`
 - 구조·상금 버전과 공개 projection
+- `economyMode:'freeroll'|'wallet'`, `botFillToMinimum`과 프리롤 상금 예약 상태
 - 개인화 `myRegistrationStatus`, `mySeat`, `canRegister`, `canCancelRegistration`
 
 `canRegister`와 백오피스의 수동 시작 가능 여부도 lifecycle 문자열만으로 계산하지 않고
@@ -1140,7 +1232,7 @@ interface PublicTournamentPayout {
 | lifecycle | legacy phase |
 |---|---|
 | `upcoming|registering|start-delayed|starting` | `registering` |
-| `running|refund-pending` | `running` |
+| `running|payout-pending|refund-pending` | `running` |
 | `completed` | `completed` |
 | `cancelled` | `cancelled` |
 
@@ -1149,8 +1241,9 @@ interface PublicTournamentPayout {
 상세·시계는 항상 `segments`와 `currentSegmentEndsAt`을 읽는다.
 
 `scheduled-hidden`은 백오피스에만 보인다. `starting`은 `시작 준비 중`,
-`refund-pending`은 개인 등록자와 백오피스에 `환불 처리 중`으로 계속 노출하고,
-active claim이 남아 있으면 다른 지갑 게임 잠금이 환불 성공까지 유지된다는 안내와 운영 경보를 함께 보여준다.
+`refund-pending`은 wallet 개인 등록자에게 `환불 처리 중`, 프리롤에는 `상금 반환 처리 중`으로
+구분해 노출한다. wallet active claim이 남아 있으면 다른 지갑 게임 잠금이 환불 성공까지
+유지된다는 안내를 보여주고, 두 모드 모두 백오피스에 운영 경보와 재시도 상태를 표시한다.
 공개 일반 목록의 completed/cancelled 회차는 기존처럼 10분 뒤 숨기되 DB·백오피스 보존은 유지한다.
 
 ## 13. 재시작 복구
@@ -1180,9 +1273,13 @@ recoverIncompleteEntries({
 - generic recovery는 `deferToMttVoidInstanceIds`의 어떤 경제 행도 개별 환불하지 않는다.
   이 집합은 아래 instance-wide `voidMttTournament()`만 소유한다.
 - `starting|running|refund-pending` 회차는 라이브 게임 복구가 불가능하다.
-  - active wallet 경제 행이 있으면 먼저 `refund-pending/closed`로 CAS하고 defer 집합에 추가
-  - active wallet 경제 행이 없으면 instance, 등록 행·attempt, pending counter를
-    한 transaction에서 `cancelled`로 정리
+  - 공통 `hasFinancialLiability`가 true면 먼저 `refund-pending/closed`를 영속한다.
+  - wallet은 instance-wide void 집합, 프리롤은 상금 반환 집합으로 나눈다.
+  - 책임이 없는 wallet 또는 미예약 숨은 프리롤만 instance, 등록 행·attempt,
+    pending counter를 한 transaction에서 `cancelled`
+  - 공개 프리롤의 escrow 누락·금액 불일치는 `refund-pending/financial-invariant`로 격리
+- `payout-pending` 회차는 결과와 payout freeze를 보존하고 같은 fingerprint로 정산을 재시도한다.
+  완주 결과가 있는 회차를 취소·환불 경로로 바꾸지 않는다.
 - 유효 회차 안이라도 allowlist에 없는 취소·노쇼·등록행 없는 고아 에스크로는 환불한다.
 - SnG 복구 계약은 변경하지 않는다.
 - `RecoveryResult`는 회차별 `{ refunded, failed, preserved }` 수를 반환한다.
@@ -1192,18 +1289,21 @@ recoverIncompleteEntries({
 
 1. DB 마이그레이션
 2. 회차·등록·경제 행을 함께 읽고 한 `BEGIN IMMEDIATE` 분류 transaction에서:
-   - 유효 pre-start reserved 행의 exact preserve map 생성
+   - 유효 wallet pre-start entry와 프리롤 prize escrow의 exact preserve map 생성
    - `starts_at IS NULL AND now >= manual_expires_at`인 만료 수동 회차는 preserve에서 제외하고,
-     active wallet 책임이 없으면 economy mode와 무관하게 등록/attempt/claim/counter와 함께 atomic cancel,
-     하나라도 있으면 `refund-pending/closed` CAS 뒤 defer 집합에 추가
-   - active wallet 책임이 있는 `starting|running|refund-pending`과 invalid-config 회차를
-     `refund-pending/closed`로 CAS하고 defer 집합 생성
-   - wallet 책임이 없는 active practice 회차를 등록 claim/counter와 함께 atomic cancel
+     `hasFinancialLiability`가 true면 `refund-pending/closed` CAS 뒤 모드별 반환 집합에 추가
+   - lifecycle이 `starting|running|refund-pending`이거나
+     `status_reason='invalid-config'`인 비종결 회차도 먼저 `assertFinancialState`를 거친 뒤
+     같은 단일 책임 판정으로 wallet void 집합 또는 프리롤 상금 반환 집합 생성
+   - 책임 없는 wallet과 에스크로가 없는 유효 숨은 프리롤만
+     등록/attempt/claim/counter와 함께 atomic cancel
+   - 공개 프리롤의 escrow 누락·원장 불일치는 `refund-pending/financial-invariant` 격리 집합에 추가
 3. generic `recoverIncompleteEntries`에 preserve map과 defer 집합을 모두 넘겨,
    SnG와 어떤 유효/보류 MTT에도 속하지 않는 고아 행만 기존 정책으로 복구
-4. defer 집합의 각 MTT는 `voidMttTournament()` 한 transaction으로
-   `reserved|started` 경제 행, 등록/attempt, counters, instance를 함께 환불·종결
-5. 환불 실패 회차는 `refund-pending`과 active claim을 유지하고 다음 startup/tick에 재시도
+4. wallet defer 집합은 `voidMttTournament()`, 프리롤 반환 집합은
+   `refundFreerollPrize()`를 각각 멱등 transaction으로 실행해 자금과 instance를 종결
+5. 반환 실패 회차와 invariant 격리 회차는 `refund-pending`과 active claim을 유지하고
+   다음 startup/tick 또는 운영 조정 뒤 재시도
 6. 템플릿에서 미래 회차 멱등 생성
 7. pre-start 회차와 등록 명단 재구성
 8. HTTP·Socket.io 수신 시작
@@ -1222,8 +1322,8 @@ recoverIncompleteEntries({
 
 진행 중 MTT의 전체 핸드·덱·타이머 복구는 이번 범위가 아니다.
 프로세스 재시작에서 `running` 인스턴스를 발견하면 현재 안전 계약대로
-`server-restart-unrecoverable` 취소로 확정한다. active wallet 경제 행이 있으면 참가비를 멱등 환불하고,
-없으면 등록 claim과 카운터를 원자적으로 닫아 practice 사용자를 잠그지 않는다.
+`server-restart-unrecoverable` 취소로 확정한다. 공통 책임 판정 뒤 wallet은 참가비를 멱등 환불하고,
+프리롤은 예약 상금을 공용 운영 원장에 반환한 뒤 등록 claim과 카운터를 닫는다.
 부분 상태를 추측해 경기를 재개하지 않는다.
 
 ### 13.1 상태 전이의 CAS와 보상
@@ -1244,7 +1344,7 @@ recoverIncompleteEntries({
 ```text
 starting 기록
 → enrollment preflight: 좌석 claim·최소 인원 판정·노쇼 정리
-→ wallet start escrow
+→ wallet start escrow 또는 프리롤 reserved 상금 검증
 → mtt-setup(ownerToken) hold 아래 모든 테이블 무방송 생성·초기화
 → 전체 방/좌석/칩/설정 불변식 검증
 → 초기 full/stack-floor/bubble 조건과 immutable startup freeze plan 계산
@@ -1269,7 +1369,7 @@ starting 기록
 - checked-in 등록 행·attempt 중 하나라도 예상 `seat-claimed`/attempt와 다르면
   instance running 전이와 전체 등록 갱신을 rollback하고 prepared runtime을 활성화하지 않는다.
 - CAS/lease가 실패하면 prepared 방을 모두 `disposeRoom('mtt-start-rollback')`하고,
-  practice는 취소, wallet은 `refund-pending`에서 `voidMttTournament()`를 수행한다.
+  프리롤은 `refund-pending`에서 상금을 반환하고 wallet은 `voidMttTournament()`를 수행한다.
 - `running` CAS 뒤 activation이 실패해도 setup hold를 유지한 채 한 번 재시도하고,
   계속 실패하면 플레이를 시작하지 않고 같은 전체 안전 취소 경로를 탄다.
 - wallet 확정 뒤 방 생성이 실패하면 `refund-pending`으로 전이하고 생성된 방을 모두 정리한 뒤
@@ -1279,11 +1379,13 @@ starting 기록
 - 재시작에서 발견한 `starting`도 같은 보상 경로를 탄다.
 - 살아 있는 프로세스의 watchdog도 `start_lease_until < now`인 stale `starting`을 발견하면
   부분 시작 여부를 추측하지 않고 경제 책임을 조회한다.
-  active wallet 행이 없으면 등록/attempt/claim/counter와 instance를 한 transaction에서 `cancelled`,
-  하나라도 있으면 `refund-pending`으로 보낸 뒤 전체 `void`한다.
+  공통 `hasFinancialLiability`가 false인 wallet 또는 미예약 숨은 프리롤만
+  등록/attempt/claim/counter와 instance를 한 transaction에서 `cancelled`로 전이한다.
+  책임이 있으면 `refund-pending`을 먼저 영속한 뒤 모드별 전체 반환을 수행한다.
+  공개 프리롤 escrow가 누락·불일치하면 `financial-invariant`로 격리한다.
 - 정상 saga는 긴 단계 전에 lease를 연장하고 `running` 전이에서 owner/lease를 null로 지운다.
-- practice는 경제 단계가 없지만 같은 CAS와 방 정리 계약을 사용한다.
-- 180일 정리는 `completed|cancelled`만 대상으로 하며 `refund-pending`은 절대 삭제하지 않는다.
+- 프리롤 등록에는 debit이 없지만 상금 에스크로 검증과 같은 CAS·방 정리 계약을 사용한다.
+- 180일 정리는 `completed|cancelled`만 대상으로 하며 `refund-pending|payout-pending`은 절대 삭제하지 않는다.
 
 ## 14. 운영 이벤트
 
@@ -1297,6 +1399,12 @@ starting 기록
 - `mtt-scheduled-start`
 - `mtt-scheduled-cancel`
 - `mtt-scheduler-reconcile`
+- `promotion-fund-adjust`
+- `mtt-freeroll-prize-reserve`
+- `mtt-freeroll-prize-reserve-failed`
+- `mtt-freeroll-prize-settle`
+- `mtt-freeroll-prize-refund`
+- `mtt-payout-pending`
 
 이벤트에는 토너먼트/템플릿 ID, 예정 시각, 실제 처리 시각, 설정 버전,
 권한 주체 종류, 결과·오류 코드를 기록한다. 인증 토큰과 세션 토큰은 기록하지 않는다.
@@ -1304,8 +1412,10 @@ starting 기록
 ## 15. 실패 처리
 
 - 중복 회차 생성: DB 유일성 제약을 성공으로 간주하고 기존 ID 반환
-- 설정 JSON 손상: 자동 시작 금지. wallet 경제 행이 없으면 등록 취소 후 즉시 `cancelled`;
-  경제 행이 있으면 `refund-pending`에서 행별 원금 전액 환불 후 `cancelled`
+- 설정 JSON 손상: 자동 시작 금지. 정규화 mode와 공통 `hasFinancialLiability`로 분류한다.
+  책임이 없고 direct cancel이 허용된 상태만 등록 취소 후 즉시 `cancelled`;
+  책임이 있으면 `refund-pending`을 먼저 영속하고 wallet 원금 또는 프리롤 예약 상금을
+  전액 반환한 뒤 `cancelled`. 공개 프리롤의 escrow 누락·불일치는 자동 종결하지 않고 격리
 - 실행 슬롯 부족: 최대 10분 `start-delayed`, 이후 취소·환불
 - 테이블 생성 일부 실패: 생성된 방을 `disposeRoom()`으로 되돌리고 회차 취소
 - wallet 시작 에스크로 실패: 방을 만들지 않고 `refund-pending`으로 전이해 전체 취소·환불
@@ -1335,11 +1445,11 @@ starting 기록
     exact seat-claimed attempts만 seated로 바꾸며 CAS·activation 실패가 전 방 dispose와 wallet void로 끝남
 11. 최소 8명/상한 48명에서 휴먼 5명일 때 봇 3명만 충원
 12. 최소 이상 휴먼은 봇 없이 전원 수용
-13. 겹친 practice 예약은 실제 seat claim 한 개만 성공하고 다른 회차는 노쇼
+13. 겹친 프리롤 예약은 실제 seat claim 한 개만 성공하고 다른 회차는 노쇼·상금 반환
 14. 기존 cash/arena/seat-waiter가 있는 프로필의 start claim·late 등록 거절
-15. wallet 인원 미달·invalid config·재시작 시 발견한 만료 수동 회차의 instance-wide 환불과
-    환불 실패 시 `refund-pending` 유지, HTTP 수신 전 expired 회차가 preserve되지 않으며
-    active 경제 행이 없는 wallet 수동 회차는 direct atomic cancel
+15. wallet 인원 미달·invalid config·재시작 시 발견한 만료 수동 회차의 instance-wide 환불,
+    프리롤 예약 상금 반환과 반환 실패 시 `refund-pending` 유지,
+    HTTP 수신 전 expired 회차가 preserve되지 않으며 공통 경제 책임 없는 허용 상태만 direct atomic cancel
 16. 상품 상수가 바뀐 배포에서도 기존 `productVersion/buyIn/fee`로 start·settle
 17. 수동 not-enough가 임시 seat claim까지 되돌리고 노쇼·경제 상태를 바꾸지 않은 채
     source `registering` 또는 `start-delayed` pair/retry deadline을 정확히 복원
@@ -1347,7 +1457,12 @@ starting 기록
 19. 새 상금 표의 입상률·내림차순·100%·정수 총합과 같은 입상 인원에서 프리셋별 1위 비율 순서
 20. admin login 만료, HttpOnly cookie, CSRF, Origin, rate limit, 무권한 명령 거절
 21. 공개 lifecycle/registration/custom segments의 legacy adapter
-22. 관련 Vitest, `npx tsc --noEmit`, `npm run lint`, `npm run build`
+22. 공용 운영 잔액 조정·음수 거절·감사·멱등성과 프리롤 상금 예약·봇 상금 반환·취소 반환
+23. 프리롤 휴먼 0명 취소, 봇 사용 시 최소 인원까지만 충원, wallet 봇 설정 거절
+24. `payout-pending` 결과 freeze와 서버 재시작 정산 재개
+25. 공개 프리롤 escrow 누락·금액 불일치의 `financial-invariant` 격리와
+    `payout-pending` 취소·환불 전이 거절
+26. 관련 Vitest, `npx tsc --noEmit`, `npm run lint`, `npm run build`
 
 브라우저 픽셀 비교용 페이지나 테스트 전용 UI는 만들지 않는다.
 
@@ -1358,10 +1473,11 @@ starting 기록
 1. v27/v28 영속화, enrollment transaction, admin session, 공개 protocol adapter
 2. 스케줄러·단발/반복 회차·재시작 reconcile
 3. 개설 모달, 상금 v2 표시, 커스텀 구조 시계
-4. practice 레이트 레지의 한 명 착석과 provisional 순위
-5. practice 다중 배치·새 테이블·closing barrier
+4. 공용 운영 원장·프리롤 상금 에스크로와 admin 조정
+5. 프리롤 레이트 레지의 한 명 착석, 다중 배치·새 테이블·closing barrier
 6. wallet late reserve/commit/refund와 전체 정산
-7. 기존 회귀+빌드+브라우저 실제 흐름 검증 후 기능 플래그 활성화
+7. 프리롤 휴먼·봇 통합 정산과 `payout-pending`
+8. 기존 회귀+빌드+브라우저 실제 흐름 검증 후 기능 플래그 활성화
 
 중간 게이트에서 테스트가 실패한 상태로 다음 경제 단계로 넘어가지 않는다.
 `MTT_SCHEDULER_V2_ENABLED`, `MTT_LATE_REG_ENABLED`, `MTT_WALLET_LATE_REG_ENABLED`은
@@ -1373,7 +1489,10 @@ starting 기록
 - 운영자가 팝업 하나에서 일정·필드·구조·상금을 이해하고 개설할 수 있다.
 - 매시간 템플릿은 다음 회차를 중복 없이 자동 생성한다.
 - 서버 재시작 뒤 예약과 등록 명단이 복구된다.
-- 봇은 practice 최소 인원까지만 채우며 wallet에는 절대 들어가지 않는다.
+- 프리롤은 공용 운영 원장에서 상금을 예약한 뒤에만 공개된다.
+- 봇은 휴먼 1명 이상인 프리롤의 최소 인원까지만 채우며 wallet에는 절대 들어가지 않는다.
+- 휴먼 상금은 지갑에 지급되고 봇 상금은 공용 운영 원장으로 반환된다.
+- wallet 최소 인원 미달은 참가비·수수료 전액 환불 뒤 취소된다.
 - 모든 공개 화면이 같은 상금 계산으로 금액과 비율을 표시한다.
 - 예약 회차가 기존 5분 빈 토너먼트 TTL 때문에 사라지지 않는다.
 - 레이트 레지 설계가 사용할 독립 시각·필드·설정 스냅샷 기반이 마련된다.
