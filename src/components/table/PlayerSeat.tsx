@@ -13,6 +13,10 @@ import CardComponent from './Card';
 import TurnTimer from './TurnTimer';
 import SeatEmote from './SeatEmote';
 import EquippedCosmetics from '@/components/collection/EquippedCosmetics';
+import {
+  getSeatVisualClasses,
+  resolveSeatVisualState,
+} from './player-seat-visual';
 
 interface PlayerSeatProps {
   player: Player | null;
@@ -116,18 +120,15 @@ export default function PlayerSeat({
 
   const isFolded = player.status === 'folded';
   const isAllIn = player.status === 'all-in';
-  // SnG away는 딜인 유지(status는 active) 상태로 자동 폴드되므로 sitOutNext 플래그로도 표시
-  const isSittingOut = player.status === 'sitting-out' || !!player.sitOutNext;
+  const seatVisualState = resolveSeatVisualState(player);
+  const visualClasses = getSeatVisualClasses(seatVisualState);
+  // 시간 초과 자동 체크(sitOutAuto)는 같은 핸드에서 실제 자리비움으로 보이지 않는다.
+  const isSittingOut = seatVisualState === 'away';
   const isBusted = player.chips <= 0 && !isAllIn;
-  const isDimmed = isFolded || isSittingOut || isBusted;
   const avatarSize = compact ? 'lg' : 'xl';
   // 히어로는 폴드해도 자기 카드를 계속 확인할 수 있어야 한다 — 상대 폴드 카드만 숨김
   const showCards = player.holeCards.length > 0 && (isCurrentPlayer || !isFolded);
   const revealed = !isCurrentPlayer && !!player.revealed;
-  // 히어로 폴드 디밍은 grayscale 없이 — 수트 색이 죽으면 접은 카드를 읽을 수 없다
-  const dimClass = isDimmed
-    ? (isCurrentPlayer && isFolded && !isBusted ? 'opacity-60' : 'opacity-40 grayscale')
-    : '';
 
   // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 sm > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
   const cardOverlapPx = isCurrentPlayer ? 14 : revealed ? 12 : 10;
@@ -165,18 +166,20 @@ export default function PlayerSeat({
         {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만.
             탭하면 캐릭터 쇼케이스(상반신 일러스트) 오픈 */}
         <div
-          className={`relative z-10 rounded-full transition-opacity cursor-pointer ${frameClass} ${dimClass}`}
+          className={`relative z-10 rounded-full cursor-pointer ${frameClass}`}
           onClick={() => setShowcaseOpen(true)}
           role="button"
           aria-label={`${player.name} 캐릭터 보기`}
         >
           <SeatEmote playerId={player.id} />
-          <CharacterAvatar
-            characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
-            size={avatarSize}
-            isActive={isActive}
-            expression={isBusted ? 'sad' : isAllIn ? 'confident' : expression}
-          />
+          <div className={`transition-[filter,opacity] ${visualClasses.portrait}`}>
+            <CharacterAvatar
+              characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
+              size={avatarSize}
+              isActive={isActive}
+              expression={isBusted ? 'sad' : isAllIn ? 'confident' : expression}
+            />
+          </div>
           {isActive && turnDuration > 0 && (
             <TurnTimer
               remainingMs={turnDuration}
@@ -188,7 +191,7 @@ export default function PlayerSeat({
           {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 sm / 상대 카드백 2xs / 쇼다운 공개 sm */}
           {showCards && (
             <div
-              className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none ${revealed ? 'z-30' : 'z-20'}`}
+              className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none transition-[filter,opacity] ${revealed ? 'z-30' : 'z-20'} ${visualClasses.cards}`}
               style={cardAnchorStyle}
             >
               {player.holeCards.map((card, i) => (
@@ -206,7 +209,7 @@ export default function PlayerSeat({
         </div>
 
         {/* 이름/칩 플레이트 — 아바타 하단에 겹침, 폴드여도 가독 유지 */}
-        <div className={`relative z-20 -mt-3 ${isDimmed ? 'opacity-80' : ''}`}>
+        <div className={`relative z-20 -mt-3 transition-opacity ${visualClasses.plate}`}>
           {/* BOT 뱃지 — 봇 플레이어 상시 표기 (플레이트 좌상단, 액션 배지와 대칭) */}
           {player.type === 'bot' && (
             <div className={`absolute -top-2 -left-2 z-30 bg-black/80 border border-cyber/60 text-cyber font-bold rounded-full tracking-wider
