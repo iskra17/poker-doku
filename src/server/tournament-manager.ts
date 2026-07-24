@@ -4,6 +4,7 @@ import type {
   FinalTableTheme,
   Player,
   TournamentHoldReason,
+  TournamentMilestone,
   TournamentStage,
 } from '../lib/poker/types';
 import {
@@ -237,6 +238,8 @@ interface TournamentRuntime {
   stage: TournamentStage;
   stageEndsAt?: number;
   finalTheme: FinalTableTheme;
+  milestoneSeq: number;
+  milestone?: TournamentMilestone;
   holds: Map<string, Set<InternalHoldReason>>;
   presentationBatchDepth: number;
   presentationDirtyRooms: Set<string>;
@@ -399,6 +402,8 @@ export class TournamentManager {
       stage: 'multi-table',
       stageEndsAt: undefined,
       finalTheme: 'sakura-championship',
+      milestoneSeq: 0,
+      milestone: undefined,
       holds: new Map(),
       presentationBatchDepth: 0,
       presentationDirtyRooms: new Set(),
@@ -1388,6 +1393,7 @@ export class TournamentManager {
   /** 같은 배치의 탈락을 결정론적 순위 그룹으로 확정하고 점유 순위 상금을 분할한다. */
   private assignEliminations(t: TournamentRuntime, busts: PendingBust[]): void {
     if (busts.length === 0) return;
+    const remainingBeforeBatch = t.remaining;
     const groups = this.eliminationGroups(t, busts);
     let place = t.remaining - busts.length + 1;
     for (const group of groups) {
@@ -1428,10 +1434,45 @@ export class TournamentManager {
       }
       place += group.length;
     }
+    this.maybePublishItmMilestone(t, remainingBeforeBatch);
     // 탈락 확정(finishPlace)·잔존 인원이 실린 스냅샷을 즉시 재브로드캐스트 — EliminationNotice 표시 계약
     this.syncTournamentPresentation(t);
     this.hooks.onTournamentUpdate?.(t.id);
     this.hooks.onTournamentsChanged?.();
+  }
+
+  private maybePublishItmMilestone(
+    t: TournamentRuntime,
+    remainingBeforeBatch: number,
+  ): void {
+    if (t.milestone?.kind === 'itm') return;
+    const paid = paidPlaces(t.seatedCount, t.config.payoutPreset);
+    if (remainingBeforeBatch <= paid || t.remaining > paid) return;
+
+    const reachedAt = Date.now();
+    t.milestone = {
+      seq: ++t.milestoneSeq,
+      kind: 'itm',
+      reachedAt,
+      expiresAt: reachedAt + 4_500,
+      paidPlaces: paid,
+    };
+    for (const roomId of t.tables.keys()) {
+      if (!this.roomManager.getRoom(roomId)) continue;
+      this.roomManager.postSystemChat(
+        roomId,
+        '🎉 버블 종료! 남은 선수 전원이 상금권에 진입했습니다.',
+      );
+    }
+    eventLog.log('mtt-itm', {
+      data: {
+        tournamentId: t.id,
+        entrants: t.seatedCount,
+        paidPlaces: paid,
+        remaining: t.remaining,
+        seq: t.milestone.seq,
+      },
+    });
   }
 
   private checkCompletion(t: TournamentRuntime): boolean {
@@ -2092,6 +2133,7 @@ export class TournamentManager {
       state.stageEndsAt = t.stageEndsAt
         ?? (state.holdReasons.includes('scheduled-break') ? clockDeadline : undefined);
       state.finalTheme = t.finalTheme;
+      state.milestone = t.milestone;
       if (pos && cur && t.pendingLevel === null && !engine.state.isHandInProgress) {
         state.level = pos.levelIndex + 1;
         state.smallBlind = cur.smallBlind;

@@ -164,6 +164,15 @@ export type FinalTableTheme =
   | 'gold-spotlight'
   | 'neon-arena';
 
+/** 서버가 한 번만 발행하는 토너먼트 진행 축하 이벤트. */
+export interface TournamentMilestone {
+  seq: number;
+  kind: 'itm';
+  reachedAt: number;
+  expiresAt: number;
+  paidPlaces: number;
+}
+
 /** 시트앤고/MTT 진행 상태 — getPublicState로 자동 브로드캐스트 */
 export interface TournamentState {
   /** MTT 전용 — 소속 토너먼트 ID (게임 중 상세 조회/HUD 진입점의 키, 매니저가 주입) */
@@ -187,6 +196,8 @@ export interface TournamentState {
   stageEndsAt?: number;
   /** 파이널 테이블 표현 테마 */
   finalTheme?: FinalTableTheme;
+  /** MTT 전역에서 한 번만 발생하는 축하 이벤트. 만료 시각은 서버 기준이다. */
+  milestone?: TournamentMilestone;
   prizes: number[]; // 순위별 상금 (1위부터)
   finished: boolean;
   results: TournamentResult[];

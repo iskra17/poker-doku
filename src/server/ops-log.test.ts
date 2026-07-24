@@ -42,7 +42,7 @@ describe('OpsEventRepository', () => {
     const base = { seq: 1, t: 1 };
     for (const type of [
       'mtt-create', 'mtt-start', 'mtt-cancel', 'mtt-complete',
-      'mtt-table-break', 'mtt-move', 'mtt-director-action',
+      'mtt-table-break', 'mtt-move', 'mtt-itm', 'mtt-director-action',
     ]) {
       expect(shouldPersistOpsEvent({ ...base, type })).toBe(true);
     }

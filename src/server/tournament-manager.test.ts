@@ -130,7 +130,17 @@ function prepareFourMaxH4hBubble(h: Harness): { id: string; tables: string[] } {
 
 function runCrossTableTie(
   callbackOrder: 'forward' | 'reverse',
-): Array<{ playerId: string; place: number; prize: number }> {
+): {
+  eliminated: Array<{ playerId: string; place: number; prize: number }>;
+  milestone: {
+    seq: number;
+    kind: string;
+    paidPlaces: number;
+    remaining: number | undefined;
+    durationMs: number;
+  } | undefined;
+  milestoneSeqAfterNextBust: number | undefined;
+} {
   const local = createHarness();
   try {
     const { tables } = prepareFourMaxH4hBubble(local);
@@ -162,9 +172,30 @@ function runCrossTableTie(
       local.manager.roomHooks.onHandComplete(roomId);
     }
 
-    return local.events.eliminated
+    const eliminated = local.events.eliminated
       .filter(event => event.playerId === firstPlayerId || event.playerId === secondPlayerId)
       .sort((a, b) => a.playerId.localeCompare(b.playerId));
+    const finalRoomId = mttTableIds(local.roomManager)[0];
+    const finalEngine = engineOf(local.roomManager, finalRoomId);
+    const milestone = finalEngine.state.tournament?.milestone;
+    const milestoneSnapshot = milestone
+      ? {
+          seq: milestone.seq,
+          kind: milestone.kind,
+          paidPlaces: milestone.paidPlaces,
+          remaining: finalEngine.state.tournament?.fieldRemaining,
+          durationMs: milestone.expiresAt - milestone.reachedAt,
+        }
+      : undefined;
+
+    bust(finalEngine, aliveIds(finalEngine)[0], 500);
+    local.manager.roomHooks.onHandComplete(finalRoomId);
+
+    return {
+      eliminated,
+      milestone: milestoneSnapshot,
+      milestoneSeqAfterNextBust: finalEngine.state.tournament?.milestone?.seq,
+    };
   } finally {
     local.manager.shutdown();
     local.roomManager.shutdown();
@@ -428,13 +459,26 @@ describe('TournamentManager', () => {
       const reverse = runCrossTableTie('reverse');
       const ladder = computePayouts(120_000, 12);
 
-      expect(reverse).toEqual(forward);
-      expect(forward.map(result => result.place)).toEqual([4, 4]);
-      expect(forward.reduce((sum, result) => sum + result.prize, 0))
+      expect(reverse.eliminated).toEqual(forward.eliminated);
+      expect(forward.eliminated.map(result => result.place)).toEqual([4, 4]);
+      expect(forward.eliminated.reduce((sum, result) => sum + result.prize, 0))
         .toBe((ladder[3] ?? 0) + (ladder[4] ?? 0));
     } finally {
       random.mockRestore();
     }
+  });
+
+  it('publishes one ITM milestone after a cross-table H4H elimination batch', () => {
+    const result = runCrossTableTie('forward');
+
+    expect(result.milestone).toEqual({
+      seq: 1,
+      kind: 'itm',
+      paidPlaces: 4,
+      remaining: 3,
+      durationMs: 4_500,
+    });
+    expect(result.milestoneSeqAfterNextBust).toBe(1);
   });
 
   it('merges to a final table before arming H4H when the field fits', () => {

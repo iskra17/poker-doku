@@ -26,6 +26,7 @@ export const OPS_PERSIST_TYPES = new Set([
   'mtt-complete',         // 정산 요약 (우승자·상금 풀)
   'mtt-table-break',
   'mtt-move',             // 밸런싱 이동 (선수·from→to)
+  'mtt-itm',              // 버블 종료 및 전원 상금권 진입
   'mtt-director-action',  // 일시정지/재개/레벨 수정/강제 제거 등 운영 개입
 ]);
 
