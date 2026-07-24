@@ -94,6 +94,11 @@ describe('/api/admin/* 백오피스 API', () => {
       res.writeHead(200);
       res.end('next');
     });
+    const adminTournamentCommands = {
+      create: vi.fn(() => ({ ok: true as const, tournamentId: 'mtt-created' })),
+      start: vi.fn(() => 'ok' as const),
+      act: vi.fn(() => 'ok' as const),
+    };
     const server = createServer(createHttpRequestHandler(nextHandler, {
       debugToken: 'admin-secret',
       database,
@@ -131,11 +136,12 @@ describe('/api/admin/* 백오피스 API', () => {
           }],
         }],
       }),
+      adminTournamentCommands,
     }));
     servers.push(server);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     const { port } = server.address() as AddressInfo;
-    return { baseUrl: `http://127.0.0.1:${port}` };
+    return { baseUrl: `http://127.0.0.1:${port}`, adminTournamentCommands };
   }
 
   it('토큰이 없거나 틀리면 403', async () => {
@@ -281,6 +287,49 @@ describe('/api/admin/* 백오피스 API', () => {
       paused: true,
       remaining: 9,
     });
+  });
+
+  it('creates and operates tournaments through authenticated backoffice commands', async () => {
+    const { baseUrl, adminTournamentCommands } = await start();
+    const draft = {
+      name: '백오피스 토너먼트',
+      speed: 'standard',
+      maxEntrants: 8,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      economyMode: 'practice',
+      payoutPreset: 'standard',
+    };
+
+    expect((await fetch(`${baseUrl}/api/admin/tournaments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(draft),
+    })).status).toBe(403);
+
+    const created = await fetch(`${baseUrl}/api/admin/tournaments?token=admin-secret`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(draft),
+    });
+    expect(created.status).toBe(201);
+    expect(await created.json()).toMatchObject({ tournamentId: 'mtt-created' });
+    expect(adminTournamentCommands.create).toHaveBeenCalledWith(draft);
+
+    const acted = await fetch(
+      `${baseUrl}/api/admin/tournaments/mtt-created/actions?token=admin-secret`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'pause' }),
+      },
+    );
+    expect(acted.status).toBe(200);
+    expect(adminTournamentCommands.act).toHaveBeenCalledWith(
+      'mtt-created',
+      { kind: 'pause' },
+    );
   });
 
   it('security는 기간 내 신호 이벤트 타입별 집계를 반환한다', async () => {

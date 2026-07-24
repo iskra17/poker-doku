@@ -261,6 +261,17 @@ async function listen(): Promise<void> {
     },
     opsEvents,
     gameConfig: gameConfigService,
+    adminTournamentCommands: {
+      create: draft => runtime
+        ? runtime.tournamentCommands.create({ kind: 'backoffice' }, draft)
+        : { ok: false, reason: 'invalid' },
+      start: tournamentId => runtime
+        ? runtime.tournamentCommands.start({ kind: 'backoffice' }, tournamentId)
+        : 'not-found',
+      act: (tournamentId, action) => runtime
+        ? runtime.tournamentCommands.act({ kind: 'backoffice' }, tournamentId, action)
+        : 'not-found',
+    },
     adminRuntime: () => {
       if (!runtime) return null;
       return {

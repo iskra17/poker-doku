@@ -7,7 +7,17 @@ import type { HandHistoryRepository, TableHandRepository } from './hand-history'
 import { drainRequest, HttpBodyError, readJsonBody } from './http-body';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
-import type { AdminTournamentView } from './tournament-manager';
+import type { CreateTournamentRequest } from '../lib/realtime/protocol';
+import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
+import type {
+  AdminTournamentView,
+  TournamentDirectorAction,
+} from './tournament-manager';
+import type {
+  TournamentActionResult,
+  TournamentCreateResult,
+  TournamentStartResult,
+} from './tournament-command-service';
 
 /**
  * 운영 백오피스 API — 토큰(`DEBUG_LOG_TOKEN`) 게이트, /admin 페이지가 짧은 주기로 폴링한다.
@@ -79,8 +89,15 @@ export interface AdminHttpOptions {
   runtime: () => AdminRuntimeSnapshot | null;
   /** 런타임 게임 설정 (핫 컨피그) — 게임 읽기 경로(live cfg)와 같은 인스턴스여야 한다 */
   gameConfig?: GameConfigService;
+  tournamentCommands?: AdminTournamentCommands;
   debugToken?: string;
   now?: () => number;
+}
+
+export interface AdminTournamentCommands {
+  create(input: CreateTournamentRequest): TournamentCreateResult;
+  start(tournamentId: string): TournamentStartResult;
+  act(tournamentId: string, action: TournamentDirectorAction): TournamentActionResult;
 }
 
 function one(value: string | string[] | undefined): string | undefined {
@@ -93,6 +110,64 @@ function send(res: ServerResponse, status: number, body: unknown): void {
     'cache-control': 'no-store',
   });
   res.end(JSON.stringify(body));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseTournamentDraft(body: unknown, now: number): CreateTournamentRequest | null {
+  if (
+    !isRecord(body)
+    || typeof body.name !== 'string'
+    || body.name.trim().length === 0
+    || body.name.trim().length > 30
+    || !(body.speed === 'standard' || body.speed === 'turbo' || body.speed === 'hyper')
+    || !Number.isInteger(body.maxEntrants)
+    || (body.maxEntrants as number) < 8
+    || (body.maxEntrants as number) > 48
+    || typeof body.botFill !== 'boolean'
+    || !(body.turnTime === 8 || body.turnTime === 15 || body.turnTime === 30)
+    || !(body.economyMode === 'practice' || body.economyMode === 'wallet')
+    || !PAYOUT_PRESET_IDS.includes(body.payoutPreset as never)
+    || !(body.startAt === null
+      || (typeof body.startAt === 'number'
+        && body.startAt > now - 10_000
+        && body.startAt < now + 24 * 60 * 60_000))
+  ) {
+    return null;
+  }
+  return {
+    name: body.name.trim(),
+    speed: body.speed,
+    maxEntrants: body.maxEntrants as number,
+    startAt: body.startAt as number | null,
+    botFill: body.economyMode === 'wallet' ? false : body.botFill,
+    turnTime: body.turnTime,
+    economyMode: body.economyMode,
+    payoutPreset: body.payoutPreset as (typeof PAYOUT_PRESET_IDS)[number],
+  };
+}
+
+function parseTournamentAction(body: unknown): TournamentDirectorAction | 'start' | null {
+  if (!isRecord(body)) return null;
+  switch (body.action) {
+    case 'start':
+    case 'pause':
+    case 'resume':
+    case 'cancel':
+      return body.action === 'start' ? 'start' : { kind: body.action };
+    case 'set-level':
+      return Number.isInteger(body.level)
+        ? { kind: 'set-level', level: body.level as number }
+        : null;
+    case 'remove-player':
+      return typeof body.playerId === 'string' && body.playerId.length > 0
+        ? { kind: 'remove-player', playerId: body.playerId }
+        : null;
+    default:
+      return null;
+  }
 }
 
 export function createAdminHttpHandler(options: AdminHttpOptions) {
@@ -114,6 +189,83 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
 
     if (pathname === '/api/admin/config') {
       await handleGameConfig(req, res, options, now);
+      return true;
+    }
+
+    if (pathname === '/api/admin/tournaments' && req.method === 'POST') {
+      if (!options.tournamentCommands) {
+        drainRequest(req);
+        send(res, 503, { error: 'unavailable' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        send(res, 400, {
+          error: 'invalid-body',
+          message: error instanceof HttpBodyError && error.kind === 'too-large'
+            ? '요청 본문이 너무 큽니다.'
+            : '요청 본문이 올바르지 않습니다.',
+        });
+        return true;
+      }
+      const draft = parseTournamentDraft(body, now());
+      if (!draft) {
+        send(res, 400, { error: 'invalid-payload' });
+        return true;
+      }
+      const result = options.tournamentCommands.create(draft);
+      if (result.ok) {
+        send(res, 201, { tournamentId: result.tournamentId });
+        return true;
+      }
+      const status = result.reason === 'forbidden'
+        ? 403
+        : result.reason === 'invalid'
+          ? 400
+          : 409;
+      send(res, status, { error: result.reason });
+      return true;
+    }
+
+    const tournamentActionMatch = pathname.match(
+      /^\/api\/admin\/tournaments\/([^/]{1,128})\/actions$/,
+    );
+    if (tournamentActionMatch && req.method === 'POST') {
+      if (!options.tournamentCommands) {
+        drainRequest(req);
+        send(res, 503, { error: 'unavailable' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch {
+        send(res, 400, { error: 'invalid-body' });
+        return true;
+      }
+      const action = parseTournamentAction(body);
+      if (!action) {
+        send(res, 400, { error: 'invalid-payload' });
+        return true;
+      }
+      const tournamentId = decodeURIComponent(tournamentActionMatch[1]);
+      const result = action === 'start'
+        ? options.tournamentCommands.start(tournamentId)
+        : options.tournamentCommands.act(tournamentId, action);
+      if (result === 'ok') {
+        send(res, 200, { ok: true });
+        return true;
+      }
+      const status = result === 'forbidden'
+        ? 403
+        : result === 'not-found'
+          ? 404
+          : result === 'invalid'
+            ? 400
+            : 409;
+      send(res, status, { error: result });
       return true;
     }
 

@@ -1,6 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  PAYOUT_PRESETS,
+  computePayouts,
+  paidPlaces,
+  type PayoutPresetId,
+} from '@/lib/poker/payout-table';
+import type { MttSpeed } from '@/lib/poker/mtt-structure';
 
 /**
  * 운영 백오피스 — DEBUG_LOG_TOKEN 토큰 게이트, 5초 주기 자동 갱신.
@@ -166,9 +173,26 @@ interface AdminTournament {
   createdAt: number; startedAt: number | null; finishedAt: number | null;
   paused: boolean; level: number; onBreak: boolean; h4hActive: boolean;
   economyMode: 'practice' | 'wallet';
+  payoutPreset: PayoutPresetId;
   entrantCount: number; seatedCount: number; remaining: number; prizePool: number;
   tables: AdminTournamentTable[]; standings: AdminTournamentStanding[];
 }
+
+interface AdminTournamentDraft {
+  name: string;
+  speed: MttSpeed;
+  maxEntrants: number;
+  startAt: number | null;
+  botFill: boolean;
+  turnTime: number;
+  economyMode: 'practice' | 'wallet';
+  payoutPreset: PayoutPresetId;
+}
+
+type AdminTournamentAction =
+  | { action: 'start' | 'pause' | 'resume' | 'cancel' }
+  | { action: 'set-level'; level: number }
+  | { action: 'remove-player'; playerId: string };
 
 // 런타임 게임 설정 (핫 컨피그) — 메타는 서버 레지스트리가 단일 소스, UI는 렌더만
 interface GameConfigEntryView {
@@ -460,6 +484,37 @@ export default function AdminPage() {
     }
   }, [token, activeTab, eventType, handRoomFilter, api]);
 
+  const createAdminTournament = useCallback(async (
+    draft: AdminTournamentDraft,
+  ): Promise<boolean> => {
+    const result = await apiPost<{ tournamentId?: string; error?: string }>(
+      '/api/admin/tournaments',
+      draft,
+    );
+    if (result.status !== 201) {
+      setLastError(result.body?.error ?? '토너먼트를 생성하지 못했습니다.');
+      return false;
+    }
+    await refresh();
+    return true;
+  }, [apiPost, refresh]);
+
+  const runAdminTournamentAction = useCallback(async (
+    tournamentId: string,
+    action: AdminTournamentAction,
+  ): Promise<boolean> => {
+    const result = await apiPost<{ error?: string }>(
+      `/api/admin/tournaments/${encodeURIComponent(tournamentId)}/actions`,
+      action,
+    );
+    if (result.status !== 200) {
+      setLastError(result.body?.error ?? '토너먼트 작업을 처리하지 못했습니다.');
+      return false;
+    }
+    await refresh();
+    return true;
+  }, [apiPost, refresh]);
+
   useEffect(() => {
     if (!token) return;
     // 첫 갱신도 타이머 콜백으로 — effect 본문 직접 setState 금지 규칙 준수
@@ -654,7 +709,11 @@ export default function AdminPage() {
           />
         )}
         {activeTab === 'tournaments' && (
-          <TournamentsTab tournaments={adminTournaments} />
+          <TournamentsTab
+            tournaments={adminTournaments}
+            onCreate={createAdminTournament}
+            onAction={runAdminTournamentAction}
+          />
         )}
         {activeTab === 'players' && (
           <PlayersTab
@@ -944,9 +1003,131 @@ const MTT_PHASE_LABEL: Record<string, string> = {
   registering: '등록 중', running: '진행 중', completed: '종료', cancelled: '취소됨',
 };
 
-function TournamentsTab({ tournaments }: { tournaments: AdminTournament[] }) {
+function TournamentsTab({
+  tournaments,
+  onCreate,
+  onAction,
+}: {
+  tournaments: AdminTournament[];
+  onCreate: (draft: AdminTournamentDraft) => Promise<boolean>;
+  onAction: (tournamentId: string, action: AdminTournamentAction) => Promise<boolean>;
+}) {
+  const [name, setName] = useState('Poker Doku Championship');
+  const [speed, setSpeed] = useState<MttSpeed>('standard');
+  const [maxEntrants, setMaxEntrants] = useState(24);
+  const [turnTime, setTurnTime] = useState(15);
+  const [botFill, setBotFill] = useState(true);
+  const [economyMode, setEconomyMode] = useState<'practice' | 'wallet'>('practice');
+  const [payoutPreset, setPayoutPreset] = useState<PayoutPresetId>('standard');
+  const [busy, setBusy] = useState(false);
+  const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
+  const [levels, setLevels] = useState<Record<string, number>>({});
+  const previewPool = maxEntrants * (economyMode === 'wallet' ? 1_500 : 10_000);
+  const previewPayouts = computePayouts(previewPool, maxEntrants, payoutPreset);
+
+  const submitCreate = async () => {
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    await onCreate({
+      name: name.trim(),
+      speed,
+      maxEntrants,
+      startAt: null,
+      botFill: economyMode === 'wallet' ? false : botFill,
+      turnTime,
+      economyMode,
+      payoutPreset,
+    });
+    setBusy(false);
+  };
+
   return (
     <section className="space-y-3">
+      <SectionBox className="p-3">
+        <h2 className="mb-3 text-sm font-bold text-blossom">토너먼트 개설</h2>
+        <div className="grid gap-2 md:grid-cols-4">
+          <input
+            value={name}
+            onChange={event => setName(event.target.value.slice(0, 30))}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs md:col-span-2"
+            aria-label="토너먼트 이름"
+          />
+          <select
+            value={speed}
+            onChange={event => setSpeed(event.target.value as MttSpeed)}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+          >
+            <option value="standard">스탠다드</option>
+            <option value="turbo">터보</option>
+            <option value="hyper">하이퍼</option>
+          </select>
+          <select
+            value={maxEntrants}
+            onChange={event => setMaxEntrants(Number(event.target.value))}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+          >
+            {[8, 12, 18, 24, 36, 48].map(value => (
+              <option key={value} value={value}>{value}명</option>
+            ))}
+          </select>
+          <select
+            value={payoutPreset}
+            onChange={event => setPayoutPreset(event.target.value as PayoutPresetId)}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+          >
+            {Object.entries(PAYOUT_PRESETS).map(([id, preset]) => (
+              <option key={id} value={id}>{preset.label}</option>
+            ))}
+          </select>
+          <select
+            value={turnTime}
+            onChange={event => setTurnTime(Number(event.target.value))}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+          >
+            {[8, 15, 30].map(value => (
+              <option key={value} value={value}>턴 {value}초</option>
+            ))}
+          </select>
+          <select
+            value={economyMode}
+            onChange={event => {
+              const next = event.target.value as 'practice' | 'wallet';
+              setEconomyMode(next);
+              if (next === 'wallet') setBotFill(false);
+            }}
+            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+          >
+            <option value="practice">연습 칩</option>
+            <option value="wallet">지갑</option>
+          </select>
+          <label className="flex items-center gap-2 rounded border border-mystic/20 px-2 text-xs">
+            <input
+              type="checkbox"
+              checked={botFill}
+              disabled={economyMode === 'wallet'}
+              onChange={event => setBotFill(event.target.checked)}
+            />
+            빈자리 봇 충원
+          </label>
+        </div>
+        <div className="mt-2 rounded-lg bg-black/20 p-2 text-[10px] text-ink-dim">
+          <span className="font-bold text-ink">{PAYOUT_PRESETS[payoutPreset].label}</span>
+          {' · '}{paidPlaces(maxEntrants, payoutPreset)}명 입상
+          {' · '}1위 {previewPayouts[0].toLocaleString()}
+          {' · '}미니 캐시 {previewPayouts.at(-1)?.toLocaleString()}
+          <div className="mt-1">
+            {previewPayouts.map((prize, index) => `${index + 1}위 ${prize.toLocaleString()}`).join(' · ')}
+          </div>
+        </div>
+        <button
+          type="button"
+          disabled={busy || !name.trim()}
+          onClick={() => void submitCreate()}
+          className="mt-2 rounded-lg bg-blossom px-3 py-1.5 text-xs font-bold text-abyss disabled:opacity-40"
+        >
+          {busy ? '개설 중…' : '토너먼트 개설'}
+        </button>
+      </SectionBox>
       <h2 className="text-sm font-bold text-blossom">
         토너먼트 ({tournaments.length}) — 상태·테이블·스탠딩, 개입 이력은 이벤트 탭 mtt-* 필터
       </h2>
@@ -973,7 +1154,76 @@ function TournamentsTab({ tournaments }: { tournaments: AdminTournament[] }) {
             id {t.id} · 호스트 {t.hostId.slice(0, 12)}… · 개설 {fmtTime(t.createdAt)}
             {t.startedAt !== null && ` · 시작 ${fmtTime(t.startedAt)}`}
             {t.finishedAt !== null && ` · 종료 ${fmtTime(t.finishedAt)}`}
+            {' · '}{PAYOUT_PRESETS[t.payoutPreset]?.label ?? t.payoutPreset}
           </div>
+          {(t.phase === 'registering' || t.phase === 'running') && (
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {t.phase === 'registering' && (
+                <button
+                  type="button"
+                  onClick={() => void onAction(t.id, { action: 'start' })}
+                  className="rounded bg-cyber/20 px-2 py-1 text-[10px] font-bold text-cyber"
+                >
+                  시작
+                </button>
+              )}
+              {t.phase === 'running' && !t.paused && (
+                <button
+                  type="button"
+                  onClick={() => void onAction(t.id, { action: 'pause' })}
+                  className="rounded bg-gilded/20 px-2 py-1 text-[10px] font-bold text-gilded"
+                >
+                  일시정지
+                </button>
+              )}
+              {t.phase === 'running' && t.paused && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void onAction(t.id, { action: 'resume' })}
+                    className="rounded bg-cyber/20 px-2 py-1 text-[10px] font-bold text-cyber"
+                  >
+                    재개
+                  </button>
+                  <input
+                    type="number"
+                    min={1}
+                    value={levels[t.id] ?? t.level}
+                    onChange={event => setLevels(current => ({
+                      ...current,
+                      [t.id]: Number(event.target.value),
+                    }))}
+                    className="w-16 rounded border border-mystic/30 bg-abyss px-2 py-1 text-[10px]"
+                    aria-label={`${t.name} 레벨`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void onAction(t.id, {
+                      action: 'set-level',
+                      level: levels[t.id] ?? t.level,
+                    })}
+                    className="rounded bg-white/10 px-2 py-1 text-[10px]"
+                  >
+                    레벨 적용
+                  </button>
+                </>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirmCancelId === t.id) {
+                    setConfirmCancelId(null);
+                    void onAction(t.id, { action: 'cancel' });
+                  } else {
+                    setConfirmCancelId(t.id);
+                  }
+                }}
+                className="rounded bg-blossom/15 px-2 py-1 text-[10px] font-bold text-blossom"
+              >
+                {confirmCancelId === t.id ? '다시 눌러 취소 확정' : '토너먼트 취소'}
+              </button>
+            </div>
+          )}
           {t.tables.length > 0 && (
             <div className="mt-2 overflow-x-auto">
               <table className="w-full text-left text-[11px]">
@@ -1017,6 +1267,20 @@ function TournamentsTab({ tournaments }: { tournaments: AdminTournament[] }) {
                         </td>
                         <td className="px-3 py-1 text-right text-ink-dim">
                           {row.tableNo !== null ? `T${row.tableNo}` : ''}
+                        </td>
+                        <td className="px-3 py-1 text-right">
+                          {t.phase === 'running' && row.place === null && (
+                            <button
+                              type="button"
+                              onClick={() => void onAction(t.id, {
+                                action: 'remove-player',
+                                playerId: row.playerId,
+                              })}
+                              className="rounded bg-blossom/10 px-1.5 py-0.5 text-[9px] text-blossom"
+                            >
+                              강제 제거
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}

@@ -4,6 +4,7 @@ import { parse } from 'url';
 import type { UrlWithParsedQuery } from 'url';
 import {
   createAdminHttpHandler,
+  type AdminTournamentCommands,
   type AdminRuntimeSnapshot,
 } from './admin-http';
 import { eventLog } from './event-log';
@@ -60,6 +61,7 @@ interface HttpHandlerCommonOptions {
   /** 운영 백오피스 (/api/admin/*) — 영속 이벤트 저장소 + 늦은 바인딩 런타임 스냅샷 */
   opsEvents?: OpsEventRepository;
   adminRuntime?: () => AdminRuntimeSnapshot | null;
+  adminTournamentCommands?: AdminTournamentCommands;
   /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
   gameConfig?: GameConfigService;
 }
@@ -172,6 +174,7 @@ export function createHttpRequestHandler(
         tableHands: new TableHandRepository(options.database),
         handHistory: new HandHistoryRepository(options.database),
         runtime: options.adminRuntime ?? (() => null),
+        tournamentCommands: options.adminTournamentCommands,
         gameConfig: options.gameConfig,
         debugToken,
         now: options.now,
