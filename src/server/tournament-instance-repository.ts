@@ -1,0 +1,1906 @@
+import type { PokerDatabase } from './persistence/database';
+import type {
+  TournamentConfigSnapshotV2,
+  TournamentRecurrence,
+  TournamentSchedule,
+} from '@/lib/tournament/tournament-config';
+import type {
+  RegistrationCloseReason,
+  TournamentInstanceStatus,
+  TournamentInstanceStatusReason,
+  TournamentRegistrationState,
+} from '@/lib/tournament/tournament-state';
+
+type SqliteRow = Record<string, unknown>;
+
+const INSTANCE_STATUSES: readonly TournamentInstanceStatus[] = [
+  'scheduled-hidden',
+  'scheduled-visible',
+  'registering',
+  'start-delayed',
+  'starting',
+  'running',
+  'payout-pending',
+  'refund-pending',
+  'completed',
+  'cancelled',
+];
+const REGISTRATION_STATES: readonly TournamentRegistrationState[] = [
+  'not-open',
+  'open-prestart',
+  'locked-for-start',
+  'open-late',
+  'closing',
+  'closed',
+];
+const STATUS_REASONS: readonly TournamentInstanceStatusReason[] = [
+  'capacity',
+  'restart-checkin-grace',
+  'not-enough',
+  'missed-start',
+  'promotion-insufficient',
+  'financial-invariant',
+  'invalid-config',
+  'template-superseded',
+  'operator-cancel',
+  'server-restart-unrecoverable',
+  'start-economy-failed',
+  'room-create-failed',
+];
+const CLOSE_REASONS: readonly RegistrationCloseReason[] = [
+  'late-reg-disabled',
+  'time',
+  'full',
+  'stack-floor',
+  'bubble',
+  'final-table',
+  'last-player',
+  'tournament-cancelled',
+  'tournament-completed',
+];
+const DIRECT_CANCELLATION_REASONS = new Set<TournamentInstanceStatusReason>([
+  'not-enough',
+  'missed-start',
+  'promotion-insufficient',
+  'invalid-config',
+  'template-superseded',
+  'operator-cancel',
+  'server-restart-unrecoverable',
+  'start-economy-failed',
+  'room-create-failed',
+]);
+const CANCELLABLE_STATUSES = new Set<TournamentInstanceStatus>([
+  'scheduled-hidden',
+  'scheduled-visible',
+  'registering',
+  'start-delayed',
+  'starting',
+  'running',
+]);
+const PUBLIC_STATUSES = new Set<TournamentInstanceStatus>([
+  'scheduled-visible',
+  'registering',
+  'start-delayed',
+  'starting',
+  'running',
+  'payout-pending',
+  'refund-pending',
+  'completed',
+  'cancelled',
+]);
+
+export type TournamentPersistenceErrorCode =
+  | 'INVALID_INPUT'
+  | 'IDEMPOTENCY_CONFLICT'
+  | 'PERSISTED_ROW_INVALID'
+  | 'FINANCIAL_LIABILITY'
+  | 'SETTLEMENT_CONFLICT';
+
+export class TournamentPersistenceError extends Error {
+  constructor(readonly code: TournamentPersistenceErrorCode) {
+    super(code);
+    this.name = 'TournamentPersistenceError';
+  }
+}
+
+export interface TournamentActor {
+  readonly kind: string;
+  readonly profileId: string | null;
+}
+
+export interface CreateTemplateCommand {
+  readonly id: string;
+  readonly idempotencyKey: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly timezone: 'Asia/Seoul';
+  readonly recurrence: TournamentRecurrence;
+  readonly visibleLeadMs: number;
+  readonly registrationLeadMs: number;
+  readonly config: TournamentConfigSnapshotV2;
+  readonly createdBy: TournamentActor;
+  readonly now: number;
+}
+
+export interface TemplatePatch {
+  readonly name?: string;
+  readonly enabled?: boolean;
+  readonly recurrence?: TournamentRecurrence;
+  readonly visibleLeadMs?: number;
+  readonly registrationLeadMs?: number;
+  readonly config?: TournamentConfigSnapshotV2;
+  readonly updatedAt: number;
+}
+
+export interface TournamentTemplateRecord {
+  readonly id: string;
+  readonly revision: number;
+  readonly idempotencyKey: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly timezone: 'Asia/Seoul';
+  readonly recurrence: TournamentRecurrence;
+  readonly visibleLeadMs: number;
+  readonly registrationLeadMs: number;
+  readonly config: TournamentConfigSnapshotV2;
+  readonly createdBy: TournamentActor;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export type TemplatePatchResult =
+  | { readonly status: 'updated'; readonly record: TournamentTemplateRecord }
+  | { readonly status: 'revision-conflict'; readonly actualRevision: number }
+  | { readonly status: 'not-found' };
+
+export interface CreateInstanceCommand {
+  readonly id: string;
+  readonly templateId: string | null;
+  readonly templateRevision: number | null;
+  readonly idempotencyKey: string;
+  readonly occurrenceKey: string;
+  readonly schedule: TournamentSchedule;
+  readonly config: TournamentConfigSnapshotV2;
+  readonly createdBy: TournamentActor;
+  readonly directorProfileId?: string | null;
+  readonly now: number;
+}
+
+export interface TournamentInstanceRecord {
+  readonly id: string;
+  readonly templateId: string | null;
+  readonly templateRevision: number | null;
+  readonly idempotencyKey: string;
+  readonly occurrenceKey: string;
+  readonly schedule: TournamentSchedule;
+  readonly status: TournamentInstanceStatus;
+  readonly statusReason: TournamentInstanceStatusReason | null;
+  readonly economyMode: 'freeroll' | 'wallet';
+  readonly registrationState: TournamentRegistrationState;
+  readonly registrationCloseReason: RegistrationCloseReason | null;
+  readonly registrationGeneration: number;
+  readonly registrationOwnerToken: string | null;
+  readonly minEntrants: number;
+  readonly maxEntrants: number;
+  readonly initialEntrants: number | null;
+  readonly initialBotEntrants: number | null;
+  readonly committedEntrants: number | null;
+  readonly pendingLateEntrants: number;
+  readonly finalEntrants: number | null;
+  readonly everMultiTable: boolean;
+  readonly forfeitedChips: number;
+  readonly payoutFreezeVersion: number | null;
+  readonly payoutFreeze: unknown | null;
+  readonly payoutFreezeAbortedAt: number | null;
+  readonly config: TournamentConfigSnapshotV2;
+  readonly createdBy: TournamentActor;
+  readonly directorProfileId: string | null;
+  readonly startAttempt: number;
+  readonly nextRetryAt: number | null;
+  readonly startOwnerId: string | null;
+  readonly startLeaseUntil: number | null;
+  readonly settlementAttempt: number;
+  readonly settlementNextRetryAt: number | null;
+  readonly settlementOwnerId: string | null;
+  readonly settlementLeaseUntil: number | null;
+  readonly actualStartedAt: number | null;
+  readonly completedAt: number | null;
+  readonly createdAt: number;
+  readonly updatedAt: number;
+}
+
+export type StartClaim =
+  | {
+      readonly status: 'claimed';
+      readonly ownerId: string;
+      readonly startAttempt: number;
+      readonly instance: TournamentInstanceRecord;
+    }
+  | { readonly status: 'not-found' | 'not-claimable' };
+
+export type CloseClaim =
+  | {
+      readonly status: 'claimed' | 'already-owned';
+      readonly ownerToken: string;
+      readonly generation: number;
+      readonly instance: TournamentInstanceRecord;
+    }
+  | {
+      readonly status: 'not-claimable';
+      readonly ownerToken?: string;
+      readonly generation?: number;
+    }
+  | { readonly status: 'not-found' };
+
+export type RefundClaim =
+  | {
+      readonly status: 'claimed' | 'already-pending';
+      readonly ownerToken: string;
+      readonly instance: TournamentInstanceRecord;
+    }
+  | { readonly status: 'not-found' | 'not-claimable' };
+
+export interface TournamentPayoutResult {
+  readonly place: number;
+  readonly playerId: string;
+  readonly participantType: 'human' | 'bot';
+  readonly profileId: string | null;
+  readonly registrationAttempt: number | null;
+  readonly displayName: string;
+  readonly prize: number;
+  readonly disposition: 'wallet-credit' | 'promotion-return' | 'none';
+}
+
+export interface TournamentPayoutFreezePlan {
+  readonly version: number;
+  readonly checksum: string;
+  readonly prizePool: number;
+  readonly fingerprint: string;
+  readonly results: readonly TournamentPayoutResult[];
+  readonly now: number;
+}
+
+export type PayoutClaim =
+  | {
+      readonly status: 'claimed' | 'already-pending';
+      readonly instance: TournamentInstanceRecord;
+    }
+  | { readonly status: 'not-found' | 'not-claimable' };
+
+export type DirectCancellationClaim =
+  | { readonly status: 'claimed'; readonly instance: TournamentInstanceRecord }
+  | { readonly status: 'not-found' | 'not-claimable' };
+
+export interface TemplateReconciliationResult {
+  readonly supersededIds: string[];
+  readonly createdIds: string[];
+  readonly preservedIds: string[];
+}
+
+export type TournamentFundingProjection =
+  | { readonly status: 'not-applicable'; readonly amount: null }
+  | {
+      readonly status: 'missing' | 'reserved' | 'settled' | 'refunded';
+      readonly amount: number | null;
+    };
+
+export interface TournamentInstancePublicProjection {
+  readonly id: string;
+  readonly name: string;
+  readonly status: TournamentInstanceStatus;
+  readonly statusReason: TournamentInstanceStatusReason | null;
+  readonly economyMode: 'freeroll' | 'wallet';
+  readonly schedule: TournamentSchedule & { readonly actualStartedAt: number | null };
+  readonly registrationState: TournamentRegistrationState;
+  readonly registrationCloseReason: RegistrationCloseReason | null;
+  readonly minEntrants: number;
+  readonly maxEntrants: number;
+  readonly acceptedEntrants: number;
+  readonly pendingLateEntrants: number;
+  readonly finalEntrants: number | null;
+  readonly botFillToMinimum: boolean;
+  readonly prizePool: number;
+  readonly registered: boolean;
+  readonly myRegistrationStatus: string | null;
+  readonly funding: TournamentFundingProjection;
+  readonly serverNow: number;
+}
+
+export interface TournamentInstanceAdminProjection
+  extends TournamentInstancePublicProjection {
+  readonly templateId: string | null;
+  readonly templateRevision: number | null;
+  readonly occurrenceKey: string;
+  readonly registrationGeneration: number;
+  readonly registrationOwnerToken: string | null;
+  readonly startAttempt: number;
+  readonly startOwnerId: string | null;
+  readonly startLeaseUntil: number | null;
+  readonly nextRetryAt: number | null;
+  readonly settlementAttempt: number;
+  readonly settlementOwnerId: string | null;
+  readonly settlementLeaseUntil: number | null;
+  readonly settlementNextRetryAt: number | null;
+  readonly invariantWarnings: string[];
+}
+
+export class TournamentInstanceRepository {
+  constructor(
+    private readonly database: PokerDatabase,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  createTemplate(command: CreateTemplateCommand): TournamentTemplateRecord {
+    assertTemplateCommand(command);
+    const existing = this.#templateByIdempotencyKey(command.idempotencyKey);
+    if (existing) {
+      if (!sameTemplateCreation(existing, command)) {
+        throw new TournamentPersistenceError('IDEMPOTENCY_CONFLICT');
+      }
+      return existing;
+    }
+
+    try {
+      this.database.db.prepare(`
+        INSERT INTO tournament_template (
+          id, revision, idempotency_key, name, enabled, timezone,
+          recurrence_json, visible_lead_ms, registration_lead_ms,
+          config_version, config_json, created_by_kind,
+          created_by_profile_id, created_at, updated_at
+        ) VALUES (?, 1, ?, ?, ?, 'Asia/Seoul', ?, ?, ?, 2, ?, ?, ?, ?, ?)
+      `).run(
+        command.id,
+        command.idempotencyKey,
+        command.name,
+        command.enabled ? 1 : 0,
+        canonicalJson(command.recurrence),
+        command.visibleLeadMs,
+        command.registrationLeadMs,
+        canonicalJson(command.config),
+        command.createdBy.kind,
+        command.createdBy.profileId,
+        command.now,
+        command.now,
+      );
+    } catch (error) {
+      const raced = this.#templateByIdempotencyKey(command.idempotencyKey);
+      if (raced && sameTemplateCreation(raced, command)) return raced;
+      throw persistenceError(error);
+    }
+    return this.#requireTemplate(command.id);
+  }
+
+  patchTemplateIfRevision(
+    id: string,
+    revision: number,
+    patch: TemplatePatch,
+  ): TemplatePatchResult {
+    assertIdentifier(id);
+    assertPositiveInteger(revision);
+    assertTimestamp(patch.updatedAt);
+    const current = this.#templateById(id);
+    if (!current) return { status: 'not-found' };
+    if (current.revision !== revision) {
+      return { status: 'revision-conflict', actualRevision: current.revision };
+    }
+    const next = {
+      name: patch.name ?? current.name,
+      enabled: patch.enabled ?? current.enabled,
+      recurrence: patch.recurrence ?? current.recurrence,
+      visibleLeadMs: patch.visibleLeadMs ?? current.visibleLeadMs,
+      registrationLeadMs:
+        patch.registrationLeadMs ?? current.registrationLeadMs,
+      config: patch.config ?? current.config,
+    };
+    assertTemplateMutableValues(next);
+    const result = this.database.db.prepare(`
+      UPDATE tournament_template
+      SET revision = revision + 1,
+          name = ?,
+          enabled = ?,
+          recurrence_json = ?,
+          visible_lead_ms = ?,
+          registration_lead_ms = ?,
+          config_version = 2,
+          config_json = ?,
+          updated_at = ?
+      WHERE id = ? AND revision = ?
+    `).run(
+      next.name,
+      next.enabled ? 1 : 0,
+      canonicalJson(next.recurrence),
+      next.visibleLeadMs,
+      next.registrationLeadMs,
+      canonicalJson(next.config),
+      patch.updatedAt,
+      id,
+      revision,
+    );
+    if (result.changes !== 1) {
+      const raced = this.#templateById(id);
+      return raced
+        ? { status: 'revision-conflict', actualRevision: raced.revision }
+        : { status: 'not-found' };
+    }
+    return { status: 'updated', record: this.#requireTemplate(id) };
+  }
+
+  createInstance(command: CreateInstanceCommand): TournamentInstanceRecord {
+    assertInstanceCommand(command);
+    const existing = this.#instanceByIdempotencyKey(command.idempotencyKey);
+    if (existing) {
+      if (!sameInstanceCreation(existing, command)) {
+        throw new TournamentPersistenceError('IDEMPOTENCY_CONFLICT');
+      }
+      return existing;
+    }
+    if (command.templateId !== null) {
+      const template = this.#templateById(command.templateId);
+      if (!template || template.revision < (command.templateRevision ?? 0)) {
+        throw new TournamentPersistenceError('INVALID_INPUT');
+      }
+    }
+    try {
+      this.database.db.prepare(`
+        INSERT INTO tournament_instance (
+          id, template_id, template_revision, idempotency_key, occurrence_key,
+          visible_at, registration_opens_at, starts_at, manual_expires_at,
+          status, status_reason, economy_mode, registration_state,
+          registration_close_reason, registration_generation,
+          registration_owner_token, min_entrants, max_entrants,
+          config_version, config_json, created_by_kind, created_by_profile_id,
+          director_profile_id, created_at, updated_at
+        ) VALUES (
+          ?, ?, ?, ?, ?, ?, ?, ?, ?,
+          'scheduled-hidden', NULL, ?, 'not-open',
+          NULL, 0, NULL, ?, ?,
+          2, ?, ?, ?, ?, ?, ?
+        )
+      `).run(
+        command.id,
+        command.templateId,
+        command.templateRevision,
+        command.idempotencyKey,
+        command.occurrenceKey,
+        command.schedule.visibleAt,
+        command.schedule.registrationOpensAt,
+        command.schedule.startsAt,
+        command.schedule.manualStartExpiresAt,
+        command.config.economy.mode,
+        command.config.field.minEntrants,
+        command.config.field.maxEntrants,
+        canonicalJson(command.config),
+        command.createdBy.kind,
+        command.createdBy.profileId,
+        command.directorProfileId ?? null,
+        command.now,
+        command.now,
+      );
+    } catch (error) {
+      const raced = this.#instanceByIdempotencyKey(command.idempotencyKey);
+      if (raced && sameInstanceCreation(raced, command)) return raced;
+      throw persistenceError(error);
+    }
+    return this.#requireInstance(command.id);
+  }
+
+  replaceHiddenTemplateOccurrences(
+    templateId: string,
+    oldRevision: number,
+    replacements: readonly CreateInstanceCommand[],
+    now: number,
+  ): TemplateReconciliationResult {
+    assertIdentifier(templateId);
+    assertPositiveInteger(oldRevision);
+    assertTimestamp(now);
+    for (const replacement of replacements) {
+      assertInstanceCommand(replacement);
+      if (
+        replacement.templateId !== templateId
+        || replacement.templateRevision === null
+        || replacement.templateRevision <= oldRevision
+      ) {
+        throw new TournamentPersistenceError('INVALID_INPUT');
+      }
+    }
+
+    return this.database.transaction((): TemplateReconciliationResult => {
+      const supersededIds: string[] = [];
+      const createdIds: string[] = [];
+      const preservedIds: string[] = [];
+      const oldRows = this.database.db.prepare(`
+        SELECT id, occurrence_key
+        FROM tournament_instance
+        WHERE template_id = ?
+          AND template_revision = ?
+          AND status = 'scheduled-hidden'
+          AND NOT EXISTS (
+            SELECT 1 FROM tournament_registration registration
+            WHERE registration.instance_id = tournament_instance.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM tournament_prize_escrow escrow
+            WHERE escrow.instance_id = tournament_instance.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM sng_entries entry
+            WHERE entry.tournament_id = tournament_instance.id
+              AND entry.status IN ('reserved', 'started')
+          )
+        ORDER BY id
+      `).all(templateId, oldRevision) as SqliteRow[];
+      for (const row of oldRows) {
+        const id = stringValue(row.id);
+        const result = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET status = 'cancelled',
+              status_reason = 'template-superseded',
+              registration_state = 'closed',
+              registration_close_reason = 'tournament-cancelled',
+              registration_generation = registration_generation + 1,
+              completed_at = ?,
+              updated_at = ?
+          WHERE id = ?
+            AND template_revision = ?
+            AND status = 'scheduled-hidden'
+            AND registration_state = 'not-open'
+            AND registration_generation = 0
+            AND registration_owner_token IS NULL
+            AND start_owner_id IS NULL
+            AND start_lease_until IS NULL
+            AND settlement_owner_id IS NULL
+            AND settlement_lease_until IS NULL
+        `).run(now, now, id, oldRevision);
+        if (result.changes === 1) supersededIds.push(id);
+      }
+
+      for (const replacement of replacements) {
+        const occupied = this.database.db.prepare(`
+          SELECT id, status, template_revision
+          FROM tournament_instance
+          WHERE template_id = ? AND occurrence_key = ?
+            AND (
+              status <> 'cancelled'
+              OR COALESCE(status_reason, '') <> 'template-superseded'
+            )
+          LIMIT 1
+        `).get(templateId, replacement.occurrenceKey) as SqliteRow | undefined;
+        if (occupied) {
+          preservedIds.push(stringValue(occupied.id));
+          continue;
+        }
+        const created = this.createInstance(replacement);
+        createdIds.push(created.id);
+      }
+      return { supersededIds, createdIds, preservedIds };
+    });
+  }
+
+  getInstance(id: string): TournamentInstanceRecord | null {
+    assertIdentifier(id);
+    const row = this.database.db.prepare(`
+      SELECT * FROM tournament_instance WHERE id = ?
+    `).get(id) as SqliteRow | undefined;
+    return row ? decodeInstance(row) : null;
+  }
+
+  claimStart(
+    instanceId: string,
+    ownerId: string,
+    leaseUntil: number,
+  ): StartClaim {
+    assertIdentifier(instanceId);
+    assertIdentifier(ownerId);
+    assertTimestamp(leaseUntil);
+    return this.database.transaction((): StartClaim => {
+      const current = this.getInstance(instanceId);
+      if (!current) return { status: 'not-found' };
+      const sourceValid = (
+        current.status === 'registering'
+        && current.registrationState === 'open-prestart'
+      ) || (
+        current.status === 'start-delayed'
+        && current.registrationState === 'locked-for-start'
+      );
+      if (
+        !sourceValid
+        || current.startOwnerId !== null
+        || current.startLeaseUntil !== null
+      ) {
+        return { status: 'not-claimable' };
+      }
+      const updatedAt = this.now();
+      const result = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET status = 'starting',
+            status_reason = NULL,
+            registration_state = 'locked-for-start',
+            start_attempt = start_attempt + 1,
+            start_owner_id = ?,
+            start_lease_until = ?,
+            next_retry_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND status = ?
+          AND registration_state = ?
+          AND registration_generation = ?
+          AND registration_owner_token IS ?
+          AND start_attempt = ?
+          AND start_owner_id IS NULL
+          AND start_lease_until IS NULL
+      `).run(
+        ownerId,
+        leaseUntil,
+        updatedAt,
+        instanceId,
+        current.status,
+        current.registrationState,
+        current.registrationGeneration,
+        current.registrationOwnerToken,
+        current.startAttempt,
+      );
+      if (result.changes !== 1) return { status: 'not-claimable' };
+      const instance = this.#requireInstance(instanceId);
+      return {
+        status: 'claimed',
+        ownerId,
+        startAttempt: instance.startAttempt,
+        instance,
+      };
+    });
+  }
+
+  claimRegistrationClose(
+    instanceId: string,
+    ownerToken: string,
+    reason: RegistrationCloseReason,
+  ): CloseClaim {
+    assertIdentifier(instanceId);
+    assertIdentifier(ownerToken);
+    if (!CLOSE_REASONS.includes(reason)) invalid();
+    return this.database.transaction((): CloseClaim => {
+      const current = this.getInstance(instanceId);
+      if (!current) return { status: 'not-found' };
+      if (
+        current.status === 'running'
+        && current.registrationState === 'closing'
+      ) {
+        return current.registrationOwnerToken === ownerToken
+          ? {
+              status: 'already-owned',
+              ownerToken,
+              generation: current.registrationGeneration,
+              instance: current,
+            }
+          : {
+              status: 'not-claimable',
+              ownerToken: current.registrationOwnerToken ?? undefined,
+              generation: current.registrationGeneration,
+            };
+      }
+      if (
+        current.status !== 'running'
+        || current.registrationState !== 'open-late'
+        || current.registrationOwnerToken !== null
+      ) {
+        return { status: 'not-claimable' };
+      }
+      const result = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET registration_state = 'closing',
+            registration_close_reason = ?,
+            registration_generation = registration_generation + 1,
+            registration_owner_token = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'running'
+          AND registration_state = 'open-late'
+          AND registration_close_reason IS NULL
+          AND registration_generation = ?
+          AND registration_owner_token IS NULL
+      `).run(
+        reason,
+        ownerToken,
+        this.now(),
+        instanceId,
+        current.registrationGeneration,
+      );
+      if (result.changes !== 1) return { status: 'not-claimable' };
+      const instance = this.#requireInstance(instanceId);
+      return {
+        status: 'claimed',
+        ownerToken,
+        generation: instance.registrationGeneration,
+        instance,
+      };
+    });
+  }
+
+  claimRefundPending(
+    instanceId: string,
+    reason: TournamentInstanceStatusReason,
+    ownerToken: string,
+  ): RefundClaim {
+    assertIdentifier(instanceId);
+    assertIdentifier(ownerToken);
+    if (!STATUS_REASONS.includes(reason)) invalid();
+    return this.database.transaction((): RefundClaim => {
+      let current = this.getInstance(instanceId);
+      if (!current) return { status: 'not-found' };
+      if (current.status === 'refund-pending') {
+        return { status: 'not-claimable' };
+      }
+      if (!CANCELLABLE_STATUSES.has(current.status)) {
+        return { status: 'not-claimable' };
+      }
+      if (
+        reason !== 'financial-invariant'
+        && !this.#hasFinancialLiability(instanceId)
+      ) {
+        return { status: 'not-claimable' };
+      }
+
+      if (current.registrationState === 'open-late') {
+        const close = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET registration_state = 'closing',
+              registration_close_reason = 'tournament-cancelled',
+              registration_generation = registration_generation + 1,
+              registration_owner_token = ?,
+              updated_at = ?
+          WHERE id = ?
+            AND status = 'running'
+            AND registration_state = 'open-late'
+            AND registration_close_reason IS NULL
+            AND registration_generation = ?
+            AND registration_owner_token IS NULL
+        `).run(
+          ownerToken,
+          this.now(),
+          instanceId,
+          current.registrationGeneration,
+        );
+        if (close.changes !== 1) {
+          return { status: 'not-claimable' };
+        }
+        current = this.#requireInstance(instanceId);
+      }
+      if (
+        current.registrationState === 'closing'
+        && current.registrationOwnerToken !== ownerToken
+      ) {
+        return { status: 'not-claimable' };
+      }
+
+      const closeGenerationIncrement = current.registrationState === 'closing'
+        ? 0
+        : 1;
+      const result = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET status = 'refund-pending',
+            status_reason = ?,
+            registration_state = 'closed',
+            registration_close_reason = COALESCE(
+              registration_close_reason,
+              'tournament-cancelled'
+            ),
+            registration_generation = registration_generation + ?,
+            registration_owner_token = NULL,
+            start_owner_id = NULL,
+            start_lease_until = NULL,
+            next_retry_at = NULL,
+            payout_freeze_aborted_at = CASE
+              WHEN payout_freeze_version IS NOT NULL
+              THEN COALESCE(payout_freeze_aborted_at, ?)
+              ELSE NULL
+            END,
+            updated_at = ?
+        WHERE id = ?
+          AND status = ?
+          AND registration_state = ?
+          AND registration_generation = ?
+          AND registration_owner_token IS ?
+          AND settlement_owner_id IS NULL
+          AND settlement_lease_until IS NULL
+      `).run(
+        reason,
+        closeGenerationIncrement,
+        this.now(),
+        this.now(),
+        instanceId,
+        current.status,
+        current.registrationState,
+        current.registrationGeneration,
+        current.registrationOwnerToken,
+      );
+      if (result.changes !== 1) return { status: 'not-claimable' };
+      return {
+        status: 'claimed',
+        ownerToken,
+        instance: this.#requireInstance(instanceId),
+      };
+    });
+  }
+
+  finishCancellation(
+    instanceId: string,
+    ownerToken: string,
+    completedAt: number,
+  ): TournamentInstanceRecord {
+    assertIdentifier(instanceId);
+    assertIdentifier(ownerToken);
+    assertTimestamp(completedAt);
+    const current = this.getInstance(instanceId);
+    if (!current || current.status !== 'refund-pending') {
+      throw new TournamentPersistenceError('INVALID_INPUT');
+    }
+    try {
+      const result = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET status = 'cancelled', completed_at = ?, updated_at = ?
+        WHERE id = ?
+          AND status = 'refund-pending'
+          AND registration_state = 'closed'
+          AND registration_generation = ?
+          AND registration_owner_token IS NULL
+          AND start_owner_id IS NULL
+          AND settlement_owner_id IS NULL
+      `).run(
+        completedAt,
+        completedAt,
+        instanceId,
+        current.registrationGeneration,
+      );
+      if (result.changes !== 1) {
+        throw new TournamentPersistenceError('INVALID_INPUT');
+      }
+    } catch (error) {
+      throw persistenceError(error, 'FINANCIAL_LIABILITY');
+    }
+    return this.#requireInstance(instanceId);
+  }
+
+  claimDirectCancellation(
+    instanceId: string,
+    reason: TournamentInstanceStatusReason,
+    ownerToken: string,
+    completedAt: number,
+  ): DirectCancellationClaim {
+    assertIdentifier(instanceId);
+    assertIdentifier(ownerToken);
+    assertTimestamp(completedAt);
+    if (!DIRECT_CANCELLATION_REASONS.has(reason)) invalid();
+    return this.database.transaction((): DirectCancellationClaim => {
+      let current = this.getInstance(instanceId);
+      if (!current) return { status: 'not-found' };
+      if (!CANCELLABLE_STATUSES.has(current.status)) {
+        return { status: 'not-claimable' };
+      }
+      if (this.#hasFinancialLiability(instanceId)) {
+        return { status: 'not-claimable' };
+      }
+      if (current.registrationState === 'open-late') {
+        const close = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET registration_state = 'closing',
+              registration_close_reason = 'tournament-cancelled',
+              registration_generation = registration_generation + 1,
+              registration_owner_token = ?,
+              updated_at = ?
+          WHERE id = ?
+            AND status = 'running'
+            AND registration_state = 'open-late'
+            AND registration_close_reason IS NULL
+            AND registration_generation = ?
+            AND registration_owner_token IS NULL
+        `).run(
+          ownerToken,
+          completedAt,
+          instanceId,
+          current.registrationGeneration,
+        );
+        if (close.changes !== 1) {
+          return { status: 'not-claimable' };
+        }
+        current = this.#requireInstance(instanceId);
+      }
+      if (
+        current.registrationState === 'closing'
+        && current.registrationOwnerToken !== ownerToken
+      ) {
+        return { status: 'not-claimable' };
+      }
+      const generationIncrement = current.registrationState === 'closing' ? 0 : 1;
+      try {
+        const result = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET status = 'cancelled',
+              status_reason = ?,
+              registration_state = 'closed',
+              registration_close_reason = COALESCE(
+                registration_close_reason,
+                'tournament-cancelled'
+              ),
+              registration_generation = registration_generation + ?,
+              registration_owner_token = NULL,
+              start_owner_id = NULL,
+              start_lease_until = NULL,
+              completed_at = ?,
+              updated_at = ?
+          WHERE id = ?
+            AND status = ?
+            AND registration_state = ?
+            AND registration_generation = ?
+            AND registration_owner_token IS ?
+            AND settlement_owner_id IS NULL
+            AND settlement_lease_until IS NULL
+        `).run(
+          reason,
+          generationIncrement,
+          completedAt,
+          completedAt,
+          instanceId,
+          current.status,
+          current.registrationState,
+          current.registrationGeneration,
+          current.registrationOwnerToken,
+        );
+        if (result.changes !== 1) return { status: 'not-claimable' };
+      } catch {
+        return { status: 'not-claimable' };
+      }
+      return { status: 'claimed', instance: this.#requireInstance(instanceId) };
+    });
+  }
+
+  claimPayoutPending(
+    instanceId: string,
+    freeze: TournamentPayoutFreezePlan,
+  ): PayoutClaim {
+    assertIdentifier(instanceId);
+    assertPayoutPlan(freeze);
+    return this.database.transaction((): PayoutClaim => {
+      let current = this.getInstance(instanceId);
+      if (!current) return { status: 'not-found' };
+      if (current.status === 'payout-pending') {
+        const settlement = this.database.db.prepare(`
+          SELECT fingerprint FROM tournament_settlement WHERE instance_id = ?
+        `).get(instanceId) as SqliteRow | undefined;
+        if (settlement?.fingerprint === freeze.fingerprint) {
+          return { status: 'already-pending', instance: current };
+        }
+        throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+      }
+      if (
+        current.status !== 'running'
+        || current.registrationState !== 'closed'
+        || current.pendingLateEntrants !== 0
+      ) {
+        return { status: 'not-claimable' };
+      }
+      const finalEntrants = freeze.results.length;
+      if (current.committedEntrants !== finalEntrants) {
+        return { status: 'not-claimable' };
+      }
+
+      if (current.payoutFreezeVersion === null) {
+        const freezeJson = canonicalJson({
+          version: freeze.version,
+          checksum: freeze.checksum,
+          finalEntrants,
+        });
+        const update = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET final_entrants = ?,
+              payout_freeze_version = ?,
+              payout_freeze_json = ?,
+              updated_at = ?
+          WHERE id = ?
+            AND status = 'running'
+            AND registration_state = 'closed'
+            AND final_entrants IS NULL
+            AND payout_freeze_version IS NULL
+            AND payout_freeze_json IS NULL
+            AND committed_entrants = ?
+            AND pending_late_entrants = 0
+        `).run(
+          finalEntrants,
+          freeze.version,
+          freezeJson,
+          freeze.now,
+          instanceId,
+          finalEntrants,
+        );
+        if (update.changes !== 1) return { status: 'not-claimable' };
+        current = this.#requireInstance(instanceId);
+      }
+      if (
+        current.finalEntrants !== finalEntrants
+        || current.payoutFreezeVersion !== freeze.version
+      ) {
+        throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+      }
+
+      const humanPayoutTotal = freeze.results
+        .filter(result => result.participantType === 'human')
+        .reduce((total, result) => total + result.prize, 0);
+      const botReturnTotal = freeze.results
+        .filter(result => result.participantType === 'bot')
+        .reduce((total, result) => total + result.prize, 0);
+      try {
+        if (current.economyMode === 'wallet' && botReturnTotal !== 0) {
+          throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+        }
+        if (current.economyMode === 'freeroll') {
+          const escrow = this.database.db.prepare(`
+            SELECT amount, status, settlement_fingerprint
+            FROM tournament_prize_escrow
+            WHERE instance_id = ? AND account_id = 'global'
+          `).get(instanceId) as SqliteRow | undefined;
+          if (
+            !escrow
+            || integerValue(escrow.amount) !== freeze.prizePool
+            || escrow.status !== 'reserved'
+            || (
+              escrow.settlement_fingerprint !== null
+              && escrow.settlement_fingerprint !== freeze.fingerprint
+            )
+          ) {
+            throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+          }
+          const bind = this.database.db.prepare(`
+            UPDATE tournament_prize_escrow
+            SET settlement_fingerprint = ?, updated_at = ?
+            WHERE instance_id = ?
+              AND status = 'reserved'
+              AND amount = ?
+              AND (
+                settlement_fingerprint IS NULL
+                OR settlement_fingerprint = ?
+              )
+          `).run(
+            freeze.fingerprint,
+            freeze.now,
+            instanceId,
+            freeze.prizePool,
+            freeze.fingerprint,
+          );
+          if (bind.changes !== 1) {
+            throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+          }
+        }
+        this.database.db.prepare(`
+          INSERT INTO tournament_settlement (
+            instance_id, status, payout_freeze_checksum, final_entrants,
+            prize_pool, human_payout_total, bot_return_total, fingerprint,
+            created_at, settled_at, updated_at
+          ) VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+        `).run(
+          instanceId,
+          freeze.checksum,
+          finalEntrants,
+          freeze.prizePool,
+          humanPayoutTotal,
+          botReturnTotal,
+          freeze.fingerprint,
+          freeze.now,
+          freeze.now,
+        );
+        const insertResult = this.database.db.prepare(`
+          INSERT INTO tournament_settlement_result (
+            instance_id, place, player_id, participant_type, profile_id,
+            registration_attempt, display_name_snapshot, prize, disposition
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+        for (const result of freeze.results) {
+          insertResult.run(
+            instanceId,
+            result.place,
+            result.playerId,
+            result.participantType,
+            result.profileId,
+            result.registrationAttempt,
+            result.displayName,
+            result.prize,
+            result.disposition,
+          );
+        }
+        const statusUpdate = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET status = 'payout-pending',
+              settlement_attempt = settlement_attempt + 1,
+              settlement_next_retry_at = NULL,
+              updated_at = ?
+          WHERE id = ?
+            AND status = 'running'
+            AND registration_state = 'closed'
+            AND registration_generation = ?
+            AND registration_owner_token IS NULL
+            AND final_entrants = ?
+            AND payout_freeze_version = ?
+            AND payout_freeze_json IS NOT NULL
+            AND pending_late_entrants = 0
+            AND settlement_owner_id IS NULL
+            AND settlement_lease_until IS NULL
+        `).run(
+          freeze.now,
+          instanceId,
+          current.registrationGeneration,
+          finalEntrants,
+          freeze.version,
+        );
+        if (statusUpdate.changes !== 1) {
+          throw new TournamentPersistenceError('SETTLEMENT_CONFLICT');
+        }
+      } catch (error) {
+        throw persistenceError(error, 'SETTLEMENT_CONFLICT');
+      }
+      return { status: 'claimed', instance: this.#requireInstance(instanceId) };
+    });
+  }
+
+  getPublicProjection(
+    instanceId: string,
+    forPlayerId: string | undefined,
+    now: number,
+  ): TournamentInstancePublicProjection | null {
+    assertIdentifier(instanceId);
+    assertTimestamp(now);
+    const row = this.#projectionRow(instanceId, forPlayerId);
+    if (!row) return null;
+    const instance = decodeInstance(row);
+    const funding = decodeFunding(row, instance.economyMode);
+    if (
+      !PUBLIC_STATUSES.has(instance.status)
+      || (
+        instance.economyMode === 'freeroll'
+        && funding.status !== 'reserved'
+        && !(
+          instance.status === 'completed'
+          && funding.status === 'settled'
+        )
+      )
+    ) {
+      return null;
+    }
+    return projectPublic(instance, row, funding, now);
+  }
+
+  listPublicProjections(
+    forPlayerId: string | undefined,
+    now: number,
+  ): TournamentInstancePublicProjection[] {
+    assertTimestamp(now);
+    const ids = this.database.db.prepare(`
+      SELECT id
+      FROM tournament_instance
+      WHERE status <> 'scheduled-hidden'
+      ORDER BY COALESCE(starts_at, manual_expires_at), id
+    `).all() as SqliteRow[];
+    return ids.flatMap(row => {
+      const projection = this.getPublicProjection(
+        stringValue(row.id),
+        forPlayerId,
+        now,
+      );
+      return projection ? [projection] : [];
+    });
+  }
+
+  getAdminProjection(
+    instanceId: string,
+    now: number,
+  ): TournamentInstanceAdminProjection | null {
+    assertIdentifier(instanceId);
+    assertTimestamp(now);
+    const row = this.#projectionRow(instanceId, undefined);
+    if (!row) return null;
+    const instance = decodeInstance(row);
+    const funding = decodeFunding(row, instance.economyMode);
+    const warnings: string[] = [];
+    if (
+      instance.economyMode === 'freeroll'
+      && instance.status !== 'scheduled-hidden'
+      && instance.status !== 'cancelled'
+      && funding.status !== 'reserved'
+      && !(instance.status === 'completed' && funding.status === 'settled')
+    ) {
+      warnings.push('PUBLIC_FREEROLL_NOT_RESERVED');
+    }
+    if (
+      instance.economyMode === 'wallet'
+      && funding.status !== 'not-applicable'
+    ) {
+      warnings.push('WALLET_HAS_PROMOTION_ESCROW');
+    }
+    if (
+      instance.status === 'starting'
+      && instance.startLeaseUntil !== null
+      && instance.startLeaseUntil < now
+    ) {
+      warnings.push('STALE_START_LEASE');
+    }
+    if (
+      instance.status === 'payout-pending'
+      && instance.settlementLeaseUntil !== null
+      && instance.settlementLeaseUntil < now
+    ) {
+      warnings.push('STALE_SETTLEMENT_LEASE');
+    }
+    const publicFields = projectPublic(instance, row, funding, now);
+    return {
+      ...publicFields,
+      templateId: instance.templateId,
+      templateRevision: instance.templateRevision,
+      occurrenceKey: instance.occurrenceKey,
+      registrationGeneration: instance.registrationGeneration,
+      registrationOwnerToken: instance.registrationOwnerToken,
+      startAttempt: instance.startAttempt,
+      startOwnerId: instance.startOwnerId,
+      startLeaseUntil: instance.startLeaseUntil,
+      nextRetryAt: instance.nextRetryAt,
+      settlementAttempt: instance.settlementAttempt,
+      settlementOwnerId: instance.settlementOwnerId,
+      settlementLeaseUntil: instance.settlementLeaseUntil,
+      settlementNextRetryAt: instance.settlementNextRetryAt,
+      invariantWarnings: warnings,
+    };
+  }
+
+  listAdminProjections(now: number): TournamentInstanceAdminProjection[] {
+    assertTimestamp(now);
+    const ids = this.database.db.prepare(`
+      SELECT id FROM tournament_instance
+      ORDER BY COALESCE(starts_at, manual_expires_at), id
+    `).all() as SqliteRow[];
+    return ids.flatMap(row => {
+      const projection = this.getAdminProjection(stringValue(row.id), now);
+      return projection ? [projection] : [];
+    });
+  }
+
+  #templateById(id: string): TournamentTemplateRecord | null {
+    const row = this.database.db.prepare(`
+      SELECT * FROM tournament_template WHERE id = ?
+    `).get(id) as SqliteRow | undefined;
+    return row ? decodeTemplate(row) : null;
+  }
+
+  #templateByIdempotencyKey(key: string): TournamentTemplateRecord | null {
+    const row = this.database.db.prepare(`
+      SELECT * FROM tournament_template WHERE idempotency_key = ?
+    `).get(key) as SqliteRow | undefined;
+    return row ? decodeTemplate(row) : null;
+  }
+
+  #requireTemplate(id: string): TournamentTemplateRecord {
+    const record = this.#templateById(id);
+    if (!record) throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
+    return record;
+  }
+
+  #instanceByIdempotencyKey(key: string): TournamentInstanceRecord | null {
+    const row = this.database.db.prepare(`
+      SELECT * FROM tournament_instance WHERE idempotency_key = ?
+    `).get(key) as SqliteRow | undefined;
+    return row ? decodeInstance(row) : null;
+  }
+
+  #requireInstance(id: string): TournamentInstanceRecord {
+    const record = this.getInstance(id);
+    if (!record) throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
+    return record;
+  }
+
+  #hasFinancialLiability(instanceId: string): boolean {
+    const row = this.database.db.prepare(`
+      SELECT (
+        EXISTS (
+          SELECT 1 FROM tournament_prize_escrow
+          WHERE instance_id = ? AND status = 'reserved'
+        )
+        OR EXISTS (
+          SELECT 1 FROM sng_entries
+          WHERE tournament_id = ? AND status IN ('reserved', 'started')
+        )
+      ) AS liability
+    `).get(instanceId, instanceId) as SqliteRow;
+    return integerValue(row.liability) === 1;
+  }
+
+  #projectionRow(
+    instanceId: string,
+    forPlayerId: string | undefined,
+  ): SqliteRow | null {
+    const row = this.database.db.prepare(`
+      SELECT
+        instance.*,
+        escrow.status AS funding_status,
+        escrow.amount AS funding_amount,
+        (
+          SELECT COUNT(*)
+          FROM tournament_registration registration
+          WHERE registration.instance_id = instance.id
+            AND registration.status IN (
+              'registered', 'seat-claimed', 'late-pending',
+              'seated', 'eliminated', 'finished'
+            )
+        ) AS accepted_entrants,
+        registration.status AS my_registration_status
+      FROM tournament_instance instance
+      LEFT JOIN tournament_prize_escrow escrow
+        ON escrow.instance_id = instance.id
+      LEFT JOIN tournament_registration registration
+        ON registration.instance_id = instance.id
+       AND registration.profile_id IS ?
+      WHERE instance.id = ?
+    `).get(forPlayerId ?? null, instanceId) as SqliteRow | undefined;
+    return row ?? null;
+  }
+}
+
+function projectPublic(
+  instance: TournamentInstanceRecord,
+  row: SqliteRow,
+  funding: TournamentFundingProjection,
+  now: number,
+): TournamentInstancePublicProjection {
+  const acceptedEntrants = integerValue(row.accepted_entrants);
+  const myRegistrationStatus = nullableString(row.my_registration_status);
+  return {
+    id: instance.id,
+    name: instance.config.name,
+    status: instance.status,
+    statusReason: instance.statusReason,
+    economyMode: instance.economyMode,
+    schedule: {
+      ...instance.schedule,
+      actualStartedAt: instance.actualStartedAt,
+    },
+    registrationState: instance.registrationState,
+    registrationCloseReason: instance.registrationCloseReason,
+    minEntrants: instance.minEntrants,
+    maxEntrants: instance.maxEntrants,
+    acceptedEntrants,
+    pendingLateEntrants: instance.pendingLateEntrants,
+    finalEntrants: instance.finalEntrants,
+    botFillToMinimum: instance.config.field.botFillToMinimum,
+    prizePool: instance.config.prizePool.kind === 'promotion-funded'
+      ? instance.config.prizePool.totalPrize
+      : acceptedEntrants * (
+          instance.config.economy.mode === 'wallet'
+            ? instance.config.economy.buyIn
+            : 0
+        ),
+    registered: myRegistrationStatus !== null,
+    myRegistrationStatus,
+    funding,
+    serverNow: now,
+  };
+}
+
+function decodeFunding(
+  row: SqliteRow,
+  economyMode: 'freeroll' | 'wallet',
+): TournamentFundingProjection {
+  if (economyMode === 'wallet') {
+    return { status: 'not-applicable', amount: null };
+  }
+  const status = nullableString(row.funding_status);
+  if (status === null) return { status: 'missing', amount: null };
+  if (!['reserved', 'settled', 'refunded'].includes(status)) persistedInvalid();
+  return {
+    status: status as 'reserved' | 'settled' | 'refunded',
+    amount: nullableInteger(row.funding_amount),
+  };
+}
+
+function decodeTemplate(row: SqliteRow): TournamentTemplateRecord {
+  try {
+    const timezone = stringValue(row.timezone);
+    if (timezone !== 'Asia/Seoul') persistedInvalid();
+    const recurrence = parseJson(row.recurrence_json);
+    assertRecurrence(recurrence);
+    const config = parseJson(row.config_json);
+    assertConfig(config);
+    if (integerValue(row.config_version) !== config.version) persistedInvalid();
+    return {
+      id: stringValue(row.id),
+      revision: positiveIntegerValue(row.revision),
+      idempotencyKey: stringValue(row.idempotency_key),
+      name: stringValue(row.name),
+      enabled: booleanInteger(row.enabled),
+      timezone,
+      recurrence,
+      visibleLeadMs: nonNegativeIntegerValue(row.visible_lead_ms),
+      registrationLeadMs: nonNegativeIntegerValue(row.registration_lead_ms),
+      config,
+      createdBy: {
+        kind: stringValue(row.created_by_kind),
+        profileId: nullableString(row.created_by_profile_id),
+      },
+      createdAt: nonNegativeIntegerValue(row.created_at),
+      updatedAt: nonNegativeIntegerValue(row.updated_at),
+    };
+  } catch (error) {
+    if (error instanceof TournamentPersistenceError) throw error;
+    persistedInvalid();
+  }
+}
+
+function decodeInstance(row: SqliteRow): TournamentInstanceRecord {
+  try {
+    const config = parseJson(row.config_json);
+    assertConfig(config);
+    const economyMode = stringValue(row.economy_mode);
+    if (
+      (economyMode !== 'freeroll' && economyMode !== 'wallet')
+      || config.economy.mode !== economyMode
+      || integerValue(row.config_version) !== config.version
+      || integerValue(row.min_entrants) !== config.field.minEntrants
+      || integerValue(row.max_entrants) !== config.field.maxEntrants
+    ) {
+      persistedInvalid();
+    }
+    const status = stringValue(row.status);
+    const registrationState = stringValue(row.registration_state);
+    if (
+      !INSTANCE_STATUSES.includes(status as TournamentInstanceStatus)
+      || !REGISTRATION_STATES.includes(
+        registrationState as TournamentRegistrationState,
+      )
+    ) {
+      persistedInvalid();
+    }
+    const reason = nullableString(row.status_reason);
+    if (
+      reason !== null
+      && !STATUS_REASONS.includes(reason as TournamentInstanceStatusReason)
+    ) {
+      persistedInvalid();
+    }
+    const closeReason = nullableString(row.registration_close_reason);
+    if (
+      closeReason !== null
+      && !CLOSE_REASONS.includes(closeReason as RegistrationCloseReason)
+    ) {
+      persistedInvalid();
+    }
+    const templateId = nullableString(row.template_id);
+    const templateRevision = nullableInteger(row.template_revision);
+    if ((templateId === null) !== (templateRevision === null)) persistedInvalid();
+    const startsAt = nullableInteger(row.starts_at);
+    const manualStartExpiresAt = nullableInteger(row.manual_expires_at);
+    if ((startsAt === null) === (manualStartExpiresAt === null)) persistedInvalid();
+    return {
+      id: stringValue(row.id),
+      templateId,
+      templateRevision,
+      idempotencyKey: stringValue(row.idempotency_key),
+      occurrenceKey: stringValue(row.occurrence_key),
+      schedule: {
+        visibleAt: nonNegativeIntegerValue(row.visible_at),
+        registrationOpensAt:
+          nonNegativeIntegerValue(row.registration_opens_at),
+        startsAt,
+        manualStartExpiresAt,
+      },
+      status: status as TournamentInstanceStatus,
+      statusReason: reason as TournamentInstanceStatusReason | null,
+      economyMode,
+      registrationState: registrationState as TournamentRegistrationState,
+      registrationCloseReason: closeReason as RegistrationCloseReason | null,
+      registrationGeneration:
+        nonNegativeIntegerValue(row.registration_generation),
+      registrationOwnerToken: nullableString(row.registration_owner_token),
+      minEntrants: positiveIntegerValue(row.min_entrants),
+      maxEntrants: positiveIntegerValue(row.max_entrants),
+      initialEntrants: nullableInteger(row.initial_entrants),
+      initialBotEntrants: nullableInteger(row.initial_bot_entrants),
+      committedEntrants: nullableInteger(row.committed_entrants),
+      pendingLateEntrants:
+        nonNegativeIntegerValue(row.pending_late_entrants),
+      finalEntrants: nullableInteger(row.final_entrants),
+      everMultiTable: booleanInteger(row.ever_multi_table),
+      forfeitedChips: nonNegativeIntegerValue(row.forfeited_chips),
+      payoutFreezeVersion: nullableInteger(row.payout_freeze_version),
+      payoutFreeze: row.payout_freeze_json === null
+        ? null
+        : parseJson(row.payout_freeze_json),
+      payoutFreezeAbortedAt: nullableInteger(row.payout_freeze_aborted_at),
+      config,
+      createdBy: {
+        kind: stringValue(row.created_by_kind),
+        profileId: nullableString(row.created_by_profile_id),
+      },
+      directorProfileId: nullableString(row.director_profile_id),
+      startAttempt: nonNegativeIntegerValue(row.start_attempt),
+      nextRetryAt: nullableInteger(row.next_retry_at),
+      startOwnerId: nullableString(row.start_owner_id),
+      startLeaseUntil: nullableInteger(row.start_lease_until),
+      settlementAttempt: nonNegativeIntegerValue(row.settlement_attempt),
+      settlementNextRetryAt: nullableInteger(row.settlement_next_retry_at),
+      settlementOwnerId: nullableString(row.settlement_owner_id),
+      settlementLeaseUntil: nullableInteger(row.settlement_lease_until),
+      actualStartedAt: nullableInteger(row.actual_started_at),
+      completedAt: nullableInteger(row.completed_at),
+      createdAt: nonNegativeIntegerValue(row.created_at),
+      updatedAt: nonNegativeIntegerValue(row.updated_at),
+    };
+  } catch (error) {
+    if (error instanceof TournamentPersistenceError) throw error;
+    persistedInvalid();
+  }
+}
+
+function assertTemplateCommand(command: CreateTemplateCommand): void {
+  assertIdentifier(command.id);
+  assertIdentifier(command.idempotencyKey);
+  if (command.timezone !== 'Asia/Seoul') invalid();
+  assertActor(command.createdBy);
+  assertTimestamp(command.now);
+  assertTemplateMutableValues(command);
+}
+
+function assertTemplateMutableValues(values: {
+  name: string;
+  enabled: boolean;
+  recurrence: TournamentRecurrence;
+  visibleLeadMs: number;
+  registrationLeadMs: number;
+  config: TournamentConfigSnapshotV2;
+}): void {
+  if (
+    typeof values.name !== 'string'
+    || values.name.trim() !== values.name
+    || values.name.length < 1
+    || values.name.length > 100
+    || typeof values.enabled !== 'boolean'
+  ) {
+    invalid();
+  }
+  assertRecurrence(values.recurrence);
+  assertTimestamp(values.visibleLeadMs);
+  assertTimestamp(values.registrationLeadMs);
+  assertConfig(values.config);
+}
+
+function assertInstanceCommand(command: CreateInstanceCommand): void {
+  assertIdentifier(command.id);
+  assertIdentifier(command.idempotencyKey);
+  assertIdentifier(command.occurrenceKey);
+  if ((command.templateId === null) !== (command.templateRevision === null)) {
+    invalid();
+  }
+  if (command.templateId !== null) {
+    assertIdentifier(command.templateId);
+    assertPositiveInteger(command.templateRevision);
+  }
+  assertActor(command.createdBy);
+  assertTimestamp(command.now);
+  assertSchedule(command.schedule);
+  assertConfig(command.config);
+  if (command.directorProfileId !== undefined && command.directorProfileId !== null) {
+    assertIdentifier(command.directorProfileId);
+  }
+}
+
+function assertSchedule(schedule: TournamentSchedule): void {
+  assertTimestamp(schedule.visibleAt);
+  assertTimestamp(schedule.registrationOpensAt);
+  if (schedule.visibleAt > schedule.registrationOpensAt) invalid();
+  const scheduled = schedule.startsAt !== null
+    && schedule.manualStartExpiresAt === null;
+  const manual = schedule.startsAt === null
+    && schedule.manualStartExpiresAt !== null;
+  if (!scheduled && !manual) invalid();
+  if (schedule.startsAt !== null) {
+    assertTimestamp(schedule.startsAt);
+    if (schedule.registrationOpensAt > schedule.startsAt) invalid();
+  }
+  if (schedule.manualStartExpiresAt !== null) {
+    assertTimestamp(schedule.manualStartExpiresAt);
+    if (schedule.registrationOpensAt >= schedule.manualStartExpiresAt) invalid();
+  }
+}
+
+function assertConfig(value: unknown): asserts value is TournamentConfigSnapshotV2 {
+  if (!isRecord(value)) invalid();
+  if (
+    value.version !== 2
+    || typeof value.name !== 'string'
+    || value.name.length < 1
+    || value.name.length > 100
+    || value.tableSize !== 6
+    || ![8, 15, 30].includes(value.turnTimeSeconds as number)
+    || !isRecord(value.field)
+    || !isRecord(value.economy)
+    || !isRecord(value.prizePool)
+    || !isRecord(value.structure)
+    || !isRecord(value.payout)
+    || !isRecord(value.lateRegistration)
+  ) {
+    invalid();
+  }
+  const min = value.field.minEntrants;
+  const max = value.field.maxEntrants;
+  if (
+    !isIntegerIn(min, 2, 48)
+    || !isIntegerIn(max, min as number, 48)
+    || typeof value.field.botFillToMinimum !== 'boolean'
+  ) {
+    invalid();
+  }
+  if (value.economy.mode === 'freeroll') {
+    if (
+      value.economy.promotionAccountId !== 'global'
+      || value.prizePool.kind !== 'promotion-funded'
+      || !isIntegerIn(value.prizePool.totalPrize, 1, 2_000_000_000)
+    ) {
+      invalid();
+    }
+  } else if (value.economy.mode === 'wallet') {
+    if (
+      !isIntegerIn(value.economy.productVersion, 1, Number.MAX_SAFE_INTEGER)
+      || !isIntegerIn(value.economy.buyIn, 1, Number.MAX_SAFE_INTEGER)
+      || !isIntegerIn(value.economy.fee, 1, Number.MAX_SAFE_INTEGER)
+      || value.prizePool.kind !== 'entry-pool'
+      || value.field.botFillToMinimum !== false
+    ) {
+      invalid();
+    }
+  } else {
+    invalid();
+  }
+  if (
+    !isIntegerIn(value.structure.startingStack, 1, Number.MAX_SAFE_INTEGER)
+    || !Array.isArray(value.structure.segments)
+    || value.structure.segments.length === 0
+    || value.payout.tableVersion !== 2
+    || !['top-heavy', 'standard', 'flat'].includes(
+      value.payout.presetId as string,
+    )
+    || ![10, 15, 20].includes(value.payout.paidFieldPercent as number)
+    || typeof value.lateRegistration.enabled !== 'boolean'
+    || value.lateRegistration.minStartingStackBb !== 20
+  ) {
+    invalid();
+  }
+  for (const segment of value.structure.segments) {
+    if (!isRecord(segment) || !isIntegerIn(segment.durationMs, 1, 86_400_000)) {
+      invalid();
+    }
+    if (
+      segment.kind === 'level'
+      && (
+        !isIntegerIn(segment.smallBlind, 1, Number.MAX_SAFE_INTEGER)
+        || !isIntegerIn(segment.bigBlind, 1, Number.MAX_SAFE_INTEGER)
+        || !isIntegerIn(segment.bigBlindAnte, 0, Number.MAX_SAFE_INTEGER)
+      )
+    ) {
+      invalid();
+    } else if (segment.kind !== 'level' && segment.kind !== 'break') {
+      invalid();
+    }
+  }
+}
+
+function assertRecurrence(value: unknown): asserts value is TournamentRecurrence {
+  if (!isRecord(value)) invalid();
+  if (value.kind === 'hourly') {
+    if (!isIntegerIn(value.minute, 0, 59)) invalid();
+    return;
+  }
+  if (value.kind === 'daily') {
+    if (!isIntegerIn(value.hour, 0, 23) || !isIntegerIn(value.minute, 0, 59)) {
+      invalid();
+    }
+    return;
+  }
+  if (value.kind === 'weekly') {
+    if (
+      !isIntegerIn(value.weekday, 0, 6)
+      || !isIntegerIn(value.hour, 0, 23)
+      || !isIntegerIn(value.minute, 0, 59)
+    ) {
+      invalid();
+    }
+    return;
+  }
+  invalid();
+}
+
+function assertPayoutPlan(plan: TournamentPayoutFreezePlan): void {
+  assertPositiveInteger(plan.version);
+  assertIdentifier(plan.checksum);
+  assertIdentifier(plan.fingerprint);
+  assertTimestamp(plan.now);
+  assertPositiveInteger(plan.prizePool);
+  if (plan.results.length < 1) invalid();
+  const players = new Set<string>();
+  let total = 0;
+  for (let index = 0; index < plan.results.length; index += 1) {
+    const result = plan.results[index];
+    if (
+      result.place !== index + 1
+      || players.has(result.playerId)
+      || typeof result.displayName !== 'string'
+      || result.displayName.length < 1
+      || !Number.isSafeInteger(result.prize)
+      || result.prize < 0
+    ) {
+      invalid();
+    }
+    assertIdentifier(result.playerId);
+    players.add(result.playerId);
+    total += result.prize;
+    if (result.participantType === 'human') {
+      assertIdentifier(result.profileId);
+      assertPositiveInteger(result.registrationAttempt);
+      if (
+        (result.prize > 0 && result.disposition !== 'wallet-credit')
+        || (result.prize === 0 && result.disposition !== 'none')
+      ) {
+        invalid();
+      }
+    } else if (result.participantType === 'bot') {
+      if (
+        result.profileId !== null
+        || result.registrationAttempt !== null
+        || (result.prize > 0 && result.disposition !== 'promotion-return')
+        || (result.prize === 0 && result.disposition !== 'none')
+      ) {
+        invalid();
+      }
+    } else {
+      invalid();
+    }
+  }
+  if (total !== plan.prizePool) invalid();
+}
+
+function sameTemplateCreation(
+  record: TournamentTemplateRecord,
+  command: CreateTemplateCommand,
+): boolean {
+  return record.id === command.id
+    && record.revision === 1
+    && record.name === command.name
+    && record.enabled === command.enabled
+    && record.timezone === command.timezone
+    && record.visibleLeadMs === command.visibleLeadMs
+    && record.registrationLeadMs === command.registrationLeadMs
+    && canonicalJson(record.recurrence) === canonicalJson(command.recurrence)
+    && canonicalJson(record.config) === canonicalJson(command.config)
+    && record.createdBy.kind === command.createdBy.kind
+    && record.createdBy.profileId === command.createdBy.profileId
+    && record.createdAt === command.now;
+}
+
+function sameInstanceCreation(
+  record: TournamentInstanceRecord,
+  command: CreateInstanceCommand,
+): boolean {
+  return record.id === command.id
+    && record.templateId === command.templateId
+    && record.templateRevision === command.templateRevision
+    && record.occurrenceKey === command.occurrenceKey
+    && canonicalJson(record.schedule) === canonicalJson(command.schedule)
+    && canonicalJson(record.config) === canonicalJson(command.config)
+    && record.createdBy.kind === command.createdBy.kind
+    && record.createdBy.profileId === command.createdBy.profileId
+    && record.directorProfileId === (command.directorProfileId ?? null)
+    && record.createdAt === command.now;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(canonicalJson).join(',')}]`;
+  }
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map(key => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function parseJson(value: unknown): unknown {
+  if (typeof value !== 'string') persistedInvalid();
+  try {
+    return JSON.parse(value);
+  } catch {
+    persistedInvalid();
+  }
+}
+
+function assertActor(actor: TournamentActor): void {
+  assertIdentifier(actor.kind);
+  if (actor.profileId !== null) assertIdentifier(actor.profileId);
+}
+
+function assertIdentifier(value: unknown): asserts value is string {
+  if (
+    typeof value !== 'string'
+    || value.trim() !== value
+    || value.length < 1
+    || value.length > 200
+  ) {
+    invalid();
+  }
+}
+
+function assertPositiveInteger(value: unknown): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1) invalid();
+}
+
+function assertTimestamp(value: unknown): asserts value is number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) invalid();
+}
+
+function isIntegerIn(
+  value: unknown,
+  minimum: number,
+  maximum: number,
+): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= minimum
+    && (value as number) <= maximum;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string {
+  if (typeof value !== 'string') persistedInvalid();
+  return value;
+}
+
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return stringValue(value);
+}
+
+function integerValue(value: unknown): number {
+  if (!Number.isSafeInteger(value)) persistedInvalid();
+  return value as number;
+}
+
+function positiveIntegerValue(value: unknown): number {
+  const result = integerValue(value);
+  if (result < 1) persistedInvalid();
+  return result;
+}
+
+function nonNegativeIntegerValue(value: unknown): number {
+  const result = integerValue(value);
+  if (result < 0) persistedInvalid();
+  return result;
+}
+
+function nullableInteger(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
+  return nonNegativeIntegerValue(value);
+}
+
+function booleanInteger(value: unknown): boolean {
+  const result = integerValue(value);
+  if (result !== 0 && result !== 1) persistedInvalid();
+  return result === 1;
+}
+
+function invalid(): never {
+  throw new TournamentPersistenceError('INVALID_INPUT');
+}
+
+function persistedInvalid(): never {
+  throw new TournamentPersistenceError('PERSISTED_ROW_INVALID');
+}
+
+function persistenceError(
+  error: unknown,
+  fallback: TournamentPersistenceErrorCode = 'PERSISTED_ROW_INVALID',
+): TournamentPersistenceError {
+  if (error instanceof TournamentPersistenceError) return error;
+  return new TournamentPersistenceError(fallback);
+}
