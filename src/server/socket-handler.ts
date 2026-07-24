@@ -2369,6 +2369,7 @@ export function setupSocketHandlers(
         || payload.name.trim().length === 0
         || payload.name.trim().length > 30
         || !VALID_MTT_SPEEDS.includes(payload.speed as MttSpeed)
+        || typeof payload.maxEntrants !== 'number'
         || !Number.isInteger(payload.maxEntrants)
         || typeof payload.botFill !== 'boolean'
         || typeof payload.turnTime !== 'number'
