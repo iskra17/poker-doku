@@ -4,6 +4,7 @@ import type {
   ArenaQueueState,
   GameUpdatePayload,
   RealtimeAck,
+  TournamentSummary,
 } from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
 import { createBot } from '../lib/bot/bot-manager';
@@ -217,6 +218,82 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(session.roomId).toBe(sourceRoomId);
     expect(harness.getServerSocketRooms(client.socket.id!)).toContain(sourceRoomId);
     expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(destinationRoomId);
+  });
+
+  it('refreshes a lobby survivor tournament list after an MTT table move', async () => {
+    harness = await createSocketTestHarness();
+    const client = await harness.connect('mtt-lobby-list-move-client');
+    const created = harness.runtime.tournamentManager.createTournament({
+      name: 'Lobby move list regression',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: client.playerId,
+    });
+    if (!created.ok) throw new Error('tournament create failed');
+    expect(harness.runtime.tournamentManager.register(created.tournamentId, {
+      id: client.playerId,
+      name: 'Lobby survivor',
+      avatar: 'ara',
+    })).toBe('ok');
+    expect(harness.runtime.tournamentManager.startTournament(
+      created.tournamentId,
+      client.playerId,
+    )).toBe('ok');
+
+    const tableIds = harness.runtime.roomManager.getAdminRoomSummaries()
+      .filter(room => room.mode === 'mtt')
+      .map(room => room.id);
+    const sourceRoomId = tableIds.find(roomId =>
+      harness!.runtime.roomManager.getRoom(roomId)!.engine.state.players
+        .some(player => player.id === client.playerId),
+    );
+    const destinationRoomId = tableIds.find(roomId => roomId !== sourceRoomId);
+    if (!sourceRoomId || !destinationRoomId) throw new Error('MTT tables not found');
+    const destinationPlayers = harness.runtime.roomManager
+      .getRoom(destinationRoomId)!.engine.state.players;
+    const destinationSeat = Array.from({ length: 6 }, (_, index) => index)
+      .find(index => !destinationPlayers.some(player => player.seatIndex === index));
+    if (destinationSeat === undefined) throw new Error('destination seat not found');
+
+    await expect(withAck(done => client.socket.emit(
+      'leave-room',
+      { mode: 'sitout' },
+      done,
+    ))).resolves.toMatchObject({ ok: true });
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    expect(session.roomId).toBeNull();
+    expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(sourceRoomId);
+    const receivedLists: TournamentSummary[][] = [];
+    client.socket.on('tournament-list', list => receivedLists.push(list));
+    await wait(20);
+    receivedLists.length = 0;
+
+    expect(harness.runtime.roomManager.transferMttSeat(
+      sourceRoomId,
+      destinationRoomId,
+      client.playerId,
+      destinationSeat,
+    )).toBe(true);
+    const managerHooks = (
+      harness.runtime.tournamentManager as unknown as {
+        hooks: Pick<TournamentRuntimeHooks, 'onPlayerMoved'>;
+      }
+    ).hooks;
+    managerHooks.onPlayerMoved?.({
+      tournamentId: created.tournamentId,
+      playerId: client.playerId,
+      fromRoomId: sourceRoomId,
+      toRoomId: destinationRoomId,
+    });
+    await wait(20);
+
+    expect(session.roomId).toBeNull();
+    expect(receivedLists.at(-1)?.find(item => item.id === created.tournamentId))
+      .toMatchObject({ myTableRoomId: destinationRoomId });
   });
 
   it('disconnected MTT 이동 뒤 old grace 만료가 목적지 좌석을 보존하고 resync한다', async () => {

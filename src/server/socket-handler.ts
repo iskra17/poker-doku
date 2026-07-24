@@ -445,10 +445,15 @@ export function setupSocketHandlers(
     // 서버 주도 테이블 이동 — 로비 경유 없이 currentRoomId를 교체하는 table-move 계약
     onPlayerMoved: ({ tournamentId, playerId, fromRoomId, toRoomId }) => {
       const targetSession = sessions.getByPlayerId(playerId);
-      if (!targetSession || targetSession.roomId !== fromRoomId) return;
+      if (!targetSession) return;
       const targetSocket = targetSession.socketId
         ? io.sockets.sockets.get(targetSession.socketId)
         : undefined;
+      targetSocket?.emit(
+        'tournament-list',
+        tournamentManager.listTournaments(playerId),
+      );
+      if (targetSession.roomId !== fromRoomId) return;
       targetSession.roomId = toRoomId;
       if (!targetSocket) return;
       targetSocket.leave(fromRoomId);
