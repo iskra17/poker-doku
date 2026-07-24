@@ -48,9 +48,7 @@ import type {
 } from './economy-runtime';
 import { ECONOMY_RULES } from './economy-service';
 import {
-  MTT_WALLET_BUY_IN,
   MTT_WALLET_ENTRY_COST,
-  MTT_WALLET_ENTRY_FEE,
 } from '../lib/economy/mtt-entry';
 import {
   ProgressionRuntime,
@@ -64,7 +62,12 @@ import {
 import { ArenaRuntime } from './arena-runtime';
 import type { ArenaService } from './arena-service';
 import { TournamentManager } from './tournament-manager';
+import {
+  TournamentCommandService,
+  parseTournamentOperatorIds,
+} from './tournament-command-service';
 import type { MttSpeed } from '../lib/poker/mtt-structure';
+import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
 const VALID_TABLE_TYPES: TableType[] = ['bots', 'mixed', 'humans'];
@@ -92,6 +95,7 @@ export interface SocketRuntimeOptions {
   /** 인증된 소켓 접속 시 호출 — 프로필 활동 지표(접속 횟수/마지막 활동) 기록용. 실패는 무시 */
   onProfileConnected?: (profileId: string) => void;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & MttAdmissionEconomy & RoomEconomyHooks;
+  tournamentOperatorProfileIds?: ReadonlySet<string>;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
   arena?: {
@@ -104,6 +108,7 @@ export interface SocketRuntimeOptions {
 export interface SocketRuntime {
   roomManager: RoomManager;
   tournamentManager: TournamentManager;
+  tournamentCommands: TournamentCommandService;
   sessions: SessionManager;
   revokeProfile: (profileId: string) => void;
   refreshPublicCosmetics: (
@@ -514,6 +519,11 @@ export function setupSocketHandlers(
         }
       : undefined,
   });
+  const tournamentCommands = new TournamentCommandService(
+    tournamentManager,
+    options.tournamentOperatorProfileIds
+      ?? parseTournamentOperatorIds(process.env.TOURNAMENT_OPERATOR_PROFILE_IDS),
+  );
 
   if (arena) {
     arenaRuntime = new ArenaRuntime(roomManager, arena.service, {
@@ -836,7 +846,12 @@ export function setupSocketHandlers(
     };
 
     // 클라이언트에 공개 playerId 통지 (히어로 식별용)
-    socket.emit('session', { playerId: session.playerId });
+    socket.emit('session', {
+      playerId: session.playerId,
+      capabilities: {
+        createTournament: tournamentCommands.canOperateProfile(session.playerId),
+      },
+    });
 
     if (progression) {
       try {
@@ -2338,6 +2353,15 @@ export function setupSocketHandlers(
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
+      const authority = { kind: 'operator-profile', profileId: session.playerId } as const;
+      if (!tournamentCommands.canOperateProfile(session.playerId)) {
+        ack?.({
+          ok: false,
+          code: 'forbidden',
+          message: '운영자만 토너먼트를 개설할 수 있어요.',
+        });
+        return;
+      }
       if (!ensureRateLimit('createRoom', '토너먼트 개설 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (
         !isRecord(payload)
@@ -2352,6 +2376,7 @@ export function setupSocketHandlers(
         || !(payload.economyMode === undefined
           || payload.economyMode === 'practice'
           || payload.economyMode === 'wallet')
+        || !PAYOUT_PRESET_IDS.includes(payload.payoutPreset as never)
         || !(payload.startAt === null
           || (typeof payload.startAt === 'number'
             && payload.startAt > Date.now() - 10_000
@@ -2361,19 +2386,15 @@ export function setupSocketHandlers(
         return;
       }
       const economyMode = payload.economyMode === 'wallet' ? 'wallet' : 'practice';
-      const created = tournamentManager.createTournament({
+      const created = tournamentCommands.create(authority, {
         name: payload.name.trim(),
         speed: payload.speed as MttSpeed,
         maxEntrants: payload.maxEntrants,
-        tableSize: 6, // v1은 6-max 고정 노출 (엔진/매니저는 2~9 지원)
         startAt: payload.startAt,
-        // wallet은 봇 충원 불가 — 봇은 바이인을 내지 못한다 (서버가 강제 해제)
         botFill: economyMode === 'wallet' ? false : payload.botFill,
         turnTime: payload.turnTime,
-        hostId: session.playerId,
         economyMode,
-        entryBuyIn: economyMode === 'wallet' ? MTT_WALLET_BUY_IN : 0,
-        entryFee: economyMode === 'wallet' ? MTT_WALLET_ENTRY_FEE : 0,
+        payoutPreset: payload.payoutPreset as (typeof PAYOUT_PRESET_IDS)[number],
       });
       if (!created.ok) {
         ack?.({
@@ -2481,31 +2502,40 @@ export function setupSocketHandlers(
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
+      const authority = { kind: 'operator-profile', profileId: session.playerId } as const;
+      if (!tournamentCommands.canOperateProfile(session.playerId)) {
+        ack?.({ ok: false, code: 'forbidden', message: '운영자만 시작할 수 있어요.' });
+        return;
+      }
       if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
         invalidPayload(ack);
         return;
       }
       if (!ensureRateLimit('joinRoom', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
-      const result = tournamentManager.startTournament(payload.tournamentId, session.playerId);
+      const result = tournamentCommands.start(authority, payload.tournamentId);
       if (result === 'ok') {
         ack?.({ ok: true });
         return;
       }
       const message = {
         'not-found': '토너먼트를 찾을 수 없어요.',
-        'not-host': '개설자만 시작할 수 있어요.',
+        forbidden: '운영자만 시작할 수 있어요.',
         'not-registering': '이미 시작됐거나 종료된 토너먼트예요.',
         'not-enough': '시작하려면 접속 중인 참가자가 더 필요해요.',
         economy: '참가비 처리에 실패했어요 — 잠시 후 다시 시도해 주세요.',
       }[result];
       ack?.({
         ok: false,
-        code: result === 'not-found' ? 'room-not-found' : 'action-rejected',
+        code: result === 'not-found'
+          ? 'room-not-found'
+          : result === 'forbidden'
+            ? 'forbidden'
+            : 'action-rejected',
         message,
       });
     });
 
-    // 디렉터 콘솔 — 개설자 전용 운영 개입. 권한 검증(hostId)은 매니저가 수행한다.
+    // 디렉터 콘솔 — 허용된 운영자 프로필 전용. 권한은 공유 명령 계층에서 검증한다.
     socket.on('tournament-admin', (...rawArgs: unknown[]) => {
       const args = parseRequiredPayloadArgs(rawArgs);
       if (!args.ok) {
@@ -2514,6 +2544,11 @@ export function setupSocketHandlers(
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
+      const authority = { kind: 'operator-profile', profileId: session.playerId } as const;
+      if (!tournamentCommands.canOperateProfile(session.playerId)) {
+        ack?.({ ok: false, code: 'forbidden', message: '운영자만 관리할 수 있어요.' });
+        return;
+      }
       if (!isRecord(payload) || typeof payload.tournamentId !== 'string') {
         invalidPayload(ack);
         return;
@@ -2549,24 +2584,24 @@ export function setupSocketHandlers(
           invalidPayload(ack);
           return;
       }
-      const result = tournamentManager.directorAction(
-        payload.tournamentId,
-        session.playerId,
-        action,
-      );
+      const result = tournamentCommands.act(authority, payload.tournamentId, action);
       if (result === 'ok') {
         ack?.({ ok: true });
         return;
       }
       const message = {
         'not-found': '토너먼트를 찾을 수 없어요.',
-        'not-host': '개설자만 운영할 수 있어요.',
+        forbidden: '운영자만 관리할 수 있어요.',
         'bad-state': '지금 상태에서는 할 수 없는 작업이에요.',
         invalid: '요청 값이 올바르지 않아요.',
       }[result];
       ack?.({
         ok: false,
-        code: result === 'not-found' ? 'room-not-found' : 'action-rejected',
+        code: result === 'not-found'
+          ? 'room-not-found'
+          : result === 'forbidden'
+            ? 'forbidden'
+            : 'action-rejected',
         message,
       });
     });
@@ -2608,6 +2643,7 @@ export function setupSocketHandlers(
   return {
     roomManager,
     tournamentManager,
+    tournamentCommands,
     sessions,
     refreshPublicCosmetics: (profileId, snapshot) => {
       const session = sessions.getByPlayerId(profileId);

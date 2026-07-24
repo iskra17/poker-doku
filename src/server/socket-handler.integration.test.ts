@@ -133,6 +133,51 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     harness = null;
   });
 
+  it('restricts tournament mutation sockets to allowlisted operators', async () => {
+    harness = await createSocketTestHarness();
+    const guest = await harness.connect('mtt-guest');
+    const draft = {
+      name: '운영 전용 토너먼트',
+      speed: 'standard' as const,
+      maxEntrants: 8,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      economyMode: 'practice' as const,
+      payoutPreset: 'standard' as const,
+    };
+
+    expect(guest.sessionCapabilities.createTournament).toBe(false);
+    await expect(withAck(done => guest.socket.emit('create-tournament', draft, done)))
+      .resolves.toMatchObject({ ok: false, code: 'forbidden' });
+
+    const operatorProfile = await harness.createProfile();
+    harness.grantTournamentOperator(operatorProfile.profile.id);
+    const operator = await harness.connect('mtt-operator', {
+      profileCookie: operatorProfile.cookie,
+    });
+    expect(operator.sessionCapabilities.createTournament).toBe(true);
+
+    const created = await withAck<{ tournamentId: string }>(
+      done => operator.socket.emit('create-tournament', draft, done),
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error('create failed');
+    expect(harness.runtime.tournamentManager.getDetail(created.data!.tournamentId)?.entrants)
+      .toHaveLength(0);
+
+    await expect(withAck(done => guest.socket.emit(
+      'start-tournament',
+      { tournamentId: created.data!.tournamentId },
+      done,
+    ))).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    await expect(withAck(done => guest.socket.emit(
+      'tournament-admin',
+      { tournamentId: created.data!.tournamentId, action: 'cancel' },
+      done,
+    ))).resolves.toMatchObject({ ok: false, code: 'forbidden' });
+  });
+
   it('returns the explicit disabled contract when Arena is off', async () => {
     harness = await createSocketTestHarness({ arenaEnabled: false });
     const client = await harness.connect('arena-disabled-client');

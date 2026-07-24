@@ -19,6 +19,7 @@ export type { MttSpeed };
 
 export type RealtimeErrorCode =
   | 'invalid-payload'
+  | 'forbidden'
   | 'rate-limited'
   | 'room-not-found'
   | 'room-full'
@@ -254,7 +255,10 @@ export interface ArenaStateReplay {
 }
 
 export interface ServerToClientEvents {
-  session: (data: { playerId: string }) => void;
+  session: (data: {
+    playerId: string;
+    capabilities: { createTournament: boolean };
+  }) => void;
   'session-replaced': (data: { message: string }) => void;
   'room-list': (rooms: RoomListItem[]) => void;
   'tournament-list': (tournaments: TournamentSummary[]) => void;

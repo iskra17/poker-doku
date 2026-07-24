@@ -37,6 +37,7 @@ import {
 export interface ConnectedTestClient {
   socket: PokerClientSocket;
   playerId: string;
+  sessionCapabilities: { createTournament: boolean };
   initialProgression: ProgressionSnapshot;
   arenaReplays: ArenaStateReplay[];
   arenaMatches: Array<{ matchId: string; training: boolean }>;
@@ -58,6 +59,7 @@ export interface SocketTestHarness {
   economyRuntime: EconomyRuntime;
   progressionService: ProgressionService;
   grantProgressionItem: (profileId: string, itemId: string) => void;
+  grantTournamentOperator: (profileId: string) => void;
   profileManager: ProfileManager;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
@@ -117,6 +119,7 @@ export async function createSocketTestHarness(
   const economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   const progressionService = new ProgressionService(database, progressionRepository);
+  const tournamentOperatorProfileIds = new Set<string>();
   const grantProgressionItem = (profileId: string, itemId: string): void => {
     const identity = database.db.prepare(
       'SELECT avatar_id FROM profiles WHERE id = ?',
@@ -215,6 +218,7 @@ export async function createSocketTestHarness(
     graceMs: options.graceMs ?? 50,
     sngRetentionMs: options.sngRetentionMs,
     economy: economyRuntime,
+    tournamentOperatorProfileIds,
     progressionService,
     ...(arenaService
       ? {
@@ -274,6 +278,7 @@ export async function createSocketTestHarness(
     economyRuntime,
     progressionService,
     grantProgressionItem,
+    grantTournamentOperator: profileId => tournamentOperatorProfileIds.add(profileId),
     profileManager,
     createProfile,
     recoverProfile,
@@ -308,15 +313,17 @@ export async function createSocketTestHarness(
           reject(error);
         };
         let playerId: string | undefined;
+        let sessionCapabilities: { createTournament: boolean } | undefined;
         let initialProgression: ProgressionSnapshot | undefined;
         const arenaReplays: ArenaStateReplay[] = [];
         const arenaMatches: Array<{ matchId: string; training: boolean }> = [];
         const resolveWhenReady = (): void => {
-          if (!playerId || !initialProgression) return;
+          if (!playerId || !sessionCapabilities || !initialProgression) return;
           socket.off('connect_error', onConnectError);
           resolve({
             socket,
             playerId,
+            sessionCapabilities,
             initialProgression,
             arenaReplays,
             arenaMatches,
@@ -325,6 +332,7 @@ export async function createSocketTestHarness(
         socket.once('connect_error', onConnectError);
         socket.once('session', data => {
           playerId = data.playerId;
+          sessionCapabilities = data.capabilities;
           resolveWhenReady();
         });
         socket.once('progression-update', snapshot => {

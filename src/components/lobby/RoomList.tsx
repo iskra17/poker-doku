@@ -110,6 +110,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
   const tournamentError = useGameStore(s => s.tournamentError);
   const clearTournamentError = useGameStore(s => s.clearTournamentError);
   const joinRoom = useGameStore(s => s.joinRoom);
+  const canCreateTournament = useGameStore(s => s.canCreateTournament);
   const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [joinableOnly, setJoinableOnly] = useState(false);
@@ -146,11 +147,11 @@ export default function RoomList({ onJoin }: RoomListProps) {
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-3 md:px-4">
       <div className="flex flex-none items-center justify-between mb-2 md:mb-3">
         <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
-        {modeFilter === 'mtt' ? (
+        {modeFilter === 'mtt' && canCreateTournament ? (
           <Button variant="primary" size="sm" onClick={() => setMttCreateOpen(true)}>
             + 토너먼트 개설
           </Button>
-        ) : (
+        ) : modeFilter !== 'mtt' ? (
           <Button
             variant="primary"
             size="sm"
@@ -158,7 +159,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
           >
             + 방 만들기
           </Button>
-        )}
+        ) : null}
       </div>
 
       {/* 보존 중인 내 좌석 — 자리비움으로 나온 테이블은 바이인/설정 없이 한 번에 복귀 */}
@@ -392,7 +393,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
       {mttDetailId && (
         <TournamentDetailModal tournamentId={mttDetailId} onClose={() => setMttDetailId(null)} />
       )}
-      {mttCreateOpen && (
+      {mttCreateOpen && canCreateTournament && (
         <CreateTournamentModal
           onClose={() => setMttCreateOpen(false)}
           onCreated={id => {

@@ -69,6 +69,7 @@ interface GameStore {
   playerName: string;
   publicAvatarId: string | null;
   myPlayerId: string | null;
+  canCreateTournament: boolean;
   currentRoomId: string | null;
   pendingRoomId: string | null;
   pendingAction: PendingAction | null;
@@ -136,6 +137,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   playerName: '',
   publicAvatarId: null,
   myPlayerId: null,
+  canCreateTournament: false,
   currentRoomId: null,
   pendingRoomId: null,
   pendingAction: null,
@@ -188,8 +190,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
       });
     });
 
-    socket.on('session', ({ playerId }) => {
-      set({ myPlayerId: playerId });
+    socket.on('session', ({ playerId, capabilities }) => {
+      set({
+        myPlayerId: playerId,
+        canCreateTournament: capabilities.createTournament,
+      });
     });
 
     socket.on('room-list', rooms => {
@@ -305,6 +310,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       playerName: '',
       publicAvatarId: null,
       myPlayerId: null,
+      canCreateTournament: false,
       currentRoomId: null,
       pendingRoomId: null,
       pendingAction: null,
@@ -333,6 +339,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     playerName: '',
     publicAvatarId: null,
     myPlayerId: null,
+    canCreateTournament: false,
   }),
 
   joinRoom: (roomId, buyIn, seatIndex, password) => {

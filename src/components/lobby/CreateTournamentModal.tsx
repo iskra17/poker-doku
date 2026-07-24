@@ -35,7 +35,6 @@ export default function CreateTournamentModal({
   onCreated: (tournamentId: string) => void;
 }) {
   const createTournament = useGameStore(state => state.createTournament);
-  const registerTournament = useGameStore(state => state.registerTournament);
   const playerName = useGameStore(state => state.playerName);
   const [name, setName] = useState(`${playerName}의 토너먼트`);
   const [speed, setSpeed] = useState<MttSpeed>('turbo');
@@ -62,7 +61,6 @@ export default function CreateTournamentModal({
     };
     const id = await createTournament(config);
     if (id) {
-      await registerTournament(id); // 개설자는 자동 등록 — 개설 후 바로 대기 명단에
       onCreated(id);
     }
     setBusy(false);
