@@ -14,6 +14,13 @@ import type {
   ProgressionSnapshot,
 } from '../progression/types';
 import type { ArenaTier } from '../arena/types';
+import type { TournamentStructureSegment } from '../tournament/tournament-config';
+import type {
+  RegistrationCloseReason,
+  TournamentInstanceStatusReason,
+  TournamentRegistrationState,
+  TournamentRegistrationStatus,
+} from '../tournament/tournament-state';
 
 export type { MttSpeed };
 
@@ -150,9 +157,59 @@ export interface RoomJoinedPayload {
 
 export type TournamentPhase = 'registering' | 'running' | 'completed' | 'cancelled';
 
+export type PublicTournamentLifecycle =
+  | 'upcoming'
+  | 'registering'
+  | 'start-delayed'
+  | 'starting'
+  | 'running'
+  | 'payout-pending'
+  | 'refund-pending'
+  | 'completed'
+  | 'cancelled';
+
+export interface PublicTournamentSchedule {
+  visibleAt: number;
+  registrationOpensAt: number;
+  scheduledStartsAt: number | null;
+  manualStartExpiresAt: number | null;
+  actualStartedAt: number | null;
+}
+
+export interface PublicTournamentStructure {
+  sourcePresetId: 'standard' | 'turbo' | 'hyper' | null;
+  startingStack: number;
+  segments: readonly TournamentStructureSegment[];
+  currentSegmentIndex: number | null;
+  currentSegmentEndsAt: number | null;
+}
+
+export interface PublicTournamentPayout {
+  tableVersion: number;
+  presetId: 'top-heavy' | 'standard' | 'flat';
+  paidFieldPercent: 10 | 15 | 20;
+  status: 'provisional' | 'final';
+  totalPrize: number;
+  payouts: ReadonlyArray<{ place: number; percent: number; amount: number }>;
+  fundingStatus:
+    | 'entry-funded'
+    | 'promotion-reserved'
+    | 'payout-pending'
+    | 'settled';
+}
+
+export interface PublicTournamentSeat {
+  roomId: string;
+  tableNo: number;
+  seatIndex: number;
+}
+
 export interface TournamentSummary {
   id: string;
   name: string;
+  lifecycle?: PublicTournamentLifecycle;
+  statusReason?: TournamentInstanceStatusReason | null;
+  /** @deprecated One-release adapter. New clients use lifecycle. */
   phase: TournamentPhase;
   speed: MttSpeed;
   entrantCount: number; // 등록 인원 (시작 후엔 봇 포함 확정 인원)
@@ -169,7 +226,11 @@ export interface TournamentSummary {
   /** 디렉터 일시정지 중 — 시계 동결·전 테이블 다음 핸드 보류 (Phase 2) */
   paused: boolean;
   /** wallet = 지갑 바이인 에스크로·리얼 칩 상금 (봇 충원 불가). 기본 practice */
-  economyMode: 'practice' | 'wallet';
+  /**
+   * v2 projections emit only freeroll or wallet. The practice member keeps the
+   * unwired v1 projection type-safe for one compatibility release.
+   */
+  economyMode: 'freeroll' | 'wallet' | 'practice';
   entryBuyIn: number; // wallet 바이인 (practice는 0)
   entryFee: number; // wallet 수수료 (practice는 0)
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
@@ -179,6 +240,80 @@ export interface TournamentSummary {
   holdReasons?: TournamentHoldReason[];
   stageEndsAt?: number;
   finalTheme?: FinalTableTheme;
+  schedule?: PublicTournamentSchedule;
+  structure?: PublicTournamentStructure;
+  payout?: PublicTournamentPayout;
+  registrationState?: TournamentRegistrationState;
+  registrationCloseReason?: RegistrationCloseReason | null;
+  lateRegistrationClosesAt?: number | null;
+  minEntrants?: number;
+  initialEntrants?: number;
+  acceptedEntrants?: number;
+  pendingLateEntrants?: number;
+  aliveSeated?: number;
+  finalEntrants?: number | null;
+  botFillToMinimum?: boolean;
+  myRegistrationStatus?: TournamentRegistrationStatus | null;
+  mySeat?: PublicTournamentSeat | null;
+  canRegister?: boolean;
+  canCancelRegistration?: boolean;
+}
+
+/**
+ * Canonical v2 lobby projection. The legacy TournamentSummary stays on the
+ * current array wire until the scheduler/runtime integration switches over.
+ */
+export type PublicTournamentSummary = Omit<
+  TournamentSummary,
+  | 'lifecycle'
+  | 'statusReason'
+  | 'phase'
+  | 'economyMode'
+  | 'schedule'
+  | 'structure'
+  | 'payout'
+  | 'registrationState'
+  | 'registrationCloseReason'
+  | 'lateRegistrationClosesAt'
+  | 'minEntrants'
+  | 'initialEntrants'
+  | 'acceptedEntrants'
+  | 'pendingLateEntrants'
+  | 'aliveSeated'
+  | 'finalEntrants'
+  | 'botFillToMinimum'
+  | 'myRegistrationStatus'
+  | 'mySeat'
+  | 'canRegister'
+  | 'canCancelRegistration'
+> & {
+  lifecycle: PublicTournamentLifecycle;
+  statusReason: TournamentInstanceStatusReason | null;
+  /** @deprecated One-release adapter. New clients use lifecycle. */
+  phase?: TournamentPhase;
+  economyMode: 'freeroll' | 'wallet';
+  schedule: PublicTournamentSchedule;
+  structure: PublicTournamentStructure;
+  payout: PublicTournamentPayout;
+  registrationState: TournamentRegistrationState;
+  registrationCloseReason: RegistrationCloseReason | null;
+  lateRegistrationClosesAt: number | null;
+  minEntrants: number;
+  initialEntrants: number;
+  acceptedEntrants: number;
+  pendingLateEntrants: number;
+  aliveSeated: number;
+  finalEntrants: number | null;
+  botFillToMinimum: boolean;
+  myRegistrationStatus: TournamentRegistrationStatus | null;
+  mySeat: PublicTournamentSeat | null;
+  canRegister: boolean;
+  canCancelRegistration: boolean;
+};
+
+export interface TournamentListPayload {
+  serverNow: number;
+  tournaments: PublicTournamentSummary[];
 }
 
 export interface TournamentStandingRow {
@@ -214,6 +349,56 @@ export interface CreateTournamentRequest {
   turnTime: number;
   /** 'wallet' = 지갑 바이인 에스크로 (봇 충원 불가). 생략 시 practice */
   economyMode?: 'practice' | 'wallet';
+}
+
+export interface RegisterTournamentCommand {
+  tournamentId: string;
+  requestId: string;
+}
+
+export type RegisterTournamentResult =
+  | {
+      ok: true;
+      status: 'registered' | 'seating' | 'seated';
+      tournamentId: string;
+      requestId: string;
+    }
+  | {
+      ok: false;
+      requestId: string;
+      reason: 'request-terminal';
+      terminalStatus:
+        | 'cancelled'
+        | 'refunded'
+        | 'no-show'
+        | 'eliminated'
+        | 'finished';
+    }
+  | {
+      ok: false;
+      requestId: string;
+      reason:
+        | 'not-open'
+        | 'late-registration-closed'
+        | 'full'
+        | 'already-entered'
+        | 'eliminated'
+        | 'insufficient-balance'
+        | 'other-tournament'
+        | 'seating-failed';
+    };
+
+export interface TournamentSeatAssigned {
+  tournamentId: string;
+  roomId: string;
+  state: GameState;
+  chat: ChatMessage[];
+}
+
+export interface LateRegistrationSeatingPayload {
+  tournamentId: string;
+  requestId: string;
+  status: 'seating';
 }
 
 /**
@@ -262,6 +447,9 @@ export interface ServerToClientEvents {
   'session-replaced': (data: { message: string }) => void;
   'room-list': (rooms: RoomListItem[]) => void;
   'tournament-list': (tournaments: TournamentSummary[]) => void;
+  'tournament-update': (tournament: PublicTournamentSummary) => void;
+  'late-registration-seating': (data: LateRegistrationSeatingPayload) => void;
+  'tournament-seat-assigned': (data: TournamentSeatAssigned) => void;
   'table-move': (data: TableMovePayload) => void;
   'room-joined': (data: RoomJoinedPayload) => void;
   'room-lost': (data?: { message?: string }) => void;
@@ -311,7 +499,10 @@ export interface ClientToServerEvents {
     data: unknown,
     ack?: AckCallback<{ tournamentId: string }>,
   ) => void;
-  'register-tournament': (data: unknown, ack?: AckCallback) => void;
+  'register-tournament': (
+    data: unknown,
+    ack?: AckCallback<RegisterTournamentResult>,
+  ) => void;
   'unregister-tournament': (data: unknown, ack?: AckCallback) => void;
   'start-tournament': (data: unknown, ack?: AckCallback) => void;
   /** 디렉터 콘솔 — 개설자 전용 운영 개입 (pause/resume/set-level/remove-player/cancel) */
