@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type {
   TournamentConfigSnapshotV2,
@@ -33,11 +34,12 @@ describe('TournamentEnrollmentRepository', () => {
   it('registers a prestart wallet debit and registration atomically', () => {
     createOpenInstance('wallet-prestart', walletConfig({ buyIn: 777, fee: 33 }));
     seedProfile('wallet-player', 2_000);
+    const requestId = randomUUID();
 
     const result = enrollment.registerPreStart({
       tournamentId: 'wallet-prestart',
       profileId: 'wallet-player',
-      requestId: 'wallet-request-1',
+      requestId,
       publicPlayer: player('wallet-player'),
       at: NOW,
     });
@@ -47,7 +49,7 @@ describe('TournamentEnrollmentRepository', () => {
       key: {
         profileId: 'wallet-player',
         economyMode: 'wallet',
-        requestId: 'wallet-request-1',
+        requestId,
         registrationAttempt: 1,
         economyEntryAttempt: 1,
       },
@@ -81,7 +83,7 @@ describe('TournamentEnrollmentRepository', () => {
     const result = enrollment.registerPreStart({
       tournamentId: 'freeroll-prestart',
       profileId: 'freeroll-player',
-      requestId: 'freeroll-request-1',
+      requestId: randomUUID(),
       publicPlayer: player('freeroll-player'),
       at: NOW,
     });
@@ -115,7 +117,7 @@ describe('TournamentEnrollmentRepository', () => {
     const input = {
       tournamentId: 'replay-prestart',
       profileId: 'replay-player',
-      requestId: 'replay-request-1',
+      requestId: randomUUID(),
       publicPlayer: player('replay-player'),
       at: NOW,
     } as const;
@@ -138,17 +140,19 @@ describe('TournamentEnrollmentRepository', () => {
   it('permits attempt two only after attempt one is terminal', () => {
     createOpenInstance('attempt-prestart', walletConfig());
     seedProfile('attempt-player', 5_000);
+    const firstRequestId = randomUUID();
+    const secondRequestId = randomUUID();
     const first = enrollment.registerPreStart({
       tournamentId: 'attempt-prestart',
       profileId: 'attempt-player',
-      requestId: 'attempt-request-1',
+      requestId: firstRequestId,
       publicPlayer: player('attempt-player'),
       at: NOW,
     });
     expect(() => enrollment.registerPreStart({
       tournamentId: 'attempt-prestart',
       profileId: 'attempt-player',
-      requestId: 'attempt-request-2',
+      requestId: secondRequestId,
       publicPlayer: player('attempt-player'),
       at: NOW + 1,
     })).toThrowError(TournamentEnrollmentError);
@@ -171,7 +175,7 @@ describe('TournamentEnrollmentRepository', () => {
     const second = enrollment.registerPreStart({
       tournamentId: 'attempt-prestart',
       profileId: 'attempt-player',
-      requestId: 'attempt-request-2',
+      requestId: secondRequestId,
       publicPlayer: player('attempt-player'),
       at: NOW + 3,
     });
@@ -192,10 +196,12 @@ describe('TournamentEnrollmentRepository', () => {
   it('rejects stale late commit release and economy refund attempts', () => {
     createRunningOpenLate('late-attempts');
     seedProfile('late-player', 5_000);
+    const firstRequestId = randomUUID();
+    const secondRequestId = randomUUID();
     const first = enrollment.reserveLateMttEntry(
       'late-player',
       'late-attempts',
-      'late-request-1',
+      firstRequestId,
       'close-owner-1',
     );
     expect(first.status).toBe('reserved');
@@ -208,7 +214,7 @@ describe('TournamentEnrollmentRepository', () => {
     const second = enrollment.reserveLateMttEntry(
       'late-player',
       'late-attempts',
-      'late-request-2',
+      secondRequestId,
       'close-owner-2',
     );
     const secondKey = expectWalletKey(second);
@@ -246,7 +252,7 @@ describe('TournamentEnrollmentRepository', () => {
       enrollment.registerPreStart({
         tournamentId: 'starting-roster',
         profileId: id,
-        requestId: `${id}-request`,
+        requestId: randomUUID(),
         publicPlayer: player(id),
         at: NOW,
       });
@@ -289,6 +295,178 @@ describe('TournamentEnrollmentRepository', () => {
     `).get()).toEqual({ status: 'registered' });
     expect(balanceOf('checked-in')).toBe(checkedBalance);
   });
+
+  it('rejects a late reservation at the canonical absolute deadline', () => {
+    createRunningOpenLate('late-expired', NOW - 600_000);
+    seedProfile('late-expired-player', 5_000);
+
+    expect(() => enrollment.reserveLateMttEntry(
+      'late-expired-player',
+      'late-expired',
+      randomUUID(),
+      'late-expired-owner',
+    )).toThrowError(expect.objectContaining({
+      code: 'registration-closed',
+    }));
+    expect(balanceOf('late-expired-player')).toBe(5_000);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_registration
+      WHERE instance_id = 'late-expired'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT pending_late_entrants
+      FROM tournament_instance WHERE id = 'late-expired'
+    `).get()).toEqual({ pending_late_entrants: 0 });
+  });
+
+  it('rolls back the wallet debit when registration persistence fails', () => {
+    createOpenInstance('rollback-after-debit', walletConfig());
+    seedProfile('rollback-player', 5_000);
+    database.db.exec(`
+      CREATE TRIGGER inject_registration_failure
+      BEFORE INSERT ON tournament_registration
+      WHEN NEW.instance_id = 'rollback-after-debit'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected registration failure');
+      END;
+    `);
+
+    expect(() => enrollment.registerPreStart({
+      tournamentId: 'rollback-after-debit',
+      profileId: 'rollback-player',
+      requestId: randomUUID(),
+      publicPlayer: player('rollback-player'),
+      at: NOW,
+    })).toThrow('injected registration failure');
+    expect(balanceOf('rollback-player')).toBe(5_000);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM sng_entries
+      WHERE tournament_id = 'rollback-after-debit'
+    `).get()).toEqual({ count: 0 });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM chip_ledger
+      WHERE ref_id = 'rollback-after-debit'
+    `).get()).toEqual({ count: 0 });
+  });
+
+  it('does not oversubscribe the last freeroll prestart capacity', () => {
+    createOpenInstance('freeroll-cap', freerollConfig(2));
+    for (const id of ['cap-one', 'cap-two', 'cap-three']) {
+      seedProfile(id, 2_000);
+    }
+    for (const id of ['cap-one', 'cap-two']) {
+      enrollment.registerPreStart({
+        tournamentId: 'freeroll-cap',
+        profileId: id,
+        requestId: randomUUID(),
+        publicPlayer: player(id),
+        at: NOW,
+      });
+    }
+
+    expect(() => enrollment.registerPreStart({
+      tournamentId: 'freeroll-cap',
+      profileId: 'cap-three',
+      requestId: randomUUID(),
+      publicPlayer: player('cap-three'),
+      at: NOW,
+    })).toThrowError(expect.objectContaining({ code: 'capacity' }));
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_registration
+      WHERE instance_id = 'freeroll-cap' AND status = 'registered'
+    `).get()).toEqual({ count: 2 });
+  });
+
+  it('rejects a wrong immutable wallet product generation before write and replay', () => {
+    createOpenInstance('wallet-product', walletConfig());
+    for (const id of ['wrong-new', 'wrong-replay']) seedProfile(id, 5_000);
+    const wrongProduct = {
+      instanceId: 'wallet-product',
+      productVersion: 8,
+      buyIn: 1_500,
+      fee: 150,
+    } as const;
+
+    expect(() => database.transaction(() => (
+      economy.reserveMttEntryInTransaction(
+        'wrong-new',
+        wrongProduct,
+        1,
+        NOW,
+      )
+    ))).toThrow();
+    expect(balanceOf('wrong-new')).toBe(5_000);
+    const reservation = enrollment.registerPreStart({
+      tournamentId: 'wallet-product',
+      profileId: 'wrong-replay',
+      requestId: randomUUID(),
+      publicPlayer: player('wrong-replay'),
+      at: NOW,
+    });
+    const key = expectWalletKey(reservation);
+    expect(() => database.transaction(() => (
+      economy.reserveMttEntryInTransaction(
+        'wrong-replay',
+        wrongProduct,
+        key.economyEntryAttempt,
+        NOW + 1,
+      )
+    ))).toThrow();
+    expect(balanceOf('wrong-replay')).toBe(5_000 - 1_650);
+  });
+
+  it('keeps one active late claim and makes exact release idempotent', () => {
+    createRunningOpenLate('active-claim-one');
+    createRunningOpenLate('active-claim-two');
+    seedProfile('active-claim-player', 5_000);
+    const reserved = enrollment.reserveLateMttEntry(
+      'active-claim-player',
+      'active-claim-one',
+      randomUUID(),
+      'active-claim-owner-one',
+    );
+    const key = expectWalletKey(reserved);
+
+    expect(() => enrollment.reserveLateMttEntry(
+      'active-claim-player',
+      'active-claim-two',
+      randomUUID(),
+      'active-claim-owner-two',
+    )).toThrow();
+    expect(enrollment.releaseLateMttEntry(
+      'active-claim-one',
+      key,
+      null,
+    )).toMatchObject({ status: 'released' });
+    expect(enrollment.releaseLateMttEntry(
+      'active-claim-one',
+      key,
+      null,
+    )).toMatchObject({ status: 'already-released' });
+    expect(balanceOf('active-claim-player')).toBe(5_000);
+    expect(database.db.prepare(`
+      SELECT pending_late_entrants
+      FROM tournament_instance WHERE id = 'active-claim-one'
+    `).get()).toEqual({ pending_late_entrants: 0 });
+  });
+
+  it('rejects non-UUID enrollment request ids before mutation', () => {
+    createOpenInstance('uuid-request', walletConfig());
+    seedProfile('uuid-player', 5_000);
+
+    expect(() => enrollment.registerPreStart({
+      tournamentId: 'uuid-request',
+      profileId: 'uuid-player',
+      requestId: 'not-a-uuid',
+      publicPlayer: player('uuid-player'),
+      at: NOW,
+    })).toThrowError(expect.objectContaining({ code: 'invalid-input' }));
+    expect(balanceOf('uuid-player')).toBe(5_000);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_registration
+      WHERE instance_id = 'uuid-request'
+    `).get()).toEqual({ count: 0 });
+  });
 });
 
 function createOpenInstance(
@@ -324,7 +502,10 @@ function createOpenInstance(
   `).run(NOW - 1, id);
 }
 
-function createRunningOpenLate(id: string): void {
+function createRunningOpenLate(
+  id: string,
+  actualStartedAt = NOW,
+): void {
   createOpenInstance(id, walletConfig({
     maxEntrants: 4,
     lateRegistration: true,
@@ -338,7 +519,7 @@ function createRunningOpenLate(id: string): void {
     UPDATE tournament_instance
     SET status = 'running', registration_state = 'open-late',
         initial_entrants = 2, initial_bot_entrants = 0,
-        committed_entrants = 2, actual_started_at = ${NOW},
+        committed_entrants = 2, actual_started_at = ${actualStartedAt},
         start_owner_id = NULL, start_lease_until = NULL,
         updated_at = ${NOW}
     WHERE id = '${id}';
@@ -373,11 +554,11 @@ function walletConfig(
   };
 }
 
-function freerollConfig(): TournamentConfigSnapshotV2 {
+function freerollConfig(maxEntrants = 6): TournamentConfigSnapshotV2 {
   return {
     ...baseConfig(),
     economy: { mode: 'freeroll', promotionAccountId: 'global' },
-    field: { minEntrants: 2, maxEntrants: 6, botFillToMinimum: true },
+    field: { minEntrants: 2, maxEntrants, botFillToMinimum: true },
     prizePool: { kind: 'promotion-funded', totalPrize: 10_000 },
   };
 }
@@ -404,6 +585,13 @@ function baseConfig(): TournamentConfigSnapshotV2 {
           durationMs: 300_000,
           smallBlind: 10,
           bigBlind: 20,
+          bigBlindAnte: 0,
+        },
+        {
+          kind: 'level',
+          durationMs: 300_000,
+          smallBlind: 15,
+          bigBlind: 30,
           bigBlindAnte: 0,
         },
       ],

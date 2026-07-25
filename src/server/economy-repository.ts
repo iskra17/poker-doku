@@ -236,6 +236,10 @@ export interface SngEntry {
   entryAttempt: number;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export interface SngResult {
   playerId: string;
   place: number;
@@ -2363,6 +2367,10 @@ export class EconomyRepository {
     ) {
       throw new EconomyDomainError('SNG_ENTRY_INVALID');
     }
+    const product = this.requireMttInstanceProduct(entry.tournamentId);
+    if (entry.buyIn !== product.buyIn || entry.fee !== product.fee) {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
     return entry;
   }
 
@@ -2377,6 +2385,57 @@ export class EconomyRepository {
       throw new EconomyDomainError('SNG_ENTRY_INVALID');
     }
     this.assertSngAmounts(product.buyIn, product.fee);
+    const persisted = this.requireMttInstanceProduct(product.instanceId);
+    if (
+      persisted.productVersion !== product.productVersion
+      || persisted.buyIn !== product.buyIn
+      || persisted.fee !== product.fee
+    ) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+  }
+
+  private requireMttInstanceProduct(
+    instanceId: string,
+  ): MttInstanceProduct {
+    const row = this.database.db.prepare(`
+      SELECT economy_mode, config_json
+      FROM tournament_instance
+      WHERE id = ?
+    `).get(instanceId) as {
+      economy_mode: string;
+      config_json: string;
+    } | undefined;
+    if (!row || row.economy_mode !== 'wallet') {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+    let config: unknown;
+    try {
+      config = JSON.parse(row.config_json);
+    } catch {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+    if (!isRecord(config) || !isRecord(config.economy)) {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+    const economy = config.economy;
+    if (
+      economy.mode !== 'wallet'
+      || !Number.isSafeInteger(economy.productVersion)
+      || (economy.productVersion as number) < 1
+      || !Number.isSafeInteger(economy.buyIn)
+      || (economy.buyIn as number) < 1
+      || !Number.isSafeInteger(economy.fee)
+      || (economy.fee as number) < 1
+    ) {
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+    return {
+      instanceId,
+      productVersion: economy.productVersion as number,
+      buyIn: economy.buyIn as number,
+      fee: economy.fee as number,
+    };
   }
 
   private toSngEntry(row: SngEntryRow): SngEntry {

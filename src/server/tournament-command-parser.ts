@@ -53,8 +53,12 @@ function safeIntegerIn(
   return value;
 }
 
+export function isUuidRequestId(value: unknown): value is string {
+  return typeof value === 'string' && UUID_PATTERN.test(value);
+}
+
 function parseUuid(value: unknown, code: string): string {
-  if (typeof value !== 'string' || !UUID_PATTERN.test(value)) fail(code);
+  if (!isUuidRequestId(value)) fail(code);
   return value;
 }
 

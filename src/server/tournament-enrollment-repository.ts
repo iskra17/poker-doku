@@ -1,4 +1,5 @@
 import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-config';
+import { lateRegistrationClosesAt } from '@/lib/tournament/late-registration-clock';
 import type {
   RegistrationCloseReason,
 } from '@/lib/tournament/tournament-state';
@@ -8,6 +9,7 @@ import {
   type SngEntry,
 } from './economy-repository';
 import type { PokerDatabase } from './persistence/database';
+import { isUuidRequestId } from './tournament-command-parser';
 
 type RegistrationStatus =
   | 'registered'
@@ -172,6 +174,7 @@ interface InstanceRow {
   config_json: string;
   start_attempt: number;
   start_owner_id: string | null;
+  actual_started_at: number | null;
 }
 
 interface RegistrationRow {
@@ -231,7 +234,7 @@ export class TournamentEnrollmentRepository {
     const at = input.at ?? this.clock();
     this.assertIdentity(input.tournamentId);
     this.assertIdentity(input.profileId);
-    this.assertIdentity(input.requestId);
+    this.assertRequestId(input.requestId);
     this.assertPublicPlayer(input.publicPlayer);
     this.assertTimestamp(at);
 
@@ -312,11 +315,11 @@ export class TournamentEnrollmentRepository {
     for (const value of [
       profileId,
       tournamentId,
-      requestId,
       candidateCloseOwnerToken,
     ]) {
       this.assertIdentity(value);
     }
+    this.assertRequestId(requestId);
     return this.database.transaction((): EnrollmentReservationResult => {
       const replay = this.findReplay(tournamentId, profileId, requestId);
       if (replay) return this.toReservationResult(replay);
@@ -330,6 +333,22 @@ export class TournamentEnrollmentRepository {
         throw new TournamentEnrollmentError('registration-closed');
       }
       if (!context.config.lateRegistration.enabled) {
+        throw new TournamentEnrollmentError('registration-closed');
+      }
+      if (instance.actual_started_at === null) {
+        throw new TournamentEnrollmentError('financial-invariant');
+      }
+      let closesAt: number;
+      try {
+        closesAt = lateRegistrationClosesAt(
+          context.config.structure.segments,
+          instance.actual_started_at,
+          context.config.lateRegistration.durationLevels,
+        );
+      } catch {
+        throw new TournamentEnrollmentError('financial-invariant');
+      }
+      if (!Number.isSafeInteger(closesAt) || at >= closesAt) {
         throw new TournamentEnrollmentError('registration-closed');
       }
       if (
@@ -1395,7 +1414,7 @@ export class TournamentEnrollmentRepository {
              registration_opens_at, starts_at, manual_expires_at,
              economy_mode, min_entrants, max_entrants,
              committed_entrants, pending_late_entrants, ever_multi_table,
-             config_json, start_attempt, start_owner_id
+             config_json, start_attempt, start_owner_id, actual_started_at
       FROM tournament_instance
       WHERE id = ?
     `).get(instanceId) as InstanceRow | undefined;
@@ -1459,6 +1478,12 @@ export class TournamentEnrollmentRepository {
 
   private assertIdentity(value: string): void {
     if (!this.isIdentity(value)) {
+      throw new TournamentEnrollmentError('invalid-input');
+    }
+  }
+
+  private assertRequestId(value: string): void {
+    if (!isUuidRequestId(value)) {
       throw new TournamentEnrollmentError('invalid-input');
     }
   }
