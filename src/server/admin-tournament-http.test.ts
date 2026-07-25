@@ -17,6 +17,7 @@ import { TournamentScheduler } from './tournament-scheduler';
 
 const NOW = Date.now();
 const MINUTE = 60_000;
+const DAY = 24 * 60 * MINUTE;
 const TOKEN = 'admin-tournament-secret';
 const BACKOFFICE: TournamentAuthority = { kind: 'backoffice' };
 
@@ -49,6 +50,8 @@ function recurring(overrides: Record<string, unknown> = {}) {
       manualStartExpiresAt: null,
     },
     recurrence: { kind: 'daily', hour: 13, minute: 0 },
+    firstStartsAt: NOW + 60 * MINUTE,
+    recurrenceEndsAt: NOW + 60 * MINUTE + 7 * DAY,
     visibleLeadMs: 10 * MINUTE,
     registrationLeadMs: 5 * MINUTE,
     ...overrides,
