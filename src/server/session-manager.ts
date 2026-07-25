@@ -6,11 +6,18 @@
  * - grace: disconnect 후 일정 시간 좌석/칩을 보존하는 유예 타이머.
  */
 
+export interface TournamentEngagement {
+  kind: 'late-pending';
+  tournamentId: string;
+  requestId: string;
+}
+
 export interface Session {
   playerId: string;
   socketId: string | null;
   roomId: string | null;
   graceTimer: NodeJS.Timeout | null;
+  tournamentEngagement: TournamentEngagement | null;
 }
 
 export interface SessionResolution {
@@ -80,7 +87,12 @@ export class SessionManager {
   }
 
   releaseIfIdle(session: Session): boolean {
-    if (session.socketId || session.roomId || session.graceTimer) return false;
+    if (
+      session.socketId
+      || session.roomId
+      || session.graceTimer
+      || session.tournamentEngagement
+    ) return false;
     if (this.byPlayerId.get(session.playerId) === session) this.byPlayerId.delete(session.playerId);
     return true;
   }
@@ -158,6 +170,7 @@ export class SessionManager {
       socketId: null,
       roomId: null,
       graceTimer: null,
+      tournamentEngagement: null,
     };
     this.byPlayerId.set(session.playerId, session);
     return session;

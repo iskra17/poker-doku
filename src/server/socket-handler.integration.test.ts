@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   ArenaQueueState,
   GameUpdatePayload,
+  RegisterTournamentResult,
   RealtimeAck,
-  TournamentSummary,
+  TournamentListPayload,
 } from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
 import { createBot } from '../lib/bot/bot-manager';
@@ -178,6 +179,250 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     ))).resolves.toMatchObject({ ok: false, code: 'forbidden' });
   });
 
+  it('returns an idempotent register result for one request id', async () => {
+    const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const registerTournament = vi.fn((input: {
+      command: {
+        tournamentId: string;
+        requestId: string;
+      };
+      profileId: string;
+    }): RegisterTournamentResult => ({
+      ok: true,
+      status: 'seating',
+      tournamentId: input.command.tournamentId,
+      requestId: input.command.requestId,
+    }));
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+        registerTournament,
+        listPublicTournaments: vi.fn(() => []),
+      } as never,
+    });
+    const client = await harness.connect('persistent-register-idempotent');
+    const send = () => withAck<RegisterTournamentResult>(done =>
+      client.socket.emit('register-tournament', {
+        tournamentId: 'mtt-persistent',
+        requestId,
+      }, done));
+
+    const first = await send();
+    const replay = await send();
+
+    expect(first).toEqual(replay);
+    expect(first).toEqual({
+      ok: true,
+      data: {
+        ok: true,
+        status: 'seating',
+        tournamentId: 'mtt-persistent',
+        requestId,
+      },
+    });
+    expect(registerTournament).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        profileId: client.playerId,
+        command: { tournamentId: 'mtt-persistent', requestId },
+      }),
+    );
+    expect(harness.runtime.sessions.getByPlayerId(client.playerId)
+      ?.tournamentEngagement).toEqual({
+      kind: 'late-pending',
+      tournamentId: 'mtt-persistent',
+      requestId,
+    });
+  });
+
+  it('emits tournament seat assigned only to the newest lobby socket', async () => {
+    const tournamentId = 'mtt-late-seat';
+    const requestId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const publicTournament = {
+      id: tournamentId,
+      economyMode: 'freeroll',
+      myRegistrationStatus: 'seated',
+      mySeat: { roomId: 'late-seat-room', tableNo: 1, seatIndex: 0 },
+    };
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [publicTournament]),
+      } as never,
+    });
+    const profile = await harness.createProfile();
+    const oldClient = await harness.connect('late-seat-old', {
+      profileCookie: profile.cookie,
+    });
+    const newest = await harness.connect('late-seat-new', {
+      profileCookie: profile.cookie,
+    });
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: 'Late seat projection',
+      tournamentId,
+    });
+    expect(harness.runtime.roomManager.getRoom(roomId)!.engine.addPlayer(
+      makePlayer(newest.playerId, 10_000, 0, { name: 'Late entrant' }),
+    )).toBe(true);
+    publicTournament.mySeat.roomId = roomId;
+    const session = harness.runtime.sessions.getByPlayerId(newest.playerId)!;
+    session.tournamentEngagement = {
+      kind: 'late-pending',
+      tournamentId,
+      requestId,
+    };
+    const oldAssignments: unknown[] = [];
+    const newAssignments: unknown[] = [];
+    oldClient.socket.on('tournament-seat-assigned', data => oldAssignments.push(data));
+    newest.socket.on('tournament-seat-assigned', data => newAssignments.push(data));
+    const managerHooks = (
+      harness.runtime.tournamentManager as unknown as {
+        hooks: Pick<TournamentRuntimeHooks, 'onSeated'>;
+      }
+    ).hooks;
+
+    managerHooks.onSeated?.({
+      tournamentId,
+      playerId: newest.playerId,
+      roomId,
+    });
+    await waitUntil(() => newAssignments.length === 1);
+
+    expect(oldAssignments).toEqual([]);
+    expect(newAssignments).toEqual([
+      expect.objectContaining({ tournamentId, roomId }),
+    ]);
+    expect(session).toMatchObject({
+      roomId,
+      tournamentEngagement: null,
+    });
+  });
+
+  it('reconstructs a committed late seat from DB projection and live state on resync', async () => {
+    const tournamentId = 'mtt-late-resync';
+    const requestId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const publicTournament = {
+      id: tournamentId,
+      economyMode: 'freeroll',
+      myRegistrationStatus: 'seated',
+      mySeat: { roomId: 'pending-room', tableNo: 1, seatIndex: 0 },
+    };
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [publicTournament]),
+      } as never,
+    });
+    const client = await harness.connect('late-seat-resync');
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      name: 'Late resync room',
+      tournamentId,
+    });
+    expect(harness.runtime.roomManager.getRoom(roomId)!.engine.addPlayer(
+      makePlayer(client.playerId, 10_000, 0, { name: 'Recovered entrant' }),
+    )).toBe(true);
+    publicTournament.mySeat.roomId = roomId;
+    const assigned = new Promise(resolve => {
+      client.socket.once('tournament-seat-assigned', resolve);
+    });
+
+    await expect(withAck(done => client.socket.emit('resync', {
+      tournamentId,
+      requestId,
+    }, done))).resolves.toMatchObject({ ok: true });
+    await expect(assigned).resolves.toMatchObject({ tournamentId, roomId });
+    expect(harness.runtime.sessions.getByPlayerId(client.playerId)).toMatchObject({
+      roomId,
+      tournamentEngagement: null,
+    });
+  });
+
+  it('rejects wallet bot fill before mutation and logging', async () => {
+    harness = await createSocketTestHarness();
+    const profile = await harness.createProfile();
+    harness.grantTournamentOperator(profile.profile.id);
+    const operator = await harness.connect('wallet-bot-fill-operator', {
+      profileCookie: profile.cookie,
+    });
+    const create = vi.spyOn(harness.runtime.tournamentCommands, 'create');
+    const eventsBefore = harness.recentEvents();
+
+    await expect(withAck(done => operator.socket.emit('create-tournament', {
+      name: 'Wallet bots forbidden',
+      speed: 'standard',
+      maxEntrants: 8,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      economyMode: 'wallet',
+      payoutPreset: 'standard',
+    }, done))).resolves.toMatchObject({
+      ok: false,
+      code: 'action-rejected',
+    });
+
+    expect(create).not.toHaveBeenCalled();
+    expect(harness.recentEvents()).toEqual(eventsBefore);
+  });
+
+  it('emits tournament lists with serverNow and canonical freeroll output', async () => {
+    const freeroll = {
+      id: 'freeroll-public',
+      name: 'Freeroll',
+      lifecycle: 'registering',
+      economyMode: 'freeroll',
+    };
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => null,
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [freeroll]),
+      } as never,
+    });
+    const client = await harness.connect('freeroll-list-client');
+
+    const response = await withAck<TournamentListPayload>(done =>
+      client.socket.emit('get-tournaments', done));
+
+    expect(response).toMatchObject({
+      ok: true,
+      data: {
+        serverNow: expect.any(Number),
+        tournaments: [expect.objectContaining({
+          id: 'freeroll-public',
+          economyMode: 'freeroll',
+        })],
+      },
+    });
+    if (!response.ok) throw new Error('list failed');
+    expect(Math.abs(Date.now() - response.data!.serverNow)).toBeLessThan(1_000);
+    expect(response.data!.tournaments).toHaveLength(1);
+  });
+
   it('rejects rejoin to an owner-held prepared MTT room before running CAS', async () => {
     harness = await createSocketTestHarness();
     const client = await harness.connect('prepared-mtt-client');
@@ -288,7 +533,7 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(destinationRoomId);
   });
 
-  it('refreshes a lobby survivor tournament list after an MTT table move', async () => {
+  it('keeps legacy MTTs out of the canonical list after a table move', async () => {
     harness = await createSocketTestHarness();
     const client = await harness.connect('mtt-lobby-list-move-client');
     const created = harness.runtime.tournamentManager.createTournament({
@@ -335,7 +580,7 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
     expect(session.roomId).toBeNull();
     expect(harness.getServerSocketRooms(client.socket.id!)).not.toContain(sourceRoomId);
-    const receivedLists: TournamentSummary[][] = [];
+    const receivedLists: TournamentListPayload[] = [];
     client.socket.on('tournament-list', list => receivedLists.push(list));
     await wait(20);
     receivedLists.length = 0;
@@ -360,8 +605,10 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     await wait(20);
 
     expect(session.roomId).toBeNull();
-    expect(receivedLists.at(-1)?.find(item => item.id === created.tournamentId))
-      .toMatchObject({ myTableRoomId: destinationRoomId });
+    expect(receivedLists.at(-1)).toMatchObject({
+      serverNow: expect.any(Number),
+      tournaments: [],
+    });
   });
 
   it('disconnected MTT 이동 뒤 old grace 만료가 목적지 좌석을 보존하고 resync한다', async () => {

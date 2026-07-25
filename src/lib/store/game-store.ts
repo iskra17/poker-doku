@@ -6,10 +6,14 @@ import type { ActionType, ChatMessage, GameState } from '../poker/types';
 import type {
   CreateTournamentRequest,
   PokerClientSocket,
+  PublicTournamentSummary,
   RoomListItem,
   TournamentDetailView,
   TournamentSummary,
 } from '../realtime/protocol';
+import type {
+  TournamentRegistrationStatus,
+} from '../tournament/tournament-state';
 import { diffGameState, emitGameEvent } from '../events/game-events';
 import { THROWABLE_MAP, THROW_COOLDOWN_MS } from '../throwables/catalog';
 import { useSettingsStore } from './settings-store';
@@ -61,6 +65,26 @@ function samePendingAction(a: PendingAction | null, b: PendingAction): boolean {
   return a?.handNumber === b.handNumber && a.actionSeq === b.actionSeq;
 }
 
+function legacyPhase(
+  tournament: PublicTournamentSummary,
+): TournamentSummary['phase'] {
+  if (tournament.phase) return tournament.phase;
+  if (tournament.lifecycle === 'completed') return 'completed';
+  if (tournament.lifecycle === 'cancelled'
+    || tournament.lifecycle === 'refund-pending') return 'cancelled';
+  if (
+    tournament.lifecycle === 'running'
+    || tournament.lifecycle === 'payout-pending'
+  ) return 'running';
+  return 'registering';
+}
+
+function toClientTournament(
+  tournament: PublicTournamentSummary,
+): TournamentSummary {
+  return { ...tournament, phase: legacyPhase(tournament) };
+}
+
 interface GameStore {
   socket: PokerClientSocket | null;
   connected: boolean;
@@ -82,6 +106,10 @@ interface GameStore {
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
   tournaments: TournamentSummary[];
+  serverClockOffsetMs: number;
+  pendingTournamentId: string | null;
+  pendingTournamentRequestId: string | null;
+  tournamentRegistrationStatus: TournamentRegistrationStatus | null;
   showCreateRoom: boolean;
   /** 방금 만든 방 id — 로비가 바이인 모달을 자동으로 띄우는 데 쓰고, 입장/닫기 시 소거 */
   createdRoomId: string | null;
@@ -148,6 +176,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
   chatMessages: [],
   rooms: [],
   tournaments: [],
+  serverClockOffsetMs: 0,
+  pendingTournamentId: null,
+  pendingTournamentRequestId: null,
+  tournamentRegistrationStatus: null,
   showCreateRoom: false,
   createdRoomId: null,
   tournamentError: null,
@@ -167,7 +199,19 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     socket.on('connect', () => {
       set({ connected: true, connectionState: 'connected' });
-      if (get().currentRoomId) socket.emit('resync');
+      const {
+        currentRoomId,
+        pendingTournamentId,
+        pendingTournamentRequestId,
+      } = get();
+      if (pendingTournamentId && pendingTournamentRequestId) {
+        socket.emit('resync', {
+          tournamentId: pendingTournamentId,
+          requestId: pendingTournamentRequestId,
+        });
+      } else if (currentRoomId) {
+        socket.emit('resync');
+      }
     });
 
     socket.on('disconnect', () => {
@@ -201,8 +245,41 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({ rooms });
     });
 
-    socket.on('tournament-list', tournaments => {
-      set({ tournaments });
+    socket.on('tournament-list', payload => {
+      set({
+        serverClockOffsetMs: payload.serverNow - Date.now(),
+        tournaments: payload.tournaments.map(toClientTournament),
+      });
+    });
+
+    socket.on('late-registration-seating', data => {
+      if (
+        get().pendingTournamentId !== data.tournamentId
+        || get().pendingTournamentRequestId !== data.requestId
+      ) return;
+      set({ tournamentRegistrationStatus: 'late-pending' });
+    });
+
+    socket.on('tournament-seat-assigned', data => {
+      if (
+        get().currentRoomId !== null
+        || get().pendingTournamentId !== data.tournamentId
+      ) return;
+      clearJoinTimeout();
+      clearActionAckTimeout();
+      set({
+        currentRoomId: data.roomId,
+        pendingRoomId: null,
+        pendingAction: null,
+        pendingTournamentId: null,
+        pendingTournamentRequestId: null,
+        tournamentRegistrationStatus: 'seated',
+        gameState: data.state,
+        chatMessages: data.chat,
+        joinError: null,
+        joinErrorCode: null,
+        tableNotice: null,
+      });
     });
 
     // 서버 주도 테이블 이동 — 로비를 경유하지 않고 현재 방을 새 테이블로 교체한다.
@@ -318,6 +395,10 @@ export const useGameStore = create<GameStore>((set, get) => ({
       chatMessages: [],
       rooms: [],
       tournaments: [],
+      serverClockOffsetMs: 0,
+      pendingTournamentId: null,
+      pendingTournamentRequestId: null,
+      tournamentRegistrationStatus: null,
       joinError: null,
       joinErrorCode: null,
       tableNotice: null,
@@ -549,7 +630,12 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket } = get();
     if (!socket?.connected) return;
     socket.emit('get-tournaments', ack => {
-      if (ack.ok && ack.data) set({ tournaments: ack.data });
+      if (ack.ok && ack.data) {
+        set({
+          serverClockOffsetMs: ack.data.serverNow - Date.now(),
+          tournaments: ack.data.tournaments.map(toClientTournament),
+        });
+      }
     });
   },
 
@@ -582,10 +668,49 @@ export const useGameStore = create<GameStore>((set, get) => ({
   registerTournament: tournamentId => {
     const { socket } = get();
     if (!socket?.connected) return Promise.resolve(false);
+    const current = get();
+    const requestId = current.pendingTournamentId === tournamentId
+      && current.pendingTournamentRequestId
+      ? current.pendingTournamentRequestId
+      : crypto.randomUUID();
+    set({
+      pendingTournamentId: tournamentId,
+      pendingTournamentRequestId: requestId,
+      tournamentRegistrationStatus: null,
+      tournamentError: null,
+    });
     return new Promise(resolve => {
-      socket.emit('register-tournament', { tournamentId }, ack => {
-        set({ tournamentError: ack.ok ? null : ack.message });
-        resolve(ack.ok);
+      socket.emit('register-tournament', { tournamentId, requestId }, ack => {
+        if (!ack.ok) {
+          set({ tournamentError: ack.message });
+          resolve(false);
+          return;
+        }
+        const result = ack.data;
+        if (!result) {
+          set({ tournamentError: '토너먼트 등록 응답이 올바르지 않아요.' });
+          resolve(false);
+          return;
+        }
+        if (result.ok) {
+          set({
+            tournamentRegistrationStatus: result.status === 'seating'
+              ? 'late-pending'
+              : result.status,
+            tournamentError: null,
+          });
+          resolve(true);
+          return;
+        }
+        if (result.reason === 'request-terminal') {
+          set({
+            pendingTournamentId: null,
+            pendingTournamentRequestId: null,
+            tournamentRegistrationStatus: result.terminalStatus,
+          });
+        }
+        set({ tournamentError: result.reason });
+        resolve(false);
       });
     });
   },

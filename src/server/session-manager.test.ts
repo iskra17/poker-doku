@@ -198,4 +198,32 @@ describe('SessionManager', () => {
     expect(sm.stats()).toEqual({ sessions: 2, sockets: 1, grace: 1 });
     expect(sm.getByPlayerId(connected.playerId)).toBe(connected);
   });
+
+  it('keeps a late-pending engagement through disconnect and idle release', () => {
+    const sm = new SessionManager();
+    const session = sm.resolve(
+      'late-pending-token',
+      'sock-late',
+      'p_late_pending',
+    ).session;
+    session.tournamentEngagement = {
+      kind: 'late-pending',
+      tournamentId: 'mtt-late',
+      requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    };
+
+    sm.detachSocket('sock-late');
+
+    expect(sm.releaseIfIdle(session)).toBe(false);
+    expect(sm.getByPlayerId(session.playerId)).toBe(session);
+    expect(sm.resolve(
+      'replacement-token',
+      'sock-late-next',
+      session.playerId,
+    ).session.tournamentEngagement).toEqual({
+      kind: 'late-pending',
+      tournamentId: 'mtt-late',
+      requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
+  });
 });

@@ -4,8 +4,11 @@ import type {
   JoinRoomRequest,
   LeaveRoomRequest,
   PlayerActionRequest,
+  RegisterTournamentCommand,
+  TournamentResyncRequest,
 } from '../lib/realtime/protocol';
 import { cfg } from './game-config/live';
+import { isUuidRequestId } from './tournament-command-parser';
 
 export type ParseResult<T> =
   | { ok: true; value: T }
@@ -163,4 +166,29 @@ export function parseLeaveRoomRequest(input: unknown): ParseResult<LeaveRoomRequ
   if (input === undefined) return { ok: true, value: { mode: 'exit' } };
   if (!isRecord(input) || !LEAVE_ROOM_MODES.has(input.mode as LeaveRoomRequest['mode'])) return fail();
   return { ok: true, value: { mode: input.mode as LeaveRoomRequest['mode'] } };
+}
+
+export function parseRegisterTournamentCommand(
+  input: unknown,
+): ParseResult<RegisterTournamentCommand> {
+  if (
+    !isRecord(input)
+    || !hasOnlyKeys(input, ['tournamentId', 'requestId'])
+  ) return fail();
+  const tournamentId = cleanText(input.tournamentId, 128);
+  if (!tournamentId || !isUuidRequestId(input.requestId)) return fail();
+  return {
+    ok: true,
+    value: { tournamentId, requestId: input.requestId },
+  };
+}
+
+export function parseTournamentResyncRequest(
+  input: unknown,
+): ParseResult<TournamentResyncRequest | undefined> {
+  if (input === undefined) return { ok: true, value: undefined };
+  const parsed = parseRegisterTournamentCommand(input);
+  return parsed.ok
+    ? { ok: true, value: parsed.value }
+    : parsed;
 }

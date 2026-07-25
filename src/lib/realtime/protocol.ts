@@ -395,6 +395,11 @@ export interface TournamentSeatAssigned {
   chat: ChatMessage[];
 }
 
+export interface TournamentResyncRequest {
+  tournamentId: string;
+  requestId: string;
+}
+
 export interface LateRegistrationSeatingPayload {
   tournamentId: string;
   requestId: string;
@@ -446,7 +451,7 @@ export interface ServerToClientEvents {
   }) => void;
   'session-replaced': (data: { message: string }) => void;
   'room-list': (rooms: RoomListItem[]) => void;
-  'tournament-list': (tournaments: TournamentSummary[]) => void;
+  'tournament-list': (payload: TournamentListPayload) => void;
   'tournament-update': (tournament: PublicTournamentSummary) => void;
   'late-registration-seating': (data: LateRegistrationSeatingPayload) => void;
   'tournament-seat-assigned': (data: TournamentSeatAssigned) => void;
@@ -472,7 +477,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  resync: (ack?: AckCallback) => void;
+  resync: (dataOrAck?: unknown, ack?: AckCallback) => void;
   'get-rooms': (ack?: AckCallback) => void;
   /**
    * ack data.status 'waiting' = 만석(봇 포함) 방에 착석 대기로 입장 — room-joined는 즉시 오고,
@@ -493,7 +498,7 @@ export interface ClientToServerEvents {
   'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;
   'create-room': (data: unknown, ack?: AckCallback<{ roomId: string }>) => void;
   'sng-fill-bots': (ack?: AckCallback) => void;
-  'get-tournaments': (ack?: AckCallback<TournamentSummary[]>) => void;
+  'get-tournaments': (ack?: AckCallback<TournamentListPayload>) => void;
   'get-tournament': (data: unknown, ack?: AckCallback<TournamentDetailView>) => void;
   'create-tournament': (
     data: unknown,
