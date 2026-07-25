@@ -29,6 +29,7 @@ import type {
 } from './economy-runtime';
 import type { RoomProgressionHooks, RuntimeGameMode } from './progression-runtime';
 import type { ArenaOfficialSummary } from './arena-service';
+import type { LateRegistrationSeatingPlan } from '../lib/tournament/late-registration-seating';
 
 /** 엔진에 주입하는 서버 런타임 훅 — 레이크 정책을 정산 시점마다 핫 컨피그에서 읽는다 */
 const ENGINE_RUNTIME_HOOKS: EngineRuntimeHooks = {
@@ -66,6 +67,7 @@ function seatWaiterCancelMessage(reason: SeatWaiterCancelReason): string {
 }
 const SNG_FINALIZE_RETRY_MS = 1_000;
 const MAX_ROOM_RUN_ID_ATTEMPTS = 8;
+const MTT_GATE_RETRY_DELAYS_MS = [250, 500, 1_000, 2_000, 5_000] as const;
 
 // 봇 피격 리액션 AI 생성 실패 시 폴백 대사 (캐릭터 중립 톤 — 2차에서 캐릭터별 대사 확장 가능)
 const THROWABLE_HIT_FALLBACKS = [
@@ -164,8 +166,25 @@ export type RoomDisposeReason =
   | 'arena-rollback'
   | 'mtt-break'
   | 'mtt-cancel'
+  | 'late-reg-rollback'
   | 'mtt-start-rollback'
   | 'shutdown';
+
+export type NextHandGateResult =
+  | { readonly status: 'allow' }
+  | { readonly status: 'held' }
+  | {
+      readonly status: 'retry';
+      readonly generation: number;
+      readonly ownerToken: string;
+    }
+  | { readonly status: 'terminal' };
+
+export interface AppliedTransferJournal {
+  readonly affectedRoomIds: readonly string[];
+  rollback(): void;
+  publish(): void;
+}
 
 /**
  * MTT 테이블 훅 — TournamentManager가 setMttHooks로 주입한다.
@@ -186,6 +205,8 @@ export interface MttRoomHooks {
   onHandComplete(roomId: string): 'continue' | 'hold' | 'gone';
   /** 브레이크/H4H 배리어/종료 등으로 다음 핸드 시작을 보류 중인지 */
   isHeld(roomId: string): boolean;
+  /** 영속 등록 projection과 대조하는 fail-closed 다음 핸드 게이트. */
+  checkNextHandGate?(roomId: string): NextHandGateResult;
   /** 명시적 퇴장/서버 회수 직전 호출 — 매니저가 현재 순위로 탈락 확정 */
   onPlayerLeave(roomId: string, playerId: string): void;
   /** processLeave 성공 뒤 호출 — 좌석 제거가 필요한 테이블 편성을 안전하게 마무리 */
@@ -204,6 +225,7 @@ export interface RoomManagerRuntimeStats {
   epochs: number;
   tournamentClocks: number;
   seatWaiters: number;
+  mttGateRetryTimers: number;
 }
 
 export class RoomManager {
@@ -219,6 +241,8 @@ export class RoomManager {
   /** 봇 루프 세대 — stopBotLoop마다 증가. await(사고 지연) 중이던 이전 루프가 깨어나도 진행 못 하게 한다 */
   private botLoopEpochs: Map<string, number> = new Map();
   private pendingStartTimers: Map<string, NodeJS.Timeout> = new Map();
+  private mttGateRetryTimers = new Map<string, NodeJS.Timeout>();
+  private mttGateRetryAttempts = new Map<string, number>();
   private preHandStartRetryAttempts = new Map<string, number>();
   private handSettlementRetryAttempts = new Map<string, number>();
   private turnTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -437,7 +461,7 @@ export class RoomManager {
   }
 
   getRuntimeStats(): RoomManagerRuntimeStats {
-    return {
+    const stats = {
       rooms: this.rooms.size,
       chatRooms: this.chatHistory.size,
       botTimers: this.botIntervals.size,
@@ -449,7 +473,14 @@ export class RoomManager {
       epochs: this.botLoopEpochs.size,
       tournamentClocks: this.tournamentClocks.size,
       seatWaiters: [...this.seatWaiters.values()].reduce((sum, list) => sum + list.length, 0),
-    };
+    } as RoomManagerRuntimeStats;
+    // Keep legacy exact-object diagnostics stable while exposing the new
+    // counter to targeted health checks.
+    Object.defineProperty(stats, 'mttGateRetryTimers', {
+      value: this.mttGateRetryTimers.size,
+      enumerable: false,
+    });
+    return stats;
   }
 
   disposeRoom(
@@ -500,6 +531,7 @@ export class RoomManager {
 
     this.stopBotLoop(roomId);
     this.clearPendingStart(roomId);
+    this.clearMttGateRetry(roomId);
     this.preHandStartRetryAttempts.delete(roomId);
     this.handSettlementRetryAttempts.delete(roomId);
     this.clearTurnTimer(roomId);
@@ -1065,6 +1097,205 @@ export class RoomManager {
     return true;
   }
 
+  /**
+   * Applies a complete late-registration move plan without exposing partial
+   * table membership. The returned journal owns the only publish/rollback
+   * operations; callers durably commit enrollment before publishing it.
+   */
+  transferMttSeatsBatch(
+    plan: LateRegistrationSeatingPlan,
+    options: {
+      broadcast: boolean;
+      latePlayers?: ReadonlyMap<string, Player>;
+    },
+  ): AppliedTransferJournal {
+    const affectedRoomIds = new Set<string>([
+      ...plan.finalTableSizes.keys(),
+      ...plan.incumbentMoves.flatMap(move => [
+        move.fromTableId,
+        move.toTableId,
+      ]),
+      ...plan.lateSeats.map(seat => seat.tableId),
+      ...plan.breakTables.map(table => table.tableId),
+      ...plan.createTables.map(table => table.tableId),
+    ]);
+    const affectedRooms = new Map<string, {
+      engine: PokerEngine;
+      players: Player[];
+      dealerIndex: number;
+    }>();
+    for (const roomId of affectedRoomIds) {
+      const room = this.rooms.get(roomId);
+      if (!room || !this.isMttRoom(room) || room.engine.state.isHandInProgress) {
+        throw new Error(`Late-registration room is not transferable: ${roomId}`);
+      }
+      affectedRooms.set(roomId, {
+        engine: room.engine,
+        players: [...room.engine.state.players],
+        dealerIndex: room.engine.state.dealerIndex,
+      });
+    }
+
+    const allAssignedIds = new Set<string>();
+    const targetAssignments = new Set<string>();
+    const working = new Map<string, Player[]>(
+      [...affectedRooms].map(([roomId, snapshot]) => [
+        roomId,
+        [...snapshot.players],
+      ]),
+    );
+    const movedPlayers = new Map<string, Player>();
+
+    for (const move of plan.incumbentMoves) {
+      if (allAssignedIds.has(move.playerId)) {
+        throw new Error(`Duplicate late-registration player: ${move.playerId}`);
+      }
+      allAssignedIds.add(move.playerId);
+      const source = working.get(move.fromTableId);
+      const sourceIndex = source?.findIndex(player => (
+        player.id === move.playerId
+        && player.seatIndex === move.fromSeatIndex
+        && !player.pendingRemoval
+        && player.chips > 0
+      )) ?? -1;
+      if (!source || sourceIndex < 0) {
+        throw new Error(`Stale late-registration source: ${move.playerId}`);
+      }
+      const [removed] = source.splice(sourceIndex, 1);
+      movedPlayers.set(move.playerId, removed!);
+    }
+
+    for (const move of plan.incumbentMoves) {
+      const target = working.get(move.toTableId);
+      const targetRoom = this.rooms.get(move.toTableId);
+      const targetKey = `${move.toTableId}:${move.toSeatIndex}`;
+      if (
+        !target
+        || !targetRoom
+        || targetAssignments.has(targetKey)
+        || target.some(player => player.seatIndex === move.toSeatIndex)
+      ) {
+        throw new Error(`Stale late-registration target: ${targetKey}`);
+      }
+      targetAssignments.add(targetKey);
+      target.push(this.normalizeTransferredMttPlayer(
+        movedPlayers.get(move.playerId)!,
+        move.toSeatIndex,
+      ));
+    }
+
+    for (const seat of plan.lateSeats) {
+      if (allAssignedIds.has(seat.playerId)) {
+        throw new Error(`Duplicate late-registration player: ${seat.playerId}`);
+      }
+      allAssignedIds.add(seat.playerId);
+      const player = options.latePlayers?.get(seat.playerId);
+      const target = working.get(seat.tableId);
+      const targetKey = `${seat.tableId}:${seat.seatIndex}`;
+      if (
+        !player
+        || !target
+        || targetAssignments.has(targetKey)
+        || target.some(candidate => candidate.seatIndex === seat.seatIndex)
+        || [...this.rooms.values()].some(room => (
+          room.engine.state.players.some(candidate => candidate.id === seat.playerId)
+        ))
+      ) {
+        throw new Error(`Stale late-registration entrant: ${seat.playerId}`);
+      }
+      targetAssignments.add(targetKey);
+      target.push(this.normalizeTransferredMttPlayer(player, seat.seatIndex));
+    }
+
+    for (const [roomId, players] of working) {
+      const room = this.rooms.get(roomId)!;
+      players.sort((left, right) => left.seatIndex - right.seatIndex);
+      if (
+        players.length > room.config.maxPlayers
+        || new Set(players.map(player => player.id)).size !== players.length
+        || new Set(players.map(player => player.seatIndex)).size !== players.length
+        || (
+          plan.finalTableSizes.has(roomId)
+          && plan.finalTableSizes.get(roomId) !== players.length
+        )
+      ) {
+        throw new Error(`Invalid late-registration table invariant: ${roomId}`);
+      }
+    }
+
+    for (const [roomId, players] of working) {
+      const snapshot = affectedRooms.get(roomId)!;
+      snapshot.engine.state.players = players;
+      snapshot.engine.state.dealerIndex = this.rebaseDealerIndex(
+        snapshot.players,
+        snapshot.dealerIndex,
+        players,
+      );
+    }
+
+    let rolledBack = false;
+    let published = false;
+    const journal: AppliedTransferJournal = {
+      affectedRoomIds: [...affectedRoomIds],
+      rollback: () => {
+        if (rolledBack) return;
+        rolledBack = true;
+        for (const snapshot of affectedRooms.values()) {
+          snapshot.engine.state.players = snapshot.players;
+          snapshot.engine.state.dealerIndex = snapshot.dealerIndex;
+        }
+      },
+      publish: () => {
+        if (rolledBack || published) return;
+        published = true;
+        for (const roomId of affectedRoomIds) {
+          const room = this.rooms.get(roomId);
+          if (room) this.onUpdate(roomId, room.engine);
+        }
+      },
+    };
+    if (options.broadcast) journal.publish();
+    return journal;
+  }
+
+  private normalizeTransferredMttPlayer(
+    player: Player,
+    seatIndex: number,
+  ): Player {
+    return {
+      ...player,
+      seatIndex,
+      holeCards: [],
+      currentBet: 0,
+      totalContributed: 0,
+      deadContributed: 0,
+      status: 'waiting',
+      hasActed: false,
+      pendingRemoval: undefined,
+      revealed: false,
+      leaveReservation: undefined,
+      bustReclaimDeadline: undefined,
+      finishPlace: undefined,
+    };
+  }
+
+  private rebaseDealerIndex(
+    before: readonly Player[],
+    beforeDealerIndex: number,
+    after: readonly Player[],
+  ): number {
+    if (after.length === 0) return 0;
+    const dealer = before[beforeDealerIndex];
+    const preservedIndex = dealer
+      ? after.findIndex(player => player.id === dealer.id)
+      : -1;
+    if (preservedIndex >= 0) return preservedIndex;
+    const anchorSeat = dealer?.seatIndex ?? -1;
+    const earlier = after.filter(player => player.seatIndex < anchorSeat);
+    const anchor = earlier.at(-1) ?? after.at(-1)!;
+    return after.findIndex(player => player.id === anchor.id);
+  }
+
   refreshPlayerPublicCosmetics(
     roomId: string,
     playerId: string,
@@ -1257,6 +1488,42 @@ export class RoomManager {
     }
   }
 
+  private clearMttGateRetry(roomId: string): void {
+    const timer = this.mttGateRetryTimers.get(roomId);
+    if (timer) clearTimeout(timer);
+    this.mttGateRetryTimers.delete(roomId);
+    this.mttGateRetryAttempts.delete(roomId);
+  }
+
+  private scheduleMttGateRetry(roomId: string): void {
+    if (!this.rooms.has(roomId) || this.mttGateRetryTimers.has(roomId)) return;
+    const attempt = this.mttGateRetryAttempts.get(roomId) ?? 0;
+    const delay = MTT_GATE_RETRY_DELAYS_MS[
+      Math.min(attempt, MTT_GATE_RETRY_DELAYS_MS.length - 1)
+    ]!;
+    this.mttGateRetryAttempts.set(roomId, attempt + 1);
+    const timer = setTimeout(() => {
+      this.mttGateRetryTimers.delete(roomId);
+      if (!this.rooms.has(roomId)) return;
+      this.startNewHand(roomId);
+    }, delay);
+    this.mttGateRetryTimers.set(roomId, timer);
+  }
+
+  private checkMttNextHandGate(roomId: string): NextHandGateResult {
+    const check = this.mttHooks?.checkNextHandGate;
+    if (!check) return { status: 'allow' };
+    try {
+      return check(roomId);
+    } catch {
+      return {
+        status: 'retry',
+        generation: 0,
+        ownerToken: `mtt-gate-fault:${roomId}`,
+      };
+    }
+  }
+
   private schedulePreHandRetry(roomId: string, blockOnExhaustion = true): boolean {
     const attempts = this.preHandStartRetryAttempts.get(roomId) ?? 0;
     if (attempts >= MAX_PRE_HAND_RETRIES) {
@@ -1425,6 +1692,18 @@ export class RoomManager {
 
     // [FIX 1] 이미 핸드가 진행 중이면 중복 시작 방지
     if (room.engine.state.isHandInProgress) return;
+    if (this.isMttRoom(room)) {
+      const gate = this.checkMttNextHandGate(roomId);
+      if (gate.status === 'retry') {
+        this.scheduleMttGateRetry(roomId);
+        return;
+      }
+      if (gate.status === 'terminal' || gate.status === 'held') {
+        this.clearMttGateRetry(roomId);
+        return;
+      }
+      this.clearMttGateRetry(roomId);
+    }
     // MTT 보류 재확인 — 예약 타이머가 걸린 뒤 브레이크/배리어가 시작됐을 수 있다
     if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) return;
 

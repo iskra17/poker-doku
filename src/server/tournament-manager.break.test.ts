@@ -163,6 +163,72 @@ describe('MTT break resume', () => {
     expect(resume).toHaveBeenCalledWith(roomId);
   });
 
+  it('releases an operation hold only for its exact owner token', () => {
+    const created = tm.createTournament({
+      name: 'owner hold',
+      speed: 'standard',
+      maxEntrants: 8,
+      tableSize: 8,
+      startAt: null,
+      botFill: false,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let i = 1; i <= 8; i++) {
+      tm.register(created.tournamentId, {
+        id: `h${i}`,
+        name: `u${i}`,
+        avatar: 'ara',
+      });
+    }
+    expect(tm.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const roomId = rm.getAdminRoomSummaries().find(room => room.mode === 'mtt')!.id;
+
+    expect(tm.acquireMttOperationHold(
+      created.tournamentId,
+      'late-reg-balance',
+      'old-owner',
+      [roomId],
+    )).toBe(true);
+    expect(tm.acquireMttOperationHold(
+      created.tournamentId,
+      'late-reg-balance',
+      'new-owner',
+      [roomId],
+    )).toBe(true);
+    expect(tm.releaseMttOperationHold(
+      created.tournamentId,
+      'late-reg-balance',
+      'old-owner',
+      [roomId],
+    )).toBe(true);
+    expect(tm.hasMttOperationHold(
+      created.tournamentId,
+      roomId,
+      'late-reg-balance',
+      'old-owner',
+    )).toBe(false);
+    expect(tm.hasMttOperationHold(
+      created.tournamentId,
+      roomId,
+      'late-reg-balance',
+      'new-owner',
+    )).toBe(true);
+
+    expect(tm.releaseMttOperationHold(
+      created.tournamentId,
+      'late-reg-balance',
+      'new-owner',
+      [roomId],
+    )).toBe(true);
+    expect(tm.hasMttOperationHold(
+      created.tournamentId,
+      roomId,
+      'late-reg-balance',
+    )).toBe(false);
+  });
+
   it('resumes after break 2 even after a final-table merge', () => {
     // 2026-07-23 라이브 교착 재현 형태: 2테이블 → 파이널 통합 →
     // 헤즈업 진행 중 두 번째 브레이크 도달

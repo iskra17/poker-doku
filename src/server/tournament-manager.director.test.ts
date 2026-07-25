@@ -129,6 +129,34 @@ describe('TournamentManager 디렉터 콘솔', () => {
     expect(h.manager.directorAction('없는-토너', 'h1', { kind: 'pause' })).toBe('not-found');
   });
 
+  it('마감 중 전 테이블을 잡고 freeze 전에 cancel이 즉시 선점한다', () => {
+    const { id, tables } = start12(h);
+    vi.advanceTimersByTime(2_000);
+    const handNumbers = new Map(tables.map(roomId => [
+      roomId,
+      engineOf(h.roomManager, roomId).state.handNumber,
+    ]));
+
+    expect(h.manager.adoptLateRegistrationClosing(id, {
+      generation: 4,
+      ownerToken: 'close-owner',
+    })).toBe(true);
+    for (const roomId of tables) {
+      expect(h.manager.roomHooks.isHeld(roomId)).toBe(true);
+      const engine = engineOf(h.roomManager, roomId);
+      engine.state.isHandInProgress = false;
+      expect(h.manager.roomHooks.onHandComplete(roomId)).toBe('hold');
+    }
+    vi.advanceTimersByTime(30_000);
+    for (const roomId of tables) {
+      expect(engineOf(h.roomManager, roomId).state.handNumber)
+        .toBe(handNumbers.get(roomId));
+    }
+
+    expect(h.manager.directorAction(id, 'h1', { kind: 'cancel' })).toBe('ok');
+    expect(mttTableIds(h.roomManager)).toEqual([]);
+  });
+
   it('일시정지는 시계를 동결하고 전 테이블 다음 핸드를 보류한다', () => {
     const { id, tables } = start12(h);
     expect(h.manager.directorAction(id, 'h1', { kind: 'pause' })).toBe('ok');

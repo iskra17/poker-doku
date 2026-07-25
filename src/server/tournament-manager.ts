@@ -30,7 +30,11 @@ import type {
 import type {
   TournamentConfigSnapshotV2,
 } from '../lib/tournament/tournament-config';
-import type { MttRoomHooks, RoomManager } from './room-manager';
+import type {
+  MttRoomHooks,
+  NextHandGateResult,
+  RoomManager,
+} from './room-manager';
 import { eventLog } from './event-log';
 
 export type {
@@ -148,9 +152,29 @@ export interface TournamentRuntimeHooks {
 export interface TournamentManagerOptions {
   /** 등록자가 한 명도 없는 registering 토너먼트의 자동 취소 시간 */
   emptyTournamentTtlMs?: number;
+  /**
+   * Persistent registration projection gate. Production injects a synchronous
+   * SQLite-backed reader; absence preserves legacy in-memory tournaments.
+   */
+  checkNextHandGate?(input: {
+    tournamentId: string;
+    roomId: string;
+  }): NextHandGateResult;
 }
 
-type InternalHoldReason = TournamentHoldReason | 'mtt-setup' | 'complete';
+export type MttOperationHoldReason =
+  | 'late-reg-seating'
+  | 'late-reg-balance'
+  | 'late-reg-closing'
+  | 'mtt-state-reconcile'
+  | 'tournament-cancel';
+
+type InternalHoldReason =
+  | TournamentHoldReason
+  | MttOperationHoldReason
+  | 'mtt-setup'
+  | 'complete';
+type OwnerScopedHolds = Map<InternalHoldReason, Set<string>>;
 
 export interface PersistentTournamentStartSnapshot {
   readonly id: string;
@@ -281,7 +305,7 @@ interface TournamentRuntime {
   finalTheme: FinalTableTheme;
   milestoneSeq: number;
   milestone?: TournamentMilestone;
-  holds: Map<string, Set<InternalHoldReason>>;
+  holds: Map<string, OwnerScopedHolds>;
   presentationBatchDepth: number;
   presentationDirtyRooms: Set<string>;
   h4h: {
@@ -310,6 +334,10 @@ const MIN_MTT_STARTERS = 8;
 const DEFAULT_EMPTY_TOURNAMENT_TTL_MS = 5 * 60_000;
 const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 const COMPLETED_RETENTION_MS = 10 * 60_000;
+
+function initialHold(reason: InternalHoldReason): OwnerScopedHolds {
+  return new Map([[reason, new Set([`system:${reason}`])]]);
+}
 
 function normalizeEmptyTournamentTtlMs(value: unknown): number {
   const configured = typeof value === 'string' ? Number(value) : value;
@@ -353,6 +381,14 @@ export class TournamentManager {
       onHandStarted: (roomId, handNumber) => this.onHandStarted(roomId, handNumber),
       onHandComplete: roomId => this.onHandComplete(roomId),
       isHeld: roomId => this.isHeld(roomId),
+      checkNextHandGate: roomId => {
+        const t = this.byTable(roomId);
+        if (!t) return { status: 'terminal' };
+        return options.checkNextHandGate?.({
+          tournamentId: t.id,
+          roomId,
+        }) ?? { status: 'allow' };
+      },
       onPlayerLeave: (roomId, playerId) => this.onPlayerLeave(roomId, playerId),
       onPlayerLeft: roomId => this.onPlayerLeft(roomId),
     };
@@ -1101,7 +1137,7 @@ export class TournamentManager {
                 ? players.filter(p => this.isAlive(engine, p)).length
                 : 0,
               handInProgress: engine?.state.isHandInProgress ?? false,
-              held: [...(t.holds.get(roomId) ?? [])].sort().join(',') || null,
+              held: this.holdReasons(t, roomId).sort().join(',') || null,
             };
           }),
           standings: this.standings(t),
@@ -1264,7 +1300,7 @@ export class TournamentManager {
     });
     this.roomManager.markPreparedMttRoom(roomId);
     this.addTournamentTable(t, roomId, { no: tableNo });
-    t.holds.set(roomId, new Set(['mtt-setup']));
+    t.holds.set(roomId, initialHold('mtt-setup'));
     return roomId;
   }
 
@@ -1404,7 +1440,7 @@ export class TournamentManager {
       // joinRoom의 tryStartGame이 만석 테이블을 조기 시작하지 못하게, 착석 전에 보류를 건다
       this.byRoom.set(roomId, t.id);
       this.addTournamentTable(t, roomId, { no: i + 1 });
-      t.holds.set(roomId, new Set(['mtt-setup']));
+      t.holds.set(roomId, initialHold('mtt-setup'));
       roomIds.push(roomId);
     }
 
@@ -1730,6 +1766,15 @@ export class TournamentManager {
         t,
         busted.map(p => this.pendingBust(roomId, engine, p)),
       );
+    }
+    if (
+      this.hasHoldReason(t, roomId, 'late-reg-seating')
+      || this.hasHoldReason(t, roomId, 'late-reg-balance')
+      || this.hasHoldReason(t, roomId, 'late-reg-closing')
+      || this.hasHoldReason(t, roomId, 'mtt-state-reconcile')
+      || this.hasHoldReason(t, roomId, 'tournament-cancel')
+    ) {
+      return 'hold';
     }
 
     if (this.checkCompletion(t)) return 'hold';
@@ -2501,14 +2546,218 @@ export class TournamentManager {
 
   // --- 브레이크/시계 ---
 
+  acquireMttOperationHold(
+    tournamentId: string,
+    reason: MttOperationHoldReason,
+    ownerToken: string,
+    roomIds?: readonly string[],
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    if (!t || !ownerToken) return false;
+    const targets = roomIds ?? [...t.tables.keys()];
+    if (targets.some(roomId => !t.tables.has(roomId))) return false;
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of targets) {
+        this.addHold(t, roomId, reason, ownerToken);
+      }
+    });
+    return true;
+  }
+
+  releaseMttOperationHold(
+    tournamentId: string,
+    reason: MttOperationHoldReason,
+    ownerToken: string,
+    roomIds?: readonly string[],
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    if (!t || !ownerToken) return false;
+    const targets = roomIds ?? [...t.tables.keys()];
+    if (targets.some(roomId => !t.tables.has(roomId))) return false;
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of targets) {
+        this.removeHold(t, roomId, reason, ownerToken);
+      }
+    });
+    for (const roomId of targets) this.resumeIfUnheld(t, roomId);
+    return true;
+  }
+
+  hasMttOperationHold(
+    tournamentId: string,
+    roomId: string,
+    reason: MttOperationHoldReason,
+    ownerToken?: string,
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    if (!t?.tables.has(roomId)) return false;
+    const owners = t.holds.get(roomId)?.get(reason);
+    return ownerToken === undefined
+      ? (owners?.size ?? 0) > 0
+      : owners?.has(ownerToken) ?? false;
+  }
+
+  /**
+   * Creates a late-registration table from the live tournament projection.
+   * No room update is emitted here: the seating journal publishes only after
+   * the enrollment transaction commits.
+   */
+  createLateRegistrationTable(tournamentId: string): string | null {
+    const t = this.tournaments.get(tournamentId);
+    if (!t || t.phase !== 'running' || t.tables.size === 0) return null;
+    const pos = this.clockPos(t);
+    const current = mttLevelAt(t.structure, pos.levelIndex);
+    const next = t.structure.levels[pos.levelIndex + 1] ?? null;
+    const levelEndsAt = Number.isFinite(pos.segmentRemainingMs)
+      ? (t.pausedAt ?? Date.now()) + pos.segmentRemainingMs
+      : 0;
+    const tableNo = Math.max(0, ...[...t.tables.values()].map(table => table.no)) + 1;
+    const roomId = this.roomManager.createRoom({
+      name: `${t.config.name} · 테이블 ${tableNo}`,
+      smallBlind: current.smallBlind,
+      bigBlind: current.bigBlind,
+      minBuyIn: t.structure.startingStack,
+      maxBuyIn: t.structure.startingStack,
+      maxPlayers: t.config.tableSize,
+      economyMode: 'practice',
+      turnTime: t.config.turnTime,
+      gameMode: 'mtt',
+      startingStack: t.structure.startingStack,
+      ante: current.ante,
+      tournamentId: t.id,
+      hostId: t.config.hostId,
+      difficulty: 'normal',
+      botCount: 0,
+      tableType: 'mixed',
+    });
+    try {
+      const room = this.roomManager.getRoom(roomId);
+      if (!room) throw new Error('late table disappeared');
+      this.byRoom.set(roomId, t.id);
+      this.addTournamentTable(t, roomId, { no: tableNo });
+
+      const inherited: OwnerScopedHolds = new Map();
+      for (const tableHolds of t.holds.values()) {
+        for (const [reason, owners] of tableHolds) {
+          const inheritedOwners = inherited.get(reason) ?? new Set<string>();
+          for (const owner of owners) inheritedOwners.add(owner);
+          inherited.set(reason, inheritedOwners);
+        }
+      }
+      if (inherited.size > 0) t.holds.set(roomId, inherited);
+
+      room.engine.setTournamentLevel(
+        pos.levelIndex + 1,
+        current.smallBlind,
+        current.bigBlind,
+        next?.smallBlind ?? null,
+        next?.bigBlind ?? null,
+        levelEndsAt,
+        current.ante ?? 0,
+      );
+      room.engine.setTournamentField(
+        t.seatedCount,
+        t.prizes,
+        false,
+        t.results,
+      );
+      const state = room.engine.state.tournament!;
+      state.fieldRemaining = t.remaining;
+      state.stage = t.stage;
+      state.holdReasons = this.publicHoldReasons(t, roomId);
+      state.stageEndsAt = t.stageEndsAt
+        ?? (state.holdReasons.includes('scheduled-break') ? levelEndsAt : undefined);
+      state.finalTheme = t.finalTheme;
+      state.milestone = t.milestone;
+      const sourceGeneration = Math.max(
+        0,
+        ...[...t.appliedLevelGenerationByRoom.values()],
+      );
+      t.appliedLevelGenerationByRoom.set(roomId, sourceGeneration);
+      return roomId;
+    } catch {
+      this.byRoom.delete(roomId);
+      this.removeTournamentTable(t, roomId);
+      t.holds.delete(roomId);
+      this.roomManager.disposeRoom(roomId, 'late-reg-rollback', false);
+      return null;
+    }
+  }
+
+  disposeLateRegistrationTable(
+    tournamentId: string,
+    roomId: string,
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    const room = this.roomManager.getRoom(roomId);
+    if (
+      !t
+      || !t.tables.has(roomId)
+      || !room
+      || room.engine.state.players.length > 0
+      || room.engine.state.isHandInProgress
+    ) {
+      return false;
+    }
+    this.byRoom.delete(roomId);
+    this.removeTournamentTable(t, roomId);
+    t.holds.delete(roomId);
+    return this.roomManager.disposeRoom(roomId, 'late-reg-rollback', false);
+  }
+
+  /**
+   * Adopts a durable close owner without a start gap: the new closing fence is
+   * installed on every table before obsolete seating/balance owners are
+   * revoked.
+   */
+  adoptLateRegistrationClosing(
+    tournamentId: string,
+    identity: { generation: number; ownerToken: string },
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    if (
+      !t
+      || !Number.isSafeInteger(identity.generation)
+      || identity.generation < 1
+      || !identity.ownerToken
+    ) {
+      return false;
+    }
+    const roomIds = [...t.tables.keys()];
+    this.batchTournamentPresentation(t, () => {
+      for (const roomId of roomIds) {
+        this.addHold(
+          t,
+          roomId,
+          'late-reg-closing',
+          identity.ownerToken,
+        );
+      }
+      for (const roomId of roomIds) {
+        const holds = t.holds.get(roomId);
+        for (const reason of ['late-reg-seating', 'late-reg-balance'] as const) {
+          for (const owner of [...(holds?.get(reason) ?? [])]) {
+            if (owner !== identity.ownerToken) {
+              this.removeHold(t, roomId, reason, owner);
+            }
+          }
+        }
+      }
+    });
+    return true;
+  }
+
   private addHold(
     t: TournamentRuntime,
     roomId: string,
     reason: InternalHoldReason,
+    ownerToken = `system:${reason}`,
   ): void {
-    const reasons = t.holds.get(roomId) ?? new Set<InternalHoldReason>();
-    if (reasons.has(reason)) return;
-    reasons.add(reason);
+    const reasons = t.holds.get(roomId) ?? new Map();
+    const owners = reasons.get(reason) ?? new Set<string>();
+    if (owners.has(ownerToken)) return;
+    owners.add(ownerToken);
+    reasons.set(reason, owners);
     t.holds.set(roomId, reasons);
     this.syncTournamentPresentation(t, [roomId]);
   }
@@ -2517,16 +2766,36 @@ export class TournamentManager {
     t: TournamentRuntime,
     roomId: string,
     reason: InternalHoldReason,
+    ownerToken = `system:${reason}`,
   ): void {
     const reasons = t.holds.get(roomId);
-    if (!reasons?.has(reason)) return;
-    reasons.delete(reason);
+    if (!reasons) return;
+    const owners = reasons?.get(reason);
+    if (!owners?.delete(ownerToken)) return;
+    if (owners.size === 0) reasons!.delete(reason);
     if (reasons.size === 0) t.holds.delete(roomId);
     this.syncTournamentPresentation(t, [roomId]);
   }
 
   private hasHolds(t: TournamentRuntime, roomId: string): boolean {
-    return (t.holds.get(roomId)?.size ?? 0) > 0;
+    return this.holdReasons(t, roomId).length > 0;
+  }
+
+  private hasHoldReason(
+    t: TournamentRuntime,
+    roomId: string,
+    reason: InternalHoldReason,
+  ): boolean {
+    return (t.holds.get(roomId)?.get(reason)?.size ?? 0) > 0;
+  }
+
+  private holdReasons(
+    t: TournamentRuntime,
+    roomId: string,
+  ): InternalHoldReason[] {
+    return [...(t.holds.get(roomId)?.entries() ?? [])]
+      .filter(([, owners]) => owners.size > 0)
+      .map(([reason]) => reason);
   }
 
   private resumeIfUnheld(t: TournamentRuntime, roomId: string): void {
@@ -2541,11 +2810,19 @@ export class TournamentManager {
   ): TournamentHoldReason[] {
     const reasons = new Set<TournamentHoldReason>();
     const roomReasons = roomId === undefined
-      ? t.holds.values()
-      : [t.holds.get(roomId) ?? new Set<InternalHoldReason>()];
+      ? [...t.holds.keys()].map(id => this.holdReasons(t, id))
+      : [this.holdReasons(t, roomId)];
     for (const entries of roomReasons) {
       for (const reason of entries) {
-        if (reason !== 'mtt-setup' && reason !== 'complete') reasons.add(reason);
+        if (
+          reason === 'director-pause'
+          || reason === 'scheduled-break'
+          || reason === 'h4h-barrier'
+          || reason === 'final-forming'
+          || reason === 'final-intro'
+        ) {
+          reasons.add(reason);
+        }
       }
     }
     return [...reasons].sort();
@@ -2641,7 +2918,7 @@ export class TournamentManager {
       t.breakTimer = null;
       t.breakAnnounced = false;
       const releasedRoomIds = [...t.holds.keys()].filter(
-        roomId => t.holds.get(roomId)?.has('scheduled-break'),
+        roomId => this.hasHoldReason(t, roomId, 'scheduled-break'),
       );
       this.batchTournamentPresentation(t, () => {
         for (const roomId of releasedRoomIds) {
