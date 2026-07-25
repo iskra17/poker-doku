@@ -419,6 +419,51 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
   });
 
+  it('rejects a stale resync request id after restart without adopting the durable attempt', async () => {
+    const tournamentId = 'mtt-late-restart-stale';
+    const requestId = '12121212-1212-4212-8212-121212121212';
+    const staleRequestId = '34343434-3434-4434-8434-343434343434';
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+        readTournamentEngagement: vi.fn(() => ({
+          tournamentId,
+          profileId: '',
+          requestId,
+          status: 'late-pending',
+        })),
+        listPublicTournaments: vi.fn(() => [{
+          id: tournamentId,
+          economyMode: 'freeroll',
+          myRegistrationStatus: 'late-pending',
+        }]),
+      } as never,
+    });
+    const client = await harness.connect('late-seat-restart-stale');
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    expect(session.tournamentEngagement).toBeNull();
+    const seating: unknown[] = [];
+    client.socket.on('late-registration-seating', payload => seating.push(payload));
+
+    await expect(withAck(done => client.socket.emit('resync', {
+      tournamentId,
+      requestId: staleRequestId,
+    }, done))).resolves.toMatchObject({
+      ok: false,
+      code: 'action-rejected',
+    });
+
+    expect(seating).toEqual([]);
+    expect(session.tournamentEngagement).toBeNull();
+  });
+
   it.each([
     ['deleted registration', () => null, () => []],
     ['projection failure', () => ({

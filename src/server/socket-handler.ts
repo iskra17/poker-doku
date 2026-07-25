@@ -1487,6 +1487,18 @@ export function setupSocketHandlers(
             durableEngagement = null;
             tournament = undefined;
           }
+          if (
+            !storedEngagement
+            && durableEngagement
+            && requested.requestId !== durableEngagement.requestId
+          ) {
+            ack?.({
+              ok: false,
+              code: 'action-rejected',
+              message: '현재 토너먼트 등록 요청과 일치하지 않아요.',
+            });
+            return;
+          }
           const durableMatchesStored = !storedEngagement || (
             durableEngagement?.tournamentId === storedEngagement.tournamentId
             && durableEngagement.requestId === storedEngagement.requestId
