@@ -7,6 +7,32 @@ import {
   parseTournamentOperatorIds,
 } from './tournament-command-service';
 import { eventLog } from './event-log';
+import { randomUUID } from 'node:crypto';
+import { openPokerDatabase } from './persistence/database';
+import { PromotionFundRepository } from './promotion-fund-repository';
+import { TournamentInstanceRepository } from './tournament-instance-repository';
+import { TournamentScheduler } from './tournament-scheduler';
+
+const ADMIN_NOW = Date.parse('2026-07-25T12:00:00+09:00');
+
+function persistentFreeroll(overrides: Record<string, unknown> = {}) {
+  return {
+    requestId: randomUUID(),
+    name: 'Persistent freeroll',
+    economyMode: 'freeroll',
+    minEntrants: 8,
+    maxEntrants: 24,
+    botFillToMinimum: true,
+    prizePool: { kind: 'promotion-funded', totalPrize: 100_000 },
+    schedule: {
+      visibleAt: ADMIN_NOW + 60_000,
+      registrationOpensAt: ADMIN_NOW + 120_000,
+      startsAt: ADMIN_NOW + 600_000,
+      manualStartExpiresAt: null,
+    },
+    ...overrides,
+  };
+}
 
 const DRAFT: CreateTournamentRequest = {
   name: '운영 토너먼트',
@@ -323,5 +349,77 @@ describe('TournamentCommandService', () => {
       source,
     );
     expect(persistent.handoffRefund).not.toHaveBeenCalled();
+  });
+
+  it('parses persistent v2 commands before mutation and audit logging', () => {
+    const database = openPokerDatabase(':memory:');
+    const instances = new TournamentInstanceRepository(
+      database,
+      () => ADMIN_NOW,
+    );
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => ADMIN_NOW,
+    });
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      undefined,
+      { database, instances, scheduler, now: () => ADMIN_NOW },
+    );
+    new PromotionFundRepository(database).adjustFund({
+      requestId: randomUUID(),
+      delta: 500_000,
+      reason: 'Persistent command test funding',
+      actor: { kind: 'backoffice-admin', id: 'test' },
+      at: ADMIN_NOW,
+    });
+    const auditBefore = eventLog.recent({ type: 'mtt-instance-generate' });
+
+    expect(durableService.createPersistentInstance(
+      { kind: 'operator-profile', profileId: 'guest' },
+      { malformed: true },
+      ADMIN_NOW,
+    )).toEqual({ ok: false, code: 'forbidden' });
+    expect(durableService.createPersistentInstance(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      { malformed: true },
+      ADMIN_NOW,
+    )).toEqual({ ok: false, code: 'invalid-payload' });
+    expect(instances.listAdminProjections(ADMIN_NOW)).toEqual([]);
+    expect(eventLog.recent({ type: 'mtt-instance-generate' }))
+      .toEqual(auditBefore);
+
+    const command = persistentFreeroll();
+    const result = durableService.createPersistentInstance(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      command,
+      ADMIN_NOW,
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      instance: {
+        id: command.requestId,
+        config: { version: 2 },
+        createdBy: {
+          kind: 'operator-profile',
+          profileId: 'operator-1',
+        },
+      },
+    });
+    expect(eventLog.recent({ type: 'mtt-instance-generate' }).at(-1)?.data)
+      .toMatchObject({
+        tournamentId: command.requestId,
+        authorityKind: 'operator-profile',
+        operatorProfileId: 'operator-1',
+      });
+
+    scheduler.close();
+    database.close();
+  });
+
+  it('keeps profile operators outside the separate promotion adjustment boundary', () => {
+    expect(service.canOperateProfile('operator-1')).toBe(true);
+    expect('adjustPromotionFund' in service).toBe(false);
   });
 });

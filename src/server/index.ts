@@ -524,9 +524,41 @@ async function listen(): Promise<void> {
     promotionFundRateLimiter: profileRateLimiter,
     gameConfig: gameConfigService,
     adminTournamentCommands: {
-      create: draft => runtime
-        ? runtime.tournamentCommands.create({ kind: 'backoffice' }, draft)
-        : { ok: false, reason: 'invalid' },
+      list: at => runtime
+        ? runtime.tournamentCommands.listAdmin({ kind: 'backoffice' }, at)
+        : { ok: false, code: 'unavailable' },
+      createInstance: (input, at) => runtime
+        ? runtime.tournamentCommands.createPersistentInstance(
+            { kind: 'backoffice' },
+            input,
+            at,
+          )
+        : { ok: false, code: 'unavailable' },
+      createTemplate: (input, at) => runtime
+        ? runtime.tournamentCommands.createRecurringTemplate(
+            { kind: 'backoffice' },
+            input,
+            at,
+          )
+        : { ok: false, code: 'unavailable' },
+      patchTemplate: (id, revision, input, at) => runtime
+        ? runtime.tournamentCommands.patchRecurringTemplate(
+            { kind: 'backoffice' },
+            id,
+            revision,
+            input,
+            at,
+          )
+        : { ok: false, code: 'unavailable' },
+      actTemplate: (id, revision, input, at) => runtime
+        ? runtime.tournamentCommands.actOnTemplate(
+            { kind: 'backoffice' },
+            id,
+            revision,
+            input,
+            at,
+          )
+        : { ok: false, code: 'unavailable' },
       start: tournamentId => runtime
         ? runtime.tournamentCommands.start({ kind: 'backoffice' }, tournamentId)
         : 'not-found',
@@ -599,6 +631,14 @@ async function listen(): Promise<void> {
         },
       }
       : {}),
+  });
+  if (!tournamentScheduler) {
+    throw new Error('Tournament scheduler must be initialized before sockets');
+  }
+  runtime.tournamentCommands.configurePersistentAdmin({
+    database,
+    instances: new TournamentInstanceRepository(database),
+    scheduler: tournamentScheduler,
   });
 
   for (const pending of pendingTournamentLeaseExpiries.splice(0)) {

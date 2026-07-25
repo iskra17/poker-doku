@@ -22,16 +22,21 @@ import {
   type PromotionFundRepository,
 } from './promotion-fund-repository';
 import type { CreateTournamentRequest } from '../lib/realtime/protocol';
-import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
 import type {
   AdminTournamentView,
   TournamentDirectorAction,
 } from './tournament-manager';
 import type {
+  PersistentTournamentAdminResult,
+  PersistentTournamentAdminSnapshot,
   TournamentActionResult,
   TournamentCreateResult,
   TournamentStartResult,
 } from './tournament-command-service';
+import type {
+  TournamentInstanceRecord,
+  TournamentTemplateRecord,
+} from './tournament-instance-repository';
 
 /**
  * 운영 백오피스 API — 토큰(`DEBUG_LOG_TOKEN`) 게이트, /admin 페이지가 짧은 주기로 폴링한다.
@@ -112,7 +117,32 @@ export interface AdminHttpOptions {
 }
 
 export interface AdminTournamentCommands {
-  create(input: CreateTournamentRequest): TournamentCreateResult;
+  /** Legacy live-only adapter kept during the v2 admin migration. */
+  create?(input: CreateTournamentRequest): TournamentCreateResult;
+  list?(at: number): PersistentTournamentAdminResult<PersistentTournamentAdminSnapshot>;
+  createInstance?(
+    input: unknown,
+    at: number,
+  ): PersistentTournamentAdminResult<{ instance: TournamentInstanceRecord }>;
+  createTemplate?(
+    input: unknown,
+    at: number,
+  ): PersistentTournamentAdminResult<{ template: TournamentTemplateRecord }>;
+  patchTemplate?(
+    id: string,
+    revision: number,
+    input: unknown,
+    at: number,
+  ): PersistentTournamentAdminResult<{ template: TournamentTemplateRecord }>;
+  actTemplate?(
+    id: string,
+    revision: number,
+    input: unknown,
+    at: number,
+  ): PersistentTournamentAdminResult<{
+    template: TournamentTemplateRecord;
+    generated?: number;
+  }>;
   start(tournamentId: string): TournamentStartResult;
   act(tournamentId: string, action: TournamentDirectorAction): TournamentActionResult;
 }
@@ -303,39 +333,6 @@ async function handleAdminSession(
   });
 }
 
-function parseTournamentDraft(body: unknown, now: number): CreateTournamentRequest | null {
-  if (
-    !isRecord(body)
-    || typeof body.name !== 'string'
-    || body.name.trim().length === 0
-    || body.name.trim().length > 30
-    || !(body.speed === 'standard' || body.speed === 'turbo' || body.speed === 'hyper')
-    || !Number.isInteger(body.maxEntrants)
-    || (body.maxEntrants as number) < 8
-    || (body.maxEntrants as number) > 48
-    || typeof body.botFill !== 'boolean'
-    || !(body.turnTime === 8 || body.turnTime === 15 || body.turnTime === 30)
-    || !(body.economyMode === 'practice' || body.economyMode === 'wallet')
-    || !PAYOUT_PRESET_IDS.includes(body.payoutPreset as never)
-    || !(body.startAt === null
-      || (typeof body.startAt === 'number'
-        && body.startAt > now - 10_000
-        && body.startAt < now + 24 * 60 * 60_000))
-  ) {
-    return null;
-  }
-  return {
-    name: body.name.trim(),
-    speed: body.speed,
-    maxEntrants: body.maxEntrants as number,
-    startAt: body.startAt as number | null,
-    botFill: body.economyMode === 'wallet' ? false : body.botFill,
-    turnTime: body.turnTime,
-    economyMode: body.economyMode,
-    payoutPreset: body.payoutPreset as (typeof PAYOUT_PRESET_IDS)[number],
-  };
-}
-
 function parseTournamentAction(body: unknown): TournamentDirectorAction | 'start' | null {
   if (!isRecord(body)) return null;
   switch (body.action) {
@@ -355,6 +352,37 @@ function parseTournamentAction(body: unknown): TournamentDirectorAction | 'start
     default:
       return null;
   }
+}
+
+function isTournamentAdminPath(pathname: string): boolean {
+  return pathname === '/api/admin/tournaments'
+    || pathname === '/api/admin/tournament-templates'
+    || pathname.startsWith('/api/admin/tournaments/')
+    || pathname.startsWith('/api/admin/tournament-templates/');
+}
+
+function parseIfMatch(req: IncomingMessage): number | null {
+  const raw = header(req, 'if-match');
+  if (!raw || !/^[1-9]\d*$/.test(raw)) return null;
+  const revision = Number(raw);
+  return Number.isSafeInteger(revision) ? revision : null;
+}
+
+function persistentAdminStatus(
+  result: { readonly ok: false; readonly code: string },
+): number {
+  if (result.code === 'forbidden') return 403;
+  if (result.code === 'unavailable') return 503;
+  if (result.code === 'not-found') return 404;
+  if (
+    result.code === 'revision-conflict'
+    || result.code === 'idempotency-conflict'
+    || result.code === 'promotion-insufficient'
+    || result.code === 'conflict'
+  ) {
+    return 409;
+  }
+  return 400;
 }
 
 export function createAdminHttpHandler(options: AdminHttpOptions) {
@@ -378,6 +406,14 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
       );
       return true;
     }
+    const tournamentAdminPath = isTournamentAdminPath(pathname);
+    const sendTournament = (
+      status: number,
+      body: Record<string, unknown>,
+      headers: Record<string, string> = {},
+    ): void => {
+      send(res, status, { ...body, serverNow: now() }, headers);
+    };
 
     let principal: AdminPrincipal;
     if (req.method === 'GET' || req.method === 'HEAD') {
@@ -387,7 +423,11 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
       );
       if (!authenticated) {
         drainRequest(req);
-        send(res, 401, { error: 'unauthenticated' });
+        if (tournamentAdminPath) {
+          sendTournament(401, { error: 'unauthenticated' });
+        } else {
+          send(res, 401, { error: 'unauthenticated' });
+        }
         return true;
       }
       principal = authenticated;
@@ -403,7 +443,33 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         });
       } catch (error) {
         drainRequest(req);
-        sendAdminSessionError(res, error);
+        if (tournamentAdminPath) {
+          const status = error instanceof AdminSessionError
+            ? error.kind === 'unauthenticated'
+              ? 401
+              : error.kind === 'rate-limited'
+                ? 429
+                : 403
+            : 500;
+          sendTournament(
+            status,
+            {
+              error: error instanceof AdminSessionError
+                ? error.kind
+                : 'internal-error',
+            },
+            error instanceof AdminSessionError
+              && error.retryAfterMs !== undefined
+              ? {
+                  'retry-after': String(
+                    Math.max(1, Math.ceil(error.retryAfterMs / 1_000)),
+                  ),
+                }
+              : {},
+          );
+        } else {
+          sendAdminSessionError(res, error);
+        }
         return true;
       }
     }
@@ -567,16 +633,23 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     }
 
     if (pathname === '/api/admin/tournaments' && req.method === 'POST') {
-      if (!options.tournamentCommands) {
+      if (
+        !options.tournamentCommands?.createInstance
+        && !options.tournamentCommands?.create
+      ) {
         drainRequest(req);
-        send(res, 503, { error: 'unavailable' });
+        sendTournament(503, { error: 'unavailable' });
         return true;
       }
       let body: unknown;
       try {
         body = await readJsonBody(req);
       } catch (error) {
-        send(res, 400, {
+        if (error instanceof HttpBodyError && error.kind === 'too-large') {
+          sendTournament(413, { error: 'body-too-large' });
+          return true;
+        }
+        sendTournament(400, {
           error: 'invalid-body',
           message: error instanceof HttpBodyError && error.kind === 'too-large'
             ? '요청 본문이 너무 큽니다.'
@@ -584,22 +657,165 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         });
         return true;
       }
-      const draft = parseTournamentDraft(body, now());
-      if (!draft) {
-        send(res, 400, { error: 'invalid-payload' });
+      if (!options.tournamentCommands.createInstance) {
+        const legacyResult = options.tournamentCommands.create!(
+          body as CreateTournamentRequest,
+        );
+        if (legacyResult.ok) {
+          sendTournament(201, { tournamentId: legacyResult.tournamentId });
+        } else {
+          const status = legacyResult.reason === 'forbidden'
+            ? 403
+            : legacyResult.reason === 'invalid'
+              ? 400
+              : 409;
+          sendTournament(status, { error: legacyResult.reason });
+        }
         return true;
       }
-      const result = options.tournamentCommands.create(draft);
+      const result = options.tournamentCommands.createInstance(body, now());
       if (result.ok) {
-        send(res, 201, { tournamentId: result.tournamentId });
+        sendTournament(201, {
+          tournamentId: result.instance.id,
+          instance: result.instance,
+        });
         return true;
       }
-      const status = result.reason === 'forbidden'
-        ? 403
-        : result.reason === 'invalid'
-          ? 400
-          : 409;
-      send(res, status, { error: result.reason });
+      sendTournament(persistentAdminStatus(result), {
+        error: result.code,
+        ...(result.actualRevision === undefined
+          ? {}
+          : { actualRevision: result.actualRevision }),
+      });
+      return true;
+    }
+
+    if (
+      pathname === '/api/admin/tournament-templates'
+      && req.method === 'POST'
+    ) {
+      if (!options.tournamentCommands?.createTemplate) {
+        drainRequest(req);
+        sendTournament(503, { error: 'unavailable' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        const tooLarge = error instanceof HttpBodyError
+          && error.kind === 'too-large';
+        sendTournament(tooLarge ? 413 : 400, {
+          error: tooLarge ? 'body-too-large' : 'invalid-body',
+        });
+        return true;
+      }
+      const result = options.tournamentCommands.createTemplate(body, now());
+      if (result.ok) {
+        sendTournament(201, { template: result.template });
+      } else {
+        sendTournament(persistentAdminStatus(result), {
+          error: result.code,
+          ...(result.actualRevision === undefined
+            ? {}
+            : { actualRevision: result.actualRevision }),
+        });
+      }
+      return true;
+    }
+
+    const templateMatch = pathname.match(
+      /^\/api\/admin\/tournament-templates\/([^/]{1,128})$/,
+    );
+    if (templateMatch && req.method === 'PATCH') {
+      if (!options.tournamentCommands?.patchTemplate) {
+        drainRequest(req);
+        sendTournament(503, { error: 'unavailable' });
+        return true;
+      }
+      const revision = parseIfMatch(req);
+      if (revision === null) {
+        drainRequest(req);
+        sendTournament(428, { error: 'precondition-required' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        const tooLarge = error instanceof HttpBodyError
+          && error.kind === 'too-large';
+        sendTournament(tooLarge ? 413 : 400, {
+          error: tooLarge ? 'body-too-large' : 'invalid-body',
+        });
+        return true;
+      }
+      const result = options.tournamentCommands.patchTemplate(
+        decodeURIComponent(templateMatch[1]),
+        revision,
+        body,
+        now(),
+      );
+      if (result.ok) {
+        sendTournament(200, { template: result.template });
+      } else {
+        sendTournament(persistentAdminStatus(result), {
+          error: result.code,
+          ...(result.actualRevision === undefined
+            ? {}
+            : { actualRevision: result.actualRevision }),
+        });
+      }
+      return true;
+    }
+
+    const templateActionMatch = pathname.match(
+      /^\/api\/admin\/tournament-templates\/([^/]{1,128})\/actions$/,
+    );
+    if (templateActionMatch && req.method === 'POST') {
+      if (!options.tournamentCommands?.actTemplate) {
+        drainRequest(req);
+        sendTournament(503, { error: 'unavailable' });
+        return true;
+      }
+      const revision = parseIfMatch(req);
+      if (revision === null) {
+        drainRequest(req);
+        sendTournament(428, { error: 'precondition-required' });
+        return true;
+      }
+      let body: unknown;
+      try {
+        body = await readJsonBody(req);
+      } catch (error) {
+        const tooLarge = error instanceof HttpBodyError
+          && error.kind === 'too-large';
+        sendTournament(tooLarge ? 413 : 400, {
+          error: tooLarge ? 'body-too-large' : 'invalid-body',
+        });
+        return true;
+      }
+      const result = options.tournamentCommands.actTemplate(
+        decodeURIComponent(templateActionMatch[1]),
+        revision,
+        body,
+        now(),
+      );
+      if (result.ok) {
+        sendTournament(200, {
+          template: result.template,
+          ...(result.generated === undefined
+            ? {}
+            : { generated: result.generated }),
+        });
+      } else {
+        sendTournament(persistentAdminStatus(result), {
+          error: result.code,
+          ...(result.actualRevision === undefined
+            ? {}
+            : { actualRevision: result.actualRevision }),
+        });
+      }
       return true;
     }
 
@@ -609,19 +825,19 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     if (tournamentActionMatch && req.method === 'POST') {
       if (!options.tournamentCommands) {
         drainRequest(req);
-        send(res, 503, { error: 'unavailable' });
+        sendTournament(503, { error: 'unavailable' });
         return true;
       }
       let body: unknown;
       try {
         body = await readJsonBody(req);
       } catch {
-        send(res, 400, { error: 'invalid-body' });
+        sendTournament(400, { error: 'invalid-body' });
         return true;
       }
       const action = parseTournamentAction(body);
       if (!action) {
-        send(res, 400, { error: 'invalid-payload' });
+        sendTournament(400, { error: 'invalid-payload' });
         return true;
       }
       const tournamentId = decodeURIComponent(tournamentActionMatch[1]);
@@ -629,7 +845,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         ? options.tournamentCommands.start(tournamentId)
         : options.tournamentCommands.act(tournamentId, action);
       if (result === 'ok') {
-        send(res, 200, { ok: true });
+        sendTournament(200, { ok: true });
         return true;
       }
       const status = result === 'forbidden'
@@ -639,7 +855,48 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           : result === 'invalid'
             ? 400
             : 409;
-      send(res, status, { error: result });
+      sendTournament(status, { error: result });
+      return true;
+    }
+
+    if (
+      (
+        pathname === '/api/admin/tournaments'
+        || pathname === '/api/admin/tournament-templates'
+      )
+      && (req.method === 'GET' || req.method === 'HEAD')
+    ) {
+      if (!options.tournamentCommands?.list) {
+        if (pathname === '/api/admin/tournaments') {
+          sendTournament(200, {
+            tournaments: options.runtime()?.tournaments ?? [],
+          });
+        } else {
+          sendTournament(503, { error: 'unavailable' });
+        }
+        return true;
+      }
+      const result = options.tournamentCommands.list(now());
+      if (!result.ok) {
+        sendTournament(persistentAdminStatus(result), { error: result.code });
+        return true;
+      }
+      if (pathname === '/api/admin/tournament-templates') {
+        sendTournament(200, { templates: result.templates });
+        return true;
+      }
+      const liveById = new Map(
+        (options.runtime()?.tournaments ?? []).map(tournament => [
+          tournament.id,
+          tournament,
+        ]),
+      );
+      sendTournament(200, {
+        tournaments: result.instances.map(instance => ({
+          ...instance,
+          live: liveById.get(instance.id) ?? null,
+        })),
+      });
       return true;
     }
 
@@ -773,12 +1030,6 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           };
         }),
       });
-      return true;
-    }
-
-    if (pathname === '/api/admin/tournaments') {
-      const runtime = options.runtime();
-      send(res, 200, { at: now(), tournaments: runtime?.tournaments ?? [] });
       return true;
     }
 

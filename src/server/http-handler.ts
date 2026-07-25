@@ -63,6 +63,7 @@ interface HttpHandlerCommonOptions {
   /** 운영 백오피스 (/api/admin/*) — 영속 이벤트 저장소 + 늦은 바인딩 런타임 스냅샷 */
   opsEvents?: OpsEventRepository;
   adminRuntime?: () => AdminRuntimeSnapshot | null;
+  /** DB-backed tournament/template commands; live runtime only enriches reads. */
   adminTournamentCommands?: AdminTournamentCommands;
   adminSessions?: AdminSessionManager;
   promotionFunds?: PromotionFundRepository;

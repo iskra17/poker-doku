@@ -3,7 +3,18 @@ import {
   MTT_WALLET_ENTRY_FEE,
 } from '../lib/economy/mtt-entry';
 import type { CreateTournamentRequest } from '../lib/realtime/protocol';
-import type { StartClaimSource } from './tournament-instance-repository';
+import { eventLog } from './event-log';
+import type { PokerDatabase } from './persistence/database';
+import {
+  TournamentInstanceRepository,
+  TournamentPersistenceError,
+  type StartClaimSource,
+  type TournamentInstanceAdminProjection,
+  type TournamentInstanceRecord,
+  type TournamentTemplateRecord,
+} from './tournament-instance-repository';
+import { parseCreateTournamentCommand } from './tournament-command-parser';
+import type { TournamentScheduler } from './tournament-scheduler';
 import {
   TournamentManager,
   type TournamentAuditActor,
@@ -80,6 +91,39 @@ export type PersistentTournamentStartResult =
   | 'not-enough'
   | 'rollback';
 
+export type PersistentTournamentAdminErrorCode =
+  | 'forbidden'
+  | 'unavailable'
+  | 'invalid-payload'
+  | 'not-found'
+  | 'revision-conflict'
+  | 'idempotency-conflict'
+  | 'promotion-insufficient'
+  | 'conflict';
+
+export type PersistentTournamentAdminResult<T extends object> =
+  | ({ readonly ok: true } & T)
+  | {
+      readonly ok: false;
+      readonly code: PersistentTournamentAdminErrorCode;
+      readonly actualRevision?: number;
+    };
+
+export interface PersistentTournamentAdminSnapshot {
+  readonly instances: TournamentInstanceAdminProjection[];
+  readonly templates: TournamentTemplateRecord[];
+}
+
+export interface PersistentTournamentAdminPorts {
+  readonly database: PokerDatabase;
+  readonly instances: TournamentInstanceRepository;
+  readonly scheduler: Pick<
+    TournamentScheduler,
+    'reconcileTemplates' | 'reconcileDue' | 'hydrateTimers'
+  >;
+  readonly now?: () => number;
+}
+
 export function parseTournamentOperatorIds(raw: string | undefined): ReadonlySet<string> {
   return new Set(
     (raw ?? '')
@@ -90,11 +134,23 @@ export function parseTournamentOperatorIds(raw: string | undefined): ReadonlySet
 }
 
 export class TournamentCommandService {
+  private persistentAdmin?: PersistentTournamentAdminPorts;
+
   constructor(
     private readonly manager: TournamentManager,
     private readonly operatorProfileIds: ReadonlySet<string>,
     private readonly persistentStart?: PersistentTournamentStartPorts,
-  ) {}
+    persistentAdmin?: PersistentTournamentAdminPorts,
+  ) {
+    this.persistentAdmin = persistentAdmin;
+  }
+
+  configurePersistentAdmin(ports: PersistentTournamentAdminPorts): void {
+    if (this.persistentAdmin && this.persistentAdmin !== ports) {
+      throw new Error('Persistent tournament admin is already configured');
+    }
+    this.persistentAdmin = ports;
+  }
 
   /**
    * Scheduler prepared-start handler. The durable running transition is the
@@ -194,6 +250,249 @@ export class TournamentCommandService {
     return this.operatorProfileIds.has(profileId);
   }
 
+  listAdmin(
+    authority: TournamentAuthority,
+    at = this.persistentAdmin?.now?.() ?? Date.now(),
+  ): PersistentTournamentAdminResult<PersistentTournamentAdminSnapshot> {
+    if (!this.allowed(authority)) return { ok: false, code: 'forbidden' };
+    const admin = this.persistentAdmin;
+    if (!admin) return { ok: false, code: 'unavailable' };
+    return {
+      ok: true,
+      instances: admin.instances.listAdminProjections(at),
+      templates: this.listTemplates(admin.database),
+    };
+  }
+
+  createPersistentInstance(
+    authority: TournamentAuthority,
+    raw: unknown,
+    at = this.persistentAdmin?.now?.() ?? Date.now(),
+  ): PersistentTournamentAdminResult<{ instance: TournamentInstanceRecord }> {
+    if (!this.allowed(authority)) return { ok: false, code: 'forbidden' };
+    const admin = this.persistentAdmin;
+    if (!admin) return { ok: false, code: 'unavailable' };
+    let parsed;
+    try {
+      parsed = parseCreateTournamentCommand(raw, at);
+      if (parsed.recurrence !== null) throw new Error('recurring-template');
+    } catch {
+      return { ok: false, code: 'invalid-payload' };
+    }
+
+    try {
+      const instance = admin.instances.createInstance({
+        id: parsed.requestId,
+        templateId: null,
+        templateRevision: null,
+        idempotencyKey: parsed.requestId,
+        occurrenceKey: parsed.requestId,
+        schedule: parsed.schedule,
+        config: parsed.config,
+        createdBy: this.persistenceActor(authority),
+        directorProfileId: authority.kind === 'operator-profile'
+          ? authority.profileId
+          : null,
+        now: at,
+      });
+      admin.scheduler.reconcileDue(at);
+      admin.scheduler.hydrateTimers(at);
+      const current = admin.instances.getInstance(instance.id) ?? instance;
+      const result = current.status === 'cancelled'
+        && current.statusReason === 'promotion-insufficient'
+        ? { ok: false as const, code: 'promotion-insufficient' as const }
+        : { ok: true as const, instance: current };
+      this.auditPersistentCommand(
+        'mtt-instance-generate',
+        authority,
+        result.ok ? 'ok' : result.code,
+        { tournamentId: current.id },
+      );
+      return result;
+    } catch (error) {
+      return this.persistenceFailure(error);
+    }
+  }
+
+  createRecurringTemplate(
+    authority: TournamentAuthority,
+    raw: unknown,
+    at = this.persistentAdmin?.now?.() ?? Date.now(),
+  ): PersistentTournamentAdminResult<{ template: TournamentTemplateRecord }> {
+    if (!this.allowed(authority)) return { ok: false, code: 'forbidden' };
+    const admin = this.persistentAdmin;
+    if (!admin) return { ok: false, code: 'unavailable' };
+    let parsed;
+    try {
+      parsed = parseCreateTournamentCommand(raw, at);
+      if (
+        parsed.recurrence === null
+        || parsed.visibleLeadMs === null
+        || parsed.registrationLeadMs === null
+      ) {
+        throw new Error('standalone-instance');
+      }
+    } catch {
+      return { ok: false, code: 'invalid-payload' };
+    }
+
+    try {
+      const template = admin.instances.createTemplate({
+        id: parsed.requestId,
+        idempotencyKey: parsed.requestId,
+        name: parsed.config.name,
+        enabled: true,
+        timezone: 'Asia/Seoul',
+        recurrence: parsed.recurrence,
+        visibleLeadMs: parsed.visibleLeadMs,
+        registrationLeadMs: parsed.registrationLeadMs,
+        config: parsed.config,
+        createdBy: this.persistenceActor(authority),
+        now: at,
+      });
+      admin.scheduler.reconcileTemplates(at);
+      admin.scheduler.reconcileDue(at);
+      admin.scheduler.hydrateTimers(at);
+      this.auditPersistentCommand(
+        'mtt-template-create',
+        authority,
+        'ok',
+        { templateId: template.id, revision: template.revision },
+      );
+      return { ok: true, template };
+    } catch (error) {
+      return this.persistenceFailure(error);
+    }
+  }
+
+  patchRecurringTemplate(
+    authority: TournamentAuthority,
+    id: string,
+    revision: number,
+    raw: unknown,
+    at = this.persistentAdmin?.now?.() ?? Date.now(),
+  ): PersistentTournamentAdminResult<{ template: TournamentTemplateRecord }> {
+    if (!this.allowed(authority)) return { ok: false, code: 'forbidden' };
+    const admin = this.persistentAdmin;
+    if (!admin) return { ok: false, code: 'unavailable' };
+    const current = this.listTemplates(admin.database)
+      .find(template => template.id === id);
+    if (!current) return { ok: false, code: 'not-found' };
+    if (current.revision !== revision) {
+      return {
+        ok: false,
+        code: 'revision-conflict',
+        actualRevision: current.revision,
+      };
+    }
+    let parsed;
+    let enabled: boolean;
+    try {
+      if (!isRecord(raw)) throw new Error('invalid-patch');
+      enabled = raw.enabled === undefined
+        ? current.enabled
+        : requireBoolean(raw.enabled);
+      parsed = parseCreateTournamentCommand(
+        this.templateParserInput(current, raw, at),
+        at,
+      );
+      if (
+        parsed.recurrence === null
+        || parsed.visibleLeadMs === null
+        || parsed.registrationLeadMs === null
+      ) {
+        throw new Error('invalid-template');
+      }
+    } catch {
+      return { ok: false, code: 'invalid-payload' };
+    }
+
+    const transitionAt = Math.max(at, current.updatedAt + 1);
+    try {
+      const result = admin.instances.patchTemplateIfRevision(id, revision, {
+        name: parsed.config.name,
+        enabled,
+        recurrence: parsed.recurrence,
+        visibleLeadMs: parsed.visibleLeadMs,
+        registrationLeadMs: parsed.registrationLeadMs,
+        config: parsed.config,
+        updatedAt: transitionAt,
+      });
+      if (result.status === 'not-found') {
+        return { ok: false, code: 'not-found' };
+      }
+      if (result.status === 'revision-conflict') {
+        return {
+          ok: false,
+          code: 'revision-conflict',
+          actualRevision: result.actualRevision,
+        };
+      }
+      admin.scheduler.reconcileTemplates(transitionAt);
+      admin.scheduler.reconcileDue(transitionAt);
+      admin.scheduler.hydrateTimers(transitionAt);
+      this.auditPersistentCommand(
+        'mtt-template-update',
+        authority,
+        'ok',
+        { templateId: id, revision: result.record.revision },
+      );
+      return { ok: true, template: result.record };
+    } catch (error) {
+      return this.persistenceFailure(error);
+    }
+  }
+
+  actOnTemplate(
+    authority: TournamentAuthority,
+    id: string,
+    revision: number,
+    raw: unknown,
+    at = this.persistentAdmin?.now?.() ?? Date.now(),
+  ): PersistentTournamentAdminResult<{
+    template: TournamentTemplateRecord;
+    generated?: number;
+  }> {
+    if (!this.allowed(authority)) return { ok: false, code: 'forbidden' };
+    const admin = this.persistentAdmin;
+    if (!admin) return { ok: false, code: 'unavailable' };
+    if (!isRecord(raw) || typeof raw.action !== 'string') {
+      return { ok: false, code: 'invalid-payload' };
+    }
+    if (raw.action === 'enable' || raw.action === 'disable') {
+      return this.patchRecurringTemplate(
+        authority,
+        id,
+        revision,
+        { enabled: raw.action === 'enable' },
+        at,
+      );
+    }
+    if (raw.action !== 'generate-next') {
+      return { ok: false, code: 'invalid-payload' };
+    }
+    const current = this.listTemplates(admin.database)
+      .find(template => template.id === id);
+    if (!current) return { ok: false, code: 'not-found' };
+    if (current.revision !== revision) {
+      return {
+        ok: false,
+        code: 'revision-conflict',
+        actualRevision: current.revision,
+      };
+    }
+    const generated = admin.scheduler.reconcileTemplates(at);
+    admin.scheduler.reconcileDue(at);
+    admin.scheduler.hydrateTimers(at);
+    this.auditPersistentCommand(
+      'mtt-instance-generate',
+      authority,
+      'ok',
+      { templateId: id, revision, generated },
+    );
+    return { ok: true, template: current, generated };
+  }
+
   create(
     authority: TournamentAuthority,
     draft: CreateTournamentRequest,
@@ -262,4 +561,129 @@ export class TournamentCommandService {
           operatorProfileId: authority.profileId,
         };
   }
+
+  private persistenceActor(authority: TournamentAuthority): {
+    kind: string;
+    profileId: string | null;
+  } {
+    return authority.kind === 'backoffice'
+      ? { kind: 'backoffice-admin', profileId: null }
+      : { kind: 'operator-profile', profileId: authority.profileId };
+  }
+
+  private listTemplates(database: PokerDatabase): TournamentTemplateRecord[] {
+    const rows = database.db.prepare(`
+      SELECT *
+      FROM tournament_template
+      ORDER BY id
+    `).all() as unknown as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      id: String(row.id),
+      revision: Number(row.revision),
+      idempotencyKey: String(row.idempotency_key),
+      name: String(row.name),
+      enabled: Number(row.enabled) === 1,
+      timezone: 'Asia/Seoul',
+      recurrence: JSON.parse(String(row.recurrence_json)),
+      visibleLeadMs: Number(row.visible_lead_ms),
+      registrationLeadMs: Number(row.registration_lead_ms),
+      config: JSON.parse(String(row.config_json)),
+      createdBy: {
+        kind: String(row.created_by_kind),
+        profileId: row.created_by_profile_id === null
+          ? null
+          : String(row.created_by_profile_id),
+      },
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at),
+    }));
+  }
+
+  private templateParserInput(
+    current: TournamentTemplateRecord,
+    patch: Record<string, unknown>,
+    at: number,
+  ): Record<string, unknown> {
+    const visibleLeadMs = patch.visibleLeadMs ?? current.visibleLeadMs;
+    const registrationLeadMs =
+      patch.registrationLeadMs ?? current.registrationLeadMs;
+    const numericVisibleLead = typeof visibleLeadMs === 'number'
+      ? visibleLeadMs
+      : current.visibleLeadMs;
+    const numericRegistrationLead = typeof registrationLeadMs === 'number'
+      ? registrationLeadMs
+      : current.registrationLeadMs;
+    const startsAt = at + Math.max(
+      60_000,
+      numericVisibleLead,
+      numericRegistrationLead,
+    );
+    return {
+      requestId: '00000000-0000-4000-8000-000000000000',
+      name: patch.name ?? current.name,
+      economyMode: patch.economyMode ?? current.config.economy.mode,
+      minEntrants: patch.minEntrants ?? current.config.field.minEntrants,
+      maxEntrants: patch.maxEntrants ?? current.config.field.maxEntrants,
+      botFillToMinimum:
+        patch.botFillToMinimum ?? current.config.field.botFillToMinimum,
+      turnTimeSeconds:
+        patch.turnTimeSeconds ?? current.config.turnTimeSeconds,
+      structure: patch.structure ?? current.config.structure,
+      prizePool: patch.prizePool ?? current.config.prizePool,
+      payout: patch.payout ?? current.config.payout,
+      lateRegistration:
+        patch.lateRegistration ?? current.config.lateRegistration,
+      schedule: {
+        visibleAt: startsAt - numericVisibleLead,
+        registrationOpensAt: startsAt - numericRegistrationLead,
+        startsAt,
+        manualStartExpiresAt: null,
+      },
+      recurrence: patch.recurrence ?? current.recurrence,
+      visibleLeadMs,
+      registrationLeadMs,
+    };
+  }
+
+  private persistenceFailure<T extends object>(
+    error: unknown,
+  ): PersistentTournamentAdminResult<T> {
+    if (error instanceof TournamentPersistenceError) {
+      if (error.code === 'IDEMPOTENCY_CONFLICT') {
+        return { ok: false, code: 'idempotency-conflict' };
+      }
+      if (error.code === 'INVALID_INPUT') {
+        return { ok: false, code: 'invalid-payload' };
+      }
+      return { ok: false, code: 'conflict' };
+    }
+    return { ok: false, code: 'conflict' };
+  }
+
+  private auditPersistentCommand(
+    type: string,
+    authority: TournamentAuthority,
+    resultCode: string,
+    data: Record<string, unknown>,
+  ): void {
+    eventLog.log(type, {
+      data: {
+        ...data,
+        resultCode,
+        authorityKind: authority.kind,
+        ...(authority.kind === 'operator-profile'
+          ? { operatorProfileId: authority.profileId }
+          : {}),
+      },
+    });
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireBoolean(value: unknown): boolean {
+  if (typeof value !== 'boolean') throw new Error('Expected boolean');
+  return value;
 }
