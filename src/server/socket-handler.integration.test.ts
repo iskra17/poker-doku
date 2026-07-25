@@ -718,6 +718,45 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(response.data!.tournaments).toHaveLength(1);
   });
 
+  it('keeps my capped-overflow tournament on the tournament-list wire', async () => {
+    // The repository caps a recurring template at five public rows but keeps the
+    // viewer's own engaged occurrence. That sixth row must survive the socket
+    // payload, otherwise the lobby loses the tournament the player joined.
+    const capped = Array.from({ length: 5 }, (_, index) => ({
+      id: `recurring-${index + 1}`,
+      name: '정기 프리롤',
+      lifecycle: 'registering',
+      economyMode: 'freeroll',
+      myRegistrationStatus: null,
+    }));
+    const mine = {
+      id: 'recurring-6',
+      name: '정기 프리롤',
+      lifecycle: 'registering',
+      economyMode: 'freeroll',
+      myRegistrationStatus: 'registered',
+    };
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => null,
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [...capped, mine]),
+      } as never,
+    });
+    const client = await harness.connect('capped-overflow-client');
+
+    const response = await withAck<TournamentListPayload>(done =>
+      client.socket.emit('get-tournaments', done));
+
+    if (!response.ok) throw new Error('list failed');
+    expect(response.data!.tournaments).toHaveLength(6);
+    expect(response.data!.tournaments.at(-1)).toMatchObject({
+      id: 'recurring-6',
+      myRegistrationStatus: 'registered',
+    });
+  });
+
   it('rejects rejoin to an owner-held prepared MTT room before running CAS', async () => {
     harness = await createSocketTestHarness();
     const client = await harness.connect('prepared-mtt-client');

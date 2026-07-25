@@ -95,6 +95,14 @@ export interface TournamentSchedule {
   readonly manualStartExpiresAt: number | null;
 }
 
+/**
+ * A recurring template never materializes — nor exposes in the public lobby —
+ * more than this many occurrences at once, whatever the cadence. Scheduler
+ * generation and lobby projection share this number so the two layers cannot
+ * drift apart.
+ */
+export const TEMPLATE_OCCURRENCE_LIMIT = 5;
+
 export type TournamentRecurrence =
   | {
       readonly kind: 'hourly';

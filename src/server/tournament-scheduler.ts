@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import type {
-  TournamentConfigSnapshotV2,
-  TournamentRecurrence,
+import {
+  TEMPLATE_OCCURRENCE_LIMIT,
+  type TournamentConfigSnapshotV2,
+  type TournamentRecurrence,
 } from '@/lib/tournament/tournament-config';
 import type { PokerDatabase } from './persistence/database';
 import {
@@ -22,7 +23,6 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 const KST_OFFSET_MS = 9 * HOUR_MS;
-const MATERIALIZED_OCCURRENCE_LIMIT = 5;
 const MISSED_START_GRACE_MS = 10 * MINUTE_MS;
 const START_LEASE_MS = 30_000;
 const MAX_LIVE_TOURNAMENTS = 4;
@@ -108,7 +108,7 @@ export function kstOccurrenceStarts(
   now: number,
   firstStartsAt: number,
   recurrenceEndsAt: number,
-  limit = MATERIALIZED_OCCURRENCE_LIMIT,
+  limit = TEMPLATE_OCCURRENCE_LIMIT,
 ): number[] {
   assertTimestamp(now);
   assertTimestamp(firstStartsAt);
@@ -567,7 +567,7 @@ export class TournamentScheduler {
     `).get(template.id, template.revision) as { count: number };
     let remaining = Math.max(
       0,
-      MATERIALIZED_OCCURRENCE_LIMIT - active.count,
+      TEMPLATE_OCCURRENCE_LIMIT - active.count,
     );
     if (remaining === 0) return [];
 

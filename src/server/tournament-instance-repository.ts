@@ -10,10 +10,11 @@ import type {
   TournamentDetailView,
   TournamentSummary,
 } from '@/lib/realtime/protocol';
-import type {
-  TournamentConfigSnapshotV2,
-  TournamentRecurrence,
-  TournamentSchedule,
+import {
+  TEMPLATE_OCCURRENCE_LIMIT,
+  type TournamentConfigSnapshotV2,
+  type TournamentRecurrence,
+  type TournamentSchedule,
 } from '@/lib/tournament/tournament-config';
 import type {
   RegistrationCloseReason,
@@ -1304,20 +1305,34 @@ export class TournamentInstanceRepository {
     now: number,
   ): PublicTournamentSummary[] {
     assertTimestamp(now);
-    const ids = this.database.db.prepare(`
-      SELECT id
+    const rows = this.database.db.prepare(`
+      SELECT id, template_id
       FROM tournament_instance
       WHERE status <> 'scheduled-hidden'
       ORDER BY COALESCE(starts_at, manual_expires_at), id
     `).all() as SqliteRow[];
-    return ids.flatMap(row => {
+    // template_id stays internal to this filter: the public summary contract
+    // does not expose which template produced an occurrence.
+    const perTemplate = new Map<string, number>();
+    return rows.flatMap(row => {
       const detail = this.getPublicProjection(
         stringValue(row.id),
         forPlayerId,
         now,
       );
-      return detail
-        ? [detail.summary as PublicTournamentSummary]
+      if (!detail) return [];
+      const summary = detail.summary as PublicTournamentSummary;
+      const templateId = nullableString(row.template_id);
+      if (templateId === null) return [summary];
+      const shown = perTemplate.get(templateId) ?? 0;
+      if (shown < TEMPLATE_OCCURRENCE_LIMIT) {
+        perTemplate.set(templateId, shown + 1);
+        return [summary];
+      }
+      // Beyond the cap only the viewer's own engaged occurrence survives, so a
+      // player never loses sight of a tournament they are already part of.
+      return isEngagedRegistrationStatus(summary.myRegistrationStatus ?? null)
+        ? [summary]
         : [];
     });
   }
@@ -1809,6 +1824,18 @@ function isActiveRegistrationStatus(status: string | null): boolean {
     || status === 'seat-claimed'
     || status === 'late-pending'
     || status === 'seated';
+}
+
+/**
+ * Lobby engagement is broader than active registration: a viewer who already
+ * busted or finished still needs the row to read their result. Keep this
+ * separate from isActiveRegistrationStatus, which drives the `registered`
+ * boolean and must not treat a finished entry as still registered.
+ */
+function isEngagedRegistrationStatus(status: string | null): boolean {
+  return isActiveRegistrationStatus(status)
+    || status === 'eliminated'
+    || status === 'finished';
 }
 
 function legacyPhase(

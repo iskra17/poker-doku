@@ -803,6 +803,85 @@ describe('TournamentInstanceRepository', () => {
 
   });
 
+  it('caps each recurring template at five public rows and keeps my engaged overflow', () => {
+    const template = repository.createTemplate(templateCommand({
+      recurrence: { kind: 'hourly', minute: 0 },
+      recurrenceEndsAt: NOW + 2 * DAY_MS,
+    }));
+    const recurringIds = Array.from({ length: 6 }, (_, index) => {
+      const id = `public-recurring-${index + 1}`;
+      repository.createInstance(recurringInstanceCommand(
+        id,
+        template.id,
+        template.revision,
+        NOW + (index + 1) * HOUR_MS,
+      ));
+      return id;
+    });
+    for (const id of ['public-standalone-1', 'public-standalone-2']) {
+      repository.createInstance(instanceCommand(id, {
+        schedule: {
+          visibleAt: NOW,
+          registrationOpensAt: NOW + 3 * DAY_MS - 20 * 60_000,
+          startsAt: NOW + 3 * DAY_MS,
+          manualStartExpiresAt: null,
+        },
+      }));
+    }
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'scheduled-visible', updated_at = ?
+    `).run(NOW + 1);
+    seedProfileAndWalletEntry(database, recurringIds[5]!);
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'registering',
+          registration_state = 'open-prestart',
+          updated_at = ?
+      WHERE id = ?
+    `).run(NOW + 2, recurringIds[5]);
+    database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (?, 'profile-a', ?, 'registered', 0, 1, 1, ?, ?)
+    `).run(
+      recurringIds[5],
+      JSON.stringify({
+        id: 'player-viewer',
+        name: 'Viewer',
+        avatar: 'sakura',
+      }),
+      NOW,
+      NOW,
+    );
+    database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (
+        ?, 'profile-a', 1, 'public-overflow-registration', 1, 'registered',
+        NULL, NULL, NULL, ?, ?
+      )
+    `).run(recurringIds[5], NOW, NOW);
+
+    const anonymous = repository.listPublicProjections(undefined, NOW + 2);
+    expect(anonymous.filter(row => row.id.startsWith('public-recurring-')))
+      .toHaveLength(5);
+    expect(anonymous.filter(row => row.id.startsWith('public-standalone-')))
+      .toHaveLength(2);
+
+    const personalized = repository.listPublicProjections(
+      'profile-a',
+      NOW + 2,
+    );
+    expect(personalized.filter(row => row.id.startsWith('public-recurring-')))
+      .toHaveLength(6);
+    expect(personalized.find(row => row.id === recurringIds[5]))
+      .toMatchObject({ myRegistrationStatus: 'registered' });
+  });
+
   it('requires exact freeroll funding and returns the canonical detail projection', () => {
     repository.createInstance(instanceCommand('detail-freeroll', {
       config: config('freeroll'),
