@@ -1,11 +1,17 @@
 import { createHash } from 'node:crypto';
+import {
+  persistedTournamentPayoutFreeze,
+  type TournamentPayoutFreeze,
+} from '@/lib/tournament/tournament-settlement';
 import type { TournamentInstanceStatusReason } from '@/lib/tournament/tournament-state';
 import type { PokerDatabase } from './persistence/database';
 import type { PromotionFundRepository } from './promotion-fund-repository';
 import {
+  computeTournamentPayoutFreezeChecksum,
   TournamentInstanceRepository,
   type TournamentInstanceRecord,
 } from './tournament-instance-repository';
+import type { PersistentTournamentParticipant } from './tournament-manager';
 
 export type RecoveryRefundReason = Extract<
   TournamentInstanceStatusReason,
@@ -96,6 +102,249 @@ export class TournamentRecoveryService {
     this.ports.reconcileTemplatesAndTimers();
     return plan;
   }
+}
+
+export interface TournamentPayoutRecoveryDependencies {
+  getInstance(instanceId: string): {
+    readonly id: string;
+    readonly economyMode: 'wallet' | 'freeroll';
+    readonly status: string;
+  } | null;
+  settleWallet(instanceId: string, at: number): unknown;
+  settleFreeroll(instanceId: string, at: number): unknown;
+}
+
+export function resumeTournamentPayout(
+  dependencies: TournamentPayoutRecoveryDependencies,
+  instanceId: string,
+  at: number,
+): void {
+  if (
+    typeof instanceId !== 'string'
+    || instanceId.length < 1
+    || !Number.isSafeInteger(at)
+    || at < 0
+  ) {
+    throw new TournamentRecoveryError('Invalid payout recovery request');
+  }
+  try {
+    const persisted = dependencies.getInstance(instanceId);
+    if (!persisted || persisted.id !== instanceId) {
+      throw new TournamentRecoveryError(
+        `Payout instance disappeared: ${instanceId}`,
+      );
+    }
+    if (persisted.status === 'completed') return;
+    if (persisted.status !== 'payout-pending') {
+      throw new TournamentRecoveryError(
+        `Tournament payout is not pending: ${instanceId}`,
+      );
+    }
+    if (persisted.economyMode === 'wallet') {
+      dependencies.settleWallet(instanceId, at);
+    } else {
+      dependencies.settleFreeroll(instanceId, at);
+    }
+    const completed = dependencies.getInstance(instanceId);
+    if (!completed || completed.status !== 'completed') {
+      throw new TournamentRecoveryError(
+        `Tournament payout did not complete: ${instanceId}`,
+      );
+    }
+  } catch (error) {
+    if (error instanceof TournamentRecoveryError) throw error;
+    throw new TournamentRecoveryError(
+      `Tournament payout recovery failed: ${instanceId}`,
+      error,
+    );
+  }
+}
+
+export interface PersistTournamentPayoutFreezeInput {
+  readonly instanceId: string;
+  readonly generation: number;
+  readonly ownerToken: string | null;
+  readonly freeze: TournamentPayoutFreeze;
+  readonly eliminatedPlayerIds: readonly string[];
+  readonly now: number;
+}
+
+/**
+ * Closes registration and stores the immutable payout ladder in one SQLite
+ * transaction. A replay is accepted only when the persisted freeze is exact.
+ */
+export function persistTournamentPayoutFreeze(
+  database: PokerDatabase,
+  input: PersistTournamentPayoutFreezeInput,
+): boolean {
+  const persisted = persistedTournamentPayoutFreeze(input.freeze);
+  const instances = new TournamentInstanceRepository(database, () => input.now);
+  return database.transaction(() => {
+    const current = instances.getInstance(input.instanceId);
+    if (!current) return false;
+    if (
+      current.registrationState === 'closed'
+      && current.finalEntrants === input.freeze.finalEntrants
+      && current.payoutFreezeVersion === input.freeze.version
+      && current.payoutFreeze !== null
+      && computeTournamentPayoutFreezeChecksum(current.payoutFreeze)
+        === input.freeze.checksum
+    ) {
+      return true;
+    }
+    if (
+      current.status !== 'running'
+      || current.registrationState !== 'closing'
+      || current.registrationGeneration !== input.generation
+      || current.registrationOwnerToken !== input.ownerToken
+      || input.ownerToken === null
+      || current.pendingLateEntrants !== 0
+      || current.committedEntrants !== input.freeze.finalEntrants
+      || current.finalEntrants !== null
+      || current.payoutFreezeVersion !== null
+      || current.payoutFreeze !== null
+    ) {
+      return false;
+    }
+
+    const eliminated = new Set(input.eliminatedPlayerIds);
+    if (eliminated.size !== input.eliminatedPlayerIds.length) return false;
+    const registrationRows = database.db.prepare(`
+      SELECT profile_id, public_player_json, status, ever_seated
+      FROM tournament_registration
+      WHERE instance_id = ?
+      ORDER BY profile_id
+    `).all(input.instanceId) as unknown as Array<{
+      profile_id: string;
+      public_player_json: string;
+      status: string;
+      ever_seated: number;
+    }>;
+    const registrationsByPlayer = new Map(registrationRows.map(row => [
+      parsePersistentParticipant(row.public_player_json).id,
+      row,
+    ]));
+    if (registrationsByPlayer.size !== registrationRows.length) return false;
+    for (const playerId of eliminated) {
+      const row = registrationsByPlayer.get(playerId);
+      if (!row || row.ever_seated !== 1 || row.status !== 'seated') {
+        return false;
+      }
+    }
+    for (const playerId of eliminated) {
+      const row = registrationsByPlayer.get(playerId)!;
+      const updated = database.db.prepare(`
+        UPDATE tournament_registration
+        SET status = 'eliminated', updated_at = ?
+        WHERE instance_id = ?
+          AND profile_id = ?
+          AND status = 'seated'
+          AND ever_seated = 1
+      `).run(input.now, input.instanceId, row.profile_id);
+      if (updated.changes !== 1) {
+        throw new TournamentRecoveryError(
+          `Tournament elimination CAS lost: ${input.instanceId}`,
+        );
+      }
+    }
+
+    const updated = database.db.prepare(`
+      UPDATE tournament_instance
+      SET registration_state = 'closed',
+          registration_owner_token = NULL,
+          final_entrants = ?,
+          payout_freeze_version = ?,
+          payout_freeze_json = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = 'running'
+        AND registration_state = 'closing'
+        AND registration_generation = ?
+        AND registration_owner_token = ?
+        AND pending_late_entrants = 0
+        AND committed_entrants = ?
+        AND final_entrants IS NULL
+        AND payout_freeze_version IS NULL
+        AND payout_freeze_json IS NULL
+    `).run(
+      input.freeze.finalEntrants,
+      input.freeze.version,
+      JSON.stringify(persisted),
+      input.now,
+      input.instanceId,
+      input.generation,
+      input.ownerToken,
+      input.freeze.finalEntrants,
+    );
+    if (updated.changes !== 1) {
+      throw new TournamentRecoveryError(
+        `Tournament freeze CAS lost: ${input.instanceId}`,
+      );
+    }
+    return true;
+  });
+}
+
+export function listTournamentSettlementParticipants(
+  database: PokerDatabase,
+  instanceId: string,
+): readonly PersistentTournamentParticipant[] {
+  const rows = database.db.prepare(`
+    SELECT
+      profile_id,
+      registration_attempt,
+      public_player_json
+    FROM tournament_registration
+    WHERE instance_id = ?
+      AND ever_seated = 1
+      AND status IN ('seated', 'eliminated', 'finished')
+    ORDER BY profile_id
+  `).all(instanceId) as unknown as Array<{
+    profile_id: string;
+    registration_attempt: number;
+    public_player_json: string;
+  }>;
+  return rows.map(row => {
+    const player = parsePersistentParticipant(row.public_player_json);
+    if (
+      !Number.isSafeInteger(row.registration_attempt)
+      || row.registration_attempt < 1
+    ) {
+      throw new TournamentRecoveryError(
+        `Invalid participant attempt: ${instanceId}`,
+      );
+    }
+    return {
+      playerId: player.id,
+      profileId: row.profile_id,
+      registrationAttempt: row.registration_attempt,
+      displayName: player.name,
+    };
+  });
+}
+
+function parsePersistentParticipant(
+  serialized: string,
+): { readonly id: string; readonly name: string } {
+  let value: unknown;
+  try {
+    value = JSON.parse(serialized);
+  } catch {
+    throw new TournamentRecoveryError('Invalid tournament participant');
+  }
+  if (
+    typeof value !== 'object'
+    || value === null
+    || !('id' in value)
+    || !('name' in value)
+    || typeof value.id !== 'string'
+    || value.id.length < 1
+    || typeof value.name !== 'string'
+    || value.name.length < 1
+  ) {
+    throw new TournamentRecoveryError('Invalid tournament participant');
+  }
+  return { id: value.id, name: value.name };
 }
 
 interface RecoveryInstanceRow {

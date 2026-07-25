@@ -52,8 +52,11 @@ import {
 } from './socket-handler';
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 import {
+  listTournamentSettlementParticipants,
   loadTournamentRecoveryPlan,
+  persistTournamentPayoutFreeze,
   resumeTournamentRefund,
+  resumeTournamentPayout,
   TournamentRecoveryService,
 } from './tournament-recovery-service';
 import { TournamentInstanceRepository } from './tournament-instance-repository';
@@ -64,7 +67,10 @@ import type {
   PersistentTournamentStartPorts,
 } from './tournament-command-service';
 import type { StartClaimSource } from './tournament-instance-repository';
-import type { PersistentLateRegistrationPorts } from './tournament-manager';
+import type {
+  PersistentLateRegistrationPorts,
+  PersistentTournamentSettlementPorts,
+} from './tournament-manager';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -97,6 +103,7 @@ let arenaMetrics: ArenaMetrics | undefined;
 let tournamentScheduler: TournamentScheduler | undefined;
 let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
 let persistentLateRegistration: PersistentLateRegistrationPorts | undefined;
+let persistentSettlement: PersistentTournamentSettlementPorts | undefined;
 const pendingTournamentStarts: Array<{
   instance: ClaimedTournamentStartSnapshot;
   source: StartClaimSource;
@@ -202,11 +209,44 @@ function initializePersistenceAndRecover(): void {
   };
   const persistentStartEnabled =
     process.env.MTT_PERSISTENT_START_ENABLED === 'true';
+  const payoutDependencies = {
+    getInstance: (instanceId: string) =>
+      tournamentInstances.getInstance(instanceId),
+    settleWallet: (instanceId: string, at: number) =>
+      economyRepository.settlePersistedMttPayout(instanceId, at),
+    settleFreeroll: (instanceId: string, at: number) =>
+      promotionFunds.settleFreerollPayout({
+        instanceId,
+        actor: { kind: 'system', id: 'tournament-settlement' },
+        at,
+      }),
+  };
   persistentLateRegistration = persistentStartEnabled
     ? createPersistentLateRegistrationPorts(
         tournamentInstances,
         tournamentEnrollments,
       )
+    : undefined;
+  persistentSettlement = persistentStartEnabled
+    ? {
+        freezeRegistration: input =>
+          persistTournamentPayoutFreeze(database!, input),
+        listParticipants: instanceId =>
+          listTournamentSettlementParticipants(database!, instanceId),
+        claimPayoutPending: (instanceId, plan) => {
+          const claim = tournamentInstances.claimPayoutPending(
+            instanceId,
+            plan,
+          );
+          return claim.status === 'claimed'
+            || claim.status === 'already-pending'
+            ? claim.status
+            : 'not-claimable';
+        },
+        settlePayout: (instanceId, at) => {
+          resumeTournamentPayout(payoutDependencies, instanceId, at);
+        },
+      }
     : undefined;
   persistentTournamentStart = persistentStartEnabled
     ? {
@@ -256,18 +296,37 @@ function initializePersistenceAndRecover(): void {
             snapshot.config.economy.fee,
           );
         },
-        commitRunning: input => tournamentEnrollments.commitStartingRoster({
-          tournamentId: input.snapshot.id,
-          ownerId: input.ownerToken,
-          startAttempt: input.snapshot.startAttempt,
-          humanEntrants:
-            input.initialEntrants - input.initialBotEntrants,
-          initialEntrants: input.initialEntrants,
-          initialBotEntrants: input.initialBotEntrants,
-          committedEntrants: input.committedEntrants,
-          everMultiTable: input.everMultiTable,
-          actualStartedAt: input.actualStartedAt,
-        }),
+        commitRunning: input => {
+          const committed = tournamentEnrollments.commitStartingRoster({
+            tournamentId: input.snapshot.id,
+            ownerId: input.ownerToken,
+            startAttempt: input.snapshot.startAttempt,
+            humanEntrants:
+              input.initialEntrants - input.initialBotEntrants,
+            initialEntrants: input.initialEntrants,
+            initialBotEntrants: input.initialBotEntrants,
+            committedEntrants: input.committedEntrants,
+            everMultiTable: input.everMultiTable,
+            actualStartedAt: input.actualStartedAt,
+          });
+          if (
+            !committed
+            || input.snapshot.config.lateRegistration.enabled
+          ) {
+            return committed;
+          }
+          const ownerToken = `late-disabled:${process.pid}`;
+          const close = tournamentInstances.claimRegistrationClose(
+            input.snapshot.id,
+            ownerToken,
+            'late-reg-disabled',
+          );
+          return close.status === 'claimed'
+            || (
+              close.status === 'already-owned'
+              && close.ownerToken === ownerToken
+            );
+        },
         restoreStartSource: (snapshot, ownerToken, source) => {
           tournamentEnrollments.rollbackStartClaim({
             tournamentId: snapshot.id,
@@ -352,10 +411,10 @@ function initializePersistenceAndRecover(): void {
       );
     },
     resumePayout: instanceId => {
-      // The stored-plan executor is supplied with settlement integration.
-      // Until then, fail closed instead of ever reclassifying payout as refund.
-      throw new Error(
-        `Tournament payout recovery executor is unavailable: ${instanceId}`,
+      resumeTournamentPayout(
+        payoutDependencies,
+        instanceId,
+        Date.now(),
       );
     },
     reconcileTemplatesAndTimers: () => {
@@ -529,6 +588,7 @@ async function listen(): Promise<void> {
     persistentTournamentStart,
     persistentRuntimeEnabled: persistentTournamentStart !== undefined,
     persistentLateRegistration,
+    persistentSettlement,
     progressionService,
     handHistory: handHistoryService,
     ...(arenaService

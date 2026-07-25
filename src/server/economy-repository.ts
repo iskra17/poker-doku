@@ -1108,6 +1108,218 @@ export class EconomyRepository {
     });
   }
 
+  settlePersistedMttPayout(instanceId: string, at: number): string {
+    this.assertSngIdentity('persisted-settlement', instanceId);
+    assertValidEconomyTimestamp(at);
+    try {
+      return this.database.transaction(() => {
+        const instance = this.database.db.prepare(`
+          SELECT status, economy_mode
+          FROM tournament_instance
+          WHERE id = ?
+        `).get(instanceId) as {
+          status: string;
+          economy_mode: string;
+        } | undefined;
+        const settlement = this.database.db.prepare(`
+          SELECT
+            status, final_entrants, prize_pool, human_payout_total,
+            bot_return_total, fingerprint
+          FROM tournament_settlement
+          WHERE instance_id = ?
+        `).get(instanceId) as {
+          status: string;
+          final_entrants: number;
+          prize_pool: number;
+          human_payout_total: number;
+          bot_return_total: number;
+          fingerprint: string;
+        } | undefined;
+        if (!instance || !settlement) {
+          throw new EconomyDomainError('SNG_ENTRY_NOT_FOUND');
+        }
+        if (instance.economy_mode !== 'wallet') {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        if (instance.status === 'completed') {
+          if (settlement.status !== 'settled') {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          return instanceId;
+        }
+        if (
+          instance.status !== 'payout-pending'
+          || settlement.status !== 'pending'
+          || !Number.isSafeInteger(settlement.final_entrants)
+          || settlement.final_entrants < 1
+          || !Number.isSafeInteger(settlement.prize_pool)
+          || settlement.prize_pool < 1
+          || settlement.human_payout_total !== settlement.prize_pool
+          || settlement.bot_return_total !== 0
+        ) {
+          throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+        }
+        const product = this.requireMttInstanceProduct(instanceId);
+        const expectedPool = product.buyIn * settlement.final_entrants;
+        if (
+          !Number.isSafeInteger(expectedPool)
+          || expectedPool !== settlement.prize_pool
+        ) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        const resultRows = this.database.db.prepare(`
+          SELECT
+            result.place, result.player_id, result.participant_type,
+            result.profile_id, result.registration_attempt, result.prize,
+            result.disposition, registration.public_player_json,
+            registration.economy_entry_attempt
+          FROM tournament_settlement_result AS result
+          LEFT JOIN tournament_registration AS registration
+            ON registration.instance_id = result.instance_id
+           AND registration.profile_id = result.profile_id
+           AND registration.registration_attempt = result.registration_attempt
+          WHERE result.instance_id = ?
+          ORDER BY result.place
+        `).all(instanceId) as unknown as Array<{
+          place: number;
+          player_id: string;
+          participant_type: string;
+          profile_id: string | null;
+          registration_attempt: number | null;
+          prize: number;
+          disposition: string;
+          public_player_json: string | null;
+          economy_entry_attempt: number | null;
+        }>;
+        if (resultRows.length !== settlement.final_entrants) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        const activeCount = this.database.db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sng_entries
+          WHERE tournament_id = ? AND status = 'started'
+        `).get(instanceId) as { count: number };
+        if (activeCount.count !== settlement.final_entrants) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+
+        let paid = 0;
+        for (let index = 0; index < resultRows.length; index += 1) {
+          const result = resultRows[index]!;
+          if (
+            result.place !== index + 1
+            || result.participant_type !== 'human'
+            || result.profile_id === null
+            || !Number.isSafeInteger(result.registration_attempt)
+            || (result.registration_attempt as number) < 1
+            || !Number.isSafeInteger(result.economy_entry_attempt)
+            || (result.economy_entry_attempt as number) < 1
+            || !Number.isSafeInteger(result.prize)
+            || result.prize < 0
+            || result.disposition !== (result.prize > 0
+              ? 'wallet-credit'
+              : 'none')
+          ) {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          let player: unknown;
+          try {
+            player = JSON.parse(result.public_player_json ?? '');
+          } catch {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          if (!isRecord(player) || player.id !== result.player_id) {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          const entry = this.getMttEntryByAttempt(
+            instanceId,
+            result.profile_id,
+            result.economy_entry_attempt as number,
+          );
+          if (
+            !entry
+            || entry.status !== 'started'
+            || entry.buyIn !== product.buyIn
+            || entry.fee !== product.fee
+            || entry.roomId !== instanceId
+          ) {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          this.requireMatchingSngSeat(entry, entry.buyIn);
+          this.assertSngStartLedger(entry);
+          if (result.prize > 0) {
+            this.applyWalletDeltaInTransaction(
+              result.profile_id,
+              result.prize,
+              'SNG_PRIZE',
+              `mtt-wallet-prize:${instanceId}:${result.place}`,
+              instanceId,
+              at,
+            );
+          }
+          paid = this.safeAdd(
+            paid,
+            result.prize,
+            'SNG_SETTLEMENT_INVALID',
+          );
+          this.insertLedger({
+            profileId: result.profile_id,
+            account: 'escrow',
+            delta: -entry.buyIn,
+            reason: 'SNG_PRIZE_POOL',
+            refId: instanceId,
+            idempotencyKey:
+              `mtt-wallet-pool:${instanceId}:${result.place}`,
+            at,
+          });
+          const entryUpdate = this.database.db.prepare(`
+            UPDATE sng_entries
+            SET status = 'settled', place = ?, prize = ?, updated_at = ?
+            WHERE id = ? AND status = 'started' AND entry_attempt = ?
+          `).run(
+            result.place,
+            result.prize,
+            at,
+            entry.id,
+            entry.entryAttempt,
+          );
+          const escrowUpdate = this.database.db.prepare(`
+            UPDATE seat_escrows
+            SET status = 'settled', amount = 0, checkpoint_amount = 0,
+                updated_at = ?
+            WHERE id = ? AND mode = 'sng' AND status = 'active'
+          `).run(at, entry.id);
+          if (entryUpdate.changes !== 1 || escrowUpdate.changes !== 1) {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+        }
+        if (paid !== settlement.prize_pool) {
+          throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+        }
+        const settlementUpdate = this.database.db.prepare(`
+          UPDATE tournament_settlement
+          SET status = 'settled', settled_at = ?, updated_at = ?
+          WHERE instance_id = ? AND status = 'pending' AND fingerprint = ?
+        `).run(at, at, instanceId, settlement.fingerprint);
+        if (settlementUpdate.changes !== 1) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        const instanceUpdate = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET status = 'completed', completed_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'payout-pending'
+        `).run(at, at, instanceId);
+        if (instanceUpdate.changes !== 1) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        return instanceId;
+      });
+    } catch (error) {
+      if (error instanceof EconomyDomainError) throw error;
+      throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+    }
+  }
+
   /**
    * MTT 무효화 환불 — 취소(디렉터/인원 미달) 시 활성 참가 전원에게 전액(수수료 포함) 반환.
    * reserved/started 혼재를 허용한다 (등록 중 취소와 진행 중 취소를 한 경로로 처리).

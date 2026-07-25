@@ -4,6 +4,7 @@ import {
   TournamentManager,
   type CreateTournamentInput,
   type MttEconomyHooks,
+  type PersistentTournamentSettlementPorts,
 } from './tournament-manager';
 import { EconomyDomainError } from './economy-repository';
 import { computePayouts } from '../lib/poker/payout-table';
@@ -180,16 +181,44 @@ describe('TournamentManager wallet MTT', () => {
 
   it('never adds bots to a prepared persistent wallet field', () => {
     const { economy } = createEconomyMock();
-    manager = new TournamentManager(roomManager, { economy });
-    const roster = Array.from({ length: 8 }, (_, index) => ({
+    const claimPayoutPending = vi.fn<
+      PersistentTournamentSettlementPorts['claimPayoutPending']
+    >(() => 'claimed');
+    const roster = Array.from({ length: 6 }, (_, index) => ({
       id: `wallet-${index + 1}`,
       name: `Wallet ${index + 1}`,
       avatar: 'ara',
     }));
+    manager = new TournamentManager(roomManager, { economy }, {
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'closed',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+      },
+      persistentSettlement: {
+        freezeRegistration: vi.fn(() => true),
+        listParticipants: () => roster.map(player => ({
+          playerId: player.id,
+          profileId: player.id,
+          registrationAttempt: 1,
+          displayName: player.name,
+        })),
+        claimPayoutPending,
+        settlePayout: vi.fn(),
+      },
+    });
     const prepared = manager.prepareFromInstance({
       id: 'persistent-wallet',
       economyMode: 'wallet',
       directorProfileId: 'director-1',
+      registrationState: 'closed',
+      registrationGeneration: 1,
+      registrationOwnerToken: null,
       config: {
         version: 2,
         name: 'Persistent Wallet',
@@ -201,7 +230,7 @@ describe('TournamentManager wallet MTT', () => {
         },
         tableSize: 6,
         field: {
-          minEntrants: 8,
+          minEntrants: 6,
           maxEntrants: 12,
           botFillToMinimum: false,
         },
@@ -232,9 +261,30 @@ describe('TournamentManager wallet MTT', () => {
     }, roster, 'owner-1');
 
     expect(prepared.botEntrants).toBe(0);
-    expect(prepared.committedEntrants).toBe(8);
+    expect(prepared.committedEntrants).toBe(6);
     expect(roomManager.getAdminRoomSummaries().every(room => room.bots === 0))
       .toBe(true);
+
+    manager.activatePreparedTournament(
+      'persistent-wallet',
+      'owner-1',
+      Date.now(),
+    );
+    const [roomId] = prepared.roomIds;
+    const table = engineOf(roomManager, roomId!);
+    for (const player of table.state.players.slice(0, 5)) {
+      player.handStartChips = 100;
+      player.chips = 0;
+    }
+    manager.roomHooks.onHandComplete(roomId!);
+
+    expect(claimPayoutPending).toHaveBeenCalledOnce();
+    expect(claimPayoutPending.mock.calls[0]![1].results)
+      .toHaveLength(6);
+    expect(claimPayoutPending.mock.calls[0]![1].results.every(result => (
+      result.participantType === 'human'
+      && result.profileId === result.playerId
+    ))).toBe(true);
   });
 
   it('cancels and refunds a scheduled wallet field that checks in short', () => {

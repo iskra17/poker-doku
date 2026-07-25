@@ -9,7 +9,10 @@ import {
 } from './promotion-fund-repository';
 import {
   TournamentInstanceRepository,
+  computeTournamentPayoutFreezeChecksum,
+  computeTournamentSettlementFingerprint,
   type CreateInstanceCommand,
+  type TournamentPayoutFreezePlan,
 } from './tournament-instance-repository';
 
 const NOW = Date.now();
@@ -113,6 +116,167 @@ describe('PromotionFundRepository', () => {
       reason: 'Initial promotion funding',
       actor: ADMIN,
       at: NOW,
+    });
+  }
+
+  function walletBalance(profileId: string): number {
+    return (database.db.prepare(`
+      SELECT balance FROM wallets WHERE profile_id = ?
+    `).get(profileId) as { balance: number }).balance;
+  }
+
+  function prepareFreerollSettlement(
+    instanceId: string,
+    playerAResultId = 'player-a',
+  ): void {
+    credit();
+    funds.createImmediateFreeroll({
+      instance: freerollCommand(instanceId),
+      idempotencyKey: randomUUID(),
+      actor: ADMIN,
+      at: NOW,
+    });
+    for (const [profileId, playerId] of [
+      ['profile-a', 'player-a'],
+      ['profile-b', 'player-b'],
+    ] as const) {
+      database.db.prepare(`
+        INSERT INTO profiles (
+          id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+          alias, avatar_id, adult_confirmed_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'sakura', 1, ?, ?)
+      `).run(
+        profileId,
+        `credential:${profileId}`,
+        `lookup:${profileId}`,
+        `recovery:${profileId}`,
+        `recovery-lookup:${profileId}`,
+        profileId,
+        NOW,
+        NOW,
+      );
+      database.db.prepare(`
+        INSERT INTO wallets (profile_id, balance, updated_at) VALUES (?, 0, ?)
+      `).run(profileId, NOW);
+      database.db.prepare(`
+        INSERT INTO tournament_registration (
+          instance_id, profile_id, public_player_json, status, ever_seated,
+          registration_attempt, economy_entry_attempt, registered_at, updated_at
+        ) VALUES (?, ?, ?, 'registered', 0, 1, NULL, ?, ?)
+      `).run(
+        instanceId,
+        profileId,
+        JSON.stringify({ id: playerId }),
+        NOW,
+        NOW,
+      );
+      database.db.prepare(`
+        INSERT INTO tournament_registration_attempt (
+          instance_id, profile_id, registration_attempt, request_id,
+          economy_entry_attempt, status, close_generation, close_owner_token,
+          close_reason, created_at, updated_at
+        ) VALUES (?, ?, 1, ?, NULL, 'registered', NULL, NULL, NULL, ?, ?)
+      `).run(instanceId, profileId, `request-${profileId}`, NOW, NOW);
+      database.db.prepare(`
+        UPDATE tournament_registration
+        SET status = 'seat-claimed', updated_at = ?
+        WHERE instance_id = ? AND profile_id = ?
+      `).run(NOW + 1, instanceId, profileId);
+      database.db.prepare(`
+        UPDATE tournament_registration
+        SET status = 'seated', ever_seated = 1, updated_at = ?
+        WHERE instance_id = ? AND profile_id = ?
+      `).run(NOW + 2, instanceId, profileId);
+    }
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'starting',
+          registration_state = 'locked-for-start',
+          start_attempt = 1,
+          start_owner_id = 'starter',
+          start_lease_until = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(NOW + 60_000, NOW + 3, instanceId);
+    const freeze = {
+      version: 1,
+      finalEntrants: 3,
+      prizePool: 100_000,
+      payouts: [
+        { place: 1, amount: 50_000 },
+        { place: 2, amount: 30_000 },
+        { place: 3, amount: 20_000 },
+      ],
+    };
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'running',
+          registration_state = 'closed',
+          registration_close_reason = 'late-reg-disabled',
+          registration_generation = 1,
+          initial_entrants = 3,
+          initial_bot_entrants = 1,
+          committed_entrants = 3,
+          final_entrants = 3,
+          payout_freeze_version = 1,
+          payout_freeze_json = ?,
+          start_owner_id = NULL,
+          start_lease_until = NULL,
+          actual_started_at = ?,
+          updated_at = ?
+      WHERE id = ?
+    `).run(JSON.stringify(freeze), NOW + 4, NOW + 4, instanceId);
+    const results: TournamentPayoutFreezePlan['results'] = [
+      {
+        place: 1,
+        playerId: 'bot-a',
+        participantType: 'bot',
+        profileId: null,
+        registrationAttempt: null,
+        displayName: '미야코',
+        prize: 50_000,
+        disposition: 'promotion-return',
+      },
+      {
+        place: 2,
+        playerId: playerAResultId,
+        participantType: 'human',
+        profileId: 'profile-a',
+        registrationAttempt: 1,
+        displayName: 'A',
+        prize: 30_000,
+        disposition: 'wallet-credit',
+      },
+      {
+        place: 3,
+        playerId: 'player-b',
+        participantType: 'human',
+        profileId: 'profile-b',
+        registrationAttempt: 1,
+        displayName: 'B',
+        prize: 20_000,
+        disposition: 'wallet-credit',
+      },
+    ];
+    const checksum = computeTournamentPayoutFreezeChecksum(freeze);
+    const plan: TournamentPayoutFreezePlan = {
+      version: 1,
+      checksum,
+      prizePool: 100_000,
+      results,
+      fingerprint: computeTournamentSettlementFingerprint({
+        instanceId,
+        configVersion: 2,
+        payoutFreezeVersion: 1,
+        payoutFreezeChecksum: checksum,
+        prizePool: 100_000,
+        results,
+      }),
+      now: NOW + 5,
+    };
+    expect(instances.claimPayoutPending(instanceId, plan)).toMatchObject({
+      status: 'claimed',
+      instance: { status: 'payout-pending' },
     });
   }
 
@@ -224,6 +388,101 @@ describe('PromotionFundRepository', () => {
       reservedTotal: 0,
       ledger: [expect.objectContaining({ kind: 'admin-adjustment' })],
     });
+  });
+
+  it('pays humans and returns bot prizes so totals equal the freeroll escrow', () => {
+    prepareFreerollSettlement('settle-freeroll');
+
+    const settled = funds.settleFreerollPayout({
+      instanceId: 'settle-freeroll',
+      actor: SYSTEM,
+      at: NOW + 30,
+    });
+
+    expect(settled).toMatchObject({
+      status: 'settled',
+      amount: 100_000,
+      humanPaid: 50_000,
+      botReturned: 50_000,
+    });
+    expect(walletBalance('profile-a')).toBe(30_000);
+    expect(walletBalance('profile-b')).toBe(20_000);
+    expect(funds.getFundPage({ limit: 10 })).toMatchObject({
+      availableBalance: 450_000,
+      reservedTotal: 0,
+    });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_instance WHERE id = 'settle-freeroll'
+    `).get()).toEqual({ status: 'completed' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_settlement WHERE instance_id = 'settle-freeroll'
+    `).get()).toEqual({ status: 'settled' });
+    expect(database.db.prepare(`
+      SELECT profile_id, idempotency_key
+      FROM chip_ledger
+      WHERE ref_id = 'settle-freeroll'
+      ORDER BY idempotency_key
+    `).all()).toEqual([
+      {
+        profile_id: 'profile-a',
+        idempotency_key: 'mtt-freeroll-prize:settle-freeroll:2',
+      },
+      {
+        profile_id: 'profile-b',
+        idempotency_key: 'mtt-freeroll-prize:settle-freeroll:3',
+      },
+    ]);
+
+    expect(funds.settleFreerollPayout({
+      instanceId: 'settle-freeroll',
+      actor: SYSTEM,
+      at: NOW + 31,
+    })).toEqual(settled);
+    expect(walletBalance('profile-a')).toBe(30_000);
+    expect(walletBalance('profile-b')).toBe(20_000);
+  });
+
+  it('keeps a failed freeroll settlement payout-pending for exact-plan recovery', () => {
+    prepareFreerollSettlement('settle-failure');
+    database.db.exec(`
+      CREATE TRIGGER injected_wallet_credit_failure
+      BEFORE UPDATE ON wallets
+      BEGIN
+        SELECT RAISE(ABORT, 'injected wallet failure');
+      END;
+    `);
+
+    expect(() => funds.settleFreerollPayout({
+      instanceId: 'settle-failure',
+      actor: SYSTEM,
+      at: NOW + 30,
+    })).toThrowError(expect.objectContaining({ code: 'financial-invariant' }));
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_instance WHERE id = 'settle-failure'
+    `).get()).toEqual({ status: 'payout-pending' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_settlement WHERE instance_id = 'settle-failure'
+    `).get()).toEqual({ status: 'pending' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_prize_escrow WHERE instance_id = 'settle-failure'
+    `).get()).toEqual({ status: 'reserved' });
+    expect(walletBalance('profile-a')).toBe(0);
+    expect(walletBalance('profile-b')).toBe(0);
+  });
+
+  it('rejects a human result whose player id is not the registered identity', () => {
+    prepareFreerollSettlement('identity-mismatch', 'forged-player');
+
+    expect(() => funds.settleFreerollPayout({
+      instanceId: 'identity-mismatch',
+      actor: SYSTEM,
+      at: NOW + 30,
+    })).toThrowError(expect.objectContaining({ code: 'financial-invariant' }));
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_instance WHERE id = 'identity-mismatch'
+    `).get()).toEqual({ status: 'payout-pending' });
+    expect(walletBalance('profile-a')).toBe(0);
+    expect(walletBalance('profile-b')).toBe(0);
   });
 
   it('funds one hidden occurrence exactly at visibility', () => {

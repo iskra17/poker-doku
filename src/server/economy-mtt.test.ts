@@ -13,7 +13,12 @@ import {
   MTT_WALLET_ENTRY_FEE,
 } from '@/lib/economy/mtt-entry';
 import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-config';
-import { TournamentInstanceRepository } from './tournament-instance-repository';
+import {
+  TournamentInstanceRepository,
+  computeTournamentPayoutFreezeChecksum,
+  computeTournamentSettlementFingerprint,
+  type TournamentPayoutFreezePlan,
+} from './tournament-instance-repository';
 
 /**
  * wallet MTT 토너 단위 에스크로 회귀 (Phase 2 — spec-mtt §4-7).
@@ -313,7 +318,219 @@ describe('wallet MTT 에스크로', () => {
     expect(() => service.settleMttTournament(MTT_ID, results, 'top-heavy')).not.toThrow();
     expect(balanceOf('p1')).toBe(5_000 - MTT_WALLET_ENTRY_COST + ladder[0]);
   });
+
+  it('settles wallet payouts only from the persisted immutable result plan', () => {
+    preparePersistentWalletSettlement('persistent-settlement');
+    const completedAt = Date.now();
+
+    expect(repository.settlePersistedMttPayout(
+      'persistent-settlement',
+      completedAt,
+    )).toBe('persistent-settlement');
+    expect(balanceOf('persist-a')).toBe(
+      5_000 - MTT_WALLET_ENTRY_COST + MTT_WALLET_BUY_IN * 2,
+    );
+    expect(balanceOf('persist-b')).toBe(5_000 - MTT_WALLET_ENTRY_COST);
+    expect(database.db.prepare(`
+      SELECT profile_id, status, place, prize
+      FROM sng_entries
+      WHERE tournament_id = 'persistent-settlement'
+      ORDER BY place
+    `).all()).toEqual([
+      {
+        profile_id: 'persist-a',
+        status: 'settled',
+        place: 1,
+        prize: MTT_WALLET_BUY_IN * 2,
+      },
+      {
+        profile_id: 'persist-b',
+        status: 'settled',
+        place: 2,
+        prize: 0,
+      },
+    ]);
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_settlement
+      WHERE instance_id = 'persistent-settlement'
+    `).get()).toEqual({ status: 'settled' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_instance
+      WHERE id = 'persistent-settlement'
+    `).get()).toEqual({ status: 'completed' });
+    expect(() => repository.settlePersistedMttPayout(
+      'persistent-settlement',
+      completedAt + 1,
+    )).not.toThrow();
+    expect(balanceOf('persist-a')).toBe(
+      5_000 - MTT_WALLET_ENTRY_COST + MTT_WALLET_BUY_IN * 2,
+    );
+  });
+
+  it('rolls wallet payout failure back and keeps the instance payout-pending', () => {
+    preparePersistentWalletSettlement('persistent-failure');
+    const completedAt = Date.now();
+    database.db.exec(`
+      CREATE TRIGGER injected_persisted_wallet_failure
+      BEFORE UPDATE ON wallets
+      BEGIN
+        SELECT RAISE(ABORT, 'injected persisted wallet failure');
+      END;
+    `);
+
+    expect(() => repository.settlePersistedMttPayout(
+      'persistent-failure',
+      completedAt,
+    )).toThrowError(EconomyDomainError);
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_instance WHERE id = 'persistent-failure'
+    `).get()).toEqual({ status: 'payout-pending' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_settlement
+      WHERE instance_id = 'persistent-failure'
+    `).get()).toEqual({ status: 'pending' });
+    expect(database.db.prepare(`
+      SELECT DISTINCT status FROM sng_entries
+      WHERE tournament_id = 'persistent-failure'
+    `).all()).toEqual([{ status: 'started' }]);
+  });
 });
+
+function preparePersistentWalletSettlement(instanceId: string): void {
+  createPersistentWalletInstance(instanceId, 'registering');
+  const product = {
+    instanceId,
+    productVersion: 1,
+    buyIn: MTT_WALLET_BUY_IN,
+    fee: MTT_WALLET_ENTRY_FEE,
+  };
+  for (const [profileId, playerId] of [
+    ['persist-a', 'wallet-player-a'],
+    ['persist-b', 'wallet-player-b'],
+  ] as const) {
+    seedProfile(profileId);
+    const entry = database.transaction(() => repository.reserveMttEntryInTransaction(
+      profileId,
+      product,
+      1,
+      NOW,
+    ));
+    database.db.prepare(`
+      INSERT INTO tournament_registration (
+        instance_id, profile_id, public_player_json, status, ever_seated,
+        registration_attempt, economy_entry_attempt, registered_at, updated_at
+      ) VALUES (?, ?, ?, 'registered', 0, 1, 1, ?, ?)
+    `).run(
+      instanceId,
+      profileId,
+      JSON.stringify({ id: playerId }),
+      NOW,
+      NOW,
+    );
+    database.db.prepare(`
+      INSERT INTO tournament_registration_attempt (
+        instance_id, profile_id, registration_attempt, request_id,
+        economy_entry_attempt, status, close_generation, close_owner_token,
+        close_reason, created_at, updated_at
+      ) VALUES (?, ?, 1, ?, 1, 'registered', NULL, NULL, NULL, ?, ?)
+    `).run(instanceId, profileId, `request-${profileId}`, NOW, NOW);
+    database.db.prepare(`
+      UPDATE tournament_registration
+      SET status = 'seat-claimed', updated_at = ?
+      WHERE instance_id = ? AND profile_id = ?
+    `).run(NOW + 1, instanceId, profileId);
+    database.db.prepare(`
+      UPDATE tournament_registration
+      SET status = 'seated', ever_seated = 1, updated_at = ?
+      WHERE instance_id = ? AND profile_id = ?
+    `).run(NOW + 2, instanceId, profileId);
+    database.transaction(() => repository.startMttEntryInTransaction(
+      entry.id,
+      1,
+      NOW + 3,
+    ));
+  }
+  database.db.prepare(`
+    UPDATE tournament_instance
+    SET status = 'starting',
+        registration_state = 'locked-for-start',
+        start_attempt = 1,
+        start_owner_id = 'settlement-owner',
+        start_lease_until = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(NOW + 60_000, NOW + 4, instanceId);
+  const freeze = {
+    version: 1,
+    finalEntrants: 2,
+    prizePool: MTT_WALLET_BUY_IN * 2,
+    payouts: [
+      { place: 1, amount: MTT_WALLET_BUY_IN * 2 },
+      { place: 2, amount: 0 },
+    ],
+  };
+  database.db.prepare(`
+    UPDATE tournament_instance
+    SET status = 'running',
+        registration_state = 'closed',
+        registration_close_reason = 'late-reg-disabled',
+        registration_generation = 1,
+        initial_entrants = 2,
+        initial_bot_entrants = 0,
+        committed_entrants = 2,
+        final_entrants = 2,
+        payout_freeze_version = 1,
+        payout_freeze_json = ?,
+        start_owner_id = NULL,
+        start_lease_until = NULL,
+        actual_started_at = ?,
+        updated_at = ?
+    WHERE id = ?
+  `).run(JSON.stringify(freeze), NOW + 5, NOW + 5, instanceId);
+  const results: TournamentPayoutFreezePlan['results'] = [
+    {
+      place: 1,
+      playerId: 'wallet-player-a',
+      participantType: 'human',
+      profileId: 'persist-a',
+      registrationAttempt: 1,
+      displayName: 'A',
+      prize: MTT_WALLET_BUY_IN * 2,
+      disposition: 'wallet-credit',
+    },
+    {
+      place: 2,
+      playerId: 'wallet-player-b',
+      participantType: 'human',
+      profileId: 'persist-b',
+      registrationAttempt: 1,
+      displayName: 'B',
+      prize: 0,
+      disposition: 'none',
+    },
+  ];
+  const checksum = computeTournamentPayoutFreezeChecksum(freeze);
+  const plan: TournamentPayoutFreezePlan = {
+    version: 1,
+    checksum,
+    prizePool: MTT_WALLET_BUY_IN * 2,
+    results,
+    fingerprint: computeTournamentSettlementFingerprint({
+      instanceId,
+      configVersion: 2,
+      payoutFreezeVersion: 1,
+      payoutFreezeChecksum: checksum,
+      prizePool: MTT_WALLET_BUY_IN * 2,
+      results,
+    }),
+    now: NOW + 6,
+  };
+  const instances = new TournamentInstanceRepository(database, () => NOW);
+  expect(instances.claimPayoutPending(instanceId, plan)).toMatchObject({
+    status: 'claimed',
+    instance: { status: 'payout-pending' },
+  });
+}
 
 function createPersistentWalletInstance(
   id: string,

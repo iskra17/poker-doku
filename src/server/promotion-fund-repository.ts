@@ -6,6 +6,7 @@ import {
   type CreateInstanceCommand,
   type TournamentInstanceRecord,
 } from './tournament-instance-repository';
+import { EconomyRepository } from './economy-repository';
 
 const ACCOUNT_ID = 'global' as const;
 const MAX_LEDGER_DELTA = 2_000_000_000;
@@ -13,6 +14,7 @@ const MIN_REASON_LENGTH = 5;
 const MAX_REASON_LENGTH = 200;
 const RESERVE_REASON = 'Freeroll prize reserve';
 const REFUND_REASON = 'Freeroll prize refund';
+const BOT_RETURN_REASON = 'Freeroll bot prize return';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -501,6 +503,205 @@ export class PromotionFundRepository {
     return result.escrow;
   }
 
+  settleFreerollPayout(input: {
+    readonly instanceId: string;
+    readonly actor: PromotionFundActor;
+    readonly at: number;
+  }): PrizeEscrow {
+    assertIdentifier(input.instanceId);
+    assertActor(input.actor);
+    assertTimestamp(input.at);
+    try {
+      return this.database.transaction(() => {
+        const instance = this.database.db.prepare(`
+          SELECT status, economy_mode
+          FROM tournament_instance
+          WHERE id = ?
+        `).get(input.instanceId) as SqlRow | undefined;
+        const settlement = this.database.db.prepare(`
+          SELECT
+            status, final_entrants, prize_pool, human_payout_total,
+            bot_return_total, fingerprint
+          FROM tournament_settlement
+          WHERE instance_id = ?
+        `).get(input.instanceId) as SqlRow | undefined;
+        const escrow = this.#escrow(input.instanceId);
+        if (!instance || !settlement || !escrow) {
+          throw new PromotionFundError('not-found');
+        }
+        if (
+          stringValue(instance.economy_mode) !== 'freeroll'
+          || escrow.amount !== positiveInteger(settlement.prize_pool)
+          || escrow.settlementFingerprint !== stringValue(settlement.fingerprint)
+        ) {
+          invariant();
+        }
+        const instanceStatus = stringValue(instance.status);
+        const settlementStatus = stringValue(settlement.status);
+        if (instanceStatus === 'completed') {
+          if (settlementStatus !== 'settled' || escrow.status !== 'settled') {
+            invariant();
+          }
+          return escrow;
+        }
+        if (
+          instanceStatus !== 'payout-pending'
+          || settlementStatus !== 'pending'
+          || escrow.status !== 'reserved'
+        ) {
+          throw new PromotionFundError('not-claimable');
+        }
+
+        const finalEntrants = positiveInteger(settlement.final_entrants);
+        const expectedHumanPaid = nonNegativeInteger(
+          settlement.human_payout_total,
+        );
+        const expectedBotReturned = nonNegativeInteger(
+          settlement.bot_return_total,
+        );
+        if (expectedHumanPaid + expectedBotReturned !== escrow.amount) {
+          invariant();
+        }
+        const results = this.database.db.prepare(`
+          SELECT
+            result.place, result.player_id, result.participant_type,
+            result.profile_id, result.registration_attempt, result.prize,
+            result.disposition,
+            registration.public_player_json
+          FROM tournament_settlement_result AS result
+          LEFT JOIN tournament_registration AS registration
+            ON registration.instance_id = result.instance_id
+           AND registration.profile_id = result.profile_id
+           AND registration.registration_attempt = result.registration_attempt
+          WHERE result.instance_id = ?
+          ORDER BY result.place
+        `).all(input.instanceId) as SqlRow[];
+        if (results.length !== finalEntrants) invariant();
+
+        const economy = new EconomyRepository(this.database);
+        let humanPaid = 0;
+        let botReturned = 0;
+        for (let index = 0; index < results.length; index += 1) {
+          const result = results[index]!;
+          const place = positiveInteger(result.place);
+          const prize = nonNegativeInteger(result.prize);
+          if (place !== index + 1) invariant();
+          if (stringValue(result.participant_type) === 'human') {
+            const profileId = stringValue(result.profile_id);
+            positiveInteger(result.registration_attempt);
+            let registeredPlayer: unknown;
+            try {
+              registeredPlayer = JSON.parse(
+                stringValue(result.public_player_json),
+              );
+            } catch {
+              invariant();
+            }
+            if (
+              !isRecord(registeredPlayer)
+              || registeredPlayer.id !== stringValue(result.player_id)
+              ||
+              stringValue(result.disposition)
+                !== (prize > 0 ? 'wallet-credit' : 'none')
+            ) {
+              invariant();
+            }
+            economy.creditFreerollPrizeInTransaction(
+              profileId,
+              input.instanceId,
+              place,
+              prize,
+              input.at,
+            );
+            humanPaid = safeAmountAdd(humanPaid, prize);
+          } else if (stringValue(result.participant_type) === 'bot') {
+            if (
+              result.profile_id !== null
+              || result.registration_attempt !== null
+              || stringValue(result.disposition)
+                !== (prize > 0 ? 'promotion-return' : 'none')
+            ) {
+              invariant();
+            }
+            botReturned = safeAmountAdd(botReturned, prize);
+          } else {
+            invariant();
+          }
+        }
+        if (
+          humanPaid !== expectedHumanPaid
+          || botReturned !== expectedBotReturned
+          || humanPaid + botReturned !== escrow.amount
+        ) {
+          invariant();
+        }
+
+        if (botReturned > 0) {
+          const account = this.#account();
+          const balanceAfter = safeAmountAdd(
+            account.availableBalance,
+            botReturned,
+          );
+          this.#insertLedger({
+            kind: 'freeroll-bot-prize-return',
+            delta: botReturned,
+            instanceId: input.instanceId,
+            actor: input.actor,
+            reason: BOT_RETURN_REASON,
+            balanceAfter,
+            idempotencyKey:
+              `mtt-freeroll-bot-return:${input.instanceId}`,
+            createdAt: input.at,
+          });
+        }
+        const escrowUpdate = this.database.db.prepare(`
+          UPDATE tournament_prize_escrow
+          SET status = 'settled',
+              human_paid = ?,
+              bot_returned = ?,
+              settled_at = ?,
+              updated_at = ?
+          WHERE instance_id = ?
+            AND status = 'reserved'
+            AND amount = ?
+            AND settlement_fingerprint = ?
+        `).run(
+          humanPaid,
+          botReturned,
+          input.at,
+          input.at,
+          input.instanceId,
+          escrow.amount,
+          escrow.settlementFingerprint,
+        );
+        if (escrowUpdate.changes !== 1) invariant();
+        const settlementUpdate = this.database.db.prepare(`
+          UPDATE tournament_settlement
+          SET status = 'settled', settled_at = ?, updated_at = ?
+          WHERE instance_id = ? AND status = 'pending' AND fingerprint = ?
+        `).run(
+          input.at,
+          input.at,
+          input.instanceId,
+          escrow.settlementFingerprint,
+        );
+        if (settlementUpdate.changes !== 1) invariant();
+        const instanceUpdate = this.database.db.prepare(`
+          UPDATE tournament_instance
+          SET status = 'completed', completed_at = ?, updated_at = ?
+          WHERE id = ? AND status = 'payout-pending'
+        `).run(input.at, input.at, input.instanceId);
+        if (instanceUpdate.changes !== 1) invariant();
+        const completed = this.#escrow(input.instanceId);
+        if (!completed || completed.status !== 'settled') invariant();
+        return completed;
+      });
+    } catch (error) {
+      if (error instanceof PromotionFundError) throw error;
+      invariant();
+    }
+  }
+
   #quarantineRefundInvariant(
     instanceId: string,
     instance: {
@@ -878,6 +1079,18 @@ function nonNegativeInteger(value: unknown): number {
 function positiveInteger(value: unknown): number {
   const result = integer(value);
   if (result < 1) invariant();
+  return result;
+}
+
+function safeAmountAdd(left: number, right: number): number {
+  const result = left + right;
+  if (
+    !Number.isSafeInteger(result)
+    || result < 0
+    || result > MAX_LEDGER_DELTA
+  ) {
+    invariant();
+  }
   return result;
 }
 

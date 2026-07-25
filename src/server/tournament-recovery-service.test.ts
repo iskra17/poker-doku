@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-config';
+import { buildTournamentPayoutFreeze } from '@/lib/tournament/tournament-settlement';
 import { EconomyRepository } from './economy-repository';
 import { EconomyService } from './economy-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
@@ -11,7 +12,10 @@ import {
   type CreateInstanceCommand,
 } from './tournament-instance-repository';
 import {
+  listTournamentSettlementParticipants,
   loadTournamentRecoveryPlan,
+  persistTournamentPayoutFreeze,
+  resumeTournamentPayout,
   resumeTournamentRefund,
   TournamentRecoveryError,
   TournamentRecoveryService,
@@ -100,6 +104,130 @@ describe('TournamentRecoveryService', () => {
 
     expect(resumeRefund).not.toHaveBeenCalled();
     expect(resumePayout).toHaveBeenCalledWith('payout-only');
+  });
+
+  it.each(['wallet', 'freeroll'] as const)(
+    'resumes the exact persisted %s payout executor and requires completion',
+    economyMode => {
+      let status: 'payout-pending' | 'completed' = 'payout-pending';
+      const settleWallet = vi.fn(() => {
+        status = 'completed';
+      });
+      const settleFreeroll = vi.fn(() => {
+        status = 'completed';
+      });
+
+      resumeTournamentPayout({
+        getInstance: () => ({
+          id: `payout-${economyMode}`,
+          economyMode,
+          status,
+        }),
+        settleWallet,
+        settleFreeroll,
+      }, `payout-${economyMode}`, NOW);
+
+      expect(settleWallet).toHaveBeenCalledTimes(economyMode === 'wallet' ? 1 : 0);
+      expect(settleFreeroll).toHaveBeenCalledTimes(
+        economyMode === 'freeroll' ? 1 : 0,
+      );
+      expect(status).toBe('completed');
+    },
+  );
+
+  it('keeps failed recovery payout-pending and never invokes a refund path', () => {
+    const resumeRefund = vi.fn();
+    const settleWallet = vi.fn(() => {
+      throw new Error('wallet unavailable');
+    });
+    const persisted = {
+      id: 'payout-retry',
+      economyMode: 'wallet' as const,
+      status: 'payout-pending' as const,
+    };
+
+    expect(() => resumeTournamentPayout({
+      getInstance: () => persisted,
+      settleWallet,
+      settleFreeroll: vi.fn(),
+    }, persisted.id, NOW)).toThrowError(TournamentRecoveryError);
+    expect(settleWallet).toHaveBeenCalledWith(persisted.id, NOW);
+    expect(persisted.status).toBe('payout-pending');
+    expect(resumeRefund).not.toHaveBeenCalled();
+  });
+
+  it('freezes a closing field once and resolves provisional human identities', () => {
+    const {
+      database,
+      id,
+      instances,
+      playerId,
+    } = createRunningClosingEnrollment('freeze-field');
+    const close = instances.getInstance(id)!;
+    const freeze = buildTournamentPayoutFreeze({
+      version: 1,
+      finalEntrants: 1,
+      prizePool: 1_500,
+      payouts: [1_500],
+    });
+    const input = {
+      instanceId: id,
+      generation: close.registrationGeneration,
+      ownerToken: close.registrationOwnerToken,
+      freeze,
+      eliminatedPlayerIds: [playerId],
+      now: NOW,
+    };
+
+    expect(persistTournamentPayoutFreeze(database, input)).toBe(true);
+    expect(persistTournamentPayoutFreeze(database, input)).toBe(true);
+    expect(instances.getInstance(id)).toMatchObject({
+      status: 'running',
+      registrationState: 'closed',
+      registrationOwnerToken: null,
+      finalEntrants: 1,
+      payoutFreezeVersion: 1,
+    });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration
+      WHERE instance_id = ? AND profile_id = ?
+    `).get(id, playerId)).toEqual({ status: 'eliminated' });
+    expect(listTournamentSettlementParticipants(database, id)).toEqual([{
+      playerId,
+      profileId: playerId,
+      registrationAttempt: 1,
+      displayName: 'Recovery',
+    }]);
+  });
+
+  it('rejects a stale freeze owner without changing registration', () => {
+    const {
+      database,
+      id,
+      instances,
+      playerId,
+    } = createRunningClosingEnrollment('stale-freeze-owner');
+    const close = instances.getInstance(id)!;
+    const freeze = buildTournamentPayoutFreeze({
+      version: 1,
+      finalEntrants: 1,
+      prizePool: 1_500,
+      payouts: [1_500],
+    });
+
+    expect(persistTournamentPayoutFreeze(database, {
+      instanceId: id,
+      generation: close.registrationGeneration,
+      ownerToken: 'different-owner',
+      freeze,
+      eliminatedPlayerIds: [playerId],
+      now: NOW,
+    })).toBe(false);
+    expect(instances.getInstance(id)).toMatchObject({
+      registrationState: 'closing',
+      registrationOwnerToken: 'close-owner',
+      finalEntrants: null,
+    });
   });
 
   it('aborts before money work when generic recovery reports failures', () => {
@@ -375,6 +503,59 @@ function createRecoveryEnrollment(id: string): {
     at: NOW,
   });
   return { database, economyService, id, instances };
+}
+
+function createRunningClosingEnrollment(id: string): {
+  readonly database: PokerDatabase;
+  readonly id: string;
+  readonly instances: TournamentInstanceRepository;
+  readonly playerId: string;
+} {
+  const {
+    database,
+    id: instanceId,
+    instances,
+  } = createRecoveryEnrollment(id);
+  const economy = new EconomyRepository(database);
+  const enrollment = new TournamentEnrollmentRepository(
+    database,
+    economy,
+    () => NOW,
+  );
+  const playerId = `${instanceId}-player`;
+  const claim = instances.claimStart(
+    instanceId,
+    'starter',
+    NOW + 30_000,
+  );
+  if (claim.status !== 'claimed') throw new Error('start claim failed');
+  enrollment.claimStartingRoster({
+    tournamentId: instanceId,
+    ownerId: 'starter',
+    startAttempt: claim.startAttempt,
+    checkedInProfileIds: [playerId],
+    at: NOW,
+  });
+  if (!enrollment.commitStartingRoster({
+    tournamentId: instanceId,
+    ownerId: 'starter',
+    startAttempt: claim.startAttempt,
+    humanEntrants: 1,
+    initialEntrants: 1,
+    initialBotEntrants: 0,
+    committedEntrants: 1,
+    everMultiTable: false,
+    actualStartedAt: NOW,
+  })) {
+    throw new Error('running commit failed');
+  }
+  const close = instances.claimRegistrationClose(
+    instanceId,
+    'close-owner',
+    'time',
+  );
+  if (close.status !== 'claimed') throw new Error('close claim failed');
+  return { database, id: instanceId, instances, playerId };
 }
 
 function addConflictingEntry(database: PokerDatabase, id: string): void {

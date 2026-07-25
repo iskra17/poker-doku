@@ -31,6 +31,13 @@ import type {
   TournamentConfigSnapshotV2,
 } from '../lib/tournament/tournament-config';
 import type { LateRegistrationSeatingPlan } from '../lib/tournament/late-registration-seating';
+import {
+  appendProvisionalEliminationBatch,
+  buildTournamentPayoutFreeze,
+  buildTournamentSettlementPlan,
+  type TournamentPayoutFreeze,
+  type TournamentSettlementPlan,
+} from '../lib/tournament/tournament-settlement';
 import type {
   MttRoomHooks,
   NextHandGateResult,
@@ -149,6 +156,12 @@ export interface TournamentRuntimeHooks {
     place: number;
     prize: number;
   }): void;
+  onProvisionalEliminated?(input: {
+    tournamentId: string;
+    roomId: string;
+    playerId: string;
+    eliminationBatchSeq: number;
+  }): void;
   /** 토너먼트 목록 변화 (생성/등록/시작/종료) — 로비 브로드캐스트 트리거 */
   onTournamentsChanged?(): void;
   /** 특정 토너먼트 상세 변화 (탈락/이동/레벨) — 관전/참가자 브로드캐스트 트리거 */
@@ -170,6 +183,7 @@ export interface TournamentManagerOptions {
   }): NextHandGateResult;
   persistentRuntimeEnabled?: boolean;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
+  persistentSettlement?: PersistentTournamentSettlementPorts;
 }
 
 export interface PersistentLateRegistrationInstance {
@@ -186,6 +200,30 @@ export interface PersistentLateRegistrationPorts {
     entries: readonly LateEntryKey[],
     tableCount: number,
   ): void;
+}
+
+export interface PersistentTournamentParticipant {
+  readonly playerId: string;
+  readonly profileId: string;
+  readonly registrationAttempt: number;
+  readonly displayName: string;
+}
+
+export interface PersistentTournamentSettlementPorts {
+  freezeRegistration(input: {
+    readonly instanceId: string;
+    readonly generation: number;
+    readonly ownerToken: string | null;
+    readonly freeze: TournamentPayoutFreeze;
+    readonly eliminatedPlayerIds: readonly string[];
+    readonly now: number;
+  }): boolean;
+  listParticipants(instanceId: string): readonly PersistentTournamentParticipant[];
+  claimPayoutPending(
+    instanceId: string,
+    plan: TournamentSettlementPlan,
+  ): 'claimed' | 'already-pending' | 'not-claimable';
+  settlePayout(instanceId: string, at: number): void;
 }
 
 export type MttOperationHoldReason =
@@ -305,6 +343,7 @@ interface StagedLevelSnapshot {
 interface TournamentRuntime {
   id: string;
   persistent: boolean;
+  configVersion: number | null;
   registrationState: string;
   registrationGeneration: number;
   registrationOwnerToken: string | null;
@@ -327,6 +366,16 @@ interface TournamentRuntime {
   /** startHand 성공 전까지만 유지하는 테이블별 레벨 rollback snapshot. */
   stagedLevelByRoom: Map<string, StagedLevelSnapshot>;
   entrants: Map<string, MttEntrant>;
+  participantTypes: Map<string, {
+    readonly type: 'human' | 'bot';
+    readonly name: string;
+  }>;
+  provisionalEliminations: Array<{
+    readonly sequence: number;
+    readonly groups: readonly (readonly PendingBust[])[];
+  }>;
+  payoutFreeze: TournamentPayoutFreeze | null;
+  settlementPending: boolean;
   seatedCount: number; // 시작 확정 총 인원 (봇 포함)
   tables: Map<string, { no: number }>;
   results: MttResult[];
@@ -401,6 +450,7 @@ export class TournamentManager {
   private readonly emptyTournamentTtlMs: number;
   private readonly persistentRuntimeEnabled: boolean;
   private readonly persistentLateRegistration?: PersistentLateRegistrationPorts;
+  private readonly persistentSettlement?: PersistentTournamentSettlementPorts;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
   readonly roomHooks: MttRoomHooks;
 
@@ -414,6 +464,7 @@ export class TournamentManager {
     );
     this.persistentRuntimeEnabled = options.persistentRuntimeEnabled ?? false;
     this.persistentLateRegistration = options.persistentLateRegistration;
+    this.persistentSettlement = options.persistentSettlement;
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
       onHandStartFailed: roomId => this.onHandStartFailed(roomId),
@@ -583,6 +634,19 @@ export class TournamentManager {
     if (prepared.botCount > 0) {
       this.addPreparedBots(t, prepared.roomIds, prepared.targetSizes);
     }
+    for (const entrant of prepared.humans) {
+      t.entrants.set(entrant.id, entrant);
+    }
+    for (const roomId of prepared.roomIds) {
+      const players = this.roomManager.getRoom(roomId)?.engine.state.players;
+      if (!players) throw new Error(`Prepared room disappeared: ${roomId}`);
+      for (const player of players) {
+        t.participantTypes.set(player.id, {
+          type: player.type,
+          name: player.name,
+        });
+      }
+    }
     const total = prepared.public.committedEntrants;
     t.seatedCount = total;
     t.remaining = total;
@@ -590,6 +654,14 @@ export class TournamentManager {
     t.prizes = computePayouts(t.prizePool, total, t.config.payoutPreset);
     t.startedAt = actualStartedAt;
     t.phase = 'running';
+    const registration = this.persistentLateRegistration?.readInstance(
+      instanceId,
+    );
+    if (registration?.status === 'running') {
+      t.registrationState = registration.registrationState;
+      t.registrationGeneration = registration.registrationGeneration;
+      t.registrationOwnerToken = registration.registrationOwnerToken;
+    }
 
     for (const roomId of prepared.roomIds) {
       this.roomManager.activatePreparedMttRoom(roomId);
@@ -606,6 +678,22 @@ export class TournamentManager {
         engine.state.tournament.tournamentId = instanceId;
       }
       this.pushLevel(t, engine, pos, true);
+    }
+    const closeIdentity = t.registrationState === 'closing'
+      && t.registrationOwnerToken
+      ? {
+          generation: t.registrationGeneration,
+          ownerToken: t.registrationOwnerToken,
+        }
+      : null;
+    if (
+      (
+        t.registrationState === 'closed'
+        || closeIdentity !== null
+      )
+      && !this.freezePersistentRegistration(t, closeIdentity)
+    ) {
+      throw new Error(`Could not freeze payout ladder: ${instanceId}`);
     }
     this.syncTournamentPresentation(t);
 
@@ -726,6 +814,7 @@ export class TournamentManager {
     const t: TournamentRuntime = {
       id,
       persistent: false,
+      configVersion: null,
       registrationState: 'closed',
       registrationGeneration: 0,
       registrationOwnerToken: null,
@@ -752,6 +841,10 @@ export class TournamentManager {
       appliedLevelGenerationByRoom: new Map(),
       stagedLevelByRoom: new Map(),
       entrants: new Map(),
+      participantTypes: new Map(),
+      provisionalEliminations: [],
+      payoutFreeze: null,
+      settlementPending: false,
       seatedCount: 0,
       tables: new Map(),
       results: [],
@@ -1282,6 +1375,7 @@ export class TournamentManager {
     return {
       id: snapshot.id,
       persistent: true,
+      configVersion: snapshot.config.version,
       registrationState: snapshot.registrationState
         ?? (snapshot.config.lateRegistration.enabled ? 'open-late' : 'closed'),
       registrationGeneration: snapshot.registrationGeneration ?? 1,
@@ -1313,6 +1407,10 @@ export class TournamentManager {
       appliedLevelGenerationByRoom: new Map(),
       stagedLevelByRoom: new Map(),
       entrants: new Map(),
+      participantTypes: new Map(),
+      provisionalEliminations: [],
+      payoutFreeze: null,
+      settlementPending: false,
       seatedCount: 0,
       tables: new Map(),
       results: [],
@@ -1979,6 +2077,17 @@ export class TournamentManager {
   /** 같은 배치의 탈락을 결정론적 순위 그룹으로 확정하고 점유 순위 상금을 분할한다. */
   private assignEliminations(t: TournamentRuntime, busts: PendingBust[]): void {
     if (busts.length === 0) return;
+    if (
+      t.persistent
+      && t.payoutFreeze === null
+      && (
+        t.registrationState === 'open-late'
+        || t.registrationState === 'closing'
+      )
+    ) {
+      this.assignProvisionalEliminations(t, busts);
+      return;
+    }
     const remainingBeforeBatch = t.remaining;
     const groups = this.eliminationGroups(t, busts);
     let place = t.remaining - busts.length + 1;
@@ -1991,13 +2100,25 @@ export class TournamentManager {
       const remainder = occupiedPrize - basePrize * group.length;
 
       for (const [index, bust] of group.entries()) {
-        const prize = basePrize + (index < remainder ? 1 : 0);
+        const resultPlace = t.persistent ? place + index : place;
+        const prize = t.persistent
+          ? (t.prizes[resultPlace - 1] ?? 0)
+          : basePrize + (index < remainder ? 1 : 0);
         t.remaining -= 1;
-        t.results.push({ playerId: bust.playerId, name: bust.name, place, prize });
+        t.results.push({
+          playerId: bust.playerId,
+          name: bust.name,
+          place: resultPlace,
+          prize,
+        });
 
         const room = this.roomManager.getRoom(bust.roomId);
         if (room) {
-          room.engine.applyTournamentEliminations([{ playerId: bust.playerId, place, prize }]);
+          room.engine.applyTournamentEliminations([{
+            playerId: bust.playerId,
+            place: resultPlace,
+            prize,
+          }]);
           const player = room.engine.state.players.find(p => p.id === bust.playerId);
           if (player) {
             player.pendingRemoval = true;
@@ -2006,7 +2127,7 @@ export class TournamentManager {
                 tournamentId: t.id,
                 roomId: bust.roomId,
                 playerId: bust.playerId,
-                place,
+                place: resultPlace,
                 prize,
               });
             }
@@ -2025,6 +2146,90 @@ export class TournamentManager {
     this.syncTournamentPresentation(t);
     this.hooks.onTournamentUpdate?.(t.id);
     this.hooks.onTournamentsChanged?.();
+  }
+
+  private assignProvisionalEliminations(
+    t: TournamentRuntime,
+    busts: PendingBust[],
+  ): void {
+    const groups = this.eliminationGroups(t, busts);
+    const sequence = t.provisionalEliminations.length + 1;
+    appendProvisionalEliminationBatch(
+      t.provisionalEliminations.map(batch => ({
+        sequence: batch.sequence,
+        playerIds: batch.groups.flatMap(group => (
+          group.map(bust => bust.playerId)
+        )),
+      })),
+      { sequence, playerIds: busts.map(bust => bust.playerId) },
+    );
+    t.provisionalEliminations.push({
+      sequence,
+      groups: groups.map(group => group.map(bust => ({ ...bust }))),
+    });
+    for (const bust of busts) {
+      t.remaining -= 1;
+      const room = this.roomManager.getRoom(bust.roomId);
+      const player = room?.engine.state.players.find(
+        candidate => candidate.id === bust.playerId,
+      );
+      if (player) player.pendingRemoval = true;
+      this.hooks.onProvisionalEliminated?.({
+        tournamentId: t.id,
+        roomId: bust.roomId,
+        playerId: bust.playerId,
+        eliminationBatchSeq: sequence,
+      });
+      this.roomManager.postSystemChat(
+        bust.roomId,
+        `${bust.name}님이 탈락했습니다. 등록 마감 후 순위가 확정됩니다.`,
+      );
+    }
+    this.syncTournamentPresentation(t);
+    this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
+  }
+
+  private resolveProvisionalEliminations(t: TournamentRuntime): void {
+    const freeze = t.payoutFreeze;
+    if (!freeze || t.provisionalEliminations.length === 0) return;
+    let resolved = 0;
+    for (const batch of t.provisionalEliminations) {
+      const batchSize = batch.groups.reduce(
+        (total, group) => total + group.length,
+        0,
+      );
+      let place = freeze.finalEntrants - resolved - batchSize + 1;
+      for (const group of batch.groups) {
+        for (const bust of group) {
+          const prize = freeze.payouts[place - 1]?.amount ?? 0;
+          t.results.push({
+            playerId: bust.playerId,
+            name: bust.name,
+            place,
+            prize,
+          });
+          this.roomManager.getRoom(bust.roomId)?.engine
+            .applyTournamentEliminations([{
+              playerId: bust.playerId,
+              place,
+              prize,
+            }]);
+          if (t.participantTypes.get(bust.playerId)?.type === 'human') {
+            this.hooks.onEliminated?.({
+              tournamentId: t.id,
+              roomId: bust.roomId,
+              playerId: bust.playerId,
+              place,
+              prize,
+            });
+          }
+          place += 1;
+        }
+      }
+      resolved += batchSize;
+    }
+    t.provisionalEliminations = [];
   }
 
   private maybePublishItmMilestone(
@@ -2061,14 +2266,217 @@ export class TournamentManager {
     });
   }
 
+  private completePersistentTournament(
+    t: TournamentRuntime,
+    winner: { roomId: string; player: Player } | null,
+  ): boolean {
+    const persistence = this.persistentSettlement;
+    const freeze = t.payoutFreeze;
+    if (
+      !persistence
+      || !freeze
+      || t.configVersion === null
+      || !winner
+    ) {
+      return false;
+    }
+    if (t.settlementPending) return true;
+
+    if (!t.results.some(result => result.place === 1)) {
+      const prize = freeze.payouts[0]?.amount ?? 0;
+      t.results.push({
+        playerId: winner.player.id,
+        name: winner.player.name,
+        place: 1,
+        prize,
+      });
+      this.roomManager.getRoom(winner.roomId)?.engine
+        .applyTournamentEliminations([{
+          playerId: winner.player.id,
+          place: 1,
+          prize,
+        }]);
+    }
+
+    const identities = new Map(
+      persistence.listParticipants(t.id).map(participant => [
+        participant.playerId,
+        participant,
+      ]),
+    );
+    const results = [...t.results].sort((left, right) => (
+      left.place - right.place
+    ));
+    const settlementResults = results.map(result => {
+      const participant = t.participantTypes.get(result.playerId);
+      if (!participant) {
+        throw new Error(`Tournament participant missing: ${result.playerId}`);
+      }
+      if (participant.type === 'human') {
+        const identity = identities.get(result.playerId);
+        if (!identity) {
+          throw new Error(`Tournament participant identity missing: ${result.playerId}`);
+        }
+        return {
+          place: result.place,
+          playerId: result.playerId,
+          participantType: 'human' as const,
+          profileId: identity.profileId,
+          registrationAttempt: identity.registrationAttempt,
+          displayName: identity.displayName,
+          prize: result.prize,
+          disposition: result.prize > 0
+            ? 'wallet-credit' as const
+            : 'none' as const,
+        };
+      }
+      return {
+        place: result.place,
+        playerId: result.playerId,
+        participantType: 'bot' as const,
+        profileId: null,
+        registrationAttempt: null,
+        displayName: participant.name,
+        prize: result.prize,
+        disposition: result.prize > 0
+          ? 'promotion-return' as const
+          : 'none' as const,
+      };
+    });
+    const plan = buildTournamentSettlementPlan({
+      instanceId: t.id,
+      configVersion: t.configVersion,
+      freeze,
+      results: settlementResults,
+      now: Date.now(),
+    });
+    const claim = persistence.claimPayoutPending(t.id, plan);
+    if (claim === 'not-claimable') return false;
+
+    t.settlementPending = true;
+    this.holdPersistentSettlement(t, results);
+    if (this.trySettlePersistentTournament(t, results)) return true;
+
+    t.settleRetryTimer = setTimeout(() => {
+      t.settleRetryTimer = null;
+      const retried = this.trySettlePersistentTournament(t, results);
+      eventLog.log('mtt-complete', {
+        data: {
+          tournamentId: t.id,
+          settlementRetryOk: retried,
+          persistent: true,
+        },
+      });
+    }, 10_000);
+    return true;
+  }
+
+  private holdPersistentSettlement(
+    t: TournamentRuntime,
+    results: MttResult[],
+  ): void {
+    t.stage = 'complete';
+    t.stageEndsAt = undefined;
+    t.pausedAt = null;
+    this.clearEmptyExpiry(t);
+    t.h4h.active = false;
+    t.h4h.roundOpen = false;
+    t.h4h.armed.clear();
+    t.h4h.busts = [];
+    t.holds.clear();
+    if (t.finalIntroTimer) {
+      clearTimeout(t.finalIntroTimer);
+      t.finalIntroTimer = null;
+    }
+    if (t.breakTimer) {
+      clearTimeout(t.breakTimer);
+      t.breakTimer = null;
+    }
+    for (const roomId of t.tables.keys()) {
+      this.roomManager.getRoom(roomId)?.engine
+        .setTournamentField(t.seatedCount, t.prizes, true, results);
+      this.addHold(t, roomId, 'complete');
+      this.roomManager.resumeRoom(roomId);
+    }
+    this.syncTournamentPresentation(t);
+    this.hooks.onTournamentsChanged?.();
+    this.hooks.onTournamentUpdate?.(t.id);
+  }
+
+  private trySettlePersistentTournament(
+    t: TournamentRuntime,
+    results: MttResult[],
+  ): boolean {
+    try {
+      this.persistentSettlement?.settlePayout(t.id, Date.now());
+    } catch {
+      return false;
+    }
+    this.finalizePersistentTournament(t, results);
+    return true;
+  }
+
+  private finalizePersistentTournament(
+    t: TournamentRuntime,
+    results: MttResult[],
+  ): void {
+    t.phase = 'completed';
+    t.finishedAt = Date.now();
+    const podium = results
+      .filter(result => result.place <= 3)
+      .map(result => (
+        `${result.place}??${result.name}`
+        + (result.prize > 0 ? ` +${result.prize.toLocaleString()}` : '')
+      ))
+      .join(' 쨌 ');
+    for (const roomId of t.tables.keys()) {
+      this.roomManager.postSystemChat(
+        roomId,
+        `?룇 ${t.config.name} 醫낅즺! ${podium}`,
+      );
+      this.roomManager.resumeRoom(roomId);
+      this.roomManager.retainFinishedTournament(roomId);
+    }
+    eventLog.log('mtt-complete', {
+      data: {
+        tournamentId: t.id,
+        entrants: t.seatedCount,
+        champion: results[0]?.name,
+        prizePool: t.prizePool,
+        settlementOk: true,
+        persistent: true,
+      },
+    });
+    this.hooks.onTournamentsChanged?.();
+    this.hooks.onTournamentUpdate?.(t.id);
+    t.cleanupTimer = setTimeout(() => {
+      for (const roomId of t.tables.keys()) this.byRoom.delete(roomId);
+      this.tournaments.delete(t.id);
+      this.lateRegistrationCoordinators.delete(t.id);
+      this.hooks.onTournamentsChanged?.();
+    }, COMPLETED_RETENTION_MS + 30_000);
+  }
+
   private checkCompletion(t: TournamentRuntime): boolean {
     if (t.phase !== 'running' || t.remaining > 1) return false;
+    if (
+      t.persistent
+      && (
+        t.registrationState !== 'closed'
+        || t.payoutFreeze === null
+      )
+    ) {
+      return false;
+    }
 
     let winner: { roomId: string; player: Player } | null = null;
     for (const roomId of t.tables.keys()) {
       const engine = this.roomManager.getRoom(roomId)?.engine;
       const alive = engine?.state.players.find(p => this.isAlive(engine, p));
       if (alive) winner = { roomId, player: alive };
+    }
+    if (t.persistent && this.persistentRuntimeEnabled) {
+      return this.completePersistentTournament(t, winner);
     }
 
     t.phase = 'completed';
@@ -2723,6 +3131,77 @@ export class TournamentManager {
       ?.commitSeating(input) ?? false;
   }
 
+  finishLateRegistration(
+    tournamentId: string,
+    identity: LateRegistrationOperationIdentity,
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    const coordinator = t ? this.lateRegistrationCoordinator(t) : null;
+    if (!t || !coordinator) return false;
+    let frozen = false;
+    if (!coordinator.runCallback(identity, () => {
+      frozen = this.freezePersistentRegistration(t, identity);
+    }) || !frozen) {
+      return false;
+    }
+    if (!coordinator.finish(identity)) return false;
+    for (const roomId of t.tables.keys()) this.resumeIfUnheld(t, roomId);
+    this.checkCompletion(t);
+    return true;
+  }
+
+  private freezePersistentRegistration(
+    t: TournamentRuntime,
+    identity: LateRegistrationOperationIdentity | null,
+  ): boolean {
+    if (!t.persistent || !this.persistentRuntimeEnabled) return true;
+    const persistence = this.persistentSettlement;
+    if (!persistence || t.configVersion === null) return false;
+    if (t.payoutFreeze) return true;
+    const payouts = Array.from(
+      { length: t.seatedCount },
+      (_, index) => t.prizes[index] ?? 0,
+    );
+    const freeze = buildTournamentPayoutFreeze({
+      version: 1,
+      finalEntrants: t.seatedCount,
+      prizePool: t.prizePool,
+      payouts,
+    });
+    const eliminatedPlayerIds = t.provisionalEliminations.flatMap(batch => (
+      batch.groups.flatMap(group => group.map(bust => bust.playerId))
+    )).filter(playerId => (
+      t.participantTypes.get(playerId)?.type === 'human'
+    ));
+    if (!persistence.freezeRegistration({
+      instanceId: t.id,
+      generation: identity?.generation ?? t.registrationGeneration,
+      ownerToken: identity?.ownerToken ?? null,
+      freeze,
+      eliminatedPlayerIds,
+      now: Date.now(),
+    })) {
+      return false;
+    }
+    t.registrationState = 'closed';
+    t.registrationGeneration = identity?.generation ?? t.registrationGeneration;
+    t.registrationOwnerToken = null;
+    t.payoutFreeze = freeze;
+    t.prizes = freeze.payouts.map(payout => payout.amount);
+    this.resolveProvisionalEliminations(t);
+    for (const roomId of t.tables.keys()) {
+      const tournament = this.roomManager.getRoom(roomId)?.engine.state.tournament;
+      if (!tournament) continue;
+      tournament.entrants = freeze.finalEntrants;
+      tournament.prizes = [...t.prizes];
+      tournament.fieldRemaining = t.remaining;
+    }
+    this.syncTournamentPresentation(t);
+    this.hooks.onTournamentUpdate?.(t.id);
+    this.hooks.onTournamentsChanged?.();
+    return true;
+  }
+
   private applyCommittedLateRegistrationPlan(
     t: TournamentRuntime,
     plan: LateRegistrationSeatingPlan,
@@ -2738,6 +3217,10 @@ export class TournamentManager {
         id: player.id,
         name: player.name,
         avatar: player.avatar,
+      });
+      t.participantTypes.set(player.id, {
+        type: player.type,
+        name: player.name,
       });
       added += 1;
     }
