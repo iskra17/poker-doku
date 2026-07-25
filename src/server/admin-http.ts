@@ -14,6 +14,7 @@ import { GAME_CONFIG_GROUP_LABELS } from './game-config/registry';
 import { GameConfigValidationError, type GameConfigService } from './game-config/service';
 import type { HandHistoryRepository, TableHandRepository } from './hand-history';
 import { drainRequest, HttpBodyError, readJsonBody } from './http-body';
+import type { TransientHttpRateLimiter } from './http-rate-limit';
 import type { OpsEventRepository } from './ops-log';
 import type { PokerDatabase } from './persistence/database';
 import {
@@ -105,6 +106,7 @@ export interface AdminHttpOptions {
   tournamentCommands?: AdminTournamentCommands;
   adminSessions: AdminSessionManager;
   promotionFunds: PromotionFundRepository;
+  promotionFundRateLimiter: TransientHttpRateLimiter;
   production: boolean;
   now?: () => number;
 }
@@ -140,6 +142,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function header(req: IncomingMessage, name: string): string | undefined {
   const value = req.headers[name];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function auditPromotionFundAdjustment(input: {
+  readonly principal: AdminPrincipal;
+  readonly resultCode: string;
+  readonly requestId?: string;
+  readonly delta?: number;
+  readonly reason?: string;
+  readonly balanceAfter?: number;
+  readonly replayed?: boolean;
+}): void {
+  eventLog.log('promotion-fund-adjust', {
+    data: {
+      actorKind: input.principal.kind,
+      actorId: input.principal.id,
+      resultCode: input.resultCode,
+      ...(input.requestId === undefined
+        ? {}
+        : { requestId: input.requestId }),
+      ...(input.delta === undefined ? {} : { delta: input.delta }),
+      ...(input.reason === undefined ? {} : { reason: input.reason }),
+      ...(input.balanceAfter === undefined
+        ? {}
+        : { balanceAfter: input.balanceAfter }),
+      ...(input.replayed === undefined ? {} : { replayed: input.replayed }),
+    },
+  });
 }
 
 function boundedInteger(
@@ -424,10 +453,26 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         send(res, 405, { error: 'method-not-allowed', allow: 'POST' });
         return true;
       }
+      if (!options.promotionFundRateLimiter.allow(
+        'promotionFundAdjust',
+        clientAddress(req),
+      )) {
+        drainRequest(req);
+        auditPromotionFundAdjustment({
+          principal,
+          resultCode: 'rate-limited',
+        });
+        send(res, 429, { error: 'rate-limited' });
+        return true;
+      }
       let body: unknown;
       try {
         body = await readJsonBody(req);
       } catch {
+        auditPromotionFundAdjustment({
+          principal,
+          resultCode: 'invalid-body',
+        });
         send(res, 400, { error: 'invalid-body' });
         return true;
       }
@@ -437,6 +482,16 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         || !Number.isSafeInteger(body.delta)
         || typeof body.reason !== 'string'
       ) {
+        auditPromotionFundAdjustment({
+          principal,
+          resultCode: 'invalid-input',
+          ...(isRecord(body) && typeof body.requestId === 'string'
+            ? { requestId: body.requestId }
+            : {}),
+          ...(isRecord(body) && Number.isSafeInteger(body.delta)
+            ? { delta: body.delta as number }
+            : {}),
+        });
         send(res, 400, { error: 'invalid-body' });
         return true;
       }
@@ -448,20 +503,24 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           actor: { kind: 'backoffice-admin', id: principal.id },
           at: now(),
         });
-        eventLog.log('promotion-fund-adjust', {
-          data: {
-            requestId: adjustment.ledger.idempotencyKey,
-            delta: adjustment.ledger.delta,
-            reason: adjustment.ledger.reason,
-            balanceAfter: adjustment.ledger.balanceAfter,
-            actorKind: adjustment.ledger.actor.kind,
-            actorId: adjustment.ledger.actor.id,
-            replayed: adjustment.replayed,
-          },
+        auditPromotionFundAdjustment({
+          principal,
+          resultCode: adjustment.replayed ? 'replayed' : 'ok',
+          requestId: adjustment.ledger.idempotencyKey,
+          delta: adjustment.ledger.delta,
+          reason: adjustment.ledger.reason,
+          balanceAfter: adjustment.ledger.balanceAfter,
+          replayed: adjustment.replayed,
         });
         send(res, 200, adjustment);
       } catch (error) {
         if (error instanceof PromotionFundError) {
+          auditPromotionFundAdjustment({
+            principal,
+            resultCode: error.code,
+            requestId: body.requestId,
+            delta: body.delta as number,
+          });
           const status = error.code === 'promotion-insufficient'
             ? 409
             : error.code === 'invalid-input'
@@ -471,6 +530,12 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
                 : 500;
           send(res, status, { error: error.code });
         } else {
+          auditPromotionFundAdjustment({
+            principal,
+            resultCode: 'internal-error',
+            requestId: body.requestId,
+            delta: body.delta as number,
+          });
           send(res, 500, { error: 'internal-error' });
         }
       }

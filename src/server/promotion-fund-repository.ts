@@ -1,5 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { PokerDatabase } from './persistence/database';
+import {
+  TournamentInstanceRepository,
+  TournamentPersistenceError,
+  type CreateInstanceCommand,
+  type TournamentInstanceRecord,
+} from './tournament-instance-repository';
 
 const ACCOUNT_ID = 'global' as const;
 const MAX_LEDGER_DELTA = 2_000_000_000;
@@ -81,6 +87,11 @@ export interface PrizeEscrow {
   readonly settledAt: number | null;
   readonly refundedAt: number | null;
   readonly updatedAt: number;
+}
+
+export interface ImmediateFreerollReservation {
+  readonly instance: TournamentInstanceRecord;
+  readonly escrow: PrizeEscrow;
 }
 
 interface LedgerFingerprint {
@@ -197,6 +208,68 @@ export class PromotionFundRepository {
     });
   }
 
+  createImmediateFreeroll(input: {
+    readonly instance: CreateInstanceCommand;
+    readonly idempotencyKey: string;
+    readonly actor: PromotionFundActor;
+    readonly at: number;
+  }): ImmediateFreerollReservation {
+    assertUuid(input.idempotencyKey);
+    assertActor(input.actor);
+    assertTimestamp(input.at);
+    if (
+      input.instance.id.length === 0
+      || input.instance.config.economy.mode !== 'freeroll'
+      || input.instance.config.prizePool.kind !== 'promotion-funded'
+      || input.instance.schedule.visibleAt > input.at
+    ) {
+      invalid();
+    }
+    const amount = input.instance.config.prizePool.totalPrize;
+    assertPositiveAmount(amount);
+
+    try {
+      return this.database.transaction(() => {
+        const instanceRepository = new TournamentInstanceRepository(
+          this.database,
+          () => input.at,
+        );
+        instanceRepository.createInstance(input.instance);
+        const result = this.#reserveFreerollPrizeInTransaction({
+          instanceId: input.instance.id,
+          amount,
+          idempotencyKey: input.idempotencyKey,
+          actor: input.actor,
+          at: input.at,
+        }, 'rollback');
+        if (result.kind !== 'reserved') {
+          throw new PromotionFundError('promotion-insufficient');
+        }
+        const instance = instanceRepository.getInstance(input.instance.id);
+        if (
+          !instance
+          || (
+            instance.status !== 'scheduled-visible'
+            && instance.status !== 'registering'
+          )
+        ) {
+          invariant();
+        }
+        return { instance, escrow: result.escrow };
+      });
+    } catch (error) {
+      if (error instanceof PromotionFundError) throw error;
+      if (error instanceof TournamentPersistenceError) {
+        throw new PromotionFundError(
+          error.code === 'IDEMPOTENCY_CONFLICT'
+            ? 'idempotency-conflict'
+            : 'invalid-input',
+        );
+      }
+      invariant();
+    }
+  }
+
   reserveFreerollPrize(input: {
     readonly instanceId: string;
     readonly amount: number;
@@ -210,105 +283,122 @@ export class PromotionFundRepository {
     assertActor(input.actor);
     assertTimestamp(input.at);
 
-    const result = this.database.transaction(():
-      | { readonly kind: 'reserved'; readonly escrow: PrizeEscrow }
-      | { readonly kind: 'insufficient' } => {
-      const fingerprint: LedgerFingerprint = {
-        kind: 'freeroll-prize-reserve',
-        delta: -input.amount,
-        instanceId: input.instanceId,
-        actor: input.actor,
-        reason: RESERVE_REASON,
-      };
-      const existingLedger = this.#ledgerByIdempotency(input.idempotencyKey);
-      if (existingLedger) {
-        assertLedgerReplay(existingLedger, fingerprint);
-        const replay = this.#escrow(input.instanceId);
-        if (!replay || replay.status !== 'reserved' || replay.amount !== input.amount) {
-          invariant();
-        }
-        return { kind: 'reserved', escrow: replay };
-      }
-
-      const instance = this.database.db.prepare(`
-        SELECT
-          status, economy_mode, config_json, visible_at,
-          registration_opens_at
-        FROM tournament_instance
-        WHERE id = ?
-      `).get(input.instanceId) as SqlRow | undefined;
-      if (!instance) throw new PromotionFundError('not-found');
-      if (stringValue(instance.status) !== 'scheduled-hidden') {
-        throw new PromotionFundError('not-claimable');
-      }
-      if (stringValue(instance.economy_mode) !== 'freeroll') invariant();
-      const configuredPrize = configuredFreerollPrize(instance.config_json);
-      if (configuredPrize !== input.amount) invariant();
-      const visibleAt = nonNegativeInteger(instance.visible_at);
-      if (input.at < visibleAt) throw new PromotionFundError('not-visible');
-
-      const account = this.#account();
-      if (account.availableBalance < input.amount) {
-        const cancelled = this.database.db.prepare(`
-          UPDATE tournament_instance
-          SET status = 'cancelled',
-              status_reason = 'promotion-insufficient',
-              registration_state = 'closed',
-              registration_close_reason = 'tournament-cancelled',
-              registration_generation = registration_generation + 1,
-              completed_at = ?,
-              updated_at = ?
-          WHERE id = ?
-            AND status = 'scheduled-hidden'
-            AND registration_state = 'not-open'
-        `).run(input.at, input.at, input.instanceId);
-        if (cancelled.changes !== 1) {
-          throw new PromotionFundError('not-claimable');
-        }
-        return { kind: 'insufficient' };
-      }
-
-      this.#insertLedger({
-        ...fingerprint,
-        balanceAfter: account.availableBalance - input.amount,
-        idempotencyKey: input.idempotencyKey,
-        createdAt: input.at,
-      });
-      this.database.db.prepare(`
-        INSERT INTO tournament_prize_escrow (
-          instance_id, account_id, amount, status, human_paid, bot_returned,
-          settlement_fingerprint, reserved_at, settled_at, refunded_at,
-          updated_at
-        ) VALUES (?, 'global', ?, 'reserved', 0, 0, NULL, ?, NULL, NULL, ?)
-      `).run(input.instanceId, input.amount, input.at, input.at);
-
-      const registrationOpensAt =
-        nonNegativeInteger(instance.registration_opens_at);
-      const registrationOpen = input.at >= registrationOpensAt;
-      const exposed = this.database.db.prepare(`
-        UPDATE tournament_instance
-        SET status = ?,
-            registration_state = ?,
-            updated_at = ?
-        WHERE id = ?
-          AND status = 'scheduled-hidden'
-          AND registration_state = 'not-open'
-      `).run(
-        registrationOpen ? 'registering' : 'scheduled-visible',
-        registrationOpen ? 'open-prestart' : 'not-open',
-        input.at,
-        input.instanceId,
-      );
-      if (exposed.changes !== 1) invariant();
-      const escrow = this.#escrow(input.instanceId);
-      if (!escrow) invariant();
-      return { kind: 'reserved', escrow };
-    });
+    const result = this.database.transaction(
+      () => this.#reserveFreerollPrizeInTransaction(input, 'cancel'),
+    );
 
     if (result.kind === 'insufficient') {
       throw new PromotionFundError('promotion-insufficient');
     }
     return result.escrow;
+  }
+
+  #reserveFreerollPrizeInTransaction(
+    input: {
+      readonly instanceId: string;
+      readonly amount: number;
+      readonly idempotencyKey: string;
+      readonly actor: PromotionFundActor;
+      readonly at: number;
+    },
+    onInsufficient: 'cancel' | 'rollback',
+  ):
+    | { readonly kind: 'reserved'; readonly escrow: PrizeEscrow }
+    | { readonly kind: 'insufficient' } {
+    this.database.assertTransactionActive();
+    const fingerprint: LedgerFingerprint = {
+      kind: 'freeroll-prize-reserve',
+      delta: -input.amount,
+      instanceId: input.instanceId,
+      actor: input.actor,
+      reason: RESERVE_REASON,
+    };
+    const existingLedger = this.#ledgerByIdempotency(input.idempotencyKey);
+    if (existingLedger) {
+      assertLedgerReplay(existingLedger, fingerprint);
+      const replay = this.#escrow(input.instanceId);
+      if (!replay || replay.status !== 'reserved' || replay.amount !== input.amount) {
+        invariant();
+      }
+      return { kind: 'reserved', escrow: replay };
+    }
+
+    const instance = this.database.db.prepare(`
+      SELECT
+        status, economy_mode, config_json, visible_at,
+        registration_opens_at
+      FROM tournament_instance
+      WHERE id = ?
+    `).get(input.instanceId) as SqlRow | undefined;
+    if (!instance) throw new PromotionFundError('not-found');
+    if (stringValue(instance.status) !== 'scheduled-hidden') {
+      throw new PromotionFundError('not-claimable');
+    }
+    if (stringValue(instance.economy_mode) !== 'freeroll') invariant();
+    const configuredPrize = configuredFreerollPrize(instance.config_json);
+    if (configuredPrize !== input.amount) invariant();
+    const visibleAt = nonNegativeInteger(instance.visible_at);
+    if (input.at < visibleAt) throw new PromotionFundError('not-visible');
+
+    const account = this.#account();
+    if (account.availableBalance < input.amount) {
+      if (onInsufficient === 'rollback') {
+        throw new PromotionFundError('promotion-insufficient');
+      }
+      const cancelled = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET status = 'cancelled',
+            status_reason = 'promotion-insufficient',
+            registration_state = 'closed',
+            registration_close_reason = 'tournament-cancelled',
+            registration_generation = registration_generation + 1,
+            completed_at = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'scheduled-hidden'
+          AND registration_state = 'not-open'
+      `).run(input.at, input.at, input.instanceId);
+      if (cancelled.changes !== 1) {
+        throw new PromotionFundError('not-claimable');
+      }
+      return { kind: 'insufficient' };
+    }
+
+    this.#insertLedger({
+      ...fingerprint,
+      balanceAfter: account.availableBalance - input.amount,
+      idempotencyKey: input.idempotencyKey,
+      createdAt: input.at,
+    });
+    this.database.db.prepare(`
+      INSERT INTO tournament_prize_escrow (
+        instance_id, account_id, amount, status, human_paid, bot_returned,
+        settlement_fingerprint, reserved_at, settled_at, refunded_at,
+        updated_at
+      ) VALUES (?, 'global', ?, 'reserved', 0, 0, NULL, ?, NULL, NULL, ?)
+    `).run(input.instanceId, input.amount, input.at, input.at);
+
+    const registrationOpensAt =
+      nonNegativeInteger(instance.registration_opens_at);
+    const registrationOpen = input.at >= registrationOpensAt;
+    const exposed = this.database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = ?,
+          registration_state = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND status = 'scheduled-hidden'
+        AND registration_state = 'not-open'
+    `).run(
+      registrationOpen ? 'registering' : 'scheduled-visible',
+      registrationOpen ? 'open-prestart' : 'not-open',
+      input.at,
+      input.instanceId,
+    );
+    if (exposed.changes !== 1) invariant();
+    const escrow = this.#escrow(input.instanceId);
+    if (!escrow) invariant();
+    return { kind: 'reserved', escrow };
   }
 
   refundFreerollPrize(input: {
@@ -324,12 +414,20 @@ export class PromotionFundRepository {
     assertActor(input.actor);
     assertTimestamp(input.at);
 
-    return this.database.transaction(() => {
+    const result = this.database.transaction(():
+      | { readonly kind: 'refunded'; readonly escrow: PrizeEscrow }
+      | { readonly kind: 'quarantined' } => {
       const currentEscrow = this.#escrow(input.instanceId);
       if (!currentEscrow) throw new PromotionFundError('not-found');
+      const instance = this.#instanceLifecycle(input.instanceId);
+      if (!instance) throw new PromotionFundError('not-found');
+      if (currentEscrow.amount !== instance.configuredPrize) {
+        this.#quarantineRefundInvariant(input.instanceId, instance, input.at);
+        return { kind: 'quarantined' };
+      }
       const fingerprint: LedgerFingerprint = {
         kind: 'freeroll-prize-refund',
-        delta: currentEscrow.amount,
+        delta: instance.configuredPrize,
         instanceId: input.instanceId,
         actor: input.actor,
         reason: REFUND_REASON,
@@ -338,31 +436,28 @@ export class PromotionFundRepository {
       if (existingLedger) {
         assertLedgerReplay(existingLedger, fingerprint);
         const replay = this.#escrow(input.instanceId);
-        const instance = this.#instanceLifecycle(input.instanceId);
         if (
           !replay
           || replay.status !== 'refunded'
-          || instance?.status !== 'cancelled'
+          || instance.status !== 'cancelled'
           || instance.generation !== input.generation
         ) {
           invariant();
         }
-        return replay;
+        return { kind: 'refunded', escrow: replay };
       }
       if (currentEscrow.status !== 'reserved') {
         throw new PromotionFundError('idempotency-conflict');
       }
-      const instance = this.#instanceLifecycle(input.instanceId);
       if (
-        !instance
-        || instance.status !== 'refund-pending'
+        instance.status !== 'refund-pending'
         || instance.registrationState !== 'closed'
         || instance.generation !== input.generation
       ) {
         throw new PromotionFundError('not-claimable');
       }
       const account = this.#account();
-      const balanceAfter = account.availableBalance + currentEscrow.amount;
+      const balanceAfter = account.availableBalance + instance.configuredPrize;
       if (!Number.isSafeInteger(balanceAfter)) invariant();
       this.#insertLedger({
         ...fingerprint,
@@ -382,7 +477,7 @@ export class PromotionFundRepository {
         input.at,
         input.at,
         input.instanceId,
-        currentEscrow.amount,
+        instance.configuredPrize,
       );
       if (escrowUpdate.changes !== 1) invariant();
       const instanceUpdate = this.database.db.prepare(`
@@ -398,8 +493,76 @@ export class PromotionFundRepository {
       if (instanceUpdate.changes !== 1) invariant();
       const escrow = this.#escrow(input.instanceId);
       if (!escrow) invariant();
-      return escrow;
+      return { kind: 'refunded', escrow };
     });
+    if (result.kind === 'quarantined') {
+      throw new PromotionFundError('financial-invariant');
+    }
+    return result.escrow;
+  }
+
+  #quarantineRefundInvariant(
+    instanceId: string,
+    instance: {
+      readonly status: string;
+      readonly registrationState: string;
+      readonly generation: number;
+    },
+    at: number,
+  ): void {
+    if (instance.status === 'refund-pending') return;
+    if (
+      ![
+        'scheduled-hidden',
+        'scheduled-visible',
+        'registering',
+        'start-delayed',
+        'starting',
+        'running',
+      ].includes(instance.status)
+    ) {
+      return;
+    }
+    const generationIncrement = instance.registrationState === 'closing'
+      ? 0
+      : 1;
+    const quarantined = this.database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'refund-pending',
+          status_reason = 'financial-invariant',
+          registration_state = 'closed',
+          registration_close_reason = COALESCE(
+            registration_close_reason,
+            'tournament-cancelled'
+          ),
+          registration_generation = registration_generation + ?,
+          registration_owner_token = NULL,
+          pending_late_entrants = 0,
+          start_owner_id = NULL,
+          start_lease_until = NULL,
+          next_retry_at = NULL,
+          payout_freeze_aborted_at = CASE
+            WHEN payout_freeze_version IS NOT NULL
+            THEN COALESCE(payout_freeze_aborted_at, ?)
+            ELSE NULL
+          END,
+          updated_at = ?
+      WHERE id = ?
+        AND status = ?
+        AND registration_state = ?
+        AND registration_generation = ?
+        AND settlement_owner_id IS NULL
+        AND settlement_lease_until IS NULL
+    `).run(
+      generationIncrement,
+      at,
+      at,
+      instanceId,
+      instance.status,
+      instance.registrationState,
+      instance.generation,
+    );
+    if (quarantined.changes !== 1) invariant();
   }
 
   #account(): PromotionFundAccount {
@@ -483,9 +646,11 @@ export class PromotionFundRepository {
     readonly status: string;
     readonly registrationState: string;
     readonly generation: number;
+    readonly configuredPrize: number;
   } | null {
     const row = this.database.db.prepare(`
-      SELECT status, registration_state, registration_generation
+      SELECT
+        status, registration_state, registration_generation, config_json
       FROM tournament_instance
       WHERE id = ?
     `).get(instanceId) as SqlRow | undefined;
@@ -494,6 +659,7 @@ export class PromotionFundRepository {
           status: stringValue(row.status),
           registrationState: stringValue(row.registration_state),
           generation: nonNegativeInteger(row.registration_generation),
+          configuredPrize: configuredFreerollPrize(row.config_json),
         }
       : null;
   }

@@ -7,7 +7,10 @@ import {
   PromotionFundRepository,
   type PromotionFundActor,
 } from './promotion-fund-repository';
-import { TournamentInstanceRepository } from './tournament-instance-repository';
+import {
+  TournamentInstanceRepository,
+  type CreateInstanceCommand,
+} from './tournament-instance-repository';
 
 const NOW = Date.now();
 const ADMIN: PromotionFundActor = {
@@ -65,16 +68,16 @@ describe('PromotionFundRepository', () => {
 
   afterEach(() => database.close());
 
-  function createFreeroll(
+  function freerollCommand(
     id: string,
     options: {
       totalPrize?: number;
       visibleAt?: number;
       registrationOpensAt?: number;
     } = {},
-  ): void {
+  ): CreateInstanceCommand {
     const visibleAt = options.visibleAt ?? NOW;
-    instances.createInstance({
+    return {
       id,
       templateId: null,
       templateRevision: null,
@@ -89,7 +92,18 @@ describe('PromotionFundRepository', () => {
       config: freerollConfig(options.totalPrize),
       createdBy: { kind: 'backoffice-admin', profileId: 'admin-test' },
       now: NOW,
-    });
+    };
+  }
+
+  function createFreeroll(
+    id: string,
+    options: {
+      totalPrize?: number;
+      visibleAt?: number;
+      registrationOpensAt?: number;
+    } = {},
+  ): void {
+    instances.createInstance(freerollCommand(id, options));
   }
 
   function credit(amount = 500_000, requestId = randomUUID()) {
@@ -161,20 +175,18 @@ describe('PromotionFundRepository', () => {
 
   it('reserves an immediate freeroll before exposing it', () => {
     credit();
-    createFreeroll('immediate');
-    const escrow = funds.reserveFreerollPrize({
-      instanceId: 'immediate',
-      amount: 100_000,
+    const result = funds.createImmediateFreeroll({
+      instance: freerollCommand('immediate'),
       idempotencyKey: randomUUID(),
       actor: ADMIN,
       at: NOW,
     });
-    expect(escrow).toMatchObject({
+    expect(result.escrow).toMatchObject({
       instanceId: 'immediate',
       amount: 100_000,
       status: 'reserved',
     });
-    expect(instances.getInstance('immediate')).toMatchObject({
+    expect(result.instance).toMatchObject({
       status: 'registering',
       registrationState: 'open-prestart',
     });
@@ -182,6 +194,35 @@ describe('PromotionFundRepository', () => {
       availableBalance: 400_000,
       reservedTotal: 100_000,
       version: 2,
+    });
+  });
+
+  it('rolls immediate creation, debit, ledger, and escrow back together', () => {
+    credit();
+    database.db.exec(`
+      CREATE TRIGGER injected_immediate_escrow_failure
+      BEFORE INSERT ON tournament_prize_escrow
+      BEGIN
+        SELECT RAISE(ABORT, 'injected escrow failure');
+      END;
+    `);
+
+    expect(() => funds.createImmediateFreeroll({
+      instance: freerollCommand('atomic-failure'),
+      idempotencyKey: randomUUID(),
+      actor: ADMIN,
+      at: NOW,
+    })).toThrowError(expect.objectContaining({ code: 'financial-invariant' }));
+    expect(instances.getInstance('atomic-failure')).toBeNull();
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_prize_escrow
+      WHERE instance_id = 'atomic-failure'
+    `).get()).toEqual({ count: 0 });
+    expect(funds.getFundPage({ limit: 10 })).toMatchObject({
+      availableBalance: 500_000,
+      version: 1,
+      reservedTotal: 0,
+      ledger: [expect.objectContaining({ kind: 'admin-adjustment' })],
     });
   });
 
@@ -279,6 +320,49 @@ describe('PromotionFundRepository', () => {
       status: 'cancelled',
       statusReason: 'operator-cancel',
     });
+  });
+
+  it('quarantines a mismatched escrow without crediting its arbitrary amount', () => {
+    credit();
+    createFreeroll('mismatch');
+    funds.reserveFreerollPrize({
+      instanceId: 'mismatch',
+      amount: 100_000,
+      idempotencyKey: randomUUID(),
+      actor: ADMIN,
+      at: NOW,
+    });
+    database.db.exec('DROP TRIGGER protect_tournament_prize_escrow_update');
+    database.db.prepare(`
+      UPDATE tournament_prize_escrow
+      SET amount = 90_000
+      WHERE instance_id = 'mismatch'
+    `).run();
+    const versionBefore = funds.getFundPage({ limit: 10 }).version;
+
+    expect(() => funds.refundFreerollPrize({
+      instanceId: 'mismatch',
+      generation: 0,
+      idempotencyKey: randomUUID(),
+      actor: SYSTEM,
+      at: NOW + 1,
+    })).toThrowError(expect.objectContaining({ code: 'financial-invariant' }));
+    expect(instances.getInstance('mismatch')).toMatchObject({
+      status: 'refund-pending',
+      statusReason: 'financial-invariant',
+      registrationState: 'closed',
+    });
+    expect(funds.getFundPage({ limit: 10 })).toMatchObject({
+      availableBalance: 400_000,
+      reservedTotal: 90_000,
+      version: versionBefore,
+    });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM promotion_fund_ledger
+      WHERE instance_id = 'mismatch'
+        AND kind = 'freeroll-prize-refund'
+    `).get()).toEqual({ count: 0 });
   });
 
   it('paginates the immutable ledger with an opaque cursor', () => {

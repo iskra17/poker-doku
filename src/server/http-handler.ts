@@ -17,9 +17,9 @@ import {
 } from './feedback-http';
 import { HandHistoryRepository, TableHandRepository } from './hand-history';
 import { createHandHistoryHttpHandler } from './hand-history-http';
-import type {
-  TransientHttpConcurrencyGate,
+import {
   TransientHttpRateLimiter,
+  type TransientHttpConcurrencyGate,
 } from './http-rate-limit';
 import type { PokerDatabase } from './persistence/database';
 import { PromotionFundRepository } from './promotion-fund-repository';
@@ -66,6 +66,7 @@ interface HttpHandlerCommonOptions {
   adminTournamentCommands?: AdminTournamentCommands;
   adminSessions?: AdminSessionManager;
   promotionFunds?: PromotionFundRepository;
+  promotionFundRateLimiter?: TransientHttpRateLimiter;
   /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
   gameConfig?: GameConfigService;
 }
@@ -187,6 +188,9 @@ export function createHttpRequestHandler(
         }),
         promotionFunds: options.promotionFunds
           ?? new PromotionFundRepository(options.database),
+        promotionFundRateLimiter: options.promotionFundRateLimiter
+          ?? options.profileRateLimiter
+          ?? new TransientHttpRateLimiter(),
         production,
         now: options.now,
       })

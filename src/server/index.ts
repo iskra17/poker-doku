@@ -263,6 +263,7 @@ async function listen(): Promise<void> {
     },
     opsEvents,
     promotionFunds,
+    promotionFundRateLimiter: profileRateLimiter,
     gameConfig: gameConfigService,
     adminTournamentCommands: {
       create: draft => runtime

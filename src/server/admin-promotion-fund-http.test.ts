@@ -69,6 +69,19 @@ describe('admin promotion fund HTTP API', () => {
     });
   }
 
+  async function loginAdmin() {
+    const login = await fetch(`${baseUrl}/api/admin/session`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', origin: baseUrl },
+      body: JSON.stringify({ token: TOKEN }),
+    });
+    expect(login.status).toBe(201);
+    return {
+      cookie: login.headers.get('set-cookie')!.split(';', 1)[0],
+      csrfToken: ((await login.json()) as { csrfToken: string }).csrfToken,
+    };
+  }
+
   it('requires an admin session for fund pages and adjustments', async () => {
     expect((await fetch(`${baseUrl}/api/admin/promotion-fund`)).status).toBe(401);
     expect((await fetch(`${baseUrl}/api/admin/promotion-fund/adjust`, {
@@ -142,6 +155,36 @@ describe('admin promotion fund HTTP API', () => {
     })).status).toBe(429);
   });
 
+  it('shares the canonical adjustment limit across admin sessions on one IP', async () => {
+    const second = await loginAdmin();
+    for (let index = 0; index < 15; index += 1) {
+      expect((await adjust({
+        requestId: randomUUID(),
+        delta: 1,
+        reason: `First session shared limit ${index}`,
+      })).status).toBe(200);
+      expect((await fetch(`${baseUrl}/api/admin/promotion-fund/adjust`, {
+        method: 'POST',
+        headers: {
+          cookie: second.cookie,
+          'content-type': 'application/json',
+          origin: baseUrl,
+          'x-csrf-token': second.csrfToken,
+        },
+        body: JSON.stringify({
+          requestId: randomUUID(),
+          delta: 1,
+          reason: `Second session shared limit ${index}`,
+        }),
+      })).status).toBe(200);
+    }
+    expect((await adjust({
+      requestId: randomUUID(),
+      delta: 1,
+      reason: 'Shared address limit overflow',
+    })).status).toBe(429);
+  });
+
   it('returns promotion-insufficient without changing the ledger', async () => {
     const response = await adjust({
       requestId: randomUUID(),
@@ -199,8 +242,41 @@ describe('admin promotion fund HTTP API', () => {
       delta: 50,
       balanceAfter: 50,
       actorKind: 'backoffice-admin',
+      resultCode: 'ok',
     });
     const serialized = JSON.stringify(events[0]);
+    expect(serialized).not.toContain(TOKEN);
+    expect(serialized).not.toContain(cookie);
+    expect(serialized).not.toContain(csrfToken);
+  });
+
+  it('audits insufficient and idempotency-conflict results without secrets', async () => {
+    const requestId = randomUUID();
+    expect((await adjust({
+      requestId,
+      delta: 10,
+      reason: 'Original audited adjustment',
+    })).status).toBe(200);
+    expect((await adjust({
+      requestId,
+      delta: 11,
+      reason: 'Changed audited adjustment',
+    })).status).toBe(409);
+    expect((await adjust({
+      requestId: randomUUID(),
+      delta: -10_000,
+      reason: 'Insufficient audited adjustment',
+    })).status).toBe(409);
+
+    const events = new OpsEventRepository(database).recent({
+      type: 'promotion-fund-adjust',
+    });
+    expect(events.map(event => event.data.resultCode)).toEqual([
+      'promotion-insufficient',
+      'idempotency-conflict',
+      'ok',
+    ]);
+    const serialized = JSON.stringify(events);
     expect(serialized).not.toContain(TOKEN);
     expect(serialized).not.toContain(cookie);
     expect(serialized).not.toContain(csrfToken);
