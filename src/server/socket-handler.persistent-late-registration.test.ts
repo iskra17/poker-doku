@@ -68,15 +68,26 @@ describe('persistent late-registration production runtime wiring', () => {
     };
     const getInstance = vi.fn(() => instance);
     const commitLateMttBatch = vi.fn();
+    const engagement = {
+      tournamentId: 'mtt-1',
+      profileId: 'profile-1',
+      requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      status: 'late-pending' as const,
+    };
+    const readTournamentEngagement = vi.fn(() => engagement);
     const ports = createPersistentLateRegistrationPorts(
       { getInstance },
-      { commitLateMttBatch },
+      { commitLateMttBatch, readTournamentEngagement },
     );
 
     expect(ports.readInstance('mtt-1')).toBe(instance);
     ports.commitLateMttBatch('mtt-1', [], 2);
+    expect(ports.readTournamentEngagement?.('mtt-1', 'profile-1'))
+      .toBe(engagement);
     expect(getInstance).toHaveBeenCalledWith('mtt-1');
     expect(commitLateMttBatch).toHaveBeenCalledWith('mtt-1', [], 2);
+    expect(readTournamentEngagement)
+      .toHaveBeenCalledWith('mtt-1', 'profile-1');
   });
 
   it('passes the persistent repository adapter into every live MTT gate', async () => {

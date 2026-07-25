@@ -11,7 +11,7 @@ import {
 import type { PokerDatabase } from './persistence/database';
 import { isUuidRequestId } from './tournament-command-parser';
 
-type RegistrationStatus =
+export type TournamentRegistrationStatus =
   | 'registered'
   | 'cancelled'
   | 'no-show'
@@ -22,7 +22,15 @@ type RegistrationStatus =
   | 'finished'
   | 'refunded';
 
+type RegistrationStatus = TournamentRegistrationStatus;
 type EconomyMode = 'freeroll' | 'wallet';
+
+export interface TournamentRegistrationEngagement {
+  readonly tournamentId: string;
+  readonly profileId: string;
+  readonly requestId: string;
+  readonly status: TournamentRegistrationStatus;
+}
 
 export type TournamentEnrollmentErrorCode =
   | 'not-found'
@@ -239,6 +247,39 @@ export class TournamentEnrollmentRepository {
     private readonly economy: EconomyRepository,
     private readonly clock: () => number = Date.now,
   ) {}
+
+  readTournamentEngagement(
+    tournamentId: string,
+    profileId: string,
+  ): TournamentRegistrationEngagement | null {
+    this.assertIdentity(tournamentId);
+    this.assertIdentity(profileId);
+    const row = this.database.db.prepare(`
+      SELECT registration.instance_id AS tournament_id,
+             registration.profile_id,
+             attempt.request_id,
+             registration.status
+      FROM tournament_registration AS registration
+      INNER JOIN tournament_registration_attempt AS attempt
+        ON attempt.instance_id = registration.instance_id
+       AND attempt.profile_id = registration.profile_id
+       AND attempt.registration_attempt = registration.registration_attempt
+      WHERE registration.instance_id = ?
+        AND registration.profile_id = ?
+    `).get(tournamentId, profileId) as {
+      tournament_id: string;
+      profile_id: string;
+      request_id: string;
+      status: TournamentRegistrationStatus;
+    } | undefined;
+    if (!row) return null;
+    return {
+      tournamentId: row.tournament_id,
+      profileId: row.profile_id,
+      requestId: row.request_id,
+      status: row.status,
+    };
+  }
 
   registerPreStart(
     input: RegisterPreStartInput,

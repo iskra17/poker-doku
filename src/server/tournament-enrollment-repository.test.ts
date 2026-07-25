@@ -111,6 +111,29 @@ describe('TournamentEnrollmentRepository', () => {
     `).get()).toEqual({ count: 0 });
   });
 
+  it('reads the canonical request id for the current durable registration attempt', () => {
+    createOpenInstance('canonical-engagement', freerollConfig());
+    seedProfile('canonical-player', 2_000);
+    const requestId = randomUUID();
+    enrollment.registerPreStart({
+      tournamentId: 'canonical-engagement',
+      profileId: 'canonical-player',
+      requestId,
+      publicPlayer: player('canonical-player'),
+      at: NOW,
+    });
+
+    expect(enrollment.readTournamentEngagement(
+      'canonical-engagement',
+      'canonical-player',
+    )).toEqual({
+      tournamentId: 'canonical-engagement',
+      profileId: 'canonical-player',
+      requestId,
+      status: 'registered',
+    });
+  });
+
   it('replays one request id without another attempt debit or cap claim', () => {
     createOpenInstance('replay-prestart', walletConfig());
     seedProfile('replay-player', 5_000);

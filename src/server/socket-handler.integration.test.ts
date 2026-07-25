@@ -332,6 +332,12 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
           registrationOwnerToken: null,
         }),
         commitLateMttBatch: vi.fn(),
+        readTournamentEngagement: vi.fn(() => ({
+          tournamentId,
+          profileId: '',
+          requestId,
+          status: 'seated',
+        })),
         listPublicTournaments: vi.fn(() => [publicTournament]),
       } as never,
     });
@@ -358,6 +364,109 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       roomId,
       tournamentEngagement: null,
     });
+  });
+
+  it('rejects a stale resync request id without replacing the durable engagement', async () => {
+    const tournamentId = 'mtt-late-stale-resync';
+    const requestId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const staleRequestId = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => ({
+          status: 'running',
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+        commitLateMttBatch: vi.fn(),
+        readTournamentEngagement: vi.fn(() => ({
+          tournamentId,
+          profileId: '',
+          requestId,
+          status: 'late-pending',
+        })),
+        listPublicTournaments: vi.fn(() => [{
+          id: tournamentId,
+          economyMode: 'freeroll',
+          myRegistrationStatus: 'late-pending',
+        }]),
+      } as never,
+    });
+    const client = await harness.connect('late-seat-stale-resync');
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    session.tournamentEngagement = {
+      kind: 'late-pending',
+      tournamentId,
+      requestId,
+    };
+    const seating: unknown[] = [];
+    client.socket.on('late-registration-seating', payload => seating.push(payload));
+
+    await expect(withAck(done => client.socket.emit('resync', {
+      tournamentId,
+      requestId: staleRequestId,
+    }, done))).resolves.toMatchObject({
+      ok: false,
+      code: 'action-rejected',
+    });
+
+    expect(seating).toEqual([]);
+    expect(session.tournamentEngagement).toEqual({
+      kind: 'late-pending',
+      tournamentId,
+      requestId,
+    });
+  });
+
+  it.each([
+    ['deleted registration', () => null, () => []],
+    ['projection failure', () => ({
+      tournamentId: 'mtt-late-terminal',
+      profileId: '',
+      requestId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+      status: 'late-pending',
+    }), () => {
+      throw new Error('projection unavailable');
+    }],
+  ])('retires engagement before room-lost on %s', async (
+    _case,
+    readTournamentEngagement,
+    listPublicTournaments,
+  ) => {
+    const tournamentId = 'mtt-late-terminal';
+    const requestId = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => null,
+        commitLateMttBatch: vi.fn(),
+        readTournamentEngagement: vi.fn(readTournamentEngagement),
+        listPublicTournaments: vi.fn(listPublicTournaments),
+      } as never,
+    });
+    const client = await harness.connect(`late-seat-terminal-${_case}`);
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    session.tournamentEngagement = {
+      kind: 'late-pending',
+      tournamentId,
+      requestId,
+    };
+    let engagementAtRoomLost: unknown = 'not-emitted';
+    const lost = new Promise(resolve => {
+      client.socket.once('room-lost', payload => {
+        engagementAtRoomLost = session.tournamentEngagement;
+        resolve(payload);
+      });
+    });
+
+    await expect(withAck(done => client.socket.emit('resync', {
+      tournamentId,
+      requestId,
+    }, done))).resolves.toMatchObject({ ok: true });
+    await expect(lost).resolves.toBeDefined();
+    expect(engagementAtRoomLost).toBeNull();
+    expect(session.tournamentEngagement).toBeNull();
   });
 
   it('rejects wallet bot fill before mutation and logging', async () => {
@@ -455,6 +564,31 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
         ok: false,
         code: 'arena-disabled',
       });
+  });
+
+  it('rejects arena queue admission while tournament seating is pending', async () => {
+    harness = await createSocketTestHarness({ arenaEnabled: true });
+    const client = await harness.connect('arena-tournament-engagement');
+    const session = harness.runtime.sessions.getByPlayerId(client.playerId)!;
+    session.tournamentEngagement = {
+      kind: 'late-pending',
+      tournamentId: 'mtt-arena-block',
+      requestId: 'abababab-abab-4bab-8bab-abababababab',
+    };
+    const eventsBefore = harness.recentEvents();
+
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toMatchObject({
+        ok: false,
+        code: 'action-rejected',
+      });
+
+    expect(harness.recentEvents()).toEqual(eventsBefore);
+    session.tournamentEngagement = null;
+    await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
+      .resolves.toEqual({ ok: true });
+    await expect(withAck(done => client.socket.emit('arena-queue-leave', done)))
+      .resolves.toEqual({ ok: true });
   });
 
   it('lobby 보존 좌석 이동은 조용히 목적지만 바꾸고 활성 테이블 이동은 한 번만 보낸다', async () => {
@@ -696,13 +830,15 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     const queuedUpdate = new Promise<ArenaQueueState>(resolve => {
       client.socket.once('arena-queue-update', resolve);
     });
+    const eventsBeforeQueue = harness.recentEvents().length;
 
     await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
       .resolves.toEqual({ ok: true });
     const queued = await queuedUpdate;
     expect(queued).toMatchObject({ status: 'queued' });
     expect(JSON.stringify(queued)).not.toMatch(/mmr|profile|socket|ticket/iu);
-    expect(JSON.stringify(harness.recentEvents())).not.toMatch(/mmr/iu);
+    expect(JSON.stringify(harness.recentEvents().slice(eventsBeforeQueue)))
+      .not.toMatch(/mmr/iu);
     await expect(withAck(done => client.socket.emit('arena-queue-join', done)))
       .resolves.toMatchObject({
         ok: false,

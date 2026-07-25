@@ -123,4 +123,25 @@ describe('game store tournament-seat-assigned isolation', () => {
       tournamentRegistrationStatus: 'late-pending',
     });
   });
+
+  it('retires pending tournament recovery state when the server reports room-lost', () => {
+    useGameStore.setState({
+      currentRoomId: null,
+      pendingTournamentId: 'mtt-expired',
+      pendingTournamentRequestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      tournamentRegistrationStatus: 'late-pending',
+    });
+    useGameStore.getState().connect();
+    const roomLost = socketHarness.listeners.get('room-lost');
+    if (!roomLost) throw new Error('room-lost listener missing');
+
+    roomLost({ message: 'expired' } as never);
+
+    expect(useGameStore.getState()).toMatchObject({
+      currentRoomId: null,
+      pendingTournamentId: null,
+      pendingTournamentRequestId: null,
+      tournamentRegistrationStatus: null,
+    });
+  });
 });

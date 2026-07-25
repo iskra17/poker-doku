@@ -77,6 +77,7 @@ import {
   type EnrollmentReservationResult,
   type LateEntryKey,
   type PublicTournamentPlayer,
+  type TournamentRegistrationEngagement,
 } from './tournament-enrollment-repository';
 import {
   TournamentCommandService,
@@ -106,6 +107,10 @@ export interface PersistentTournamentSocketPorts {
     profileId: string;
     publicPlayer: PublicTournamentPlayer;
   }): RegisterTournamentResult;
+  readTournamentEngagement(
+    tournamentId: string,
+    profileId: string,
+  ): TournamentRegistrationEngagement | null;
 }
 
 type PersistentTournamentRuntimePorts = PersistentLateRegistrationPorts
@@ -162,6 +167,10 @@ export function createPersistentLateRegistrationPorts(
       requestId: string,
       candidateCloseOwnerToken: string,
     ): EnrollmentReservationResult;
+    readTournamentEngagement?(
+      tournamentId: string,
+      profileId: string,
+    ): TournamentRegistrationEngagement | null;
   },
 ): PersistentTournamentRuntimePorts {
   return {
@@ -175,6 +184,14 @@ export function createPersistentLateRegistrationPorts(
             profileId: string | undefined,
             now: number,
           ) => instances.listPublicProjections!(profileId, now),
+        }
+      : {}),
+    ...(enrollments.readTournamentEngagement
+      ? {
+          readTournamentEngagement: (
+            tournamentId: string,
+            profileId: string,
+          ) => enrollments.readTournamentEngagement!(tournamentId, profileId),
         }
       : {}),
     ...(enrollments.registerPreStart && enrollments.reserveLateMttEntry
@@ -1226,6 +1243,14 @@ export function setupSocketHandlers(
       }
       const { ack } = args;
       if (!ensureOwnership(ack)) return;
+      if (session.tournamentEngagement) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '토너먼트 좌석을 배정 중이에요.',
+        });
+        return;
+      }
       if (!ensureRateLimit(
         'joinRoom',
         '아레나 참가 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.',
@@ -1428,62 +1453,113 @@ export function setupSocketHandlers(
       if (session.roomId) {
         restoreOrEvict();
       } else {
-        const requested = parsed.value
-          ?? session.tournamentEngagement
-          ?? undefined;
+        const storedEngagement = session.tournamentEngagement;
+        if (
+          storedEngagement
+          && parsed.value
+          && (
+            parsed.value.tournamentId !== storedEngagement.tournamentId
+            || parsed.value.requestId !== storedEngagement.requestId
+          )
+        ) {
+          ack?.({
+            ok: false,
+            code: 'action-rejected',
+            message: '현재 좌석 배정 요청과 일치하지 않아요.',
+          });
+          return;
+        }
+        const requested = storedEngagement ?? parsed.value ?? undefined;
         if (requested) {
+          let durableEngagement: TournamentRegistrationEngagement | null = null;
           let tournament: PublicTournamentSummary | undefined;
           try {
+            durableEngagement = persistentTournamentPorts
+              ?.readTournamentEngagement?.(
+                requested.tournamentId,
+                session.playerId,
+              ) ?? null;
             tournament = persistentTournamentPorts?.listPublicTournaments?.(
               session.playerId,
               Date.now(),
             ).find(candidate => candidate.id === requested.tournamentId);
           } catch {
+            durableEngagement = null;
             tournament = undefined;
           }
-          if (tournament?.myRegistrationStatus === 'late-pending') {
+          const durableMatchesStored = !storedEngagement || (
+            durableEngagement?.tournamentId === storedEngagement.tournamentId
+            && durableEngagement.requestId === storedEngagement.requestId
+          );
+          if (
+            !durableEngagement
+            || durableEngagement.tournamentId !== requested.tournamentId
+            || !durableMatchesStored
+            || !tournament
+          ) {
+            session.tournamentEngagement = null;
+            sessions.releaseIfIdle(session);
+            socket.emit('room-lost', {
+              message: '토너먼트 좌석 배정 세션이 만료되어 로비로 돌아왔어요.',
+            });
+            ack?.({ ok: true });
+            return;
+          }
+          const canonicalRequestId = durableEngagement.requestId;
+          if (
+            durableEngagement.status === 'late-pending'
+            && tournament.myRegistrationStatus === 'late-pending'
+          ) {
             session.tournamentEngagement = {
               kind: 'late-pending',
-              tournamentId: requested.tournamentId,
-              requestId: requested.requestId,
+              tournamentId: durableEngagement.tournamentId,
+              requestId: canonicalRequestId,
             };
             socket.emit('late-registration-seating', {
-              tournamentId: requested.tournamentId,
-              requestId: requested.requestId,
+              tournamentId: durableEngagement.tournamentId,
+              requestId: canonicalRequestId,
               status: 'seating',
             });
             ack?.({ ok: true });
             return;
           }
-          if (tournament?.myRegistrationStatus === 'seated') {
+          if (
+            durableEngagement.status === 'seated'
+            && tournament.myRegistrationStatus === 'seated'
+          ) {
             session.tournamentEngagement = {
               kind: 'late-pending',
-              tournamentId: requested.tournamentId,
-              requestId: requested.requestId,
+              tournamentId: durableEngagement.tournamentId,
+              requestId: canonicalRequestId,
             };
             const roomId = findLiveTournamentRoom(
-              requested.tournamentId,
+              durableEngagement.tournamentId,
               session.playerId,
             );
             if (roomId) {
-              projectLateTournamentSeat(
+              const projected = projectLateTournamentSeat(
                 session,
-                requested.tournamentId,
+                durableEngagement.tournamentId,
                 roomId,
               );
+              if (!projected) {
+                session.tournamentEngagement = null;
+                sessions.releaseIfIdle(session);
+                socket.emit('room-lost', {
+                  message: '토너먼트 좌석을 복구하지 못해 로비로 돌아왔어요.',
+                });
+              }
             }
             ack?.({ ok: true });
             return;
           }
-          if (
-            tournament?.myRegistrationStatus
-            && tournament.myRegistrationStatus !== 'registered'
-            && tournament.myRegistrationStatus !== 'seat-claimed'
-          ) {
-            session.tournamentEngagement = null;
-            ack?.({ ok: true });
-            return;
-          }
+          session.tournamentEngagement = null;
+          sessions.releaseIfIdle(session);
+          socket.emit('room-lost', {
+            message: '토너먼트 좌석 배정이 종료되어 로비로 돌아왔어요.',
+          });
+          ack?.({ ok: true });
+          return;
         }
         // roomId 없음 = 서버 재시작·grace 만료·다른 탭 퇴장 등 여러 원인 — 원인 단정 없이 중립 안내
         socket.emit('room-lost', { message: '게임 세션이 만료되어 로비로 돌아왔어요. 다시 입장해 주세요.' });
@@ -1505,7 +1581,6 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
-      if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (session.tournamentEngagement) {
         ack?.({
           ok: false,
@@ -1514,6 +1589,7 @@ export function setupSocketHandlers(
         });
         return;
       }
+      if (!ensureRateLimit('joinRoom', '입장 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (arenaMatchmaker?.hasBlockingParticipation(session.playerId)) {
         ack?.({
           ok: false,
@@ -2788,26 +2864,35 @@ export function setupSocketHandlers(
         return;
       }
       const command = parsed.value;
+      const existing = session.tournamentEngagement;
+      if (
+        existing
+        && options.persistentRuntimeEnabled
+        && (
+          existing.tournamentId !== command.tournamentId
+          || existing.requestId !== command.requestId
+        )
+      ) {
+        ack?.({
+          ok: true,
+          data: {
+            ok: false,
+            requestId: command.requestId,
+            reason: 'other-tournament',
+          },
+        });
+        return;
+      }
+      if (existing && !options.persistentRuntimeEnabled) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '이미 참가 중인 토너먼트가 있어요.',
+        });
+        return;
+      }
       if (!ensureRateLimit('joinRoom', '등록 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
       if (options.persistentRuntimeEnabled) {
-        const existing = session.tournamentEngagement;
-        if (
-          existing
-          && (
-            existing.tournamentId !== command.tournamentId
-            || existing.requestId !== command.requestId
-          )
-        ) {
-          ack?.({
-            ok: true,
-            data: {
-              ok: false,
-              requestId: command.requestId,
-              reason: 'other-tournament',
-            },
-          });
-          return;
-        }
         const result = persistentTournamentPorts?.registerTournament?.({
           command,
           profileId: session.playerId,
