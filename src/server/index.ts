@@ -50,6 +50,16 @@ import {
   type AuthenticatedSocketData,
 } from './socket-handler';
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
+import {
+  loadTournamentRecoveryPlan,
+  recoveryOperationUuid,
+  TournamentRecoveryService,
+} from './tournament-recovery-service';
+import {
+  TournamentInstanceRepository,
+  type TournamentInstanceRecord,
+} from './tournament-instance-repository';
+import { TournamentScheduler } from './tournament-scheduler';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -79,6 +89,7 @@ let arenaService: ArenaService | undefined;
 let arenaHttpService: ArenaHttpDataService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
 let arenaMetrics: ArenaMetrics | undefined;
+let tournamentScheduler: TournamentScheduler | undefined;
 let lifecycleReady = false;
 
 const shutdown = createServerShutdown({
@@ -91,6 +102,7 @@ const shutdown = createServerShutdown({
   runtime: {
     close: async () => {
       lifecycleReady = false;
+      tournamentScheduler?.close();
       arenaScheduler?.close();
       arenaMetrics?.close(Date.now());
       const arenaClose = await runtime?.close();
@@ -163,7 +175,77 @@ function initializePersistenceAndRecover(): void {
   // 새 입장 escrow가 생긴 뒤 실행하면 정상 좌석까지 환불하므로 시작 시점에 딱 한 번만 호출한다.
   // Arena 복구보다 먼저 실행 — 시작 순서 계약:
   // migration → cash/SnG 회수 → Arena refund → 주간/시즌 reconcile → socket accept.
-  economyRuntime.recoverActiveEscrows();
+  const tournamentInstances = new TournamentInstanceRepository(database);
+  const promotionFunds = new PromotionFundRepository(database);
+  const resumeTournamentRefund = (
+    persisted: TournamentInstanceRecord,
+    at: number,
+  ): void => {
+    let instance = persisted;
+    if (instance.status !== 'refund-pending') {
+      const claim = tournamentInstances.claimRefundPending(
+        instance.id,
+        'server-restart-unrecoverable',
+        'startup-recovery',
+      );
+      if (claim.status !== 'claimed') {
+        tournamentInstances.claimDirectCancellation(
+          instance.id,
+          'server-restart-unrecoverable',
+          'startup-recovery',
+          at,
+        );
+        return;
+      }
+      instance = claim.instance;
+    }
+    if (instance.economyMode === 'wallet') {
+      economyService!.voidMttTournament(instance.id, at);
+      tournamentInstances.finishCancellation(
+        instance.id,
+        instance.registrationGeneration,
+        at,
+      );
+      return;
+    }
+    promotionFunds.refundFreerollPrize({
+      instanceId: instance.id,
+      generation: instance.registrationGeneration,
+      idempotencyKey: recoveryOperationUuid(
+        `freeroll-refund:${instance.id}`,
+      ),
+      actor: { kind: 'system', id: 'startup-recovery' },
+      at,
+    });
+  };
+  tournamentScheduler = new TournamentScheduler({
+    database,
+    onRefundPending: instance => {
+      resumeTournamentRefund(instance, Date.now());
+    },
+  });
+  const tournamentRecovery = new TournamentRecoveryService({
+    loadAndValidate: () => loadTournamentRecoveryPlan(database!, Date.now()),
+    recoverGeneric: options => {
+      economyService!.recoverActiveCashEscrows();
+      economyRuntime!.recoverIncompleteEntries(options);
+    },
+    resumeRefund: instanceId => {
+      const instance = tournamentInstances.getInstance(instanceId);
+      if (instance) resumeTournamentRefund(instance, Date.now());
+    },
+    resumePayout: instanceId => {
+      // The stored-plan executor is supplied with settlement integration.
+      // Until then, fail closed instead of ever reclassifying payout as refund.
+      throw new Error(
+        `Tournament payout recovery executor is unavailable: ${instanceId}`,
+      );
+    },
+    reconcileTemplatesAndTimers: () => {
+      tournamentScheduler!.reconcileAndHydrate();
+    },
+  });
+  tournamentRecovery.recoverBeforeListen();
   const arenaConfig = parseArenaRuntimeConfig(process.env);
   if (arenaConfig.enabled) {
     const arenaRepository = new ArenaRepository(database);
