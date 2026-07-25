@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MTT_STRUCTURES, mttClockAt, mttLevelAt } from './mtt-structure';
+import type { TournamentStructureSegment } from '../tournament/tournament-config';
 
 const MIN = 60_000;
 
@@ -76,5 +77,57 @@ describe('mttClockAt', () => {
   it('mttLevelAt clamps out-of-range indices', () => {
     expect(mttLevelAt(s, 999).level).toBe(s.levels.length);
     expect(mttLevelAt(s, 0).level).toBe(1);
+  });
+});
+
+describe('absolute segment mttClockAt', () => {
+  const start = Date.UTC(2026, 6, 25, 12);
+  const segments: readonly TournamentStructureSegment[] = [
+    {
+      kind: 'level',
+      durationMs: 5 * MIN,
+      smallBlind: 50,
+      bigBlind: 100,
+      bigBlindAnte: 0,
+    },
+    { kind: 'break', durationMs: 10 * MIN },
+    {
+      kind: 'level',
+      durationMs: 7 * MIN,
+      smallBlind: 100,
+      bigBlind: 200,
+      bigBlindAnte: 200,
+    },
+    {
+      kind: 'level',
+      durationMs: 9 * MIN,
+      smallBlind: 150,
+      bigBlind: 300,
+      bigBlindAnte: 300,
+    },
+  ];
+
+  it('exposes the current break, next play blinds, and absolute end', () => {
+    const pos = mttClockAt(segments, start, start + 6 * MIN);
+
+    expect(pos.currentSegmentIndex).toBe(1);
+    expect(pos.currentSegment.kind).toBe('break');
+    expect(pos.onBreak).toBe(true);
+    expect(pos.segmentEndsAt).toBe(start + 15 * MIN);
+    expect(pos.bigBlind).toBe(200);
+    expect(pos.bigBlindAnte).toBe(200);
+    expect(pos.nextPlaySegmentIndex).toBe(2);
+    expect(pos.nextPlaySegment?.kind).toBe('level');
+  });
+
+  it('holds the final play segment without a deadline', () => {
+    const pos = mttClockAt(segments, start, start + 1_000 * MIN);
+
+    expect(pos.currentSegmentIndex).toBe(3);
+    expect(pos.currentSegment.kind).toBe('level');
+    expect(pos.bigBlind).toBe(300);
+    expect(pos.segmentEndsAt).toBeNull();
+    expect(pos.nextPlaySegmentIndex).toBeNull();
+    expect(pos.nextPlaySegment).toBeNull();
   });
 });

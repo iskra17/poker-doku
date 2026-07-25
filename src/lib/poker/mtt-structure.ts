@@ -1,3 +1,5 @@
+import type { TournamentStructureSegment } from '../tournament/tournament-config';
+
 /**
  * MTT 블라인드 구조 — 프리셋(스탠다드/터보/하이퍼) + 단일 토너먼트 시계 계산.
  *
@@ -98,7 +100,49 @@ export interface MttClockPosition {
  * 경과 플레이 시간 → 시계 위치. 세그먼트 나열:
  * L1 … L{N} [break] L{N+1} … L{2N} [break] … (마지막 레벨 이후 고정, 브레이크 없음)
  */
-export function mttClockAt(structure: MttStructure, elapsedPlayMs: number): MttClockPosition {
+export interface MttSegmentClockPosition {
+  currentSegmentIndex: number;
+  currentSegment: TournamentStructureSegment;
+  onBreak: boolean;
+  levelIndex: number;
+  smallBlind: number;
+  bigBlind: number;
+  bigBlindAnte: number;
+  segmentStartedAt: number;
+  segmentEndsAt: number | null;
+  segmentRemainingMs: number;
+  nextPlaySegmentIndex: number | null;
+  nextPlaySegment: Extract<TournamentStructureSegment, { kind: 'level' }> | null;
+}
+
+export function mttClockAt(
+  segments: readonly TournamentStructureSegment[],
+  actualStartedAt: number,
+  now: number,
+): MttSegmentClockPosition;
+export function mttClockAt(
+  structure: MttStructure,
+  elapsedPlayMs: number,
+): MttClockPosition;
+export function mttClockAt(
+  structureOrSegments: MttStructure | readonly TournamentStructureSegment[],
+  elapsedOrStartedAt: number,
+  now?: number,
+): MttClockPosition | MttSegmentClockPosition {
+  if (Array.isArray(structureOrSegments)) {
+    if (now === undefined) throw new Error('segment-clock-now-required');
+    return segmentClockAt(structureOrSegments, elapsedOrStartedAt, now);
+  }
+  return legacyClockAt(
+    structureOrSegments as MttStructure,
+    elapsedOrStartedAt,
+  );
+}
+
+function legacyClockAt(
+  structure: MttStructure,
+  elapsedPlayMs: number,
+): MttClockPosition {
   const { levelDurationMs, breakEveryLevels, breakDurationMs, levels } = structure;
   let remaining = Math.max(0, elapsedPlayMs);
   for (let i = 0; i < levels.length; i++) {
@@ -124,6 +168,79 @@ export function mttClockAt(structure: MttStructure, elapsedPlayMs: number): MttC
 }
 
 /** 구조의 레벨 (스케줄 끝에서 고정) */
+function segmentClockAt(
+  segments: readonly TournamentStructureSegment[],
+  actualStartedAt: number,
+  now: number,
+): MttSegmentClockPosition {
+  if (segments.length === 0) throw new Error('empty-structure-segments');
+  const elapsedMs = Math.max(0, now - actualStartedAt);
+  let elapsedBeforeSegment = 0;
+  let currentSegmentIndex = segments.length - 1;
+
+  for (let index = 0; index < segments.length - 1; index++) {
+    const segmentEndOffset = elapsedBeforeSegment + segments[index].durationMs;
+    if (elapsedMs < segmentEndOffset) {
+      currentSegmentIndex = index;
+      break;
+    }
+    elapsedBeforeSegment = segmentEndOffset;
+  }
+  if (currentSegmentIndex === segments.length - 1) {
+    elapsedBeforeSegment = segments
+      .slice(0, currentSegmentIndex)
+      .reduce((sum, segment) => sum + segment.durationMs, 0);
+  }
+
+  const currentSegment = segments[currentSegmentIndex];
+  const segmentStartedAt = actualStartedAt + elapsedBeforeSegment;
+  const segmentEndsAt = currentSegmentIndex === segments.length - 1
+    ? null
+    : segmentStartedAt + currentSegment.durationMs;
+  const indexedSegments = segments.map((segment, index) => ({ segment, index }));
+  const nextPlayEntry = indexedSegments.find(entry => (
+    entry.index > currentSegmentIndex && entry.segment.kind === 'level'
+  ));
+  const previousPlayEntry = [...indexedSegments]
+    .slice(0, currentSegmentIndex)
+    .reverse()
+    .find(entry => entry.segment.kind === 'level');
+  const blindSegment = currentSegment.kind === 'level'
+    ? currentSegment
+    : nextPlayEntry?.segment.kind === 'level'
+      ? nextPlayEntry.segment
+      : previousPlayEntry?.segment.kind === 'level'
+        ? previousPlayEntry.segment
+        : null;
+  if (!blindSegment) throw new Error('structure-missing-play-segment');
+  const playIndex = currentSegment.kind === 'level'
+    ? currentSegmentIndex
+    : nextPlayEntry?.index ?? previousPlayEntry?.index ?? 0;
+  const levelIndex = segments
+    .slice(0, playIndex)
+    .filter(segment => segment.kind === 'level')
+    .length;
+
+  return {
+    currentSegmentIndex,
+    currentSegment,
+    onBreak: currentSegment.kind === 'break',
+    levelIndex,
+    smallBlind: blindSegment.smallBlind,
+    bigBlind: blindSegment.bigBlind,
+    bigBlindAnte: blindSegment.bigBlindAnte,
+    segmentStartedAt,
+    segmentEndsAt,
+    segmentRemainingMs: segmentEndsAt === null
+      ? Infinity
+      : Math.max(0, segmentEndsAt - now),
+    nextPlaySegmentIndex: nextPlayEntry?.index ?? null,
+    nextPlaySegment: nextPlayEntry?.segment.kind === 'level'
+      ? nextPlayEntry.segment
+      : null,
+  };
+}
+
 export function mttLevelAt(structure: MttStructure, levelIndex: number): MttBlindLevel {
   return structure.levels[Math.min(levelIndex, structure.levels.length - 1)];
 }
