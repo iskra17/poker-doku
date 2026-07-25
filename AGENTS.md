@@ -248,6 +248,22 @@ npx tsc --noEmit
     핸드 감사는 `table_hand.tournament_id`(v25 — v23의 game_mode CHECK가 MTT 핸드 기록을 조용히
     거부하던 버그도 이때 수정) + `/api/admin/hands?tournament=` 필터. mtt-* 이벤트 8종은
     ops_event 화이트리스트로 영속.
+- **영속 예약 MTT v2**: 공개 경제 모드는 `freeroll|'wallet'`뿐이다. 레거시 `practice` 입력은
+  `normalizeTournamentCommandIngress()` 한 곳에서 `freeroll`로 변환하는 1회성 ingress 호환
+  어댑터일 뿐, DB·소켓·HTTP 응답으로 다시 내보내지 않는다. 인스턴스와 등록 행의 상태 전이는
+  `(status, registration_state, generation, owner token/lease, attempt)` 복합 CAS로 함께 소유하며,
+  부분 성공을 독립 상태 변경으로 보정하지 않는다. 프리롤은 공개·등록·착석 전에
+  `tournament_prize_escrow.status='reserved'`와 설정 금액이 정확히 일치해야 한다.
+  시작은 방과 좌석을 owner-scoped prepared 상태로 먼저 만들고, DB가 `running`으로 커밋된 뒤에만
+  `activatePreparedTournament()`로 타이머·브로드캐스트를 켠다. 레이트 레지는 owner-scoped hold로
+  좌석 이동을 멈추고 등록 batch를 커밋하며, 각 테이블의 다음 핸드는 DB
+  `checkNextHandGate()`가 `allow`를 줄 때만 시작한다. 종료 시 등록을 `closing→closed`로 동결한 뒤
+  지급 계획을 fingerprint와 함께 `payout-pending`에 저장한다. `payout-pending`은 절대 환불로
+  바꾸지 않고 같은 동결 계획으로 재개하며, `refund-pending`도 실제 wallet void/프리롤 escrow
+  반환이 끝난 뒤에만 `cancelled`가 된다. 서버 시작은 listen 전에
+  영속 계획 검증→일반 경제 복구(보존/위임 집합 적용)→환불→지급→템플릿 조정·타이머 hydration
+  순으로 끝낸다. 회귀: `persistent-mtt-lifecycle.integration.test.ts`,
+  `tournament-recovery-service.test.ts`.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -318,7 +334,9 @@ npx tsc --noEmit
   정산 실패 hand-end)로 SQLite에 남긴다 (최대 5만 행 자동 정리, 저장 실패는 삼킴). 링 버퍼는
   재시작에 소멸하므로 장애 역추적은 이 테이블이 기준. `server-start`가 재시작/배포 마커.
 - **운영 백오피스** (`/admin` → `src/app/admin/page.tsx`, API는 `src/server/admin-http.ts`):
-  `DEBUG_LOG_TOKEN` 토큰 게이트(localStorage 보관). 상용 포커룸 백오피스 구조를 축소한
+  `DEBUG_LOG_TOKEN`은 로그인 때만 검증하고 이후 요청은 process-local 불투명 HttpOnly
+  `SameSite=Strict` 세션 쿠키를 사용한다. 변경 요청은 exact-origin + CSRF를 함께 검증하며,
+  raw 토큰이나 세션 토큰을 localStorage·로그·응답 본문에 보관하지 않는다. 상용 포커룸 백오피스 구조를 축소한
   **7탭 레이아웃** — 대시보드(지표+24h 핸드/레이크)/테이블(방+좌석 상세 확장)/플레이어(프로필+
   최근 핸드 드릴다운)/핸드(핸드 감사 — 정본 목록·상세 뷰어)/문의·리포트/이벤트/보안·공정성
   (신호 집계+아키텍처 체크리스트). 폴링은 overview 상시 + 활성 탭 데이터만 5초 주기.

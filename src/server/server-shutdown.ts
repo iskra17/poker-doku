@@ -11,7 +11,9 @@ export interface ServerShutdownResources {
     stopScheduler: () => void | Promise<void>;
     backupAfterCurrent: () => void | Promise<void>;
   };
+  schedulers?: readonly ImmediateCloseable[];
   runtime: ImmediateCloseable;
+  adminSessions?: ImmediateCloseable;
   rateLimiter?: ImmediateCloseable;
   io: CallbackCloseable;
   httpServer: CallbackCloseable;
@@ -116,11 +118,16 @@ export function createServerShutdown(
 
     const backup = resources.backup;
     if (backup) await attempt(() => backup.stopScheduler());
+    for (const scheduler of resources.schedulers ?? []) {
+      await attempt(() => scheduler.close());
+    }
     await attempt(() => resources.runtime.close());
     await attempt(() => closeWithCallback(resources.io));
     await attempt(() => closeWithCallback(resources.httpServer));
     const rateLimiter = resources.rateLimiter;
     if (rateLimiter) await attempt(() => rateLimiter.close());
+    const adminSessions = resources.adminSessions;
+    if (adminSessions) await attempt(() => adminSessions.close());
     if (backup && reason !== 'startup-error') {
       await attempt(() => backup.backupAfterCurrent());
     }

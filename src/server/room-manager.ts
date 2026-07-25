@@ -2779,6 +2779,9 @@ export class RoomManager {
     this.finishedRoomTimers.clear();
     for (const timer of this.emptyRoomTimers.values()) clearTimeout(timer);
     this.emptyRoomTimers.clear();
+    for (const timer of this.mttGateRetryTimers.values()) clearTimeout(timer);
+    this.mttGateRetryTimers.clear();
+    this.mttGateRetryAttempts.clear();
     this.dialogue.shutdown();
   }
 

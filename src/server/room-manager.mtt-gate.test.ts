@@ -121,4 +121,20 @@ describe('RoomManager MTT next-hand gate', () => {
     expect(manager.getRuntimeStats().mttGateRetryTimers).toBe(0);
     expect(manager.getRoom(roomId)!.engine.state.handNumber).toBe(0);
   });
+
+  it('clears every persistent gate retry during shutdown', () => {
+    const timer = setTimeout(() => {}, 30_000);
+    const internals = manager as unknown as {
+      mttGateRetryTimers: Map<string, NodeJS.Timeout>;
+      mttGateRetryAttempts: Map<string, number>;
+    };
+    internals.mttGateRetryTimers.set('recovery-held-room', timer);
+    internals.mttGateRetryAttempts.set('recovery-held-room', 3);
+
+    manager.shutdown();
+
+    expect(internals.mttGateRetryTimers.size).toBe(0);
+    expect(internals.mttGateRetryAttempts.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });

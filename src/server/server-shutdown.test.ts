@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AdminSessionManager } from './admin-session';
 import {
   createServerShutdown,
   startServerLifecycle,
@@ -67,6 +68,54 @@ function callbackCloseable(
 }
 
 describe('custom server shutdown', () => {
+  it('shuts down every scheduler lease retry batch and admin session timer', async () => {
+    const order: string[] = [];
+    const adminSessions = new AdminSessionManager({
+      sourceToken: 'operator-secret',
+      production: false,
+      randomSecret: (() => {
+        let sequence = 0;
+        return () => `secret-${sequence += 1}`;
+      })(),
+    });
+    expect(adminSessions.login('operator-secret', '127.0.0.1', 1).ok)
+      .toBe(true);
+    expect(adminSessions.login('wrong', '127.0.0.2', 2).ok).toBe(false);
+    expect(adminSessions.stats()).toEqual({ sessions: 1, loginBuckets: 2 });
+
+    const shutdown = createServerShutdown({
+      schedulers: [
+        { close: () => { order.push('mtt-scheduler'); } },
+        { close: () => { order.push('arena-scheduler'); } },
+      ],
+      runtime: {
+        close: () => {
+          order.push('runtime-retries-and-batches');
+        },
+      },
+      adminSessions,
+      io: callbackCloseable('socket.io', order),
+      httpServer: callbackCloseable('http', order),
+      app: {
+        close: () => {
+          order.push('next');
+        },
+      },
+    });
+
+    await shutdown('SIGTERM');
+
+    expect(order).toEqual([
+      'mtt-scheduler',
+      'arena-scheduler',
+      'runtime-retries-and-batches',
+      'socket.io',
+      'http',
+      'next',
+    ]);
+    expect(adminSessions.stats()).toEqual({ sessions: 0, loginBuckets: 0 });
+  });
+
   it('is idempotent and closes resources in dependency order', async () => {
     const order: string[] = [];
     const shutdown = createServerShutdown({

@@ -39,7 +39,7 @@ import type {
 } from './tournament-instance-repository';
 
 /**
- * 운영 백오피스 API — 토큰(`DEBUG_LOG_TOKEN`) 게이트, /admin 페이지가 짧은 주기로 폴링한다.
+ * 운영 백오피스 API — 불투명 HttpOnly 관리자 세션과 CSRF로 보호한다.
  *
  * - GET /api/admin/overview  — 접속자/방/프로세스/DB 집계 + 24h 핸드/레이크 + 최신 문의 커서
  * - GET /api/admin/profiles  — 익명 프로필 활동·칩 현황 (개인정보 없음 — 익명 별명뿐)

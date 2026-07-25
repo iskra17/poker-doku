@@ -5,6 +5,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
+import { AdminSessionManager } from './admin-session';
 import { ArenaHttpDataService } from './arena-http';
 import { ArenaMetrics } from './arena-metrics';
 import { ArenaRepository } from './arena-repository';
@@ -110,6 +111,7 @@ let arenaHttpService: ArenaHttpDataService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
 let arenaMetrics: ArenaMetrics | undefined;
 let tournamentScheduler: TournamentScheduler | undefined;
+let adminSessionManager: AdminSessionManager | undefined;
 let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
 let persistentTournamentRegistration:
   PersistentTournamentRuntimePorts | undefined;
@@ -131,11 +133,13 @@ const shutdown = createServerShutdown({
       await backupManager?.backupAfterCurrent();
     },
   },
+  schedulers: [
+    { close: () => tournamentScheduler?.close() },
+    { close: () => arenaScheduler?.close() },
+  ],
   runtime: {
     close: async () => {
       lifecycleReady = false;
-      tournamentScheduler?.close();
-      arenaScheduler?.close();
       arenaMetrics?.close(Date.now());
       const arenaClose = await runtime?.close();
       if (
@@ -155,6 +159,9 @@ const shutdown = createServerShutdown({
   },
   rateLimiter: {
     close: () => profileRateLimiter?.close(),
+  },
+  adminSessions: {
+    close: () => adminSessionManager?.close(),
   },
   io: {
     close: callback => {
@@ -523,6 +530,10 @@ async function listen(): Promise<void> {
     throw new Error('Persistence must be initialized before listening');
   }
   profileRateLimiter = new TransientHttpRateLimiter();
+  adminSessionManager = new AdminSessionManager({
+    sourceToken: process.env.DEBUG_LOG_TOKEN,
+    production: !dev,
+  });
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
 
   // 운영 이벤트 영속화 — 신호 이벤트(429·정산 실패·grace 만료 등)를 SQLite로 남겨
@@ -546,6 +557,7 @@ async function listen(): Promise<void> {
     profileRateLimiter,
     profileConcurrencyGate,
     production: !dev,
+    adminSessions: adminSessionManager,
     onProfileRevoked: profileId => runtime?.revokeProfile(profileId),
     onAvatarChanged: (profileId, avatarId) => runtime?.refreshAvatar(profileId, avatarId),
     onProgressionPublicCosmeticsChanged: (profileId, snapshot) => {

@@ -232,6 +232,11 @@ export class AdminSessionManager {
     };
   }
 
+  close(): void {
+    this.#sessions.clear();
+    this.#loginAttempts.clear();
+  }
+
   #session(
     cookieHeader: string | undefined,
     now: number,

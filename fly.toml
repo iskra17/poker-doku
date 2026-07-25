@@ -16,6 +16,11 @@ primary_region = "nrt" # 도쿄 — 한국 레이턴시 ~40ms
   ARENA_ENABLED = "false"
   ARENA_SEASON_EPOCH_KST = "2026-07-20T00:00:00+09:00"
   ARENA_PRESEASON_COUNT = "1"
+  # 영속 MTT는 의존 순서대로 활성화한다. 코드 기본값은 모두 false라
+  # 다른 환경은 명시적으로 opt-in하지 않으면 구 경로를 유지한다.
+  MTT_SCHEDULER_V2_ENABLED = "true"
+  MTT_LATE_REG_ENABLED = "true"
+  MTT_WALLET_LATE_REG_ENABLED = "true"
   # AI 대사 일일 상한 — 동접 100 규모 권장값 (월 ~$3 하드캡)
   AI_DIALOGUE_DAILY_MAX = "1500"
   # GEMINI_API_KEY는 secrets로 주입: fly secrets set GEMINI_API_KEY=<키>
