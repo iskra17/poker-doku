@@ -71,6 +71,8 @@ function templateCommand(
     enabled: true,
     timezone: 'Asia/Seoul',
     recurrence,
+    firstStartsAt: NOW,
+    recurrenceEndsAt: NOW + 30 * 24 * HOUR,
     visibleLeadMs: 24 * HOUR,
     registrationLeadMs: 20 * MINUTE,
     config: config(),
@@ -117,27 +119,66 @@ describe('TournamentScheduler', () => {
 
   afterEach(() => database.close());
 
-  it('generates hourly daily and weekly occurrences across the full horizon', () => {
+  it('bounds hourly daily and weekly occurrences to five reviewed starts', () => {
     const cases: TournamentRecurrence[] = [
       { kind: 'hourly', minute: 30 },
       { kind: 'daily', hour: 12, minute: 0 },
       { kind: 'weekly', weekday: 6, hour: 12, minute: 0 },
     ];
+    const firstStartsAt = RECURRENCE_NOW + 10 * MINUTE;
+    const recurrenceEndsAt = RECURRENCE_NOW + 60 * 24 * HOUR;
     const [hourly, daily, weekly] = cases.map(recurrence =>
-      kstOccurrenceStarts(recurrence, RECURRENCE_NOW, 7 * 24 * HOUR));
+      kstOccurrenceStarts(
+        recurrence,
+        RECURRENCE_NOW,
+        firstStartsAt,
+        recurrenceEndsAt,
+      ));
 
     expect(hourly[0]).toBe(Date.parse('2026-07-25T01:30:00.000Z'));
-    expect(hourly.at(-1)).toBeGreaterThanOrEqual(
-      RECURRENCE_NOW + 7 * 24 * HOUR,
-    );
+    expect(hourly).toHaveLength(5);
     expect(daily.slice(0, 2)).toEqual([
       Date.parse('2026-07-25T03:00:00.000Z'),
       Date.parse('2026-07-26T03:00:00.000Z'),
     ]);
+    expect(daily).toHaveLength(5);
     expect(weekly.slice(0, 2)).toEqual([
       Date.parse('2026-07-25T03:00:00.000Z'),
       Date.parse('2026-08-01T03:00:00.000Z'),
     ]);
+    expect(weekly).toHaveLength(5);
+  });
+
+  it('includes the exact recurrence end and never crosses either boundary', () => {
+    const firstStartsAt = Date.parse('2026-07-25T02:30:00.000Z');
+    const recurrenceEndsAt = firstStartsAt + 4 * HOUR;
+
+    expect(kstOccurrenceStarts(
+      { kind: 'hourly', minute: 30 },
+      RECURRENCE_NOW,
+      firstStartsAt,
+      recurrenceEndsAt,
+      10,
+    )).toEqual([
+      firstStartsAt,
+      firstStartsAt + HOUR,
+      firstStartsAt + 2 * HOUR,
+      firstStartsAt + 3 * HOUR,
+      recurrenceEndsAt,
+    ]);
+
+    expect(kstOccurrenceStarts(
+      { kind: 'hourly', minute: 30 },
+      recurrenceEndsAt + 1,
+      firstStartsAt,
+      recurrenceEndsAt,
+    )).toEqual([]);
+    expect(kstOccurrenceStarts(
+      { kind: 'hourly', minute: 30 },
+      RECURRENCE_NOW,
+      firstStartsAt,
+      firstStartsAt + HOUR + 30 * MINUTE,
+    )).toEqual([firstStartsAt, firstStartsAt + HOUR]);
   });
 
   it('reconciles the same template without duplicate occurrences', () => {
@@ -157,7 +198,77 @@ describe('TournamentScheduler', () => {
     ).get() as { count: number };
 
     expect(twice.count).toBe(once.count);
-    expect(once.count).toBeGreaterThan(48);
+    expect(once.count).toBe(5);
+  });
+
+  it('refills one successor after an occurrence is cancelled without recreating it', () => {
+    const template = instances.createTemplate(templateCommand(
+      'rolling-window',
+      { kind: 'hourly', minute: 30 },
+    ));
+    const scheduler = new TournamentScheduler({ database, clock: () => NOW });
+    scheduler.reconcileTemplates();
+    const before = database.db.prepare(`
+      SELECT id, starts_at FROM tournament_instance
+      WHERE template_id = ? ORDER BY starts_at
+    `).all(template.id) as Array<{ id: string; starts_at: number }>;
+    expect(before).toHaveLength(5);
+
+    expect(instances.claimDirectCancellation(
+      before[0]!.id,
+      'operator-cancel',
+      'scheduler-test-cancel',
+      Date.now(),
+    ).status).toBe('claimed');
+    scheduler.reconcileTemplates();
+
+    const active = database.db.prepare(`
+      SELECT starts_at FROM tournament_instance
+      WHERE template_id = ? AND status <> 'cancelled'
+      ORDER BY starts_at
+    `).all(template.id) as Array<{ starts_at: number }>;
+    expect(active).toHaveLength(5);
+    expect(active.some(row => row.starts_at === before[0]!.starts_at)).toBe(false);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_instance
+      WHERE id = ?
+    `).get(before[0]!.id)).toEqual({ count: 1 });
+  });
+
+  it('does not refill beyond the inclusive recurrence end', () => {
+    const first = Date.parse('2026-07-25T01:30:00.000Z');
+    const template = instances.createTemplate(templateCommand(
+      'finite-window',
+      { kind: 'hourly', minute: 30 },
+      {
+        firstStartsAt: first,
+        recurrenceEndsAt: first + HOUR,
+        now: RECURRENCE_NOW,
+      },
+    ));
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => RECURRENCE_NOW,
+    });
+    scheduler.reconcileTemplates();
+    const before = database.db.prepare(`
+      SELECT id FROM tournament_instance
+      WHERE template_id = ? ORDER BY starts_at
+    `).all(template.id) as Array<{ id: string }>;
+    expect(before).toHaveLength(2);
+
+    expect(instances.claimDirectCancellation(
+      before[0]!.id,
+      'operator-cancel',
+      'finite-window-cancel',
+      Date.now(),
+    ).status).toBe('claimed');
+    scheduler.reconcileTemplates();
+
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_instance
+      WHERE template_id = ?
+    `).get(template.id)).toEqual({ count: 2 });
   });
 
   it('disabling a template preserves every already generated occurrence', () => {

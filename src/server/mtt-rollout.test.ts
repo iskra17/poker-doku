@@ -66,6 +66,8 @@ describe('ordered MTT rollout initialization', () => {
       enabled: true,
       timezone: 'Asia/Seoul',
       recurrence: { kind: 'daily', hour: 20, minute: 0 },
+      firstStartsAt: NOW + 60 * 60_000,
+      recurrenceEndsAt: NOW + 7 * 24 * 60 * 60_000,
       visibleLeadMs: 24 * 60 * 60_000,
       registrationLeadMs: 20 * 60_000,
       config: config(),

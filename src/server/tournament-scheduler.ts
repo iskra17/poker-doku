@@ -22,8 +22,7 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const WEEK_MS = 7 * DAY_MS;
 const KST_OFFSET_MS = 9 * HOUR_MS;
-const MIN_HORIZON_MS = 48 * HOUR_MS;
-const VISIBILITY_MARGIN_MS = 5 * MINUTE_MS;
+const MATERIALIZED_OCCURRENCE_LIMIT = 5;
 const MISSED_START_GRACE_MS = 10 * MINUTE_MS;
 const START_LEASE_MS = 30_000;
 const MAX_LIVE_TOURNAMENTS = 4;
@@ -44,6 +43,8 @@ interface TemplateRow {
   readonly enabled: number;
   readonly timezone: string;
   readonly recurrence_json: string;
+  readonly first_starts_at: number | null;
+  readonly recurrence_ends_at: number | null;
   readonly visible_lead_ms: number;
   readonly registration_lead_ms: number;
   readonly config_json: string;
@@ -99,32 +100,33 @@ export type TemplateGenerationResult =
   | { readonly status: 'not-found' };
 
 /**
- * Returns recurrences through the full durable materialization horizon. The
- * first occurrence at or after the horizon is included so reconciliation never
- * leaves a gap at its boundary.
+ * Returns at most `limit` recurrences inside the operator-reviewed inclusive
+ * boundaries.
  */
 export function kstOccurrenceStarts(
   recurrence: TournamentRecurrence,
   now: number,
-  visibleLeadMs: number,
+  firstStartsAt: number,
+  recurrenceEndsAt: number,
+  limit = MATERIALIZED_OCCURRENCE_LIMIT,
 ): number[] {
   assertTimestamp(now);
-  assertNonNegativeInteger(visibleLeadMs);
-  const first = nextKstOccurrence(recurrence, now);
-  const second = nextKstOccurrence(recurrence, first + 1);
-  const horizon = Math.max(
-    safeAdd(now, MIN_HORIZON_MS),
-    second,
-    safeAdd(safeAdd(now, visibleLeadMs), VISIBILITY_MARGIN_MS),
-  );
+  assertTimestamp(firstStartsAt);
+  assertTimestamp(recurrenceEndsAt);
+  assertPositiveInteger(limit);
+  if (recurrenceEndsAt < firstStartsAt) {
+    throw new Error('Tournament recurrence end precedes first start');
+  }
   const starts: number[] = [];
-  let cursor = first;
-  for (let count = 0; count < 100_000; count += 1) {
+  let cursor = nextKstOccurrence(
+    recurrence,
+    Math.max(now, firstStartsAt),
+  );
+  while (cursor <= recurrenceEndsAt && starts.length < limit) {
     starts.push(cursor);
-    if (cursor >= horizon) return starts;
     cursor = nextKstOccurrence(recurrence, cursor + 1);
   }
-  throw new Error('Tournament recurrence horizon is unbounded');
+  return starts;
 }
 
 export class TournamentScheduler {
@@ -180,11 +182,7 @@ export class TournamentScheduler {
     let created = 0;
     for (const template of this.listTemplates()) {
       if (!template.enabled) continue;
-      const commands = kstOccurrenceStarts(
-        template.recurrence,
-        at,
-        template.visibleLeadMs,
-      ).map(startsAt => occurrenceCommand(template, startsAt, at));
+      const commands = this.occurrenceCommandsToFill(template, at);
       const previous = this.options.database.db.prepare(`
         SELECT DISTINCT template_revision AS revision
         FROM tournament_instance
@@ -239,11 +237,7 @@ export class TournamentScheduler {
       revision,
       template => {
         let generated = 0;
-        const commands = kstOccurrenceStarts(
-          template.recurrence,
-          at,
-          template.visibleLeadMs,
-        ).map(startsAt => occurrenceCommand(template, startsAt, at));
+        const commands = this.occurrenceCommandsToFill(template, at);
         for (const command of commands) {
           const exists = this.options.database.db.prepare(`
             SELECT 1 FROM tournament_instance WHERE idempotency_key = ?
@@ -553,6 +547,59 @@ export class TournamentScheduler {
     return row.count;
   }
 
+  private occurrenceCommandsToFill(
+    template: TournamentTemplateRecord,
+    at: number,
+  ): CreateInstanceCommand[] {
+    if (
+      template.firstStartsAt === null
+      || template.recurrenceEndsAt === null
+    ) {
+      if (!template.enabled) return [];
+      throw new Error('Enabled tournament template has no recurrence boundary');
+    }
+    const active = this.options.database.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM tournament_instance
+      WHERE template_id = ?
+        AND template_revision = ?
+        AND status NOT IN ('completed', 'cancelled')
+    `).get(template.id, template.revision) as { count: number };
+    let remaining = Math.max(
+      0,
+      MATERIALIZED_OCCURRENCE_LIMIT - active.count,
+    );
+    if (remaining === 0) return [];
+
+    const commands: CreateInstanceCommand[] = [];
+    let cursor = Math.max(at, template.firstStartsAt);
+    let scanned = 0;
+    for (; scanned < 100_000 && remaining > 0; scanned += 1) {
+      const startsAt = nextKstOccurrence(template.recurrence, cursor);
+      if (startsAt > template.recurrenceEndsAt) break;
+      const occurrenceKey = String(startsAt);
+      const occupied = this.options.database.db.prepare(`
+        SELECT 1
+        FROM tournament_instance
+        WHERE template_id = ? AND occurrence_key = ?
+          AND (
+            status <> 'cancelled'
+            OR COALESCE(status_reason, '') <> 'template-superseded'
+          )
+        LIMIT 1
+      `).get(template.id, occurrenceKey);
+      if (!occupied) {
+        commands.push(occurrenceCommand(template, startsAt, at));
+        remaining -= 1;
+      }
+      cursor = safeAdd(startsAt, 1);
+    }
+    if (remaining > 0 && scanned === 100_000) {
+      throw new Error('Tournament recurrence scan is unbounded');
+    }
+    return commands;
+  }
+
   private cancelOrQueueRefund(
     instanceId: string,
     reason: 'not-enough' | 'missed-start',
@@ -689,6 +736,25 @@ function decodeTemplate(row: TemplateRow): TournamentTemplateRecord {
   if (row.visible_lead_ms < row.registration_lead_ms) {
     throw new Error('Invalid persisted tournament template leads');
   }
+  if (
+    (row.first_starts_at === null) !== (row.recurrence_ends_at === null)
+    || (
+      row.first_starts_at === null
+      && row.enabled === 1
+    )
+    || (
+      row.first_starts_at !== null
+      && row.recurrence_ends_at !== null
+      && (
+        !Number.isSafeInteger(row.first_starts_at)
+        || row.first_starts_at < 0
+        || !Number.isSafeInteger(row.recurrence_ends_at)
+        || row.recurrence_ends_at < row.first_starts_at
+      )
+    )
+  ) {
+    throw new Error('Invalid persisted tournament template boundaries');
+  }
   return {
     id: row.id,
     revision: row.revision,
@@ -697,6 +763,8 @@ function decodeTemplate(row: TemplateRow): TournamentTemplateRecord {
     enabled: row.enabled === 1,
     timezone: 'Asia/Seoul',
     recurrence,
+    firstStartsAt: row.first_starts_at,
+    recurrenceEndsAt: row.recurrence_ends_at,
     visibleLeadMs: row.visible_lead_ms,
     registrationLeadMs: row.registration_lead_ms,
     config: JSON.parse(row.config_json) as TournamentConfigSnapshotV2,
@@ -760,6 +828,12 @@ function assertTimestamp(value: number): void {
 function assertNonNegativeInteger(value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error('Invalid tournament scheduler duration');
+  }
+}
+
+function assertPositiveInteger(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new Error('Invalid tournament scheduler limit');
   }
 }
 
