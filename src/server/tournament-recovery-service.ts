@@ -113,6 +113,8 @@ interface RecoveryEnrollmentLinkRow {
   readonly attempt_status: string | null;
   readonly attempt_economy_entry_attempt: number | null;
   readonly entry_id: string | null;
+  readonly entry_tournament_id: string | null;
+  readonly entry_room_id: string | null;
   readonly entry_attempt: number | null;
   readonly entry_status: string | null;
   readonly buy_in: number | null;
@@ -180,6 +182,8 @@ export function loadTournamentRecoveryPlan(
       attempt.status AS attempt_status,
       attempt.economy_entry_attempt AS attempt_economy_entry_attempt,
       entry.id AS entry_id,
+      entry.tournament_id AS entry_tournament_id,
+      entry.room_id AS entry_room_id,
       entry.entry_attempt,
       entry.status AS entry_status,
       entry.buy_in,
@@ -234,6 +238,8 @@ export function loadTournamentRecoveryPlan(
       && first.attempt_status === 'registered'
       && first.attempt_economy_entry_attempt === first.economy_entry_attempt
       && exact !== null
+      && exact.entry_tournament_id === first.instance_id
+      && exact.entry_room_id === first.instance_id
       && exact.entry_status === 'reserved'
       && activeLinks.length === 1
       && activeLinks[0]!.entry_id === exact.entry_id

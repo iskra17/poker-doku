@@ -206,6 +206,11 @@ describe('TournamentRecoveryService', () => {
       },
     },
     {
+      name: 'wrong room incarnation',
+      valid: false,
+      corrupt: corruptRoomIncarnation,
+    },
+    {
       name: 'multiple active economy links',
       valid: false,
       corrupt: addConflictingEntry,
@@ -286,6 +291,43 @@ describe('TournamentRecoveryService', () => {
     });
     expect(plan.deferToMttVoidInstanceIds.has(id)).toBe(true);
   });
+
+  it('quarantines a wrong room incarnation before generic recovery', () => {
+    const {
+      database,
+      economyService,
+      id,
+      instances,
+    } = createRecoveryEnrollment('wrong-room-fail-closed');
+    corruptRoomIncarnation(database, id);
+
+    const plan = loadTournamentRecoveryPlan(database, NOW);
+    expect(plan.preserveReservedMttEntries.has(id)).toBe(false);
+    expect(plan.refundReasons.get(id)).toBe('financial-invariant');
+    expect(plan.deferToMttVoidInstanceIds.has(id)).toBe(true);
+
+    expect(() => resumeTournamentRefund({
+      database,
+      instances,
+      funds: new PromotionFundRepository(database),
+      voidWallet: (instanceId, at) =>
+        economyService.voidMttTournament(instanceId, at),
+    }, instances.getInstance(id)!, NOW, 'financial-invariant')).toThrowError(
+      TournamentRecoveryError,
+    );
+
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration WHERE instance_id = ?
+    `).get(id)).toEqual({ status: 'refunded' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration_attempt
+      WHERE instance_id = ?
+    `).get(id)).toEqual({ status: 'refunded' });
+    expect(instances.getInstance(id)).toMatchObject({
+      status: 'refund-pending',
+      statusReason: 'financial-invariant',
+    });
+  });
 });
 
 function recoveryResult(failed = 0) {
@@ -351,6 +393,13 @@ function addConflictingEntry(database: PokerDatabase, id: string): void {
     NOW,
     NOW,
   );
+}
+
+function corruptRoomIncarnation(database: PokerDatabase, id: string): void {
+  database.db.prepare(`
+    UPDATE sng_entries SET room_id = ?
+    WHERE tournament_id = ?
+  `).run(`${id}-other-room`, id);
 }
 
 function walletConfig(): TournamentConfigSnapshotV2 {
