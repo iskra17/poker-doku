@@ -178,6 +178,29 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     ))).resolves.toMatchObject({ ok: false, code: 'forbidden' });
   });
 
+  it('rejects rejoin to an owner-held prepared MTT room before running CAS', async () => {
+    harness = await createSocketTestHarness();
+    const client = await harness.connect('prepared-mtt-client');
+    const roomId = harness.runtime.roomManager.createRoom({
+      ...MTT_MOVE_ROOM,
+      tournamentId: 'prepared-mtt',
+    });
+    harness.runtime.roomManager.markPreparedMttRoom(roomId);
+    expect(harness.runtime.roomManager.seatPreparedMttPlayer(
+      roomId,
+      makePlayer(client.playerId, 1_500, 0, {
+        name: 'Prepared Human',
+      }),
+    )).toBe(true);
+
+    await expect(joinRoom(client, roomId, 0)).resolves.toMatchObject({
+      ok: false,
+      code: 'action-rejected',
+    });
+    expect(harness.runtime.sessions.getByPlayerId(client.playerId)?.roomId)
+      .toBeNull();
+  });
+
   it('returns the explicit disabled contract when Arena is off', async () => {
     harness = await createSocketTestHarness({ arenaEnabled: false });
     const client = await harness.connect('arena-disabled-client');

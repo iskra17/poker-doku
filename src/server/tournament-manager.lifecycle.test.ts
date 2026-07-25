@@ -160,6 +160,111 @@ describe('TournamentManager registering lifecycle', () => {
     expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('running');
   });
 
+  it('cancels a scheduled zero-human freeroll instead of creating an all-bot field', () => {
+    const created = manager.createTournament(tournamentInput('host-1', {
+      startAt: Date.now() + 1_000,
+      botFill: true,
+      maxEntrants: 48,
+    }));
+    if (!created.ok) throw new Error('create failed');
+
+    vi.advanceTimersByTime(1_000);
+
+    expect(manager.getDetail(created.tournamentId)?.summary.phase)
+      .toBe('cancelled');
+    expect(roomManager.getAdminRoomSummaries()).toHaveLength(0);
+  });
+
+  it('prepares persistent rooms without projecting sessions, broadcasts, timers, bots, or hands', () => {
+    const updates = vi.fn();
+    const seated = vi.fn();
+    manager.shutdown();
+    roomManager.shutdown();
+    roomManager = new RoomManager(updates, () => {});
+    manager = new TournamentManager(roomManager, { onSeated: seated });
+    const snapshot = {
+      id: 'persistent-mtt',
+      status: 'starting',
+      economyMode: 'freeroll',
+      directorProfileId: 'director-1',
+      config: {
+        version: 2,
+        name: 'Prepared MTT',
+        economy: { mode: 'freeroll', promotionAccountId: 'global' },
+        tableSize: 6,
+        field: {
+          minEntrants: 8,
+          maxEntrants: 12,
+          botFillToMinimum: true,
+        },
+        turnTimeSeconds: 15,
+        structure: {
+          sourcePresetId: 'standard',
+          startingStack: 10_000,
+          segments: [
+            {
+              kind: 'level',
+              durationMs: 480_000,
+              smallBlind: 50,
+              bigBlind: 100,
+              bigBlindAnte: 0,
+            },
+          ],
+        },
+        prizePool: { kind: 'promotion-funded', totalPrize: 100_000 },
+        payout: {
+          tableVersion: 2,
+          presetId: 'standard',
+          paidFieldPercent: 15,
+        },
+        lateRegistration: {
+          enabled: false,
+          durationLevels: 0,
+          minStartingStackBb: 20,
+        },
+      },
+    } as const;
+
+    const prepared = manager.prepareFromInstance(
+      snapshot,
+      [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      'owner-1',
+    );
+
+    expect(prepared).toMatchObject({
+      instanceId: 'persistent-mtt',
+      ownerToken: 'owner-1',
+      humanEntrants: 1,
+      botEntrants: 7,
+      committedEntrants: 8,
+      everMultiTable: true,
+    });
+    expect(roomManager.getRuntimeStats()).toMatchObject({
+      pendingStartTimers: 0,
+      turnTimers: 0,
+      botTimers: 0,
+      tournamentClocks: 0,
+    });
+    expect(roomManager.getAdminRoomSummaries()).toHaveLength(2);
+    for (const room of roomManager.getAdminRoomSummaries()) {
+      expect(room.handNumber).toBe(0);
+      expect(room.handInProgress).toBe(false);
+      expect(room.bots).toBe(0);
+    }
+    expect(updates).not.toHaveBeenCalled();
+    expect(seated).not.toHaveBeenCalled();
+    expect(manager.listTournaments()).toHaveLength(0);
+
+    manager.activatePreparedTournament(
+      'persistent-mtt',
+      'owner-1',
+      Date.now(),
+    );
+    expect(manager.listTournaments()).toHaveLength(1);
+    expect(seated).toHaveBeenCalledOnce();
+    expect(updates).toHaveBeenCalled();
+  });
+
   it('preserves a scheduled start after a manual wallet escrow failure', () => {
     let failEscrow = true;
     manager.shutdown();

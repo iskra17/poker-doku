@@ -313,6 +313,12 @@ describe('TournamentInstanceRepository', () => {
       status: 'claimed',
       ownerId: 'worker-a',
       startAttempt: 1,
+      source: {
+        status: 'registering',
+        registrationState: 'open-prestart',
+        statusReason: null,
+        nextRetryAt: null,
+      },
     });
     expect(repository.claimStart('start', 'worker-b', NOW + 30_000)).toMatchObject({
       status: 'not-claimable',

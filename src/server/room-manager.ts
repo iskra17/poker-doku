@@ -164,6 +164,7 @@ export type RoomDisposeReason =
   | 'arena-rollback'
   | 'mtt-break'
   | 'mtt-cancel'
+  | 'mtt-start-rollback'
   | 'shutdown';
 
 /**
@@ -255,6 +256,7 @@ export class RoomManager {
   /** 핸드 히스토리 기록 완료 커서 — 정산 재시도로 handleCompletedHand가 재진입해도 중복 저장 방지 */
   private handHistoryRecordedHands = new Map<string, number>();
   private readonly usedRoomRunIds = new Set<string>();
+  private readonly preparedMttRooms = new Set<string>();
   private readonly roomRunInstanceId = randomUUID().replaceAll('-', '_');
   private roomRunGeneration = 0;
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
@@ -349,6 +351,24 @@ export class RoomManager {
 
   getRoom(roomId: string): { engine: PokerEngine; config: RoomConfig; createdAt: number } | undefined {
     return this.rooms.get(roomId);
+  }
+
+  markPreparedMttRoom(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isMttRoom(room)) {
+      throw new Error(`Cannot mark non-MTT room as prepared: ${roomId}`);
+    }
+    this.preparedMttRooms.add(roomId);
+  }
+
+  activatePreparedMttRoom(roomId: string): void {
+    if (!this.preparedMttRooms.delete(roomId)) {
+      throw new Error(`Prepared MTT room is stale: ${roomId}`);
+    }
+  }
+
+  isPreparedMttRoom(roomId: string): boolean {
+    return this.preparedMttRooms.has(roomId);
   }
 
   getRoomCount(): number {
@@ -493,6 +513,7 @@ export class RoomManager {
     this.cancelAllSeatWaiters(roomId, 'room-closed');
 
     this.rooms.delete(roomId);
+    this.preparedMttRooms.delete(roomId);
     this.chatHistory.delete(roomId);
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
@@ -652,6 +673,26 @@ export class RoomManager {
       this.tryStartGame(roomId);
     }
     return success;
+  }
+
+  /**
+   * Adds a player to an owner-held MTT room without publishing membership or
+   * arming any gameplay work. TournamentManager is the only caller and must
+   * activate the room after its durable running CAS succeeds.
+   */
+  seatPreparedMttPlayer(roomId: string, player: Player): boolean {
+    const room = this.rooms.get(roomId);
+    if (
+      !room
+      || !this.isMttRoom(room)
+      || room.engine.state.isHandInProgress
+      || this.pendingStartTimers.has(roomId)
+      || this.turnTimers.has(roomId)
+      || this.botIntervals.has(roomId)
+    ) {
+      return false;
+    }
+    return room.engine.addPlayer(player);
   }
 
   isArenaParticipant(roomId: string, playerId: string): boolean {

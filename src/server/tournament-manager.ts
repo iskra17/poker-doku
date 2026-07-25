@@ -27,6 +27,9 @@ import type {
   TournamentStandingRow,
   TournamentSummary,
 } from '../lib/realtime/protocol';
+import type {
+  TournamentConfigSnapshotV2,
+} from '../lib/tournament/tournament-config';
 import type { MttRoomHooks, RoomManager } from './room-manager';
 import { eventLog } from './event-log';
 
@@ -147,7 +150,40 @@ export interface TournamentManagerOptions {
   emptyTournamentTtlMs?: number;
 }
 
-type InternalHoldReason = TournamentHoldReason | 'setup' | 'complete';
+type InternalHoldReason = TournamentHoldReason | 'mtt-setup' | 'complete';
+
+export interface PersistentTournamentStartSnapshot {
+  readonly id: string;
+  readonly economyMode: 'freeroll' | 'wallet';
+  readonly directorProfileId?: string | null;
+  readonly createdBy?: {
+    readonly profileId?: string | null;
+  };
+  readonly config: TournamentConfigSnapshotV2;
+}
+
+export interface PreparedTournamentRuntime {
+  readonly instanceId: string;
+  readonly ownerToken: string;
+  readonly roomIds: readonly string[];
+  readonly humanEntrants: number;
+  readonly botEntrants: number;
+  readonly committedEntrants: number;
+  readonly everMultiTable: boolean;
+}
+
+interface PreparedTournamentState {
+  readonly ownerToken: string;
+  readonly runtime: TournamentRuntime;
+  readonly humans: readonly MttEntrant[];
+  readonly roomIds: readonly string[];
+  readonly roomByHuman: ReadonlyMap<string, string>;
+  readonly targetSizes: readonly number[];
+  readonly botCount: number;
+  readonly prizePool: number;
+  readonly public: PreparedTournamentRuntime;
+  activationBegan: boolean;
+}
 
 /** 백오피스 토너먼트 탭 뷰 (admin-http /api/admin/tournaments) */
 export interface AdminTournamentView {
@@ -298,6 +334,7 @@ function shuffle<T>(items: T[]): T[] {
 export class TournamentManager {
   private tournaments = new Map<string, TournamentRuntime>();
   private byRoom = new Map<string, string>();
+  private preparedTournaments = new Map<string, PreparedTournamentState>();
   private readonly emptyTournamentTtlMs: number;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
   readonly roomHooks: MttRoomHooks;
@@ -323,6 +360,228 @@ export class TournamentManager {
   }
 
   // --- 생성/등록 ---
+
+  /**
+   * Builds physical tables for a durably claimed start while keeping the
+   * runtime private. Nothing is published or scheduled before activation.
+   */
+  prepareFromInstance(
+    snapshot: PersistentTournamentStartSnapshot,
+    roster: readonly MttEntrant[],
+    ownerToken: string,
+  ): PreparedTournamentRuntime {
+    if (
+      !snapshot.id
+      || !ownerToken
+      || this.tournaments.has(snapshot.id)
+      || this.preparedTournaments.has(snapshot.id)
+      || snapshot.economyMode !== snapshot.config.economy.mode
+      || (
+        snapshot.economyMode === 'wallet'
+        && snapshot.config.field.botFillToMinimum
+      )
+    ) {
+      throw new Error('Tournament start is not prepareable');
+    }
+    const uniqueHumans = new Map(roster.map(entrant => [entrant.id, entrant]));
+    if (
+      uniqueHumans.size !== roster.length
+      || roster.length > snapshot.config.field.maxEntrants
+    ) {
+      throw new Error('Tournament roster is invalid');
+    }
+    const humanCount = roster.length;
+    const botCount = snapshot.economyMode === 'freeroll'
+      && snapshot.config.field.botFillToMinimum
+      && humanCount > 0
+      ? Math.max(0, snapshot.config.field.minEntrants - humanCount)
+      : 0;
+    const total = humanCount + botCount;
+    if (
+      humanCount < 1
+      || total < snapshot.config.field.minEntrants
+      || total > snapshot.config.field.maxEntrants
+    ) {
+      throw new Error('Tournament field is not large enough');
+    }
+
+    const t = this.runtimeFromSnapshot(snapshot);
+    const tableCount = Math.ceil(total / snapshot.config.tableSize);
+    const base = Math.floor(total / tableCount);
+    const extra = total % tableCount;
+    const targetSizes = Array.from(
+      { length: tableCount },
+      (_, index) => base + (index < extra ? 1 : 0),
+    );
+    const roomIds: string[] = [];
+    const roomByHuman = new Map<string, string>();
+    try {
+      for (let index = 0; index < tableCount; index += 1) {
+        roomIds.push(this.createPreparedRoom(t, index + 1));
+      }
+      const shuffled = shuffle([...roster]);
+      const nextSeat = roomIds.map(() => 0);
+      shuffled.forEach((entrant, index) => {
+        const tableIndex = index % tableCount;
+        const roomId = roomIds[tableIndex]!;
+        const player: Player = {
+          id: entrant.id,
+          name: entrant.name,
+          type: 'human',
+          avatar: entrant.avatar,
+          chips: t.structure.startingStack,
+          seatIndex: nextSeat[tableIndex]++,
+          holeCards: [],
+          currentBet: 0,
+          totalContributed: 0,
+          status: 'waiting',
+          hasActed: false,
+        };
+        if (!this.roomManager.seatPreparedMttPlayer(roomId, player)) {
+          throw new Error(`Could not prepare seat for ${entrant.id}`);
+        }
+        roomByHuman.set(entrant.id, roomId);
+      });
+      const publicRuntime: PreparedTournamentRuntime = {
+        instanceId: snapshot.id,
+        ownerToken,
+        roomIds: [...roomIds],
+        humanEntrants: humanCount,
+        botEntrants: botCount,
+        committedEntrants: total,
+        everMultiTable: tableCount >= 2,
+      };
+      this.preparedTournaments.set(snapshot.id, {
+        ownerToken,
+        runtime: t,
+        humans: shuffled,
+        roomIds,
+        roomByHuman,
+        targetSizes,
+        botCount,
+        prizePool: snapshot.config.prizePool.kind === 'promotion-funded'
+          ? snapshot.config.prizePool.totalPrize
+          : total * (
+              snapshot.config.economy.mode === 'wallet'
+                ? snapshot.config.economy.buyIn
+                : 0
+            ),
+        public: publicRuntime,
+        activationBegan: false,
+      });
+      return publicRuntime;
+    } catch (error) {
+      for (const roomId of roomIds) {
+        this.roomManager.disposeRoom(roomId, 'mtt-start-rollback', false);
+      }
+      throw error;
+    }
+  }
+
+  activatePreparedTournament(
+    instanceId: string,
+    ownerToken: string,
+    actualStartedAt: number,
+  ): void {
+    const prepared = this.preparedTournaments.get(instanceId);
+    if (
+      !prepared
+      || prepared.ownerToken !== ownerToken
+      || !Number.isSafeInteger(actualStartedAt)
+      || actualStartedAt < 0
+    ) {
+      throw new Error('Prepared tournament ownership is stale');
+    }
+    const t = prepared.runtime;
+    if (prepared.botCount > 0) {
+      this.addPreparedBots(t, prepared.roomIds, prepared.targetSizes);
+    }
+    const total = prepared.public.committedEntrants;
+    t.seatedCount = total;
+    t.remaining = total;
+    t.prizePool = prepared.prizePool;
+    t.prizes = computePayouts(t.prizePool, total, t.config.payoutPreset);
+    t.startedAt = actualStartedAt;
+    t.phase = 'running';
+
+    for (const roomId of prepared.roomIds) {
+      this.roomManager.activatePreparedMttRoom(roomId);
+    }
+    prepared.activationBegan = true;
+    this.tournaments.set(instanceId, t);
+    for (const roomId of prepared.roomIds) this.byRoom.set(roomId, instanceId);
+    const pos = this.clockPos(t);
+    for (const roomId of prepared.roomIds) {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      if (!engine) throw new Error(`Prepared room disappeared: ${roomId}`);
+      engine.setTournamentField(total, t.prizes, false);
+      if (engine.state.tournament) {
+        engine.state.tournament.tournamentId = instanceId;
+      }
+      this.pushLevel(t, engine, pos, true);
+    }
+    this.syncTournamentPresentation(t);
+
+    for (const entrant of prepared.humans) {
+      this.hooks.onSeated?.({
+        tournamentId: instanceId,
+        playerId: entrant.id,
+        roomId: prepared.roomByHuman.get(entrant.id)!,
+      });
+    }
+    for (const roomId of prepared.roomIds) {
+      this.roomManager.postSystemChat(
+        roomId,
+        `🏆 ${t.config.name} 시작! 참가 ${total}명 · 테이블 ${prepared.roomIds.length}개`,
+      );
+    }
+    let formingFinal = false;
+    this.batchTournamentPresentation(t, () => {
+      formingFinal = this.beginFinalFormation(t);
+      for (const roomId of prepared.roomIds) {
+        this.removeHold(t, roomId, 'mtt-setup');
+      }
+    });
+    if (formingFinal) {
+      this.finishFinalFormation(t);
+    } else {
+      for (const roomId of prepared.roomIds) this.resumeIfUnheld(t, roomId);
+    }
+    eventLog.log('mtt-start', {
+      data: {
+        tournamentId: instanceId,
+        entrants: total,
+        humans: prepared.public.humanEntrants,
+        bots: prepared.public.botEntrants,
+        tables: prepared.roomIds.length,
+      },
+    });
+    this.hooks.onTournamentsChanged?.();
+    this.hooks.onTournamentUpdate?.(instanceId);
+    this.preparedTournaments.delete(instanceId);
+  }
+
+  discardPreparedTournament(
+    instanceId: string,
+    ownerToken: string,
+    _reason: string,
+  ): void {
+    void _reason;
+    const prepared = this.preparedTournaments.get(instanceId);
+    if (!prepared || prepared.ownerToken !== ownerToken) return;
+    this.preparedTournaments.delete(instanceId);
+    this.tournaments.delete(instanceId);
+    for (const roomId of prepared.roomIds) {
+      this.byRoom.delete(roomId);
+      this.roomManager.disposeRoom(
+        roomId,
+        'mtt-start-rollback',
+        prepared.activationBegan,
+      );
+    }
+    prepared.runtime.tables.clear();
+    prepared.runtime.holds.clear();
+  }
 
   createTournament(
     input: CreateTournamentInput,
@@ -851,6 +1110,13 @@ export class TournamentManager {
   }
 
   shutdown(): void {
+    for (const prepared of [...this.preparedTournaments.values()]) {
+      this.discardPreparedTournament(
+        prepared.runtime.id,
+        prepared.ownerToken,
+        'mtt-start-rollback',
+      );
+    }
     for (const t of this.tournaments.values()) {
       if (t.startTimer) clearTimeout(t.startTimer);
       this.clearEmptyExpiry(t);
@@ -877,6 +1143,183 @@ export class TournamentManager {
 
   // --- 시작 ---
 
+  private runtimeFromSnapshot(
+    snapshot: PersistentTournamentStartSnapshot,
+  ): TournamentRuntime {
+    const sourcePreset = snapshot.config.structure.sourcePresetId;
+    const speed: MttSpeed = sourcePreset && sourcePreset in MTT_STRUCTURES
+      ? sourcePreset
+      : 'standard';
+    const preset = MTT_STRUCTURES[speed];
+    const levelSegments = snapshot.config.structure.segments.filter(
+      (segment): segment is Extract<
+        TournamentConfigSnapshotV2['structure']['segments'][number],
+        { kind: 'level' }
+      > => segment.kind === 'level',
+    );
+    const firstBreakIndex = snapshot.config.structure.segments.findIndex(
+      segment => segment.kind === 'break',
+    );
+    const firstBreak = snapshot.config.structure.segments.find(
+      segment => segment.kind === 'break',
+    );
+    const structure: MttStructure = {
+      ...preset,
+      startingStack: snapshot.config.structure.startingStack,
+      levelDurationMs: levelSegments[0]?.durationMs ?? preset.levelDurationMs,
+      breakEveryLevels: firstBreakIndex < 0
+        ? 0
+        : snapshot.config.structure.segments
+            .slice(0, firstBreakIndex)
+            .filter(segment => segment.kind === 'level').length,
+      breakDurationMs: firstBreak?.kind === 'break'
+        ? firstBreak.durationMs
+        : preset.breakDurationMs,
+      levels: levelSegments.map((segment, index) => ({
+        level: index + 1,
+        smallBlind: segment.smallBlind,
+        bigBlind: segment.bigBlind,
+        ante: segment.bigBlindAnte,
+      })),
+    };
+    const economy = snapshot.config.economy;
+    const hostId = snapshot.directorProfileId
+      ?? snapshot.createdBy?.profileId
+      ?? 'tournament-operator';
+    return {
+      id: snapshot.id,
+      hostId,
+      config: {
+        name: snapshot.config.name,
+        speed,
+        maxEntrants: snapshot.config.field.maxEntrants,
+        tableSize: snapshot.config.tableSize,
+        startAt: null,
+        botFill: snapshot.config.field.botFillToMinimum,
+        turnTime: snapshot.config.turnTimeSeconds,
+        hostId,
+        economyMode: economy.mode === 'wallet' ? 'wallet' : 'practice',
+        entryBuyIn: economy.mode === 'wallet' ? economy.buyIn : 0,
+        entryFee: economy.mode === 'wallet' ? economy.fee : 0,
+        payoutPreset: snapshot.config.payout.presetId,
+      },
+      structure,
+      phase: 'registering',
+      createdAt: Date.now(),
+      startedAt: null,
+      finishedAt: null,
+      pauseAccumMs: 0,
+      pausedAt: null,
+      levelGeneration: 0,
+      pendingLevel: null,
+      appliedLevelGenerationByRoom: new Map(),
+      stagedLevelByRoom: new Map(),
+      entrants: new Map(),
+      seatedCount: 0,
+      tables: new Map(),
+      results: [],
+      remaining: 0,
+      prizePool: 0,
+      prizes: [],
+      stage: 'multi-table',
+      stageEndsAt: undefined,
+      finalTheme: 'sakura-championship',
+      milestoneSeq: 0,
+      milestone: undefined,
+      holds: new Map(),
+      presentationBatchDepth: 0,
+      presentationDirtyRooms: new Set(),
+      h4h: { active: false, roundOpen: false, armed: new Set(), busts: [] },
+      finalIntroTimer: null,
+      breakTimer: null,
+      breakAnnounced: false,
+      finalAnnounced: false,
+      startTimer: null,
+      emptyDeadline: null,
+      emptyTimer: null,
+      cleanupTimer: null,
+      settleRetryTimer: null,
+    };
+  }
+
+  private createPreparedRoom(t: TournamentRuntime, tableNo: number): string {
+    const level1 = t.structure.levels[0];
+    const roomId = this.roomManager.createRoom({
+      name: `${t.config.name} · 테이블 ${tableNo}`,
+      smallBlind: level1.smallBlind,
+      bigBlind: level1.bigBlind,
+      minBuyIn: t.structure.startingStack,
+      maxBuyIn: t.structure.startingStack,
+      maxPlayers: t.config.tableSize,
+      economyMode: 'practice',
+      turnTime: t.config.turnTime,
+      gameMode: 'mtt',
+      startingStack: t.structure.startingStack,
+      ante: level1.ante,
+      tournamentId: t.id,
+      hostId: t.config.hostId,
+      difficulty: 'normal',
+      botCount: 0,
+      tableType: 'mixed',
+    });
+    this.roomManager.markPreparedMttRoom(roomId);
+    this.addTournamentTable(t, roomId, { no: tableNo });
+    t.holds.set(roomId, new Set(['mtt-setup']));
+    return roomId;
+  }
+
+  private addPreparedBots(
+    t: TournamentRuntime,
+    roomIds: readonly string[],
+    targetSizes: readonly number[],
+  ): void {
+    const usedGlobal: string[] = roomIds.flatMap(roomId => {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      return engine ? getUsedCharacterIds(engine) : [];
+    });
+    const characterUses = new Map<string, number>();
+    for (const id of usedGlobal) {
+      characterUses.set(id, (characterUses.get(id) ?? 0) + 1);
+    }
+    roomIds.forEach((roomId, index) => {
+      const engine = this.roomManager.getRoom(roomId)?.engine;
+      if (!engine) throw new Error(`Prepared room disappeared: ${roomId}`);
+      for (
+        let seat = 0;
+        seat < t.config.tableSize
+          && engine.state.players.length < targetSizes[index]!;
+        seat += 1
+      ) {
+        if (engine.state.players.some(player => player.seatIndex === seat)) {
+          continue;
+        }
+        const tableUsed = getUsedCharacterIds(engine);
+        let bot = createBot(
+          seat,
+          t.structure.startingStack,
+          usedGlobal,
+          'normal',
+        );
+        if (bot.personalityId && tableUsed.includes(bot.personalityId)) {
+          bot = createBot(
+            seat,
+            t.structure.startingStack,
+            tableUsed,
+            'normal',
+          );
+        }
+        const characterId = bot.personalityId ?? '';
+        const uses = (characterUses.get(characterId) ?? 0) + 1;
+        characterUses.set(characterId, uses);
+        if (uses > 1) bot.name = `${bot.name} ${uses}`;
+        if (!this.roomManager.seatPreparedMttPlayer(roomId, bot)) {
+          throw new Error(`Could not prepare bot seat in ${roomId}`);
+        }
+        usedGlobal.push(characterId);
+      }
+    });
+  }
+
   private attemptStart(
     t: TournamentRuntime,
     automatic: boolean,
@@ -890,8 +1333,8 @@ export class TournamentManager {
     const checkedIn = [...t.entrants.values()].filter(
       e => this.hooks.isConnected?.(e.id) ?? true,
     );
-    const botCount = t.config.botFill
-      ? Math.max(0, t.config.maxEntrants - checkedIn.length)
+    const botCount = t.config.botFill && checkedIn.length > 0
+      ? Math.max(0, MIN_MTT_STARTERS - checkedIn.length)
       : 0;
     const total = checkedIn.length + botCount;
     if (total < MIN_MTT_STARTERS || checkedIn.length < 1) {
@@ -961,7 +1404,7 @@ export class TournamentManager {
       // joinRoom의 tryStartGame이 만석 테이블을 조기 시작하지 못하게, 착석 전에 보류를 건다
       this.byRoom.set(roomId, t.id);
       this.addTournamentTable(t, roomId, { no: i + 1 });
-      t.holds.set(roomId, new Set(['setup']));
+      t.holds.set(roomId, new Set(['mtt-setup']));
       roomIds.push(roomId);
     }
 
@@ -1063,7 +1506,7 @@ export class TournamentManager {
     let formingFinal = false;
     this.batchTournamentPresentation(t, () => {
       formingFinal = this.beginFinalFormation(t);
-      for (const roomId of roomIds) this.removeHold(t, roomId, 'setup');
+      for (const roomId of roomIds) this.removeHold(t, roomId, 'mtt-setup');
     });
     if (formingFinal) {
       this.finishFinalFormation(t);
@@ -1673,7 +2116,7 @@ export class TournamentManager {
     this.batchTournamentPresentation(t, () => {
       this.removeHold(t, destination, 'h4h-barrier');
       this.removeHold(t, destination, 'final-forming');
-      this.removeHold(t, destination, 'setup');
+      this.removeHold(t, destination, 'mtt-setup');
       this.addHold(t, destination, 'final-intro');
       if (onBreak) this.addHold(t, destination, 'scheduled-break');
     });
@@ -2102,7 +2545,7 @@ export class TournamentManager {
       : [t.holds.get(roomId) ?? new Set<InternalHoldReason>()];
     for (const entries of roomReasons) {
       for (const reason of entries) {
-        if (reason !== 'setup' && reason !== 'complete') reasons.add(reason);
+        if (reason !== 'mtt-setup' && reason !== 'complete') reasons.add(reason);
       }
     }
     return [...reasons].sort();

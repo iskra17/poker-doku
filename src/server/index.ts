@@ -56,7 +56,13 @@ import {
   TournamentRecoveryService,
 } from './tournament-recovery-service';
 import { TournamentInstanceRepository } from './tournament-instance-repository';
+import { TournamentEnrollmentRepository } from './tournament-enrollment-repository';
 import { TournamentScheduler } from './tournament-scheduler';
+import type {
+  ClaimedTournamentStartSnapshot,
+  PersistentTournamentStartPorts,
+} from './tournament-command-service';
+import type { StartClaimSource } from './tournament-instance-repository';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -87,6 +93,12 @@ let arenaHttpService: ArenaHttpDataService | undefined;
 let arenaScheduler: ArenaScheduler | undefined;
 let arenaMetrics: ArenaMetrics | undefined;
 let tournamentScheduler: TournamentScheduler | undefined;
+let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
+const pendingTournamentStarts: Array<{
+  instance: ClaimedTournamentStartSnapshot;
+  source: StartClaimSource;
+}> = [];
+const pendingTournamentLeaseExpiries: ClaimedTournamentStartSnapshot[] = [];
 let lifecycleReady = false;
 
 const shutdown = createServerShutdown({
@@ -173,6 +185,10 @@ function initializePersistenceAndRecover(): void {
   // Arena 복구보다 먼저 실행 — 시작 순서 계약:
   // migration → cash/SnG 회수 → Arena refund → 주간/시즌 reconcile → socket accept.
   const tournamentInstances = new TournamentInstanceRepository(database);
+  const tournamentEnrollments = new TournamentEnrollmentRepository(
+    database,
+    economyRepository,
+  );
   const promotionFunds = new PromotionFundRepository(database);
   const refundDependencies = {
     database,
@@ -181,9 +197,112 @@ function initializePersistenceAndRecover(): void {
     voidWallet: (instanceId: string, at: number) =>
       economyService!.voidMttTournament(instanceId, at),
   };
+  const persistentStartEnabled =
+    process.env.MTT_PERSISTENT_START_ENABLED === 'true';
+  persistentTournamentStart = persistentStartEnabled
+    ? {
+        claimManualStart: tournamentId => {
+          const claim = tournamentInstances.claimStart(
+            tournamentId,
+            `manual-start-${process.pid}`,
+            Date.now() + 30_000,
+          );
+          return claim.status === 'claimed'
+            ? {
+                ...claim.instance,
+                startSource: claim.source,
+              }
+            : null;
+        },
+        claimStartingRoster: (snapshot, ownerToken) => {
+          const candidates = tournamentEnrollments.listStartingCandidates(
+            snapshot.id,
+          );
+          const checkedIn = candidates.filter(player => {
+            const session = runtime?.sessions.getByPlayerId(player.id);
+            return !!(
+              session?.socketId
+              && io?.sockets.sockets.get(session.socketId)
+            );
+          });
+          const claimed = tournamentEnrollments.claimStartingRoster({
+            tournamentId: snapshot.id,
+            ownerId: ownerToken,
+            startAttempt: snapshot.startAttempt,
+            checkedInProfileIds: checkedIn.map(player => player.id),
+          });
+          const claimedIds = new Set(
+            claimed.entries.map(entry => entry.profileId),
+          );
+          return {
+            roster: checkedIn.filter(player => claimedIds.has(player.id)),
+          };
+        },
+        startEconomy: (snapshot, roster) => {
+          if (snapshot.config.economy.mode !== 'wallet') return;
+          economyService!.startMttTournament(
+            snapshot.id,
+            roster.map(player => player.id),
+            snapshot.config.economy.buyIn,
+            snapshot.config.economy.fee,
+          );
+        },
+        commitRunning: input => tournamentEnrollments.commitStartingRoster({
+          tournamentId: input.snapshot.id,
+          ownerId: input.ownerToken,
+          startAttempt: input.snapshot.startAttempt,
+          humanEntrants:
+            input.initialEntrants - input.initialBotEntrants,
+          initialEntrants: input.initialEntrants,
+          initialBotEntrants: input.initialBotEntrants,
+          committedEntrants: input.committedEntrants,
+          everMultiTable: input.everMultiTable,
+          actualStartedAt: input.actualStartedAt,
+        }),
+        restoreStartSource: (snapshot, ownerToken, source) => {
+          tournamentEnrollments.rollbackStartClaim({
+            tournamentId: snapshot.id,
+            ownerId: ownerToken,
+            startAttempt: snapshot.startAttempt,
+            restore: {
+              status: source.status,
+              statusReason: source.statusReason,
+              nextRetryAt: source.nextRetryAt,
+            },
+          });
+        },
+        handoffRefund: (snapshot, _ownerToken, _error) => {
+          void _ownerToken;
+          void _error;
+          const current = tournamentInstances.getInstance(snapshot.id);
+          if (!current) throw new Error(`Tournament disappeared: ${snapshot.id}`);
+          resumeTournamentRefund(
+            refundDependencies,
+            current,
+            Date.now(),
+            'financial-invariant',
+          );
+        },
+      }
+    : undefined;
   tournamentScheduler = new TournamentScheduler({
     database,
-    startProcessingEnabled: false,
+    startProcessingEnabled: persistentStartEnabled,
+    onStartClaim: (instance, source) => {
+      const snapshot = { ...instance, startSource: source };
+      if (runtime) {
+        runtime.tournamentCommands.processStartClaim(snapshot);
+      } else {
+        pendingTournamentStarts.push({ instance: snapshot, source });
+      }
+    },
+    onStartLeaseExpired: instance => {
+      if (runtime) {
+        runtime.tournamentCommands.processExpiredStartLease(instance);
+      } else {
+        pendingTournamentLeaseExpiries.push(instance);
+      }
+    },
     onRefundPending: instance => {
       resumeTournamentRefund(
         refundDependencies,
@@ -398,6 +517,7 @@ async function listen(): Promise<void> {
       }
     },
     economy: economyRuntime,
+    persistentTournamentStart,
     progressionService,
     handHistory: handHistoryService,
     ...(arenaService
@@ -409,6 +529,28 @@ async function listen(): Promise<void> {
       }
       : {}),
   });
+
+  for (const pending of pendingTournamentLeaseExpiries.splice(0)) {
+    runtime.tournamentCommands.processExpiredStartLease(pending);
+  }
+  const startupInstances = new TournamentInstanceRepository(database!);
+  for (const pending of pendingTournamentStarts.splice(0)) {
+    const current = startupInstances.getInstance(pending.instance.id);
+    if (
+      current?.status !== 'starting'
+      || current.startOwnerId !== pending.instance.startOwnerId
+    ) {
+      continue;
+    }
+    if (
+      current.startLeaseUntil !== null
+      && current.startLeaseUntil <= Date.now()
+    ) {
+      runtime.tournamentCommands.processExpiredStartLease(current);
+      continue;
+    }
+    runtime.tournamentCommands.processStartClaim(pending.instance);
+  }
 
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => {

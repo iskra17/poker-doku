@@ -178,6 +178,91 @@ describe('TournamentManager wallet MTT', () => {
     expect(calls.some(call => call.kind === 'refund')).toBe(false);
   });
 
+  it('never adds bots to a prepared persistent wallet field', () => {
+    const { economy } = createEconomyMock();
+    manager = new TournamentManager(roomManager, { economy });
+    const roster = Array.from({ length: 8 }, (_, index) => ({
+      id: `wallet-${index + 1}`,
+      name: `Wallet ${index + 1}`,
+      avatar: 'ara',
+    }));
+    const prepared = manager.prepareFromInstance({
+      id: 'persistent-wallet',
+      economyMode: 'wallet',
+      directorProfileId: 'director-1',
+      config: {
+        version: 2,
+        name: 'Persistent Wallet',
+        economy: {
+          mode: 'wallet',
+          productVersion: 1,
+          buyIn: BUY_IN,
+          fee: FEE,
+        },
+        tableSize: 6,
+        field: {
+          minEntrants: 8,
+          maxEntrants: 12,
+          botFillToMinimum: false,
+        },
+        turnTimeSeconds: 15,
+        structure: {
+          sourcePresetId: 'standard',
+          startingStack: 10_000,
+          segments: [{
+            kind: 'level',
+            durationMs: 480_000,
+            smallBlind: 50,
+            bigBlind: 100,
+            bigBlindAnte: 0,
+          }],
+        },
+        prizePool: { kind: 'entry-pool' },
+        payout: {
+          tableVersion: 2,
+          presetId: 'standard',
+          paidFieldPercent: 15,
+        },
+        lateRegistration: {
+          enabled: false,
+          durationLevels: 0,
+          minStartingStackBb: 20,
+        },
+      },
+    }, roster, 'owner-1');
+
+    expect(prepared.botEntrants).toBe(0);
+    expect(prepared.committedEntrants).toBe(8);
+    expect(roomManager.getAdminRoomSummaries().every(room => room.bots === 0))
+      .toBe(true);
+  });
+
+  it('cancels and refunds a scheduled wallet field that checks in short', () => {
+    const { calls, economy } = createEconomyMock();
+    manager = new TournamentManager(roomManager, {
+      isConnected: () => true,
+      economy,
+    });
+    const created = manager.createTournament(walletInput({
+      startAt: Date.now() + 1_000,
+    }));
+    if (!created.ok) throw new Error('create failed');
+    for (let index = 1; index <= 7; index += 1) {
+      manager.register(created.tournamentId, {
+        id: `short-${index}`,
+        name: `Short ${index}`,
+        avatar: 'ara',
+      });
+    }
+
+    vi.advanceTimersByTime(1_000);
+
+    expect(manager.getDetail(created.tournamentId)?.summary.phase)
+      .toBe('cancelled');
+    expect(calls.filter(call => call.kind === 'refundAll')).toHaveLength(1);
+    expect(calls.some(call => call.kind === 'start')).toBe(false);
+  });
+
   it('완주 시 settle에 전 순위와 payout-table 상금이 전달된다', () => {
     const { calls, economy } = createEconomyMock();
     manager = new TournamentManager(roomManager, { isConnected: () => true, economy });

@@ -3,11 +3,15 @@ import {
   MTT_WALLET_ENTRY_FEE,
 } from '../lib/economy/mtt-entry';
 import type { CreateTournamentRequest } from '../lib/realtime/protocol';
+import type { StartClaimSource } from './tournament-instance-repository';
 import {
   TournamentManager,
   type TournamentAuditActor,
   type TournamentDirectorAction,
   type TournamentDirectorResult,
+  type MttEntrant,
+  type PersistentTournamentStartSnapshot,
+  type PreparedTournamentRuntime,
 } from './tournament-manager';
 
 export type TournamentAuthority =
@@ -30,6 +34,52 @@ export type TournamentActionResult =
   | 'forbidden'
   | Exclude<TournamentDirectorResult, 'not-host'>;
 
+export interface ClaimedTournamentStartSnapshot
+  extends PersistentTournamentStartSnapshot {
+  readonly startOwnerId: string | null;
+  readonly startAttempt: number;
+  readonly startSource?: StartClaimSource;
+}
+
+export interface PersistentTournamentStartPorts {
+  claimManualStart?(
+    tournamentId: string,
+  ): ClaimedTournamentStartSnapshot | null;
+  claimStartingRoster(
+    snapshot: ClaimedTournamentStartSnapshot,
+    ownerToken: string,
+  ): { readonly roster: readonly MttEntrant[] };
+  startEconomy(
+    snapshot: ClaimedTournamentStartSnapshot,
+    roster: readonly MttEntrant[],
+    ownerToken: string,
+  ): void;
+  commitRunning(input: {
+    readonly snapshot: ClaimedTournamentStartSnapshot;
+    readonly ownerToken: string;
+    readonly actualStartedAt: number;
+    readonly initialEntrants: number;
+    readonly initialBotEntrants: number;
+    readonly committedEntrants: number;
+    readonly everMultiTable: boolean;
+  }): boolean;
+  handoffRefund(
+    snapshot: ClaimedTournamentStartSnapshot,
+    ownerToken: string,
+    error: Error,
+  ): void;
+  restoreStartSource?(
+    snapshot: ClaimedTournamentStartSnapshot,
+    ownerToken: string,
+    source: StartClaimSource,
+  ): void;
+}
+
+export type PersistentTournamentStartResult =
+  | 'ok'
+  | 'not-enough'
+  | 'rollback';
+
 export function parseTournamentOperatorIds(raw: string | undefined): ReadonlySet<string> {
   return new Set(
     (raw ?? '')
@@ -43,7 +93,102 @@ export class TournamentCommandService {
   constructor(
     private readonly manager: TournamentManager,
     private readonly operatorProfileIds: ReadonlySet<string>,
+    private readonly persistentStart?: PersistentTournamentStartPorts,
   ) {}
+
+  /**
+   * Scheduler prepared-start handler. The durable running transition is the
+   * publication gate: activation is unreachable until commitRunning wins.
+   */
+  processStartClaim(
+    snapshot: ClaimedTournamentStartSnapshot,
+    trigger: 'scheduled' | 'manual' = 'scheduled',
+  ): PersistentTournamentStartResult {
+    const ports = this.persistentStart;
+    const ownerToken = snapshot.startOwnerId;
+    if (!ports || !ownerToken) return 'rollback';
+    let prepared: PreparedTournamentRuntime | null = null;
+    try {
+      const { roster } = ports.claimStartingRoster(snapshot, ownerToken);
+      const humanCount = roster.length;
+      const botCount = snapshot.economyMode === 'freeroll'
+        && snapshot.config.field.botFillToMinimum
+        && humanCount > 0
+        ? Math.max(0, snapshot.config.field.minEntrants - humanCount)
+        : 0;
+      if (
+        humanCount < 1
+        || humanCount + botCount < snapshot.config.field.minEntrants
+      ) {
+        throw new Error('Tournament field is not large enough');
+      }
+      ports.startEconomy(snapshot, roster, ownerToken);
+      prepared = this.manager.prepareFromInstance(
+        snapshot,
+        roster,
+        ownerToken,
+      );
+      const actualStartedAt = Date.now();
+      const committed = ports.commitRunning({
+        snapshot,
+        ownerToken,
+        actualStartedAt,
+        initialEntrants: prepared.committedEntrants,
+        initialBotEntrants: prepared.botEntrants,
+        committedEntrants: prepared.committedEntrants,
+        everMultiTable: prepared.everMultiTable,
+      });
+      if (!committed) throw new Error('Tournament running CAS lost');
+      this.manager.activatePreparedTournament(
+        snapshot.id,
+        ownerToken,
+        actualStartedAt,
+      );
+      return 'ok';
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      this.manager.discardPreparedTournament(
+        snapshot.id,
+        ownerToken,
+        'mtt-start-rollback',
+      );
+      if (
+        trigger === 'manual'
+        && prepared === null
+        && error.message.includes('not large enough')
+        && snapshot.startSource
+      ) {
+        ports.restoreStartSource?.(
+          snapshot,
+          ownerToken,
+          snapshot.startSource,
+        );
+        if (ports.restoreStartSource) return 'not-enough';
+      }
+      ports.handoffRefund(snapshot, ownerToken, error);
+      return prepared === null && error.message.includes('not large enough')
+        ? 'not-enough'
+        : 'rollback';
+    }
+  }
+
+  processExpiredStartLease(
+    snapshot: ClaimedTournamentStartSnapshot,
+  ): void {
+    const ports = this.persistentStart;
+    const ownerToken = snapshot.startOwnerId;
+    if (!ports || !ownerToken) return;
+    this.manager.discardPreparedTournament(
+      snapshot.id,
+      ownerToken,
+      'mtt-start-rollback',
+    );
+    ports.handoffRefund(
+      snapshot,
+      ownerToken,
+      new Error('Tournament start lease expired'),
+    );
+  }
 
   canOperateProfile(profileId: string): boolean {
     return this.operatorProfileIds.has(profileId);
@@ -74,10 +219,21 @@ export class TournamentCommandService {
     tournamentId: string,
   ): TournamentStartResult {
     if (!this.allowed(authority)) return 'forbidden';
-    return this.manager.startTournamentAsOperator(
+    const memoryResult = this.manager.startTournamentAsOperator(
       tournamentId,
       this.auditActor(authority),
     );
+    if (memoryResult !== 'not-found' || !this.persistentStart) {
+      return memoryResult;
+    }
+    const claim = this.persistentStart.claimManualStart?.(tournamentId);
+    if (!claim) return 'not-found';
+    const result = this.processStartClaim(claim, 'manual');
+    return result === 'ok'
+      ? 'ok'
+      : result === 'not-enough'
+        ? 'not-enough'
+        : 'economy';
   }
 
   act(

@@ -65,6 +65,7 @@ import { TournamentManager } from './tournament-manager';
 import {
   TournamentCommandService,
   parseTournamentOperatorIds,
+  type PersistentTournamentStartPorts,
 } from './tournament-command-service';
 import type { MttSpeed } from '../lib/poker/mtt-structure';
 import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
@@ -96,6 +97,7 @@ export interface SocketRuntimeOptions {
   onProfileConnected?: (profileId: string) => void;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & MttAdmissionEconomy & RoomEconomyHooks;
   tournamentOperatorProfileIds?: ReadonlySet<string>;
+  persistentTournamentStart?: PersistentTournamentStartPorts;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
   arena?: {
@@ -396,6 +398,10 @@ export function setupSocketHandlers(
             socket?.emit('room-lost', {
               message: '토너먼트가 취소되어 로비로 돌아왔어요.',
             });
+          } else if (reason === 'mtt-start-rollback') {
+            socket?.emit('room-lost', {
+              message: '토너먼트 시작을 완료하지 못해 안전하게 로비로 돌아왔어요.',
+            });
           }
           session.roomId = null;
           sessions.releaseIfIdle(session);
@@ -523,6 +529,7 @@ export function setupSocketHandlers(
     tournamentManager,
     options.tournamentOperatorProfileIds
       ?? parseTournamentOperatorIds(process.env.TOURNAMENT_OPERATOR_PROFILE_IDS),
+    options.persistentTournamentStart,
   );
 
   if (arena) {
@@ -1193,6 +1200,19 @@ export function setupSocketHandlers(
           roomId, playerId: session.playerId, data: { reason: 'room-not-found' },
         });
         ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
+        return;
+      }
+      if (roomManager.isPreparedMttRoom(roomId)) {
+        eventLog.log('join-room:reject', {
+          roomId,
+          playerId: session.playerId,
+          data: { reason: 'mtt-setup' },
+        });
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '토너먼트 테이블을 준비 중이에요. 잠시 후 다시 시도해 주세요.',
+        });
         return;
       }
       if (

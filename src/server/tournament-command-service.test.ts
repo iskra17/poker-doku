@@ -19,6 +19,50 @@ const DRAFT: CreateTournamentRequest = {
   payoutPreset: 'standard',
 };
 
+function persistentSnapshot(id = 'persistent-mtt') {
+  return {
+    id,
+    status: 'starting',
+    startOwnerId: 'owner-1',
+    startAttempt: 1,
+    economyMode: 'freeroll',
+    config: {
+      version: 2,
+      name: 'Persistent MTT',
+      economy: { mode: 'freeroll', promotionAccountId: 'global' },
+      tableSize: 6,
+      field: {
+        minEntrants: 8,
+        maxEntrants: 12,
+        botFillToMinimum: true,
+      },
+      turnTimeSeconds: 15,
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [{
+          kind: 'level',
+          durationMs: 480_000,
+          smallBlind: 50,
+          bigBlind: 100,
+          bigBlindAnte: 0,
+        }],
+      },
+      prizePool: { kind: 'promotion-funded', totalPrize: 100_000 },
+      payout: {
+        tableVersion: 2,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+      },
+      lateRegistration: {
+        enabled: false,
+        durationLevels: 0,
+        minStartingStackBb: 20,
+      },
+    },
+  } as const;
+}
+
 describe('TournamentCommandService', () => {
   let rooms: RoomManager;
   let manager: TournamentManager;
@@ -124,5 +168,160 @@ describe('TournamentCommandService', () => {
       created.tournamentId,
     )).toBe('not-enough');
     expect(manager.getDetail(created.tournamentId)?.summary.phase).toBe('registering');
+  });
+
+  it('discards every prepared room when the durable running CAS fails', () => {
+    const prepare = vi.spyOn(manager, 'prepareFromInstance');
+    const discard = vi.spyOn(manager, 'discardPreparedTournament');
+    const persistent = {
+      claimStartingRoster: vi.fn(() => ({
+        roster: [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      })),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(() => false),
+      handoffRefund: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+    );
+    const snapshot = persistentSnapshot();
+
+    expect(durableService.processStartClaim(snapshot)).toBe('rollback');
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledWith(
+      'persistent-mtt',
+      'owner-1',
+      'mtt-start-rollback',
+    );
+    expect(persistent.handoffRefund).toHaveBeenCalledWith(
+      snapshot,
+      'owner-1',
+      expect.any(Error),
+    );
+    expect(rooms.getAdminRoomSummaries()).toHaveLength(0);
+  });
+
+  it('disposes prepared rooms when activation fails after the running CAS', () => {
+    const snapshot = persistentSnapshot('activation-failure');
+    const persistent = {
+      claimStartingRoster: vi.fn(() => ({
+        roster: [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      })),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(() => true),
+      handoffRefund: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+    );
+    vi.spyOn(manager, 'activatePreparedTournament')
+      .mockImplementation(() => {
+        throw new Error('activation failed');
+      });
+
+    expect(durableService.processStartClaim(snapshot)).toBe('rollback');
+    expect(persistent.commitRunning).toHaveBeenCalledWith(expect.objectContaining({
+      initialEntrants: 8,
+      initialBotEntrants: 7,
+      committedEntrants: 8,
+      everMultiTable: true,
+    }));
+    expect(rooms.getAdminRoomSummaries()).toHaveLength(0);
+    expect(persistent.handoffRefund).toHaveBeenCalledOnce();
+  });
+
+  it('notifies projected sessions when a fallible activation hook rolls back', () => {
+    const snapshot = persistentSnapshot('projection-failure');
+    const persistent = {
+      claimStartingRoster: vi.fn(() => ({
+        roster: [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      })),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(() => true),
+      handoffRefund: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+    );
+    const dispose = vi.spyOn(rooms, 'disposeRoom');
+    (
+      manager as unknown as {
+        hooks: { onSeated?: () => void };
+      }
+    ).hooks.onSeated = () => {
+      throw new Error('projection failed');
+    };
+
+    expect(durableService.processStartClaim(snapshot)).toBe('rollback');
+    expect(dispose).toHaveBeenCalledWith(
+      expect.any(String),
+      'mtt-start-rollback',
+      true,
+    );
+    expect(rooms.getAdminRoomSummaries()).toHaveLength(0);
+  });
+
+  it('hands a zero-human freeroll to durable cancellation without preparing rooms', () => {
+    const persistent = {
+      claimStartingRoster: vi.fn(() => ({ roster: [] })),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(() => true),
+      handoffRefund: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+    );
+    const prepare = vi.spyOn(manager, 'prepareFromInstance');
+
+    expect(durableService.processStartClaim(persistentSnapshot('empty')))
+      .toBe('not-enough');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(persistent.startEconomy).not.toHaveBeenCalled();
+    expect(persistent.handoffRefund).toHaveBeenCalledOnce();
+  });
+
+  it('restores the exact durable source pair after an early manual not-enough result', () => {
+    const source = {
+      status: 'start-delayed',
+      registrationState: 'locked-for-start',
+      statusReason: 'capacity',
+      nextRetryAt: Date.now() + 30_000,
+    } as const;
+    const snapshot = {
+      ...persistentSnapshot('manual-not-enough'),
+      startSource: source,
+    };
+    const persistent = {
+      claimManualStart: vi.fn(() => snapshot),
+      claimStartingRoster: vi.fn(() => ({ roster: [] })),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(() => true),
+      handoffRefund: vi.fn(),
+      restoreStartSource: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+    );
+
+    expect(durableService.start(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      snapshot.id,
+    )).toBe('not-enough');
+    expect(persistent.restoreStartSource).toHaveBeenCalledWith(
+      snapshot,
+      'owner-1',
+      source,
+    );
+    expect(persistent.handoffRefund).not.toHaveBeenCalled();
   });
 });

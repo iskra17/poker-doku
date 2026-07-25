@@ -143,6 +143,18 @@ export interface StartingRosterClaimResult {
   readonly entries: readonly LateEntryKey[];
 }
 
+export interface CommitStartingRosterInput {
+  readonly tournamentId: string;
+  readonly ownerId: string;
+  readonly startAttempt: number;
+  readonly humanEntrants: number;
+  readonly initialEntrants: number;
+  readonly initialBotEntrants: number;
+  readonly committedEntrants: number;
+  readonly everMultiTable: boolean;
+  readonly actualStartedAt: number;
+}
+
 export interface RollbackStartClaimInput {
   readonly tournamentId: string;
   readonly ownerId: string;
@@ -782,6 +794,105 @@ export class TournamentEnrollmentRepository {
         }
       }
       return { entries: selected };
+    });
+  }
+
+  listStartingCandidates(tournamentId: string): PublicTournamentPlayer[] {
+    this.assertIdentity(tournamentId);
+    return this.listCurrentRegistrations(tournamentId)
+      .filter(row => row.status === 'registered' || row.status === 'seat-claimed')
+      .map(row => {
+        const player = JSON.parse(row.public_player_json) as PublicTournamentPlayer;
+        this.assertPublicPlayer(player);
+        return player;
+      });
+  }
+
+  commitStartingRoster(input: CommitStartingRosterInput): boolean {
+    this.assertIdentity(input.tournamentId);
+    this.assertIdentity(input.ownerId);
+    this.assertPositiveInteger(input.startAttempt);
+    this.assertPositiveInteger(input.humanEntrants);
+    this.assertPositiveInteger(input.initialEntrants);
+    this.assertNonnegativeInteger(input.initialBotEntrants);
+    this.assertPositiveInteger(input.committedEntrants);
+    this.assertTimestamp(input.actualStartedAt);
+    if (
+      input.initialEntrants !== input.committedEntrants
+      || input.humanEntrants + input.initialBotEntrants
+        !== input.committedEntrants
+    ) {
+      throw new TournamentEnrollmentError('invalid-input');
+    }
+    return this.database.transaction(() => {
+      const instance = this.requireInstance(input.tournamentId);
+      if (
+        instance.status !== 'starting'
+        || instance.registration_state !== 'locked-for-start'
+        || instance.start_attempt !== input.startAttempt
+        || instance.start_owner_id !== input.ownerId
+      ) {
+        return false;
+      }
+      const claimed = this.database.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM tournament_registration
+        WHERE instance_id = ? AND status = 'seat-claimed'
+      `).get(input.tournamentId) as { count: number };
+      if (claimed.count !== input.humanEntrants) return false;
+
+      const registrations = this.database.db.prepare(`
+        UPDATE tournament_registration
+        SET status = 'seated', ever_seated = 1, updated_at = ?
+        WHERE instance_id = ? AND status = 'seat-claimed'
+      `).run(input.actualStartedAt, input.tournamentId);
+      const attempts = this.database.db.prepare(`
+        SELECT COUNT(*) AS count
+        FROM tournament_registration_attempt
+        WHERE instance_id = ? AND status = 'seated'
+      `).get(input.tournamentId) as { count: number };
+      if (
+        registrations.changes !== input.humanEntrants
+        || attempts.count !== input.humanEntrants
+      ) {
+        throw new TournamentEnrollmentError('stale-attempt');
+      }
+      const committed = this.database.db.prepare(`
+        UPDATE tournament_instance
+        SET status = 'running',
+            status_reason = NULL,
+            registration_state = 'open-late',
+            registration_close_reason = NULL,
+            initial_entrants = ?,
+            initial_bot_entrants = ?,
+            committed_entrants = ?,
+            ever_multi_table = ?,
+            actual_started_at = ?,
+            start_owner_id = NULL,
+            start_lease_until = NULL,
+            next_retry_at = NULL,
+            updated_at = ?
+        WHERE id = ?
+          AND status = 'starting'
+          AND registration_state = 'locked-for-start'
+          AND start_attempt = ?
+          AND start_owner_id = ?
+          AND start_lease_until IS NOT NULL
+      `).run(
+        input.initialEntrants,
+        input.initialBotEntrants,
+        input.committedEntrants,
+        input.everMultiTable ? 1 : 0,
+        input.actualStartedAt,
+        input.actualStartedAt,
+        input.tournamentId,
+        input.startAttempt,
+        input.ownerId,
+      );
+      if (committed.changes !== 1) {
+        throw new TournamentEnrollmentError('stale-attempt');
+      }
+      return true;
     });
   }
 

@@ -237,7 +237,7 @@ describe('TournamentManager', () => {
     );
   });
 
-  it('seats humans round-robin and fills with bots to max entrants', () => {
+  it('seats humans round-robin and fills freerolls only to the minimum', () => {
     const created = h.manager.createTournament({
       name: '봇 충원 MTT',
       speed: 'turbo',
@@ -261,8 +261,7 @@ describe('TournamentManager', () => {
     let bots = 0;
     for (const roomId of tables) {
       const engine = engineOf(h.roomManager, roomId);
-      expect(engine.state.players.length).toBe(6);
-      expect(engine.state.tournament?.entrants).toBe(12);
+      expect(engine.state.tournament?.entrants).toBe(8);
       humans += engine.state.players.filter(p => p.type === 'human').length;
       bots += engine.state.players.filter(p => p.type === 'bot').length;
       // 시작 스택 확인
@@ -274,13 +273,13 @@ describe('TournamentManager', () => {
       expect(new Set(ids).size).toBe(ids.length);
     }
     expect(humans).toBe(3);
-    expect(bots).toBe(9);
+    expect(bots).toBe(5);
     expect(h.events.seated.length).toBe(3);
 
     const summary = h.manager.listTournaments('h1')[0];
     expect(summary.phase).toBe('running');
-    expect(summary.remaining).toBe(12);
-    expect(summary.prizePool).toBe(120000);
+    expect(summary.remaining).toBe(8);
+    expect(summary.prizePool).toBe(80000);
     expect(summary.registered).toBe(true);
     expect(summary.myTableRoomId).toBeDefined();
   });
@@ -378,6 +377,33 @@ describe('TournamentManager', () => {
     expect(h.manager.startTournament(botFill.tournamentId, 'h2')).toBe('ok');
     expect(h.manager.listTournaments().find(t => t.id === botFill.tournamentId)?.entrantCount)
       .toBe(8);
+  });
+
+  it('adds no bots when checked-in humans already meet the freeroll minimum', () => {
+    const created = h.manager.createTournament({
+      name: 'Human Minimum',
+      speed: 'standard',
+      maxEntrants: 48,
+      tableSize: 6,
+      startAt: null,
+      botFill: true,
+      turnTime: 15,
+      hostId: 'h1',
+    });
+    if (!created.ok) throw new Error('create failed');
+    for (let index = 1; index <= 8; index += 1) {
+      h.manager.register(created.tournamentId, {
+        id: `human-${index}`,
+        name: `Human ${index}`,
+        avatar: 'ara',
+      });
+    }
+
+    expect(h.manager.startTournament(created.tournamentId, 'h1')).toBe('ok');
+    const players = mttTableIds(h.roomManager).flatMap(roomId =>
+      engineOf(h.roomManager, roomId).state.players);
+    expect(players).toHaveLength(8);
+    expect(players.every(player => player.type === 'human')).toBe(true);
   });
 
   it('auto-cancels a scheduled tournament with too few checked-in entrants', () => {
@@ -884,7 +910,7 @@ describe('TournamentManager', () => {
       engineOf(h.roomManager, roomId).state.players
         .filter(p => p.type === 'bot')
         .map(p => p.personalityId));
-    expect(ids.length).toBe(11); // 봇 11 ≤ 로스터 16 → 전역 중복 없어야 한다
+    expect(ids.length).toBe(7); // 최소 8명까지만 충원하며 로스터 내에서 전역 중복이 없다
     expect(new Set(ids).size).toBe(ids.length);
   });
 
@@ -902,7 +928,7 @@ describe('TournamentManager', () => {
     }
   });
 
-  it('gives duplicate bot characters numbered names (48인 풀필드 — 2026-07-24 모바일 QA)', () => {
+  it('does not max-fill a 48-seat freeroll when one human reaches the minimum with bots', () => {
     const created = h.manager.createTournament({
       name: '풀필드',
       speed: 'turbo',
@@ -919,12 +945,10 @@ describe('TournamentManager', () => {
 
     const players = mttTableIds(h.roomManager).flatMap(roomId =>
       engineOf(h.roomManager, roomId).state.players);
-    expect(players.length).toBe(48);
-    // 순위표/로비에서 구분 가능해야 한다 — 전 좌석 이름 유일
+    expect(players.length).toBe(8);
     const names = players.map(p => p.name);
     expect(new Set(names).size).toBe(names.length);
-    // 로스터(16) 초과분은 번호 접미 (엘레나, 엘레나 2, 엘레나 3 …)
-    expect(names.some(name => / 2$/.test(name))).toBe(true);
+    expect(names.some(name => / 2$/.test(name))).toBe(false);
 
     // 게임 중 상세 진입점 — 각 테이블 엔진 미러에 토너먼트 ID가 실린다
     for (const roomId of mttTableIds(h.roomManager)) {

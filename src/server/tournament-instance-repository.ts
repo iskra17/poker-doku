@@ -233,8 +233,16 @@ export type StartClaim =
       readonly ownerId: string;
       readonly startAttempt: number;
       readonly instance: TournamentInstanceRecord;
+      readonly source: StartClaimSource;
     }
   | { readonly status: 'not-found' | 'not-claimable' };
+
+export interface StartClaimSource {
+  readonly status: 'registering' | 'start-delayed';
+  readonly registrationState: 'open-prestart' | 'locked-for-start';
+  readonly statusReason: TournamentInstanceStatusReason | null;
+  readonly nextRetryAt: number | null;
+}
 
 export type CloseClaim =
   | {
@@ -695,6 +703,13 @@ export class TournamentInstanceRepository {
         ownerId,
         startAttempt: instance.startAttempt,
         instance,
+        source: {
+          status: current.status as StartClaimSource['status'],
+          registrationState:
+            current.registrationState as StartClaimSource['registrationState'],
+          statusReason: current.statusReason,
+          nextRetryAt: current.nextRetryAt,
+        },
       };
     });
   }

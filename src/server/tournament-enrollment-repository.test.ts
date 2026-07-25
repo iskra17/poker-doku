@@ -296,6 +296,68 @@ describe('TournamentEnrollmentRepository', () => {
     expect(balanceOf('checked-in')).toBe(checkedBalance);
   });
 
+  it('commits the exact claimed starting roster and persistent field counters', () => {
+    createOpenInstance('commit-starting-roster', walletConfig());
+    for (const id of ['starter-a', 'starter-b']) {
+      seedProfile(id, 5_000);
+      enrollment.registerPreStart({
+        tournamentId: 'commit-starting-roster',
+        profileId: id,
+        requestId: randomUUID(),
+        publicPlayer: player(id),
+        at: NOW,
+      });
+    }
+    expect(enrollment.listStartingCandidates('commit-starting-roster'))
+      .toEqual([player('starter-a'), player('starter-b')]);
+    database.db.prepare(`
+      UPDATE tournament_instance
+      SET status = 'starting', registration_state = 'locked-for-start',
+          start_attempt = 1, start_owner_id = 'starter',
+          start_lease_until = ?, updated_at = ?
+      WHERE id = 'commit-starting-roster'
+    `).run(NOW + 30_000, NOW + 1);
+    enrollment.claimStartingRoster({
+      tournamentId: 'commit-starting-roster',
+      ownerId: 'starter',
+      startAttempt: 1,
+      checkedInProfileIds: ['starter-a', 'starter-b'],
+      at: NOW + 2,
+    });
+
+    expect(enrollment.commitStartingRoster({
+      tournamentId: 'commit-starting-roster',
+      ownerId: 'starter',
+      startAttempt: 1,
+      humanEntrants: 2,
+      initialEntrants: 2,
+      initialBotEntrants: 0,
+      committedEntrants: 2,
+      everMultiTable: false,
+      actualStartedAt: NOW + 3,
+    })).toBe(true);
+    expect(instances.getInstance('commit-starting-roster')).toMatchObject({
+      status: 'running',
+      registrationState: 'open-late',
+      initialEntrants: 2,
+      initialBotEntrants: 0,
+      committedEntrants: 2,
+      everMultiTable: false,
+      actualStartedAt: NOW + 3,
+      startOwnerId: null,
+      startLeaseUntil: null,
+    });
+    expect(database.db.prepare(`
+      SELECT profile_id, status, ever_seated
+      FROM tournament_registration
+      WHERE instance_id = 'commit-starting-roster'
+      ORDER BY profile_id
+    `).all()).toEqual([
+      { profile_id: 'starter-a', status: 'seated', ever_seated: 1 },
+      { profile_id: 'starter-b', status: 'seated', ever_seated: 1 },
+    ]);
+  });
+
   it('rejects a late reservation at the canonical absolute deadline', () => {
     createRunningOpenLate('late-expired', NOW - 600_000);
     seedProfile('late-expired-player', 5_000);

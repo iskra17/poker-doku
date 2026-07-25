@@ -11,6 +11,7 @@ import {
 import {
   TournamentInstanceRepository,
   type CreateInstanceCommand,
+  type StartClaimSource,
   type TournamentActor,
   type TournamentInstanceRecord,
   type TournamentTemplateRecord,
@@ -66,7 +67,10 @@ export interface TournamentSchedulerOptions {
   readonly clock?: () => number;
   readonly ownerId?: string;
   readonly startProcessingEnabled?: boolean;
-  readonly onStartClaim?: (instance: TournamentInstanceRecord) => unknown;
+  readonly onStartClaim?: (
+    instance: TournamentInstanceRecord,
+    source: StartClaimSource,
+  ) => unknown;
   readonly onStartLeaseExpired?:
     (instance: TournamentInstanceRecord) => unknown;
   readonly onRefundPending?: (instance: TournamentInstanceRecord) => unknown;
@@ -124,7 +128,10 @@ export class TournamentScheduler {
   private readonly clock: () => number;
   private readonly ownerId: string;
   private readonly startProcessingEnabled: boolean;
-  private readonly onStartClaim: (instance: TournamentInstanceRecord) => unknown;
+  private readonly onStartClaim: (
+    instance: TournamentInstanceRecord,
+    source: StartClaimSource,
+  ) => unknown;
   private readonly onStartLeaseExpired:
     (instance: TournamentInstanceRecord) => unknown;
   private readonly onRefundPending:
@@ -405,7 +412,7 @@ export class TournamentScheduler {
       if (claim.status !== 'claimed') continue;
       active += 1;
       startClaims += 1;
-      this.onStartClaim(claim.instance);
+      this.onStartClaim(claim.instance, claim.source);
     }
 
     return { exposed, opened, startClaims, cancelled };
