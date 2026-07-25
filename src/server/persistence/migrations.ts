@@ -6397,6 +6397,32 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    version: 29,
+    name: 'bounded_tournament_recurrence',
+    sql: `
+      ALTER TABLE tournament_template
+        ADD COLUMN first_starts_at INTEGER CHECK (
+          first_starts_at IS NULL OR first_starts_at >= 0
+        );
+
+      ALTER TABLE tournament_template
+        ADD COLUMN recurrence_ends_at INTEGER CHECK (
+          recurrence_ends_at IS NULL OR recurrence_ends_at >= 0
+        );
+
+      UPDATE tournament_template
+      SET
+        first_starts_at = (
+          SELECT MIN(instance.starts_at)
+          FROM tournament_instance AS instance
+          WHERE instance.template_id = tournament_template.id
+            AND instance.starts_at IS NOT NULL
+        ),
+        enabled = 0
+      WHERE enabled = 1;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

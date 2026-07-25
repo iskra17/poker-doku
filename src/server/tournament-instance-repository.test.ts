@@ -12,6 +12,8 @@ import {
 } from './tournament-instance-repository';
 
 const NOW = Date.now() - 10_000;
+const HOUR_MS = 60 * 60_000;
+const DAY_MS = 24 * HOUR_MS;
 
 function config(
   economy: 'freeroll' | 'wallet' = 'wallet',
@@ -64,6 +66,8 @@ function templateCommand(
     enabled: true,
     timezone: 'Asia/Seoul',
     recurrence: { kind: 'weekly', weekday: 6, hour: 20, minute: 0 },
+    firstStartsAt: NOW + HOUR_MS,
+    recurrenceEndsAt: NOW + 7 * DAY_MS,
     visibleLeadMs: 86_400_000,
     registrationLeadMs: 20 * 60_000,
     config: config(),
@@ -133,6 +137,10 @@ describe('TournamentInstanceRepository', () => {
   it('creates one idempotent standalone or recurring instance', () => {
     const template = repository.createTemplate(templateCommand());
     expect(repository.createTemplate(templateCommand())).toEqual(template);
+    expect(template).toMatchObject({
+      firstStartsAt: NOW + HOUR_MS,
+      recurrenceEndsAt: NOW + 7 * DAY_MS,
+    });
 
     const standalone = instanceCommand('standalone');
     expect(repository.createInstance(standalone)).toEqual(
@@ -220,7 +228,13 @@ describe('TournamentInstanceRepository', () => {
     });
     expect(updated).toMatchObject({
       status: 'updated',
-      record: { revision: 2, name: '토요일 메인', enabled: false },
+      record: {
+        revision: 2,
+        name: '토요일 메인',
+        enabled: false,
+        firstStartsAt: NOW + HOUR_MS,
+        recurrenceEndsAt: NOW + 7 * DAY_MS,
+      },
     });
 
     expect(repository.patchTemplateIfRevision('template-main', 1, {
@@ -232,6 +246,37 @@ describe('TournamentInstanceRepository', () => {
       enabled: false,
       updatedAt: NOW,
     })).toEqual({ status: 'not-found' });
+  });
+
+  it('rejects an enabled persisted template without recurrence boundaries', () => {
+    database.db.prepare(`
+      INSERT INTO tournament_template (
+        id, revision, idempotency_key, name, enabled, timezone,
+        recurrence_json, visible_lead_ms, registration_lead_ms,
+        config_version, config_json, created_by_kind,
+        created_by_profile_id, created_at, updated_at,
+        first_starts_at, recurrence_ends_at
+      ) VALUES (
+        ?, 1, ?, ?, 1, 'Asia/Seoul', ?, ?, ?, 2, ?, ?, NULL, ?, ?, NULL, NULL
+      )
+    `).run(
+      'corrupt-active-template',
+      'corrupt-active-template-key',
+      '손상 템플릿',
+      JSON.stringify({ kind: 'hourly', minute: 0 }),
+      HOUR_MS,
+      20 * 60_000,
+      JSON.stringify(config()),
+      'legacy-import',
+      NOW,
+      NOW,
+    );
+
+    expect(() => repository.withTemplateRevisionLease(
+      'corrupt-active-template',
+      1,
+      template => template,
+    )).toThrowError(TournamentPersistenceError);
   });
 
   it('replaces hidden old-revision occurrences but preserves visible occupancy', () => {

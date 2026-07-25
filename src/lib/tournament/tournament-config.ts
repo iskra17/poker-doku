@@ -116,6 +116,8 @@ export interface CreateTournamentCommand {
   readonly requestId: string;
   readonly schedule: TournamentSchedule;
   readonly recurrence: TournamentRecurrence | null;
+  readonly firstStartsAt: number | null;
+  readonly recurrenceEndsAt: number | null;
   readonly visibleLeadMs: number | null;
   readonly registrationLeadMs: number | null;
   readonly config: TournamentConfigSnapshotV2;

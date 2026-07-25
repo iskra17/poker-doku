@@ -133,6 +133,8 @@ export interface CreateTemplateCommand {
   readonly enabled: boolean;
   readonly timezone: 'Asia/Seoul';
   readonly recurrence: TournamentRecurrence;
+  readonly firstStartsAt: number;
+  readonly recurrenceEndsAt: number;
   readonly visibleLeadMs: number;
   readonly registrationLeadMs: number;
   readonly config: TournamentConfigSnapshotV2;
@@ -144,6 +146,8 @@ export interface TemplatePatch {
   readonly name?: string;
   readonly enabled?: boolean;
   readonly recurrence?: TournamentRecurrence;
+  readonly firstStartsAt?: number;
+  readonly recurrenceEndsAt?: number;
   readonly visibleLeadMs?: number;
   readonly registrationLeadMs?: number;
   readonly config?: TournamentConfigSnapshotV2;
@@ -158,6 +162,8 @@ export interface TournamentTemplateRecord {
   readonly enabled: boolean;
   readonly timezone: 'Asia/Seoul';
   readonly recurrence: TournamentRecurrence;
+  readonly firstStartsAt: number | null;
+  readonly recurrenceEndsAt: number | null;
   readonly visibleLeadMs: number;
   readonly registrationLeadMs: number;
   readonly config: TournamentConfigSnapshotV2;
@@ -389,16 +395,21 @@ export class TournamentInstanceRepository {
       this.database.db.prepare(`
         INSERT INTO tournament_template (
           id, revision, idempotency_key, name, enabled, timezone,
-          recurrence_json, visible_lead_ms, registration_lead_ms,
+          recurrence_json, first_starts_at, recurrence_ends_at,
+          visible_lead_ms, registration_lead_ms,
           config_version, config_json, created_by_kind,
           created_by_profile_id, created_at, updated_at
-        ) VALUES (?, 1, ?, ?, ?, 'Asia/Seoul', ?, ?, ?, 2, ?, ?, ?, ?, ?)
+        ) VALUES (
+          ?, 1, ?, ?, ?, 'Asia/Seoul', ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?
+        )
       `).run(
         command.id,
         command.idempotencyKey,
         command.name,
         command.enabled ? 1 : 0,
         canonicalJson(command.recurrence),
+        command.firstStartsAt,
+        command.recurrenceEndsAt,
         command.visibleLeadMs,
         command.registrationLeadMs,
         canonicalJson(command.config),
@@ -432,6 +443,8 @@ export class TournamentInstanceRepository {
       name: patch.name ?? current.name,
       enabled: patch.enabled ?? current.enabled,
       recurrence: patch.recurrence ?? current.recurrence,
+      firstStartsAt: patch.firstStartsAt ?? current.firstStartsAt,
+      recurrenceEndsAt: patch.recurrenceEndsAt ?? current.recurrenceEndsAt,
       visibleLeadMs: patch.visibleLeadMs ?? current.visibleLeadMs,
       registrationLeadMs:
         patch.registrationLeadMs ?? current.registrationLeadMs,
@@ -444,6 +457,8 @@ export class TournamentInstanceRepository {
           name = ?,
           enabled = ?,
           recurrence_json = ?,
+          first_starts_at = ?,
+          recurrence_ends_at = ?,
           visible_lead_ms = ?,
           registration_lead_ms = ?,
           config_version = 2,
@@ -454,6 +469,8 @@ export class TournamentInstanceRepository {
       next.name,
       next.enabled ? 1 : 0,
       canonicalJson(next.recurrence),
+      next.firstStartsAt,
+      next.recurrenceEndsAt,
       next.visibleLeadMs,
       next.registrationLeadMs,
       canonicalJson(next.config),
@@ -1881,14 +1898,31 @@ function decodeTemplate(row: SqliteRow): TournamentTemplateRecord {
     const config = parseJson(row.config_json);
     assertConfig(config);
     if (integerValue(row.config_version) !== config.version) persistedInvalid();
+    const enabled = booleanInteger(row.enabled);
+    const firstStartsAt = nullableInteger(row.first_starts_at);
+    const recurrenceEndsAt = nullableInteger(row.recurrence_ends_at);
+    if (
+      (firstStartsAt !== null && firstStartsAt < 0)
+      || (recurrenceEndsAt !== null && recurrenceEndsAt < 0)
+      || (
+        firstStartsAt !== null
+        && recurrenceEndsAt !== null
+        && firstStartsAt > recurrenceEndsAt
+      )
+      || (enabled && (firstStartsAt === null || recurrenceEndsAt === null))
+    ) {
+      persistedInvalid();
+    }
     return {
       id: stringValue(row.id),
       revision: positiveIntegerValue(row.revision),
       idempotencyKey: stringValue(row.idempotency_key),
       name: stringValue(row.name),
-      enabled: booleanInteger(row.enabled),
+      enabled,
       timezone,
       recurrence,
+      firstStartsAt,
+      recurrenceEndsAt,
       visibleLeadMs: nonNegativeIntegerValue(row.visible_lead_ms),
       registrationLeadMs: nonNegativeIntegerValue(row.registration_lead_ms),
       config,
@@ -2023,6 +2057,8 @@ function assertTemplateMutableValues(values: {
   name: string;
   enabled: boolean;
   recurrence: TournamentRecurrence;
+  firstStartsAt: number | null;
+  recurrenceEndsAt: number | null;
   visibleLeadMs: number;
   registrationLeadMs: number;
   config: TournamentConfigSnapshotV2;
@@ -2037,6 +2073,16 @@ function assertTemplateMutableValues(values: {
     invalid();
   }
   assertRecurrence(values.recurrence);
+  if (
+    values.firstStartsAt !== null
+    && values.recurrenceEndsAt !== null
+  ) {
+    assertTimestamp(values.firstStartsAt);
+    assertTimestamp(values.recurrenceEndsAt);
+    if (values.firstStartsAt > values.recurrenceEndsAt) invalid();
+  } else if (values.enabled) {
+    invalid();
+  }
   assertTimestamp(values.visibleLeadMs);
   assertTimestamp(values.registrationLeadMs);
   assertConfig(values.config);
@@ -2279,6 +2325,8 @@ function sameTemplateCreation(
     && record.name === command.name
     && record.enabled === command.enabled
     && record.timezone === command.timezone
+    && record.firstStartsAt === command.firstStartsAt
+    && record.recurrenceEndsAt === command.recurrenceEndsAt
     && record.visibleLeadMs === command.visibleLeadMs
     && record.registrationLeadMs === command.registrationLeadMs
     && canonicalJson(record.recurrence) === canonicalJson(command.recurrence)
