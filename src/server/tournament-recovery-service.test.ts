@@ -230,6 +230,64 @@ describe('TournamentRecoveryService', () => {
     });
   });
 
+  it('refunds a restarted running frozen field without invoking payout recovery', () => {
+    const {
+      database,
+      id,
+      instances,
+    } = createRunningClosingEnrollment('restart-running-freeze');
+    const close = instances.getInstance(id)!;
+    const freeze = buildTournamentPayoutFreeze({
+      version: 1,
+      finalEntrants: 1,
+      prizePool: 1_500,
+      payouts: [1_500],
+    });
+    expect(persistTournamentPayoutFreeze(database, {
+      instanceId: id,
+      generation: close.registrationGeneration,
+      ownerToken: close.registrationOwnerToken,
+      freeze,
+      eliminatedPlayerIds: [],
+      now: NOW,
+    })).toBe(true);
+    const plan = loadTournamentRecoveryPlan(database, NOW);
+    const resumePayout = vi.fn();
+    const economyService = new EconomyService(
+      new EconomyRepository(database),
+      () => NOW,
+    );
+    const service = new TournamentRecoveryService({
+      loadAndValidate: () => plan,
+      recoverGeneric: () => recoveryResult(),
+      resumeRefund: (instanceId, reason) => {
+        const instance = instances.getInstance(instanceId);
+        if (!instance) throw new Error('instance missing');
+        resumeTournamentRefund({
+          database,
+          instances,
+          funds: new PromotionFundRepository(database),
+          voidWallet: (tournamentId, at) =>
+            economyService.voidMttTournament(tournamentId, at),
+        }, instance, NOW, reason);
+      },
+      resumePayout,
+      reconcileTemplatesAndTimers: vi.fn(),
+    });
+
+    expect(plan.refundInstanceIds).toContain(id);
+    expect(plan.payoutInstanceIds).not.toContain(id);
+    service.recoverBeforeListen();
+
+    expect(resumePayout).not.toHaveBeenCalled();
+    expect(instances.getInstance(id)).toMatchObject({
+      status: 'cancelled',
+      payoutFreezeVersion: 1,
+    });
+    expect(instances.getInstance(id)?.payoutFreezeAbortedAt)
+      .toBeTypeOf('number');
+  });
+
   it('aborts before money work when generic recovery reports failures', () => {
     const resumeRefund = vi.fn();
     const service = new TournamentRecoveryService({

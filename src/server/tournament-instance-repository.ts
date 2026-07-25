@@ -844,9 +844,10 @@ export class TournamentInstanceRepository {
           true,
         );
       }
-      const closeGenerationIncrement = current.registrationState === 'closing'
-        ? 0
-        : 1;
+      const closeGenerationIncrement = (
+        current.registrationState === 'closing'
+        || current.registrationState === 'closed'
+      ) ? 0 : 1;
       const result = this.database.db.prepare(`
         UPDATE tournament_instance
         SET status = 'refund-pending',

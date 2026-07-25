@@ -998,6 +998,12 @@ export class TournamentManager {
     auditActor?: TournamentAuditActor,
   ): Exclude<TournamentDirectorResult, 'not-found' | 'not-host'> {
     if (
+      action.kind === 'cancel'
+      && this.isSettlementProtected(t)
+    ) {
+      return 'bad-state';
+    }
+    if (
       t.config.economyMode === 'wallet'
       && t.phase === 'running'
       && (
@@ -1723,6 +1729,7 @@ export class TournamentManager {
 
   private cancelTournament(t: TournamentRuntime, reason: string): void {
     if (t.phase === 'completed' || t.phase === 'cancelled') return;
+    if (this.isSettlementProtected(t)) return;
     t.phase = 'cancelled';
     t.pausedAt = null;
     if (t.startTimer) { clearTimeout(t.startTimer); t.startTimer = null; }
@@ -1755,9 +1762,17 @@ export class TournamentManager {
     this.hooks.onTournamentsChanged?.();
     // 취소 기록은 잠시 보여준 뒤 목록에서 제거
     t.cleanupTimer = setTimeout(() => {
+      if (this.isSettlementProtected(t)) return;
       this.tournaments.delete(t.id);
       this.hooks.onTournamentsChanged?.();
     }, 60_000);
+  }
+
+  private isSettlementProtected(t: TournamentRuntime): boolean {
+    if (t.settlementPending) return true;
+    if (!t.persistent) return false;
+    return this.persistentLateRegistration?.readInstance(t.id)?.status
+      === 'payout-pending';
   }
 
   private armEmptyExpiry(t: TournamentRuntime): void {
@@ -2420,6 +2435,7 @@ export class TournamentManager {
     t: TournamentRuntime,
     results: MttResult[],
   ): void {
+    t.settlementPending = false;
     t.phase = 'completed';
     t.finishedAt = Date.now();
     const podium = results
@@ -2450,6 +2466,7 @@ export class TournamentManager {
     this.hooks.onTournamentsChanged?.();
     this.hooks.onTournamentUpdate?.(t.id);
     t.cleanupTimer = setTimeout(() => {
+      if (this.isSettlementProtected(t)) return;
       for (const roomId of t.tables.keys()) this.byRoom.delete(roomId);
       this.tournaments.delete(t.id);
       this.lateRegistrationCoordinators.delete(t.id);
@@ -2555,6 +2572,7 @@ export class TournamentManager {
     this.hooks.onTournamentUpdate?.(t.id);
 
     t.cleanupTimer = setTimeout(() => {
+      if (this.isSettlementProtected(t)) return;
       for (const roomId of t.tables.keys()) this.byRoom.delete(roomId);
       this.tournaments.delete(t.id);
       this.lateRegistrationCoordinators.delete(t.id);
@@ -3433,6 +3451,7 @@ export class TournamentManager {
     const room = this.roomManager.getRoom(roomId);
     if (
       !t
+      || this.isSettlementProtected(t)
       || !t.tables.has(roomId)
       || !room
       || room.engine.state.players.length > 0

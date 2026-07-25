@@ -398,19 +398,19 @@ export function loadTournamentRecoveryPlan(
   const payoutInstanceIds: string[] = [];
 
   for (const row of rows) {
-    if (
-      row.status === 'payout-pending'
-      || (row.status === 'running' && row.payout_freeze_json !== null)
-    ) {
+    if (row.status === 'payout-pending') {
+      if (!hasCompletePersistedSettlementPlan(database, row.id)) {
+        throw new TournamentRecoveryError(
+          `Incomplete persisted payout plan: ${row.id}`,
+        );
+      }
       payoutInstanceIds.push(row.id);
       continue;
     }
     if (
       row.status === 'refund-pending'
-      || (
-        (row.status === 'starting' || row.status === 'running')
-        && row.payout_freeze_json === null
-      )
+      || row.status === 'starting'
+      || row.status === 'running'
     ) {
       refundInstanceIds.add(row.id);
       refundReasons.set(row.id, 'server-restart-unrecoverable');
@@ -526,6 +526,67 @@ export function loadTournamentRecoveryPlan(
     refundReasons,
     payoutInstanceIds,
   };
+}
+
+function hasCompletePersistedSettlementPlan(
+  database: PokerDatabase,
+  instanceId: string,
+): boolean {
+  const row = database.db.prepare(`
+    SELECT
+      instance.final_entrants,
+      instance.initial_bot_entrants,
+      instance.payout_freeze_version,
+      instance.payout_freeze_json,
+      settlement.status AS settlement_status,
+      settlement.final_entrants AS settlement_entrants,
+      settlement.prize_pool,
+      settlement.payout_freeze_checksum,
+      settlement.fingerprint,
+      COUNT(result.place) AS result_count,
+      MIN(result.place) AS min_place,
+      MAX(result.place) AS max_place,
+      COALESCE(SUM(result.prize), 0) AS result_total,
+      COALESCE(SUM(
+        CASE WHEN result.participant_type = 'human' THEN 1 ELSE 0 END
+      ), 0) AS human_count,
+      COALESCE(SUM(
+        CASE WHEN result.participant_type = 'bot' THEN 1 ELSE 0 END
+      ), 0) AS bot_count,
+      (
+        SELECT COUNT(*)
+        FROM tournament_registration registration
+        WHERE registration.instance_id = instance.id
+          AND registration.ever_seated = 1
+      ) AS registered_humans
+    FROM tournament_instance instance
+    LEFT JOIN tournament_settlement settlement
+      ON settlement.instance_id = instance.id
+    LEFT JOIN tournament_settlement_result result
+      ON result.instance_id = instance.id
+    WHERE instance.id = ?
+    GROUP BY instance.id
+  `).get(instanceId) as Record<string, unknown> | undefined;
+  if (!row) return false;
+  const finalEntrants = Number(row.final_entrants);
+  return (
+    Number.isSafeInteger(finalEntrants)
+    && finalEntrants >= 1
+    && Number(row.payout_freeze_version) >= 1
+    && typeof row.payout_freeze_json === 'string'
+    && row.settlement_status === 'pending'
+    && Number(row.settlement_entrants) === finalEntrants
+    && Number(row.result_count) === finalEntrants
+    && Number(row.min_place) === 1
+    && Number(row.max_place) === finalEntrants
+    && Number(row.result_total) === Number(row.prize_pool)
+    && Number(row.human_count) === Number(row.registered_humans)
+    && Number(row.bot_count) === Number(row.initial_bot_entrants)
+    && typeof row.payout_freeze_checksum === 'string'
+    && row.payout_freeze_checksum.length > 0
+    && typeof row.fingerprint === 'string'
+    && row.fingerprint.length > 0
+  );
 }
 
 export interface TournamentRefundRecoveryDependencies {

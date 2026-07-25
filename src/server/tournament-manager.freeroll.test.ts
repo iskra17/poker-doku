@@ -237,6 +237,10 @@ describe('TournamentManager persistent freeroll settlement', () => {
         profileId: 'human-1',
       })]);
     expect(manager.getDetail('failed-payout')?.summary.phase).toBe('running');
+    expect(manager.directorActionAsOperator(
+      'failed-payout',
+      { kind: 'cancel' },
+    )).toBe('bad-state');
 
     vi.advanceTimersByTime(11 * 60_000);
 
