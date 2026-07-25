@@ -179,6 +179,100 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     ))).resolves.toMatchObject({ ok: false, code: 'forbidden' });
   });
 
+  it('forwards the reviewed canonical v2 draft unchanged to persistent creation', async () => {
+    harness = await createSocketTestHarness();
+    const profile = await harness.createProfile();
+    harness.grantTournamentOperator(profile.profile.id);
+    const operator = await harness.connect('canonical-create-operator', {
+      profileCookie: profile.cookie,
+    });
+    const now = Date.now();
+    const draft = {
+      requestId: '11111111-1111-4111-8111-111111111111',
+      name: '리뷰 완료 프리롤',
+      economyMode: 'freeroll',
+      minEntrants: 8,
+      maxEntrants: 24,
+      botFillToMinimum: true,
+      prizePool: { kind: 'promotion-funded', totalPrize: 180_000 },
+      schedule: {
+        visibleAt: now,
+        registrationOpensAt: now,
+        startsAt: now + 30 * 60_000,
+        manualStartExpiresAt: null,
+      },
+      recurrence: null,
+      visibleLeadMs: null,
+      registrationLeadMs: null,
+      turnTimeSeconds: 15,
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [
+          {
+            kind: 'level',
+            durationMs: 8 * 60_000,
+            smallBlind: 50,
+            bigBlind: 100,
+            bigBlindAnte: 0,
+          },
+          {
+            kind: 'level',
+            durationMs: 8 * 60_000,
+            smallBlind: 75,
+            bigBlind: 150,
+            bigBlindAnte: 0,
+          },
+          {
+            kind: 'level',
+            durationMs: 8 * 60_000,
+            smallBlind: 100,
+            bigBlind: 200,
+            bigBlindAnte: 200,
+          },
+        ],
+      },
+      payout: {
+        tableVersion: 2,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+      },
+      lateRegistration: {
+        enabled: true,
+        durationLevels: 2,
+        minStartingStackBb: 20,
+      },
+    } as const;
+    const createPersistent = vi.spyOn(
+      harness.runtime.tournamentCommands,
+      'createPersistentInstance',
+    ).mockReturnValue({
+      ok: true,
+      instance: { id: draft.requestId },
+    } as never);
+    const guest = await harness.connect('canonical-create-guest');
+
+    expect(guest.sessionCapabilities.createTournament).toBe(false);
+    await expect(withAck<{ tournamentId: string }>(done =>
+      guest.socket.emit('create-tournament', draft, done)))
+      .resolves.toMatchObject({ ok: false, code: 'forbidden' });
+    expect(createPersistent).not.toHaveBeenCalled();
+
+    await expect(withAck<{ tournamentId: string }>(done =>
+      operator.socket.emit('create-tournament', draft, done)))
+      .resolves.toMatchObject({
+        ok: true,
+        data: { tournamentId: draft.requestId },
+      });
+    expect(createPersistent).toHaveBeenCalledWith(
+      {
+        kind: 'operator-profile',
+        profileId: operator.playerId,
+      },
+      draft,
+    );
+  });
+
   it('returns an idempotent register result for one request id', async () => {
     const requestId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
     const registerTournament = vi.fn((input: {

@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
 import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
+import { useServerNow } from '@/lib/hooks/use-server-now';
 import Button from '../ui/Button';
 import TournamentDetailModal from './TournamentDetailModal';
 import CreateTournamentModal from './CreateTournamentModal';
@@ -94,6 +95,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
   const { rooms } = useGameStore();
   const tournaments = useGameStore(s => s.tournaments);
   const serverClockOffsetMs = useGameStore(s => s.serverClockOffsetMs);
+  const serverNow = useServerNow(serverClockOffsetMs);
   const tournamentError = useGameStore(s => s.tournamentError);
   const clearTournamentError = useGameStore(s => s.clearTournamentError);
   const joinRoom = useGameStore(s => s.joinRoom);
@@ -271,7 +273,7 @@ export default function RoomList({ onJoin }: RoomListProps) {
             key={t.id}
             tournament={t}
             delay={i * 0.1}
-            serverClockOffsetMs={serverClockOffsetMs}
+            serverNow={serverNow}
             onOpen={() => setMttDetailId(t.id)}
             onReturn={t.mySeat ? () => joinRoom(t.mySeat!.roomId, 0, 0) : undefined}
           />

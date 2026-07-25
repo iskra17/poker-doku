@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import TournamentCreateForm, {
   type TournamentCreateDraft,
 } from '@/components/tournament/TournamentCreateForm';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 
 /**
  * 운영 백오피스 — HttpOnly 세션 쿠키 인증, 5초 주기 자동 갱신.
@@ -1628,12 +1629,16 @@ function AdminModal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const dialogRef = useDialogFocus(onClose);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 md:items-center md:p-4" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         className="max-h-[96dvh] w-full overflow-y-auto rounded-t-2xl border border-mystic/30 bg-panel p-4 md:max-w-3xl md:rounded-2xl"
         onClick={event => event.stopPropagation()}
       >

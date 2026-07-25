@@ -1,9 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
-import { formatCountdown, useCountdownTo } from '@/lib/hooks/use-countdown';
+import { formatCountdown } from '@/lib/hooks/use-countdown';
 import { presentTournament } from '@/lib/tournament/tournament-presenter';
 import Button from '@/components/ui/Button';
 
@@ -21,15 +20,6 @@ const KST_SCHEDULE_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
   hour12: false,
 });
 
-function useServerNow(offsetMs: number): number {
-  const [now, setNow] = useState(() => Date.now() + offsetMs);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now() + offsetMs), 500);
-    return () => clearInterval(timer);
-  }, [offsetMs]);
-  return now;
-}
-
 function formatSchedule(epoch: number | null): string {
   if (epoch === null) return '운영자 수동 시작';
   return KST_SCHEDULE_FORMATTER.format(epoch);
@@ -38,22 +28,23 @@ function formatSchedule(epoch: number | null): string {
 export default function TournamentCard({
   tournament,
   delay,
-  serverClockOffsetMs,
+  serverNow,
   onOpen,
   onReturn,
 }: {
   tournament: PublicTournamentSummary;
   delay: number;
-  serverClockOffsetMs: number;
+  serverNow: number;
   onOpen: () => void;
   onReturn?: () => void;
 }) {
-  const serverNow = useServerNow(serverClockOffsetMs);
   const presentation = presentTournament(tournament, serverNow);
-  const localDeadline = presentation.registrationDeadline === null
-    ? 0
-    : presentation.registrationDeadline - serverClockOffsetMs;
-  const seconds = useCountdownTo(localDeadline);
+  const seconds = presentation.registrationDeadline === null
+    ? null
+    : Math.max(
+      0,
+      Math.ceil((presentation.registrationDeadline - serverNow) / 1_000),
+    );
   const action = onReturn
     ? { kind: 'return' as const, label: '게임 복귀', disabled: false }
     : presentation.primaryAction;
@@ -68,11 +59,15 @@ export default function TournamentCard({
       initial={{ opacity: 0, x: -20 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay }}
-      onClick={onOpen}
-      className="cursor-pointer rounded-xl border border-mystic/20 bg-panel/80 p-3 backdrop-blur-sm transition-all hover:border-gilded/40 active:scale-[0.98] md:p-4"
+      className="rounded-xl border border-mystic/20 bg-panel/80 p-3 backdrop-blur-sm transition-all hover:border-gilded/40 md:p-4"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 gap-3">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`${tournament.name} 상세 보기`}
+          className="flex min-w-0 flex-1 gap-3 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-gilded/70 active:scale-[0.99]"
+        >
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gilded/25 bg-gradient-to-br from-yellow-600/25 to-pink-600/25 text-2xl">
             🏆
           </div>
@@ -105,8 +100,8 @@ export default function TournamentCard({
               </span>
             </div>
           </div>
-        </div>
-        <span onClick={event => event.stopPropagation()}>
+        </button>
+        <span>
           <Button
             variant={action.disabled ? 'secondary' : 'success'}
             size="sm"

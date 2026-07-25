@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { io } from 'socket.io-client';
 import type { ActionType, ChatMessage, GameState } from '../poker/types';
 import type {
-  CreateTournamentRequest,
+  CreatePersistentTournamentRequest,
   PokerClientSocket,
   PublicTournamentSummary,
   RoomListItem,
@@ -140,7 +140,9 @@ interface GameStore {
   // --- MTT (멀티테이블 토너먼트) ---
   refreshTournaments: () => void;
   fetchTournamentDetail: (tournamentId: string) => Promise<TournamentDetailView | null>;
-  createTournament: (config: CreateTournamentRequest) => Promise<string | null>;
+  createTournament: (
+    config: CreatePersistentTournamentRequest,
+  ) => Promise<string | null>;
   registerTournament: (tournamentId: string) => Promise<boolean>;
   unregisterTournament: (tournamentId: string) => Promise<boolean>;
   startTournament: (tournamentId: string) => Promise<boolean>;

@@ -13,6 +13,7 @@ import { openPokerDatabase } from './persistence/database';
 import { PromotionFundRepository } from './promotion-fund-repository';
 import { TournamentInstanceRepository } from './tournament-instance-repository';
 import { TournamentScheduler } from './tournament-scheduler';
+import { parseCreateTournamentCommand } from './tournament-command-parser';
 
 const ADMIN_NOW = Date.parse('2026-07-25T12:00:00+09:00');
 
@@ -414,6 +415,116 @@ describe('TournamentCommandService', () => {
         authorityKind: 'operator-profile',
         operatorProfileId: 'operator-1',
       });
+
+    scheduler.close();
+    database.close();
+  });
+
+  it('persists the exact reviewed config and reserves its freeroll prize', () => {
+    const database = openPokerDatabase(':memory:');
+    const instances = new TournamentInstanceRepository(
+      database,
+      () => ADMIN_NOW,
+    );
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => ADMIN_NOW,
+    });
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      undefined,
+      { database, instances, scheduler, now: () => ADMIN_NOW },
+    );
+    const funds = new PromotionFundRepository(database);
+    funds.adjustFund({
+      requestId: randomUUID(),
+      delta: 500_000,
+      reason: 'Reviewed UI command funding',
+      actor: { kind: 'backoffice-admin', id: 'test' },
+      at: ADMIN_NOW,
+    });
+    const reviewedDraft = persistentFreeroll({
+      name: '리뷰 완료 프리롤',
+      minEntrants: 8,
+      maxEntrants: 48,
+      prizePool: { kind: 'promotion-funded', totalPrize: 180_000 },
+      schedule: {
+        visibleAt: ADMIN_NOW,
+        registrationOpensAt: ADMIN_NOW,
+        startsAt: ADMIN_NOW + 30 * 60_000,
+        manualStartExpiresAt: null,
+      },
+      recurrence: null,
+      visibleLeadMs: null,
+      registrationLeadMs: null,
+      turnTimeSeconds: 15,
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [
+          {
+            kind: 'level',
+            durationMs: 480_000,
+            smallBlind: 50,
+            bigBlind: 100,
+            bigBlindAnte: 0,
+          },
+          {
+            kind: 'level',
+            durationMs: 480_000,
+            smallBlind: 75,
+            bigBlind: 150,
+            bigBlindAnte: 0,
+          },
+          {
+            kind: 'level',
+            durationMs: 480_000,
+            smallBlind: 100,
+            bigBlind: 200,
+            bigBlindAnte: 200,
+          },
+        ],
+      },
+      payout: {
+        tableVersion: 2,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+      },
+      lateRegistration: {
+        enabled: true,
+        durationLevels: 2,
+        minStartingStackBb: 20,
+      },
+    });
+    const expected = parseCreateTournamentCommand(reviewedDraft, ADMIN_NOW);
+
+    const result = durableService.createPersistentInstance(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      reviewedDraft,
+      ADMIN_NOW,
+    );
+
+    expect(result).toMatchObject({
+      ok: true,
+      instance: {
+        id: reviewedDraft.requestId,
+        schedule: expected.schedule,
+        config: expected.config,
+        status: 'registering',
+      },
+    });
+    expect(funds.getFundPage({ limit: 10 })).toMatchObject({
+      availableBalance: 320_000,
+      reservedTotal: 180_000,
+      ledger: expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'freeroll-prize-reserve',
+          delta: -180_000,
+          instanceId: reviewedDraft.requestId,
+        }),
+      ]),
+    });
 
     scheduler.close();
     database.close();

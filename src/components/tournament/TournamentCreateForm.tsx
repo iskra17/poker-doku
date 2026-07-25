@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { MTT_WALLET_BUY_IN, MTT_WALLET_ENTRY_FEE } from '@/lib/economy/mtt-entry';
 import { MTT_STRUCTURES, type MttSpeed } from '@/lib/poker/mtt-structure';
+import type { CreatePersistentTournamentRequest } from '@/lib/realtime/protocol';
 import type {
   TournamentPayoutPolicy,
   TournamentRecurrence,
@@ -42,32 +43,7 @@ const KST_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
   hour12: false,
 });
 
-export interface TournamentCreateDraft {
-  requestId: string;
-  name: string;
-  economyMode: 'freeroll' | 'wallet';
-  minEntrants: number;
-  maxEntrants: number;
-  botFillToMinimum: boolean;
-  prizePool:
-    | { kind: 'promotion-funded'; totalPrize: number }
-    | { kind: 'entry-pool' };
-  schedule: {
-    visibleAt: number;
-    registrationOpensAt: number;
-    startsAt: number | null;
-    manualStartExpiresAt: number | null;
-  };
-  recurrence: TournamentRecurrence | null;
-  visibleLeadMs: number | null;
-  registrationLeadMs: number | null;
-  turnTimeSeconds: 8 | 15 | 30;
-  structure: TournamentStructure;
-  payout: TournamentPayoutPolicy;
-  lateRegistration:
-    | { enabled: false; durationLevels: 0; minStartingStackBb: 20 }
-    | { enabled: true; durationLevels: 1 | 2 | 3; minStartingStackBb: 20 };
-}
+export type TournamentCreateDraft = CreatePersistentTournamentRequest;
 
 interface TournamentCreateFormProps {
   serverNow: number;
@@ -264,9 +240,16 @@ export default function TournamentCreateForm({
     }
     setBusy(true);
     setError(null);
-    const ok = await onSubmit(draft());
-    if (!ok) setError('개설하지 못했습니다. 입력과 운영 자금 잔액을 확인해 주세요.');
-    setBusy(false);
+    try {
+      const ok = await onSubmit(draft());
+      if (!ok) {
+        setError('개설하지 못했습니다. 입력과 운영 자금 잔액을 확인해 주세요.');
+      }
+    } catch {
+      setError('서버에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (

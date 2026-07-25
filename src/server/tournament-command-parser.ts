@@ -215,7 +215,13 @@ function parseRecurrenceSettings(
   'recurrence' | 'visibleLeadMs' | 'registrationLeadMs'
 > {
   if (raw.recurrence === undefined || raw.recurrence === null) {
-    if (raw.visibleLeadMs !== undefined || raw.registrationLeadMs !== undefined) {
+    if (
+      (raw.visibleLeadMs !== undefined && raw.visibleLeadMs !== null)
+      || (
+        raw.registrationLeadMs !== undefined
+        && raw.registrationLeadMs !== null
+      )
+    ) {
       fail('recurrence-lead');
     }
     return {

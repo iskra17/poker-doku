@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
-import type { CreateTournamentRequest } from '@/lib/realtime/protocol';
 import TournamentCreateForm, {
   type TournamentCreateDraft,
 } from '@/components/tournament/TournamentCreateForm';
@@ -20,22 +19,7 @@ export default function CreateTournamentModal({
   const [serverNow] = useState(() => Date.now() + serverClockOffsetMs);
 
   const submit = async (draft: TournamentCreateDraft): Promise<boolean> => {
-    const speed = draft.structure.sourcePresetId ?? 'standard';
-    const config: CreateTournamentRequest = {
-      name: draft.name,
-      payoutPreset: draft.payout.presetId,
-      speed,
-      maxEntrants: draft.maxEntrants,
-      startAt: draft.schedule.startsAt,
-      botFill:
-        draft.economyMode === 'freeroll' && draft.botFillToMinimum,
-      turnTime: draft.turnTimeSeconds,
-      // The legacy socket accepts practice for one release and normalizes it
-      // to the canonical freeroll policy before persistence.
-      economyMode:
-        draft.economyMode === 'freeroll' ? 'practice' : 'wallet',
-    };
-    const tournamentId = await createTournament(config);
+    const tournamentId = await createTournament(draft);
     if (!tournamentId) return false;
     onCreated(tournamentId);
     return true;

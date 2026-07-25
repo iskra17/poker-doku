@@ -2834,6 +2834,35 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('createRoom', '토너먼트 개설 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      // Canonical v2 commands never fall through to the lossy legacy adapter,
+      // even while the runtime rollout flag keeps legacy commands available.
+      if (isRecord(payload) && 'requestId' in payload) {
+        const created = tournamentCommands.createPersistentInstance(
+          authority,
+          payload,
+        );
+        if (!created.ok) {
+          ack?.({
+            ok: false,
+            code: created.code === 'forbidden'
+              ? 'forbidden'
+              : created.code === 'invalid-payload'
+                ? 'invalid-payload'
+                : 'action-rejected',
+            message: created.code === 'promotion-insufficient'
+              ? '프리롤 운영 기금이 부족해 토너먼트를 개설하지 못했습니다.'
+              : created.code === 'invalid-payload'
+                ? '토너먼트 설정이 올바르지 않아요.'
+                : '토너먼트를 개설하지 못했습니다.',
+          });
+          return;
+        }
+        ack?.({
+          ok: true,
+          data: { tournamentId: created.instance.id },
+        });
+        return;
+      }
       if (
         !isRecord(payload)
         || typeof payload.name !== 'string'

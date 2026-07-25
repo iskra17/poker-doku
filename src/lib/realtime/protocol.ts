@@ -14,7 +14,14 @@ import type {
   ProgressionSnapshot,
 } from '../progression/types';
 import type { ArenaTier } from '../arena/types';
-import type { TournamentStructureSegment } from '../tournament/tournament-config';
+import type {
+  LateRegistrationPolicy,
+  PrizePoolPolicy,
+  TournamentPayoutPolicy,
+  TournamentRecurrence,
+  TournamentStructure,
+  TournamentStructureSegment,
+} from '../tournament/tournament-config';
 import type {
   RegistrationCloseReason,
   TournamentInstanceStatusReason,
@@ -349,6 +356,30 @@ export interface CreateTournamentRequest {
   turnTime: number;
   /** 'wallet' = 지갑 바이인 에스크로 (봇 충원 불가). 생략 시 practice */
   economyMode?: 'practice' | 'wallet';
+}
+
+/** Canonical persistent-v2 command emitted by the reviewed seven-stage UI. */
+export interface CreatePersistentTournamentRequest {
+  requestId: string;
+  name: string;
+  economyMode: 'freeroll' | 'wallet';
+  minEntrants: number;
+  maxEntrants: number;
+  botFillToMinimum: boolean;
+  prizePool: PrizePoolPolicy;
+  schedule: {
+    visibleAt: number;
+    registrationOpensAt: number;
+    startsAt: number | null;
+    manualStartExpiresAt: number | null;
+  };
+  recurrence: TournamentRecurrence | null;
+  visibleLeadMs: number | null;
+  registrationLeadMs: number | null;
+  turnTimeSeconds: 8 | 15 | 30;
+  structure: TournamentStructure;
+  payout: TournamentPayoutPolicy;
+  lateRegistration: LateRegistrationPolicy;
 }
 
 export interface RegisterTournamentCommand {

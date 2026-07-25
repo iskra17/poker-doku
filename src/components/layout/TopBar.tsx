@@ -5,8 +5,10 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import { useInviteLink } from '@/lib/hooks/use-invite-link';
+import { useServerNow } from '@/lib/hooks/use-server-now';
 import { TournamentState } from '@/lib/poker/types';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
+import { presentTournament } from '@/lib/tournament/tournament-presenter';
 import Button from '@/components/ui/Button';
 import NeonText from '@/components/ui/NeonText';
 import SettingsModal from './SettingsModal';
@@ -22,6 +24,12 @@ const STREET_LABELS: Record<string, string> = {
   river: '리버',
   showdown: '쇼다운',
 };
+const KST_TIME_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
 
 interface TopBarProps {
   onLeave: () => void;
@@ -40,14 +48,22 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const mttTournamentId = gameState?.tournament?.tournamentId;
   const tournaments = useGameStore(state => state.tournaments);
   const serverClockOffsetMs = useGameStore(state => state.serverClockOffsetMs);
+  const serverNow = useServerNow(serverClockOffsetMs);
   const tournamentSummary = (tournaments as PublicTournamentSummary[])
     .find(tournament => tournament.id === mttTournamentId);
-  const lateRegistrationSeconds = useCountdownTo(
-    tournamentSummary?.registrationState === 'open-late' &&
-      tournamentSummary.lateRegistrationClosesAt
-      ? tournamentSummary.lateRegistrationClosesAt - serverClockOffsetMs
-      : 0,
-  );
+  const tournamentPresentation = tournamentSummary
+    ? presentTournament(tournamentSummary, serverNow)
+    : null;
+  const registrationSeconds =
+    tournamentPresentation?.registrationDeadline === null ||
+    tournamentPresentation?.registrationDeadline === undefined
+      ? null
+      : Math.max(
+        0,
+        Math.ceil(
+          (tournamentPresentation.registrationDeadline - serverNow) / 1_000,
+        ),
+      );
   const { copied, copy } = useInviteLink(currentRoomId);
 
   return (
@@ -76,11 +92,29 @@ export default function TopBar({ onLeave }: TopBarProps) {
                 className="min-w-0 max-w-full overflow-hidden rounded-lg px-1 py-0.5 hover:bg-white/5 active:bg-white/10 transition-colors"
               >
                 <TournamentBadge tournament={gameState.tournament} showInfoHint />
-                {tournamentSummary?.registrationState === 'open-late' && (
-                  <span className="mt-0.5 block text-[9px] font-bold text-blossom">
-                    레이트 레지 진행 중
-                    {lateRegistrationSeconds !== null &&
-                      ` · 마감 ${formatCountdown(lateRegistrationSeconds)}`}
+                {tournamentPresentation &&
+                  (tournamentSummary?.registrationState === 'open-late' ||
+                    tournamentPresentation.seatingNotice) && (
+                  <span className="mt-0.5 block max-w-[min(94vw,34rem)] text-[9px] font-bold text-blossom">
+                    {tournamentPresentation.seatingNotice
+                      ? '등록 완료'
+                      : tournamentPresentation.registrationLabel}
+                    {tournamentPresentation.registrationDeadline !== null &&
+                      ` · ${KST_TIME_FORMATTER.format(tournamentPresentation.registrationDeadline)} 마감`}
+                    {registrationSeconds !== null &&
+                      ` · ${formatCountdown(registrationSeconds)}`}
+                    {tournamentPresentation.stackDepthLabel &&
+                      ` · ${tournamentPresentation.stackDepthLabel}`}
+                    {tournamentPresentation.lateRegistrationWarning && (
+                      <span className="block">
+                        {tournamentPresentation.lateRegistrationWarning}
+                      </span>
+                    )}
+                    {tournamentPresentation.seatingNotice && (
+                      <span className="block text-cyber">
+                        {tournamentPresentation.seatingNotice}
+                      </span>
+                    )}
                   </span>
                 )}
               </button>

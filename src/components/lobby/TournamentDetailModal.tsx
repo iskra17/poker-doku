@@ -7,6 +7,8 @@ import type {
   TournamentDetailView,
 } from '@/lib/realtime/protocol';
 import { formatCountdown, useCountdownTo } from '@/lib/hooks/use-countdown';
+import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
+import { useServerNow } from '@/lib/hooks/use-server-now';
 import { presentTournament } from '@/lib/tournament/tournament-presenter';
 import Button from '@/components/ui/Button';
 
@@ -19,15 +21,6 @@ const KST_DETAIL_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
 function formatKst(epoch: number | null): string {
   if (epoch === null) return '운영자 수동 시작';
   return KST_DETAIL_FORMATTER.format(epoch);
-}
-
-function useServerNow(offsetMs: number): number {
-  const [now, setNow] = useState(() => Date.now() + offsetMs);
-  useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now() + offsetMs), 500);
-    return () => clearInterval(timer);
-  }, [offsetMs]);
-  return now;
 }
 
 export default function TournamentDetailModal({
@@ -334,12 +327,16 @@ export function ModalShell({
   children: React.ReactNode;
   wide?: boolean;
 }) {
+  const dialogRef = useDialogFocus(onClose);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 md:items-center md:p-3" onClick={onClose}>
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
         className={`max-h-[92dvh] w-full overflow-y-auto rounded-t-2xl border border-mystic/30 bg-panel p-3.5 scrollbar-thin md:max-h-[88dvh] md:rounded-2xl md:p-4 ${wide ? 'md:max-w-2xl' : 'md:max-w-md'}`}
         onClick={event => event.stopPropagation()}
       >
