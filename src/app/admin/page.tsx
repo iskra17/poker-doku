@@ -1,25 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  PAYOUT_PRESETS,
-  computePayouts,
-  paidPlaces,
-  type PayoutPresetId,
-} from '@/lib/poker/payout-table';
-import type { MttSpeed } from '@/lib/poker/mtt-structure';
+import TournamentCreateForm, {
+  type TournamentCreateDraft,
+} from '@/components/tournament/TournamentCreateForm';
 
 /**
- * 운영 백오피스 — DEBUG_LOG_TOKEN 토큰 게이트, 5초 주기 자동 갱신.
+ * 운영 백오피스 — HttpOnly 세션 쿠키 인증, 5초 주기 자동 갱신.
  * 상용 포커룸 백오피스(대시보드/테이블/플레이어/핸드 감사/CS/이벤트/인테그리티) 구조를
  * 단일 운영자 규모로 축소한 탭 레이아웃.
- * 서버 API: /api/admin/{overview,profiles,events,hands,security} + /api/debug/feedback.
+ * 서버 API: /api/admin/{session,overview,profiles,events,hands,security,feedback}.
  * 개인정보 없음 — 익명 별명/활동 지표/칩 현황만 다룬다.
  * 핸드 상세는 마스킹 전 정본(전체 홀카드) — 이 화면 밖으로 재공유 금지.
  */
 
 const REFRESH_MS = 5_000;
-const TOKEN_STORAGE_KEY = 'poker-doku-admin-token';
 const FEEDBACK_SEEN_KEY = 'poker-doku-admin-feedback-seen';
 
 // ---------- 서버 응답 타입 ----------
@@ -169,24 +164,81 @@ interface AdminTournamentStanding {
 }
 
 interface AdminTournament {
-  id: string; name: string; phase: string; speed: string; hostId: string;
-  createdAt: number; startedAt: number | null; finishedAt: number | null;
-  paused: boolean; level: number; onBreak: boolean; h4hActive: boolean;
-  economyMode: 'practice' | 'wallet';
-  payoutPreset: PayoutPresetId;
-  entrantCount: number; seatedCount: number; remaining: number; prizePool: number;
-  tables: AdminTournamentTable[]; standings: AdminTournamentStanding[];
+  id: string;
+  name: string;
+  status: string;
+  statusReason: string | null;
+  economyMode: 'freeroll' | 'wallet';
+  schedule: {
+    visibleAt: number;
+    registrationOpensAt: number;
+    startsAt: number | null;
+    manualStartExpiresAt: number | null;
+    actualStartedAt: number | null;
+  };
+  registrationState: string;
+  minEntrants: number;
+  maxEntrants: number;
+  acceptedEntrants: number;
+  pendingLateEntrants: number;
+  finalEntrants: number | null;
+  prizePool: number;
+  templateId: string | null;
+  templateRevision: number | null;
+  occurrenceKey: string;
+  registrationGeneration: number;
+  registrationOwnerToken: string | null;
+  startAttempt: number;
+  startOwnerId: string | null;
+  startLeaseUntil: number | null;
+  nextRetryAt: number | null;
+  settlementAttempt: number;
+  settlementOwnerId: string | null;
+  settlementLeaseUntil: number | null;
+  settlementNextRetryAt: number | null;
+  invariantWarnings: string[];
+  live: {
+    paused?: boolean;
+    level?: number;
+    onBreak?: boolean;
+    h4hActive?: boolean;
+    remaining?: number;
+    tables?: AdminTournamentTable[];
+    standings?: AdminTournamentStanding[];
+  } | null;
 }
 
-interface AdminTournamentDraft {
+interface AdminTournamentTemplate {
+  id: string;
+  revision: number;
   name: string;
-  speed: MttSpeed;
-  maxEntrants: number;
-  startAt: number | null;
-  botFill: boolean;
-  turnTime: number;
-  economyMode: 'practice' | 'wallet';
-  payoutPreset: PayoutPresetId;
+  enabled: boolean;
+  timezone: 'Asia/Seoul';
+  recurrence: { kind: string; minute: number; hour?: number; weekday?: number };
+  visibleLeadMs: number;
+  registrationLeadMs: number;
+  config: {
+    economy: { mode: 'freeroll' | 'wallet' };
+    field: { minEntrants: number; maxEntrants: number; botFillToMinimum: boolean };
+    prizePool: { kind: string; totalPrize?: number };
+  };
+  updatedAt: number;
+}
+
+interface PromotionFundPage {
+  availableBalance: number;
+  reservedTotal: number;
+  version: number;
+  updatedAt: number;
+  ledger: Array<{
+    id: string;
+    kind: string;
+    delta: number;
+    balanceAfter: number;
+    instanceId: string | null;
+    reason: string;
+    createdAt: number;
+  }>;
 }
 
 type AdminTournamentAction =
@@ -357,13 +409,9 @@ function Th({ children }: { children: React.ReactNode }) {
 // ---------- 메인 ----------
 
 export default function AdminPage() {
-  // 저장된 토큰은 렌더 초기값으로 복원 (effect 내 setState 금지 규칙 — page.tsx 초대 링크와 동일 패턴)
-  const [token, setToken] = useState(() => (
-    typeof window === 'undefined' ? '' : window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
-  ));
-  const [tokenInput, setTokenInput] = useState(() => (
-    typeof window === 'undefined' ? '' : window.localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
-  ));
+  const [csrfToken, setCsrfToken] = useState<string | null>(null);
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [tokenInput, setTokenInput] = useState('');
   const [seenFeedbackId, setSeenFeedbackId] = useState(() => {
     if (typeof window === 'undefined') return 0;
     return parseInt(window.localStorage.getItem(FEEDBACK_SEEN_KEY) ?? '0', 10) || 0;
@@ -376,6 +424,9 @@ export default function AdminPage() {
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [hands, setHands] = useState<TableHandSummary[]>([]);
   const [adminTournaments, setAdminTournaments] = useState<AdminTournament[]>([]);
+  const [tournamentTemplates, setTournamentTemplates] = useState<AdminTournamentTemplate[]>([]);
+  const [promotionFund, setPromotionFund] = useState<PromotionFundPage | null>(null);
+  const [tournamentServerNow, setTournamentServerNow] = useState<number | null>(null);
   const [handDetail, setHandDetail] = useState<TableHandDetail | null>(null);
   const [security, setSecurity] = useState<SecuritySummary | null>(null);
   const [gameConfig, setGameConfig] = useState<GameConfigResponse | null>(null);
@@ -392,29 +443,38 @@ export default function AdminPage() {
   const handsPagedRef = useRef(false);
 
   const api = useCallback(async <T,>(path: string): Promise<T | null> => {
-    const joiner = path.includes('?') ? '&' : '?';
-    const response = await fetch(`${path}${joiner}token=${encodeURIComponent(token)}`);
-    if (response.status === 403) {
+    const response = await fetch(path, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+    if (response.status === 401 || response.status === 403) {
       setAuthFailed(true);
+      setCsrfToken(null);
       return null;
     }
     if (!response.ok) return null;
     return await response.json() as T;
-  }, [token]);
+  }, []);
 
   const apiPost = useCallback(async <T,>(
     path: string,
     body: unknown,
+    headers: Record<string, string> = {},
   ): Promise<{ status: number; body: T | null }> => {
-    const joiner = path.includes('?') ? '&' : '?';
-    const response = await fetch(`${path}${joiner}token=${encodeURIComponent(token)}`, {
+    const response = await fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        ...headers,
+      },
       body: JSON.stringify(body),
     });
-    if (response.status === 403) {
+    if (response.status === 401 || response.status === 403) {
       setAuthFailed(true);
-      return { status: 403, body: null };
+      setCsrfToken(null);
+      return { status: response.status, body: null };
     }
     let parsed: T | null = null;
     try {
@@ -423,10 +483,10 @@ export default function AdminPage() {
       parsed = null;
     }
     return { status: response.status, body: parsed };
-  }, [token]);
+  }, [csrfToken]);
 
   const refresh = useCallback(async () => {
-    if (!token) return;
+    if (!csrfToken) return;
     try {
       const overviewBody = await api<Overview>('/api/admin/overview');
       if (overviewBody) {
@@ -444,7 +504,7 @@ export default function AdminPage() {
         if (body) setEvents(body.events ?? []);
       }
       if (activeTab === 'feedback') {
-        const body = await api<{ items: FeedbackItem[] }>('/api/debug/feedback?limit=100');
+        const body = await api<{ items: FeedbackItem[] }>('/api/admin/feedback?limit=100');
         if (body) {
           setFeedback(body.items ?? []);
           // 문의 탭을 보고 있는 동안은 전부 읽음 처리 (feedback id는 단조 증가·미삭제)
@@ -459,8 +519,17 @@ export default function AdminPage() {
         }
       }
       if (activeTab === 'tournaments') {
-        const body = await api<{ tournaments: AdminTournament[] }>('/api/admin/tournaments');
-        if (body) setAdminTournaments(body.tournaments ?? []);
+        const [instancesBody, templatesBody, fundBody] = await Promise.all([
+          api<{ tournaments: AdminTournament[]; serverNow: number }>('/api/admin/tournaments'),
+          api<{ templates: AdminTournamentTemplate[]; serverNow: number }>('/api/admin/tournament-templates'),
+          api<PromotionFundPage>('/api/admin/promotion-fund?limit=50'),
+        ]);
+        if (instancesBody) {
+          setAdminTournaments(instancesBody.tournaments ?? []);
+          setTournamentServerNow(instancesBody.serverNow);
+        }
+        if (templatesBody) setTournamentTemplates(templatesBody.templates ?? []);
+        if (fundBody) setPromotionFund(fundBody);
       }
       if (activeTab === 'hands' && !handsPagedRef.current) {
         const roomFilter = handRoomFilter ? `&room=${encodeURIComponent(handRoomFilter)}` : '';
@@ -482,17 +551,23 @@ export default function AdminPage() {
     } catch {
       setLastError('서버에 연결하지 못했어요');
     }
-  }, [token, activeTab, eventType, handRoomFilter, api]);
+  }, [csrfToken, activeTab, eventType, handRoomFilter, api]);
 
   const createAdminTournament = useCallback(async (
-    draft: AdminTournamentDraft,
+    draft: TournamentCreateDraft,
   ): Promise<boolean> => {
+    const recurring = draft.recurrence !== null;
     const result = await apiPost<{ tournamentId?: string; error?: string }>(
-      '/api/admin/tournaments',
+      recurring
+        ? '/api/admin/tournament-templates'
+        : '/api/admin/tournaments',
       draft,
     );
     if (result.status !== 201) {
-      setLastError(result.body?.error ?? '토너먼트를 생성하지 못했습니다.');
+      setLastError(
+        result.body?.error ??
+        (recurring ? '반복 템플릿을 생성하지 못했습니다.' : '토너먼트를 생성하지 못했습니다.'),
+      );
       return false;
     }
     await refresh();
@@ -515,8 +590,64 @@ export default function AdminPage() {
     return true;
   }, [apiPost, refresh]);
 
+  const runTemplateAction = useCallback(async (
+    templateId: string,
+    revision: number,
+    action: 'enable' | 'disable' | 'generate-next',
+  ): Promise<boolean> => {
+    const result = await apiPost<{ error?: string }>(
+      `/api/admin/tournament-templates/${encodeURIComponent(templateId)}/actions`,
+      { action },
+      { 'if-match': String(revision) },
+    );
+    if (result.status !== 200) {
+      setLastError(result.body?.error ?? '템플릿 작업을 처리하지 못했습니다.');
+      return false;
+    }
+    await refresh();
+    return true;
+  }, [apiPost, refresh]);
+
+  const adjustPromotionFund = useCallback(async (
+    delta: number,
+    reason: string,
+  ): Promise<boolean> => {
+    const result = await apiPost<{ error?: string }>(
+      '/api/admin/promotion-fund/adjust',
+      { requestId: crypto.randomUUID(), delta, reason },
+    );
+    if (result.status !== 200) {
+      setLastError(result.body?.error ?? '운영 기금을 조정하지 못했습니다.');
+      return false;
+    }
+    await refresh();
+    return true;
+  }, [apiPost, refresh]);
+
   useEffect(() => {
-    if (!token) return;
+    const controller = new AbortController();
+    void fetch('/api/admin/session', {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      signal: controller.signal,
+    }).then(async response => {
+      if (!response.ok) {
+        setAuthFailed(true);
+        return;
+      }
+      const body = await response.json() as { csrfToken: string };
+      setCsrfToken(body.csrfToken);
+      setAuthFailed(false);
+    }).catch(() => {
+      if (!controller.signal.aborted) setAuthFailed(true);
+    }).finally(() => {
+      if (!controller.signal.aborted) setSessionLoading(false);
+    });
+    return () => controller.abort();
+  }, []);
+
+  useEffect(() => {
+    if (!csrfToken) return;
     // 첫 갱신도 타이머 콜백으로 — effect 본문 직접 setState 금지 규칙 준수
     const initial = setTimeout(() => void refresh(), 0);
     const timer = setInterval(() => void refresh(), REFRESH_MS);
@@ -524,7 +655,7 @@ export default function AdminPage() {
       clearTimeout(initial);
       clearInterval(timer);
     };
-  }, [token, refresh]);
+  }, [csrfToken, refresh]);
 
   const newFeedbackCount = Math.max(0, (overview?.latestFeedbackId ?? 0) - seenFeedbackId);
 
@@ -607,34 +738,68 @@ export default function AdminPage() {
     return { ok: false, message: '저장에 실패했어요. 잠시 후 다시 시도해주세요.' };
   };
 
-  const applyToken = () => {
+  const applyToken = async () => {
     const value = tokenInput.trim();
     if (!value) return;
-    window.localStorage.setItem(TOKEN_STORAGE_KEY, value);
-    setAuthFailed(false);
-    setToken(value);
+    setSessionLoading(true);
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: value }),
+      });
+      if (!response.ok) {
+        setAuthFailed(true);
+        return;
+      }
+      const body = await response.json() as { csrfToken: string };
+      setCsrfToken(body.csrfToken);
+      setTokenInput('');
+      setAuthFailed(false);
+    } finally {
+      setSessionLoading(false);
+    }
   };
 
-  if (!token || authFailed) {
+  const logout = async () => {
+    await fetch('/api/admin/session', {
+      method: 'DELETE',
+      credentials: 'same-origin',
+      headers: { 'x-csrf-token': csrfToken ?? '' },
+    });
+    setCsrfToken(null);
+    setAuthFailed(true);
+  };
+
+  if (sessionLoading && !csrfToken) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center bg-abyss p-4 text-sm text-ink-dim">
+        운영 세션 확인 중…
+      </main>
+    );
+  }
+
+  if (!csrfToken || authFailed) {
     return (
       <main className="min-h-dvh bg-abyss flex items-center justify-center p-4">
         <div className="w-full max-w-sm rounded-2xl border border-mystic/30 bg-panel p-6">
           <h1 className="text-lg font-bold text-mystic mb-1">운영 백오피스</h1>
           <p className="text-xs text-ink-dim mb-4">
-            DEBUG_LOG_TOKEN을 입력하세요.
+            운영 토큰을 입력하세요. 토큰은 로그인 요청에만 사용되고 저장되지 않습니다.
             {authFailed && <span className="text-blossom"> — 토큰이 올바르지 않아요.</span>}
           </p>
           <input
             type="password"
             value={tokenInput}
             onChange={event => setTokenInput(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') applyToken(); }}
+            onKeyDown={event => { if (event.key === 'Enter') void applyToken(); }}
             placeholder="운영 토큰"
             className="w-full rounded-xl border border-mystic/20 bg-elevated/70 p-3 text-sm text-ink outline-none focus:border-blossom/50"
           />
           <button
             type="button"
-            onClick={applyToken}
+            onClick={() => void applyToken()}
             className="mt-3 w-full rounded-xl bg-blossom/20 border border-blossom/50 py-2 text-sm font-bold text-blossom hover:bg-blossom/30"
           >
             접속
@@ -666,10 +831,17 @@ export default function AdminPage() {
               </button>
             )}
           </div>
-          <div className="text-[11px] text-ink-dim">
+          <div className="flex items-center gap-2 text-[11px] text-ink-dim">
             {lastError
               ? <span className="text-blossom">{lastError}</span>
               : `${REFRESH_MS / 1000}초마다 갱신 · 마지막 ${timeAgo(updatedAt)}`}
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="rounded border border-mystic/25 px-2 py-1 hover:text-ink"
+            >
+              로그아웃
+            </button>
           </div>
         </header>
 
@@ -711,8 +883,13 @@ export default function AdminPage() {
         {activeTab === 'tournaments' && (
           <TournamentsTab
             tournaments={adminTournaments}
+            templates={tournamentTemplates}
+            promotionFund={promotionFund}
+            serverNow={tournamentServerNow ?? updatedAt ?? 0}
             onCreate={createAdminTournament}
             onAction={runAdminTournamentAction}
+            onTemplateAction={runTemplateAction}
+            onAdjustFund={adjustPromotionFund}
           />
         )}
         {activeTab === 'players' && (
@@ -999,135 +1176,109 @@ function RoomRows({ room, expanded, onToggle }: {
 
 // ---------- 토너먼트 (MTT) ----------
 
-const MTT_PHASE_LABEL: Record<string, string> = {
-  registering: '등록 중', running: '진행 중', completed: '종료', cancelled: '취소됨',
+const MTT_STATUS_LABEL: Record<string, string> = {
+  'scheduled-hidden': '노출 전',
+  'scheduled-visible': '예정',
+  registering: '등록 중',
+  'start-delayed': '시작 지연',
+  starting: '시작 준비 중',
+  running: '진행 중',
+  'payout-pending': '상금 지급 처리 중',
+  'refund-pending': '환불 처리 중',
+  completed: '종료',
+  cancelled: '취소됨',
 };
 
 function TournamentsTab({
   tournaments,
+  templates,
+  promotionFund,
+  serverNow,
   onCreate,
   onAction,
+  onTemplateAction,
+  onAdjustFund,
 }: {
   tournaments: AdminTournament[];
-  onCreate: (draft: AdminTournamentDraft) => Promise<boolean>;
+  templates: AdminTournamentTemplate[];
+  promotionFund: PromotionFundPage | null;
+  serverNow: number;
+  onCreate: (draft: TournamentCreateDraft) => Promise<boolean>;
   onAction: (tournamentId: string, action: AdminTournamentAction) => Promise<boolean>;
+  onTemplateAction: (
+    templateId: string,
+    revision: number,
+    action: 'enable' | 'disable' | 'generate-next',
+  ) => Promise<boolean>;
+  onAdjustFund: (delta: number, reason: string) => Promise<boolean>;
 }) {
-  const [name, setName] = useState('Poker Doku Championship');
-  const [speed, setSpeed] = useState<MttSpeed>('standard');
-  const [maxEntrants, setMaxEntrants] = useState(24);
-  const [turnTime, setTurnTime] = useState(15);
-  const [botFill, setBotFill] = useState(true);
-  const [economyMode, setEconomyMode] = useState<'practice' | 'wallet'>('practice');
-  const [payoutPreset, setPayoutPreset] = useState<PayoutPresetId>('standard');
-  const [busy, setBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
   const [confirmCancelId, setConfirmCancelId] = useState<string | null>(null);
-  const [levels, setLevels] = useState<Record<string, number>>({});
-  const previewPool = maxEntrants * (economyMode === 'wallet' ? 1_500 : 10_000);
-  const previewPayouts = computePayouts(previewPool, maxEntrants, payoutPreset);
+  const [adjustment, setAdjustment] = useState({ delta: 0, reason: '' });
+  const [reviewAdjustment, setReviewAdjustment] = useState(false);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
 
-  const submitCreate = async () => {
-    if (busy || !name.trim()) return;
-    setBusy(true);
-    await onCreate({
-      name: name.trim(),
-      speed,
-      maxEntrants,
-      startAt: null,
-      botFill: economyMode === 'wallet' ? false : botFill,
-      turnTime,
-      economyMode,
-      payoutPreset,
-    });
-    setBusy(false);
+  const run = async (key: string, action: () => Promise<boolean>) => {
+    if (busyKey) return;
+    setBusyKey(key);
+    await action();
+    setBusyKey(null);
   };
 
   return (
     <section className="space-y-3">
-      <SectionBox className="p-3">
-        <h2 className="mb-3 text-sm font-bold text-blossom">토너먼트 개설</h2>
-        <div className="grid gap-2 md:grid-cols-4">
-          <input
-            value={name}
-            onChange={event => setName(event.target.value.slice(0, 30))}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs md:col-span-2"
-            aria-label="토너먼트 이름"
-          />
-          <select
-            value={speed}
-            onChange={event => setSpeed(event.target.value as MttSpeed)}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
-          >
-            <option value="standard">스탠다드</option>
-            <option value="turbo">터보</option>
-            <option value="hyper">하이퍼</option>
-          </select>
-          <select
-            value={maxEntrants}
-            onChange={event => setMaxEntrants(Number(event.target.value))}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
-          >
-            {[8, 12, 18, 24, 36, 48].map(value => (
-              <option key={value} value={value}>{value}명</option>
-            ))}
-          </select>
-          <select
-            value={payoutPreset}
-            onChange={event => setPayoutPreset(event.target.value as PayoutPresetId)}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
-          >
-            {Object.entries(PAYOUT_PRESETS).map(([id, preset]) => (
-              <option key={id} value={id}>{preset.label}</option>
-            ))}
-          </select>
-          <select
-            value={turnTime}
-            onChange={event => setTurnTime(Number(event.target.value))}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
-          >
-            {[8, 15, 30].map(value => (
-              <option key={value} value={value}>턴 {value}초</option>
-            ))}
-          </select>
-          <select
-            value={economyMode}
-            onChange={event => {
-              const next = event.target.value as 'practice' | 'wallet';
-              setEconomyMode(next);
-              if (next === 'wallet') setBotFill(false);
-            }}
-            className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
-          >
-            <option value="practice">연습 칩</option>
-            <option value="wallet">지갑</option>
-          </select>
-          <label className="flex items-center gap-2 rounded border border-mystic/20 px-2 text-xs">
-            <input
-              type="checkbox"
-              checked={botFill}
-              disabled={economyMode === 'wallet'}
-              onChange={event => setBotFill(event.target.checked)}
-            />
-            빈자리 봇 충원
-          </label>
-        </div>
-        <div className="mt-2 rounded-lg bg-black/20 p-2 text-[10px] text-ink-dim">
-          <span className="font-bold text-ink">{PAYOUT_PRESETS[payoutPreset].label}</span>
-          {' · '}{paidPlaces(maxEntrants, payoutPreset)}명 입상
-          {' · '}1위 {previewPayouts[0].toLocaleString()}
-          {' · '}미니 캐시 {previewPayouts.at(-1)?.toLocaleString()}
-          <div className="mt-1">
-            {previewPayouts.map((prize, index) => `${index + 1}위 ${prize.toLocaleString()}`).join(' · ')}
-          </div>
-        </div>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-bold text-blossom">토너먼트 운영</h2>
         <button
           type="button"
-          disabled={busy || !name.trim()}
-          onClick={() => void submitCreate()}
-          className="mt-2 rounded-lg bg-blossom px-3 py-1.5 text-xs font-bold text-abyss disabled:opacity-40"
+          onClick={() => setCreateOpen(true)}
+          className="rounded-lg bg-blossom px-3 py-1.5 text-xs font-bold text-abyss"
         >
-          {busy ? '개설 중…' : '토너먼트 개설'}
+          + 토너먼트 개설
         </button>
-      </SectionBox>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <PromotionFundPanel
+          fund={promotionFund}
+          adjustment={adjustment}
+          review={reviewAdjustment}
+          busy={busyKey === 'fund'}
+          onChange={setAdjustment}
+          onReview={setReviewAdjustment}
+          onExecute={() => void run('fund', async () => {
+            const ok = await onAdjustFund(adjustment.delta, adjustment.reason);
+            if (ok) {
+              setAdjustment({ delta: 0, reason: '' });
+              setReviewAdjustment(false);
+            }
+            return ok;
+          })}
+        />
+        <TemplatePanel
+          templates={templates}
+          busyKey={busyKey}
+          onAction={(template, action) => void run(
+            `template:${template.id}`,
+            () => onTemplateAction(template.id, template.revision, action),
+          )}
+        />
+      </div>
+
+      {createOpen && (
+        <AdminModal title="토너먼트 개설" onClose={() => setCreateOpen(false)}>
+          <TournamentCreateForm
+            serverNow={serverNow}
+            promotionAvailableBalance={promotionFund?.availableBalance ?? null}
+            onCancel={() => setCreateOpen(false)}
+            onSubmit={async draft => {
+              const ok = await onCreate(draft);
+              if (ok) setCreateOpen(false);
+              return ok;
+            }}
+          />
+        </AdminModal>
+      )}
       <h2 className="text-sm font-bold text-blossom">
         토너먼트 ({tournaments.length}) — 상태·테이블·스탠딩, 개입 이력은 이벤트 탭 mtt-* 필터
       </h2>
@@ -1138,82 +1289,98 @@ function TournamentsTab({
         <SectionBox key={t.id} className="p-3">
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="font-bold text-ink">{t.name}</span>
-            <span className="rounded bg-white/10 px-1.5 py-0.5">{MTT_PHASE_LABEL[t.phase] ?? t.phase}</span>
-            <span className="text-ink-dim">{t.speed} · Lv.{t.level}</span>
-            {t.economyMode === 'wallet' && (
-              <span className="rounded bg-gilded/20 px-1.5 py-0.5 font-bold text-gilded">💰 wallet</span>
+            <span className="rounded bg-white/10 px-1.5 py-0.5">
+              {MTT_STATUS_LABEL[t.status] ?? t.status}
+            </span>
+            <span className="rounded bg-mystic/15 px-1.5 py-0.5 text-mystic">
+              {t.registrationState}
+            </span>
+            <span className="text-ink-dim">
+              {t.economyMode === 'freeroll' ? '프리롤' : '유료 토너먼트'}
+            </span>
+            {t.statusReason && (
+              <span className="rounded bg-blossom/15 px-1.5 py-0.5 text-blossom">
+                {t.statusReason}
+              </span>
             )}
-            {t.paused && <span className="rounded bg-blossom/20 px-1.5 py-0.5 font-bold text-blossom">⏸ 일시정지</span>}
-            {t.onBreak && <span className="rounded bg-cyber/20 px-1.5 py-0.5 text-cyber">☕ 브레이크</span>}
-            {t.h4hActive && <span className="rounded bg-gilded/20 px-1.5 py-0.5 text-gilded">⚔️ H4H</span>}
             <span className="ml-auto text-ink-dim">
-              잔존 {t.remaining}/{t.seatedCount || t.entrantCount} · 풀 <Amount value={t.prizePool} />
+              등록 {t.acceptedEntrants}/{t.maxEntrants} · 최소 {t.minEntrants}
+              {' · '}총상금 <Amount value={t.prizePool} />
             </span>
           </div>
-          <div className="mt-1 text-[10px] text-ink-dim">
-            id {t.id} · 호스트 {t.hostId.slice(0, 12)}… · 개설 {fmtTime(t.createdAt)}
-            {t.startedAt !== null && ` · 시작 ${fmtTime(t.startedAt)}`}
-            {t.finishedAt !== null && ` · 종료 ${fmtTime(t.finishedAt)}`}
-            {' · '}{PAYOUT_PRESETS[t.payoutPreset]?.label ?? t.payoutPreset}
+          <div className="mt-2 grid gap-1 text-[10px] text-ink-dim md:grid-cols-2">
+            <span>id {t.id}</span>
+            <span>회차 {t.occurrenceKey}</span>
+            <span>
+              시작 {t.schedule.startsAt === null ? '수동' : fmtTime(t.schedule.startsAt)}
+              {' · '}등록 {fmtTime(t.schedule.registrationOpensAt)}
+            </span>
+            <span>
+              템플릿 {t.templateId ?? '단발성'}
+              {t.templateRevision !== null && ` · rev.${t.templateRevision}`}
+            </span>
+            <span>
+              시작 시도 {t.startAttempt}
+              {t.nextRetryAt !== null && ` · 재시도 ${fmtTime(t.nextRetryAt)}`}
+            </span>
+            <span>
+              정산 시도 {t.settlementAttempt}
+              {t.settlementNextRetryAt !== null &&
+                ` · 재시도 ${fmtTime(t.settlementNextRetryAt)}`}
+            </span>
+            <span className={t.startLeaseUntil !== null && t.startLeaseUntil < serverNow ? 'text-blossom' : ''}>
+              시작 리스 {t.startOwnerId ?? '없음'}
+              {t.startLeaseUntil !== null && ` · ${fmtTime(t.startLeaseUntil)}`}
+            </span>
+            <span className={t.settlementLeaseUntil !== null && t.settlementLeaseUntil < serverNow ? 'text-blossom' : ''}>
+              정산 리스 {t.settlementOwnerId ?? '없음'}
+              {t.settlementLeaseUntil !== null && ` · ${fmtTime(t.settlementLeaseUntil)}`}
+            </span>
           </div>
-          {(t.phase === 'registering' || t.phase === 'running') && (
+          {t.invariantWarnings.length > 0 && (
+            <div className="mt-2 rounded-lg border border-blossom/35 bg-blossom/10 p-2 text-[10px] text-blossom">
+              무결성 경고 · {t.invariantWarnings.join(' · ')}
+            </div>
+          )}
+          {['registering', 'start-delayed', 'running'].includes(t.status) && (
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              {t.phase === 'registering' && (
+              {['registering', 'start-delayed'].includes(t.status) && (
                 <button
                   type="button"
-                  onClick={() => void onAction(t.id, { action: 'start' })}
+                  disabled={busyKey !== null}
+                  onClick={() => void run(`instance:${t.id}`, () => onAction(t.id, { action: 'start' }))}
                   className="rounded bg-cyber/20 px-2 py-1 text-[10px] font-bold text-cyber"
                 >
-                  시작
+                  지금 시작
                 </button>
               )}
-              {t.phase === 'running' && !t.paused && (
+              {t.status === 'running' && !t.live?.paused && (
                 <button
                   type="button"
-                  onClick={() => void onAction(t.id, { action: 'pause' })}
+                  disabled={busyKey !== null}
+                  onClick={() => void run(`instance:${t.id}`, () => onAction(t.id, { action: 'pause' }))}
                   className="rounded bg-gilded/20 px-2 py-1 text-[10px] font-bold text-gilded"
                 >
                   일시정지
                 </button>
               )}
-              {t.phase === 'running' && t.paused && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void onAction(t.id, { action: 'resume' })}
-                    className="rounded bg-cyber/20 px-2 py-1 text-[10px] font-bold text-cyber"
-                  >
-                    재개
-                  </button>
-                  <input
-                    type="number"
-                    min={1}
-                    value={levels[t.id] ?? t.level}
-                    onChange={event => setLevels(current => ({
-                      ...current,
-                      [t.id]: Number(event.target.value),
-                    }))}
-                    className="w-16 rounded border border-mystic/30 bg-abyss px-2 py-1 text-[10px]"
-                    aria-label={`${t.name} 레벨`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void onAction(t.id, {
-                      action: 'set-level',
-                      level: levels[t.id] ?? t.level,
-                    })}
-                    className="rounded bg-white/10 px-2 py-1 text-[10px]"
-                  >
-                    레벨 적용
-                  </button>
-                </>
+              {t.status === 'running' && t.live?.paused && (
+                <button
+                  type="button"
+                  disabled={busyKey !== null}
+                  onClick={() => void run(`instance:${t.id}`, () => onAction(t.id, { action: 'resume' }))}
+                  className="rounded bg-cyber/20 px-2 py-1 text-[10px] font-bold text-cyber"
+                >
+                  재개
+                </button>
               )}
               <button
                 type="button"
+                disabled={busyKey !== null}
                 onClick={() => {
                   if (confirmCancelId === t.id) {
                     setConfirmCancelId(null);
-                    void onAction(t.id, { action: 'cancel' });
+                    void run(`instance:${t.id}`, () => onAction(t.id, { action: 'cancel' }));
                   } else {
                     setConfirmCancelId(t.id);
                   }
@@ -1224,7 +1391,7 @@ function TournamentsTab({
               </button>
             </div>
           )}
-          {t.tables.length > 0 && (
+          {(t.live?.tables?.length ?? 0) > 0 && (
             <div className="mt-2 overflow-x-auto">
               <table className="w-full text-left text-[11px]">
                 <thead className="text-[10px] text-ink-dim">
@@ -1233,7 +1400,7 @@ function TournamentsTab({
                   </tr>
                 </thead>
                 <tbody>
-                  {t.tables.map(table => (
+                  {t.live!.tables!.map(table => (
                     <tr key={table.roomId} className="border-t border-white/5">
                       <td className="px-3 py-1.5 font-bold">T{table.no}</td>
                       <td className="px-3 py-1.5 text-ink-dim">{table.roomId}</td>
@@ -1248,15 +1415,15 @@ function TournamentsTab({
               </table>
             </div>
           )}
-          {t.standings.length > 0 && (
+          {(t.live?.standings?.length ?? 0) > 0 && (
             <details className="mt-2">
               <summary className="cursor-pointer text-[11px] text-ink-dim hover:text-ink">
-                스탠딩 전체 ({t.standings.length}명)
+                스탠딩 전체 ({t.live!.standings!.length}명)
               </summary>
               <div className="mt-1 max-h-64 overflow-y-auto">
                 <table className="w-full text-left text-[11px]">
                   <tbody>
-                    {t.standings.map((row, i) => (
+                    {t.live!.standings!.map((row, i) => (
                       <tr key={row.playerId} className="border-t border-white/5">
                         <td className="px-3 py-1 tabular text-ink-dim">{row.place ?? i + 1}</td>
                         <td className="px-3 py-1">{row.name}</td>
@@ -1269,7 +1436,7 @@ function TournamentsTab({
                           {row.tableNo !== null ? `T${row.tableNo}` : ''}
                         </td>
                         <td className="px-3 py-1 text-right">
-                          {t.phase === 'running' && row.place === null && (
+                          {t.status === 'running' && row.place === null && (
                             <button
                               type="button"
                               onClick={() => void onAction(t.id, {
@@ -1292,6 +1459,191 @@ function TournamentsTab({
         </SectionBox>
       ))}
     </section>
+  );
+}
+
+function PromotionFundPanel({
+  fund,
+  adjustment,
+  review,
+  busy,
+  onChange,
+  onReview,
+  onExecute,
+}: {
+  fund: PromotionFundPage | null;
+  adjustment: { delta: number; reason: string };
+  review: boolean;
+  busy: boolean;
+  onChange: (value: { delta: number; reason: string }) => void;
+  onReview: (value: boolean) => void;
+  onExecute: () => void;
+}) {
+  const before = fund?.availableBalance ?? 0;
+  const after = before + adjustment.delta;
+  return (
+    <SectionBox className="p-3">
+      <h3 className="text-xs font-bold text-gilded">프리롤 운영 기금</h3>
+      <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-lg bg-black/20 p-2">
+          <p className="text-[10px] text-ink-dim">사용 가능</p>
+          <p className="font-bold text-gilded">{before.toLocaleString()}</p>
+        </div>
+        <div className="rounded-lg bg-black/20 p-2">
+          <p className="text-[10px] text-ink-dim">프리롤 예약</p>
+          <p className="font-bold text-cyber">{(fund?.reservedTotal ?? 0).toLocaleString()}</p>
+        </div>
+      </div>
+
+      <div className="mt-3 rounded-lg border border-mystic/20 p-2">
+        <p className="text-[10px] font-bold text-ink">기금 조정 · 초안 → 검토 → 실행</p>
+        {!review ? (
+          <div className="mt-2 grid gap-2 md:grid-cols-[120px_1fr_auto]">
+            <input
+              type="number"
+              value={adjustment.delta}
+              onChange={event => onChange({ ...adjustment, delta: Number(event.target.value) })}
+              aria-label="조정 금액"
+              className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+            />
+            <input
+              value={adjustment.reason}
+              maxLength={200}
+              onChange={event => onChange({ ...adjustment, reason: event.target.value })}
+              placeholder="조정 사유"
+              aria-label="조정 사유"
+              className="rounded border border-mystic/30 bg-abyss px-2 py-1.5 text-xs"
+            />
+            <button
+              type="button"
+              disabled={!Number.isSafeInteger(adjustment.delta) || adjustment.delta === 0 || adjustment.reason.trim().length < 3}
+              onClick={() => onReview(true)}
+              className="rounded bg-white/10 px-2 py-1.5 text-[10px] font-bold disabled:opacity-40"
+            >
+              검토
+            </button>
+          </div>
+        ) : (
+          <div className="mt-2 rounded-lg border border-gilded/25 bg-gilded/5 p-2 text-xs">
+            <p>조정 전 <b>{before.toLocaleString()}</b></p>
+            <p>조정액 <b className={adjustment.delta > 0 ? 'text-green-400' : 'text-blossom'}>{adjustment.delta > 0 ? '+' : ''}{adjustment.delta.toLocaleString()}</b></p>
+            <p>조정 후 <b className={after < 0 ? 'text-blossom' : 'text-gilded'}>{after.toLocaleString()}</b></p>
+            <p className="mt-1 text-ink-dim">사유 · {adjustment.reason}</p>
+            <div className="mt-2 flex gap-2">
+              <button type="button" disabled={busy} onClick={() => onReview(false)} className="rounded bg-white/10 px-2 py-1 text-[10px]">초안 수정</button>
+              <button type="button" disabled={busy || after < 0} onClick={onExecute} className="rounded bg-blossom px-2 py-1 text-[10px] font-bold text-abyss disabled:opacity-40">
+                {busy ? '실행 중…' : '조정 실행'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <details className="mt-3">
+        <summary className="cursor-pointer text-[10px] font-bold text-ink-dim">
+          최근 원장 {fund?.ledger.length ?? 0}건
+        </summary>
+        <div className="mt-1 max-h-52 overflow-y-auto rounded-lg border border-mystic/20">
+          {(fund?.ledger ?? []).map(entry => (
+            <div key={entry.id} className="border-b border-white/5 p-2 text-[10px]">
+              <div className="flex justify-between">
+                <span className="font-bold text-ink">{entry.kind}</span>
+                <Amount value={entry.delta} signed />
+              </div>
+              <p className="text-ink-dim">{entry.reason} · 잔액 {entry.balanceAfter.toLocaleString()}</p>
+              <p className="text-ink-dim">{fmtTime(entry.createdAt)}{entry.instanceId && ` · ${entry.instanceId}`}</p>
+            </div>
+          ))}
+          {!fund?.ledger.length && <p className="p-2 text-[10px] text-ink-dim">원장 기록 없음</p>}
+        </div>
+      </details>
+    </SectionBox>
+  );
+}
+
+function TemplatePanel({
+  templates,
+  busyKey,
+  onAction,
+}: {
+  templates: AdminTournamentTemplate[];
+  busyKey: string | null;
+  onAction: (
+    template: AdminTournamentTemplate,
+    action: 'enable' | 'disable' | 'generate-next',
+  ) => void;
+}) {
+  return (
+    <SectionBox className="p-3">
+      <h3 className="text-xs font-bold text-cyber">반복 템플릿 ({templates.length})</h3>
+      <div className="mt-2 max-h-96 space-y-2 overflow-y-auto">
+        {templates.map(template => (
+          <div key={template.id} className="rounded-lg border border-mystic/20 p-2 text-[10px]">
+            <div className="flex items-center gap-2">
+              <b className="text-ink">{template.name}</b>
+              <span className={template.enabled ? 'text-green-400' : 'text-ink-dim'}>
+                {template.enabled ? '활성' : '비활성'}
+              </span>
+              <span className="ml-auto text-ink-dim">rev.{template.revision}</span>
+            </div>
+            <p className="mt-1 text-ink-dim">
+              {template.recurrence.kind} · 최소 {template.config.field.minEntrants} / 최대 {template.config.field.maxEntrants}
+              {' · '}{template.config.economy.mode === 'freeroll' ? '프리롤' : '유료 토너먼트'}
+            </p>
+            <p className="text-ink-dim">
+              노출 리드 {Math.round(template.visibleLeadMs / 60_000)}분 · 등록 리드 {Math.round(template.registrationLeadMs / 60_000)}분
+            </p>
+            <div className="mt-2 flex gap-1.5">
+              <button
+                type="button"
+                disabled={busyKey !== null}
+                onClick={() => onAction(template, template.enabled ? 'disable' : 'enable')}
+                className="rounded bg-white/10 px-2 py-1 font-bold"
+              >
+                {template.enabled ? '비활성화' : '활성화'}
+              </button>
+              <button
+                type="button"
+                disabled={busyKey !== null}
+                onClick={() => onAction(template, 'generate-next')}
+                className="rounded bg-cyber/15 px-2 py-1 font-bold text-cyber"
+              >
+                다음 회차 생성
+              </button>
+            </div>
+          </div>
+        ))}
+        {templates.length === 0 && <p className="text-[10px] text-ink-dim">반복 템플릿 없음</p>}
+      </div>
+    </SectionBox>
+  );
+}
+
+function AdminModal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 md:items-center md:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="max-h-[96dvh] w-full overflow-y-auto rounded-t-2xl border border-mystic/30 bg-panel p-4 md:max-w-3xl md:rounded-2xl"
+        onClick={event => event.stopPropagation()}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <h2 className="text-sm font-bold text-ink">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="닫기" className="text-ink-dim hover:text-ink">✕</button>
+        </div>
+        {children}
+      </div>
+    </div>
   );
 }
 

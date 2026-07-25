@@ -6,6 +6,7 @@ import { useSettingsStore } from '@/lib/store/settings-store';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import { useInviteLink } from '@/lib/hooks/use-invite-link';
 import { TournamentState } from '@/lib/poker/types';
+import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
 import Button from '@/components/ui/Button';
 import NeonText from '@/components/ui/NeonText';
 import SettingsModal from './SettingsModal';
@@ -37,6 +38,16 @@ export default function TopBar({ onLeave }: TopBarProps) {
   // MTT 게임 중 토너 상세(내 순위/순위표/구조) — 배지 탭으로 진입 (2026-07-24 모바일 QA)
   const [tournamentOpen, setTournamentOpen] = useState(false);
   const mttTournamentId = gameState?.tournament?.tournamentId;
+  const tournaments = useGameStore(state => state.tournaments);
+  const serverClockOffsetMs = useGameStore(state => state.serverClockOffsetMs);
+  const tournamentSummary = (tournaments as PublicTournamentSummary[])
+    .find(tournament => tournament.id === mttTournamentId);
+  const lateRegistrationSeconds = useCountdownTo(
+    tournamentSummary?.registrationState === 'open-late' &&
+      tournamentSummary.lateRegistrationClosesAt
+      ? tournamentSummary.lateRegistrationClosesAt - serverClockOffsetMs
+      : 0,
+  );
   const { copied, copy } = useInviteLink(currentRoomId);
 
   return (
@@ -65,6 +76,13 @@ export default function TopBar({ onLeave }: TopBarProps) {
                 className="min-w-0 max-w-full overflow-hidden rounded-lg px-1 py-0.5 hover:bg-white/5 active:bg-white/10 transition-colors"
               >
                 <TournamentBadge tournament={gameState.tournament} showInfoHint />
+                {tournamentSummary?.registrationState === 'open-late' && (
+                  <span className="mt-0.5 block text-[9px] font-bold text-blossom">
+                    레이트 레지 진행 중
+                    {lateRegistrationSeconds !== null &&
+                      ` · 마감 ${formatCountdown(lateRegistrationSeconds)}`}
+                  </span>
+                )}
               </button>
             ) : (
               <TournamentBadge tournament={gameState.tournament} />
