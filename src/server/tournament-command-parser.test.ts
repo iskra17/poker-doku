@@ -131,6 +131,8 @@ describe('parseCreateTournamentCommand', () => {
     }), NOW);
 
     expect(parsed.schedule.startsAt).toBe(NOW + 10 * MINUTE);
+    expect(parsed.firstStartsAt).toBeNull();
+    expect(parsed.recurrenceEndsAt).toBeNull();
   });
 
   it.each([
@@ -184,14 +186,19 @@ describe('parseCreateTournamentCommand', () => {
     const parsed = parseCreateTournamentCommand(freeroll({
       schedule,
       recurrence: { kind: 'weekly', weekday: 6, hour: 23, minute: 59 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: schedule.startsAt + 28 * 24 * 60 * MINUTE,
       visibleLeadMs: 7 * 24 * 60 * MINUTE,
       registrationLeadMs: 6 * 24 * 60 * MINUTE,
     }), NOW);
     expect(parsed.recurrence?.kind).toBe('weekly');
+    expect(parsed.firstStartsAt).toBe(schedule.startsAt);
 
     expect(() => parseCreateTournamentCommand(freeroll({
       schedule,
       recurrence: { kind: 'hourly', minute: 60 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: schedule.startsAt + 60 * MINUTE,
       visibleLeadMs: MINUTE,
       registrationLeadMs: MINUTE,
     }), NOW)).toThrow('recurrence');
@@ -199,6 +206,8 @@ describe('parseCreateTournamentCommand', () => {
     expect(() => parseCreateTournamentCommand(freeroll({
       schedule,
       recurrence: { kind: 'daily', hour: 12, minute: 0 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: schedule.startsAt + 24 * 60 * MINUTE,
       visibleLeadMs: MINUTE,
       registrationLeadMs: 2 * MINUTE,
     }), NOW)).toThrow('recurrence-lead');
@@ -206,6 +215,8 @@ describe('parseCreateTournamentCommand', () => {
     expect(() => parseCreateTournamentCommand(wallet({
       schedule,
       recurrence: { kind: 'daily', hour: 12, minute: 0 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: schedule.startsAt + 24 * 60 * MINUTE,
       visibleLeadMs: 21 * MINUTE,
       registrationLeadMs: 20 * MINUTE + 1,
     }), NOW)).toThrow('wallet-registration-window');
@@ -218,9 +229,29 @@ describe('parseCreateTournamentCommand', () => {
         manualStartExpiresAt: NOW + 6 * 60 * MINUTE,
       },
       recurrence: { kind: 'hourly', minute: 0 },
+      firstStartsAt: NOW + 10 * MINUTE,
+      recurrenceEndsAt: NOW + 70 * MINUTE,
       visibleLeadMs: MINUTE,
       registrationLeadMs: MINUTE,
     }), NOW)).toThrow('recurrence-schedule');
+
+    expect(() => parseCreateTournamentCommand(freeroll({
+      schedule,
+      recurrence: { kind: 'hourly', minute: 0 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: null,
+      visibleLeadMs: MINUTE,
+      registrationLeadMs: MINUTE,
+    }), NOW)).toThrow('recurrence-boundary');
+
+    expect(() => parseCreateTournamentCommand(freeroll({
+      schedule,
+      recurrence: { kind: 'hourly', minute: 0 },
+      firstStartsAt: schedule.startsAt,
+      recurrenceEndsAt: schedule.startsAt - 1,
+      visibleLeadMs: MINUTE,
+      registrationLeadMs: MINUTE,
+    }), NOW)).toThrow('recurrence-boundary');
   });
 
   it('accepts ordered structure segments and rejects blind regression', () => {

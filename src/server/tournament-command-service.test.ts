@@ -420,6 +420,74 @@ describe('TournamentCommandService', () => {
     database.close();
   });
 
+  it('persists reviewed recurrence boundaries on a template', () => {
+    const database = openPokerDatabase(':memory:');
+    const instances = new TournamentInstanceRepository(
+      database,
+      () => ADMIN_NOW,
+    );
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => ADMIN_NOW,
+    });
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      undefined,
+      { database, instances, scheduler, now: () => ADMIN_NOW },
+    );
+    const firstStartsAt = ADMIN_NOW + 60 * 60_000;
+    const recurrenceEndsAt = firstStartsAt + 24 * 60 * 60_000;
+    const command = persistentFreeroll({
+      schedule: {
+        visibleAt: firstStartsAt - 30 * 60_000,
+        registrationOpensAt: firstStartsAt - 20 * 60_000,
+        startsAt: firstStartsAt,
+        manualStartExpiresAt: null,
+      },
+      recurrence: { kind: 'hourly', minute: 0 },
+      firstStartsAt,
+      recurrenceEndsAt,
+      visibleLeadMs: 30 * 60_000,
+      registrationLeadMs: 20 * 60_000,
+    });
+
+    expect(durableService.createRecurringTemplate(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      command,
+      ADMIN_NOW,
+    )).toMatchObject({
+      ok: true,
+      template: {
+        firstStartsAt,
+        recurrenceEndsAt,
+      },
+    });
+    const revisedFirstStartsAt = firstStartsAt + 60 * 60_000;
+    const revisedRecurrenceEndsAt =
+      revisedFirstStartsAt + 48 * 60 * 60_000;
+    expect(durableService.patchRecurringTemplate(
+      { kind: 'operator-profile', profileId: 'operator-1' },
+      command.requestId,
+      1,
+      {
+        firstStartsAt: revisedFirstStartsAt,
+        recurrenceEndsAt: revisedRecurrenceEndsAt,
+      },
+      Date.now(),
+    )).toMatchObject({
+      ok: true,
+      template: {
+        revision: 2,
+        firstStartsAt: revisedFirstStartsAt,
+        recurrenceEndsAt: revisedRecurrenceEndsAt,
+      },
+    });
+
+    scheduler.close();
+    database.close();
+  });
+
   it('persists the exact reviewed config and reserves its freeroll prize', () => {
     const database = openPokerDatabase(':memory:');
     const instances = new TournamentInstanceRepository(
@@ -456,6 +524,8 @@ describe('TournamentCommandService', () => {
         manualStartExpiresAt: null,
       },
       recurrence: null,
+      firstStartsAt: null,
+      recurrenceEndsAt: null,
       visibleLeadMs: null,
       registrationLeadMs: null,
       turnTimeSeconds: 15,

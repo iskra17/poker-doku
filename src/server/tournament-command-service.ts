@@ -357,6 +357,8 @@ export class TournamentCommandService {
       parsed = parseCreateTournamentCommand(raw, at);
       if (
         parsed.recurrence === null
+        || parsed.firstStartsAt === null
+        || parsed.recurrenceEndsAt === null
         || parsed.visibleLeadMs === null
         || parsed.registrationLeadMs === null
       ) {
@@ -374,6 +376,8 @@ export class TournamentCommandService {
         enabled: true,
         timezone: 'Asia/Seoul',
         recurrence: parsed.recurrence,
+        firstStartsAt: parsed.firstStartsAt,
+        recurrenceEndsAt: parsed.recurrenceEndsAt,
         visibleLeadMs: parsed.visibleLeadMs,
         registrationLeadMs: parsed.registrationLeadMs,
         config: parsed.config,
@@ -434,6 +438,8 @@ export class TournamentCommandService {
       );
       if (
         parsed.recurrence === null
+        || parsed.firstStartsAt === null
+        || parsed.recurrenceEndsAt === null
         || parsed.visibleLeadMs === null
         || parsed.registrationLeadMs === null
       ) {
@@ -442,6 +448,8 @@ export class TournamentCommandService {
       if (
         enabled === current.enabled
         && parsed.config.name === current.name
+        && parsed.firstStartsAt === current.firstStartsAt
+        && parsed.recurrenceEndsAt === current.recurrenceEndsAt
         && parsed.visibleLeadMs === current.visibleLeadMs
         && parsed.registrationLeadMs === current.registrationLeadMs
         && sameJsonValue(parsed.recurrence, current.recurrence)
@@ -459,6 +467,8 @@ export class TournamentCommandService {
         name: parsed.config.name,
         enabled,
         recurrence: parsed.recurrence,
+        firstStartsAt: parsed.firstStartsAt,
+        recurrenceEndsAt: parsed.recurrenceEndsAt,
         visibleLeadMs: parsed.visibleLeadMs,
         registrationLeadMs: parsed.registrationLeadMs,
         config: parsed.config,
@@ -689,6 +699,12 @@ export class TournamentCommandService {
       enabled: Number(row.enabled) === 1,
       timezone: 'Asia/Seoul',
       recurrence: JSON.parse(String(row.recurrence_json)),
+      firstStartsAt: row.first_starts_at === null
+        ? null
+        : Number(row.first_starts_at),
+      recurrenceEndsAt: row.recurrence_ends_at === null
+        ? null
+        : Number(row.recurrence_ends_at),
       visibleLeadMs: Number(row.visible_lead_ms),
       registrationLeadMs: Number(row.registration_lead_ms),
       config: JSON.parse(String(row.config_json)),
@@ -717,11 +733,16 @@ export class TournamentCommandService {
     const numericRegistrationLead = typeof registrationLeadMs === 'number'
       ? registrationLeadMs
       : current.registrationLeadMs;
-    const startsAt = at + Math.max(
-      60_000,
-      numericVisibleLead,
-      numericRegistrationLead,
-    );
+    const firstStartsAt = patch.firstStartsAt ?? current.firstStartsAt;
+    const recurrenceEndsAt =
+      patch.recurrenceEndsAt ?? current.recurrenceEndsAt;
+    const startsAt = typeof firstStartsAt === 'number'
+      ? firstStartsAt
+      : at + Math.max(
+          60_000,
+          numericVisibleLead,
+          numericRegistrationLead,
+        );
     return {
       requestId: '00000000-0000-4000-8000-000000000000',
       name: patch.name ?? current.name,
@@ -744,6 +765,8 @@ export class TournamentCommandService {
         manualStartExpiresAt: null,
       },
       recurrence: patch.recurrence ?? current.recurrence,
+      firstStartsAt,
+      recurrenceEndsAt,
       visibleLeadMs,
       registrationLeadMs,
     };
@@ -819,6 +842,8 @@ const TEMPLATE_PATCH_FIELDS = new Set([
   'payout',
   'lateRegistration',
   'recurrence',
+  'firstStartsAt',
+  'recurrenceEndsAt',
   'visibleLeadMs',
   'registrationLeadMs',
 ]);

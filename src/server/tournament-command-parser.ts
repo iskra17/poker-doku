@@ -212,7 +212,11 @@ function parseRecurrenceSettings(
   economyMode: TournamentEconomyPolicy['mode'],
 ): Pick<
   CreateTournamentCommand,
-  'recurrence' | 'visibleLeadMs' | 'registrationLeadMs'
+  | 'recurrence'
+  | 'firstStartsAt'
+  | 'recurrenceEndsAt'
+  | 'visibleLeadMs'
+  | 'registrationLeadMs'
 > {
   if (raw.recurrence === undefined || raw.recurrence === null) {
     if (
@@ -221,11 +225,15 @@ function parseRecurrenceSettings(
         raw.registrationLeadMs !== undefined
         && raw.registrationLeadMs !== null
       )
+      || (raw.firstStartsAt !== undefined && raw.firstStartsAt !== null)
+      || (raw.recurrenceEndsAt !== undefined && raw.recurrenceEndsAt !== null)
     ) {
-      fail('recurrence-lead');
+      fail('recurrence-boundary');
     }
     return {
       recurrence: null,
+      firstStartsAt: null,
+      recurrenceEndsAt: null,
       visibleLeadMs: null,
       registrationLeadMs: null,
     };
@@ -234,6 +242,16 @@ function parseRecurrenceSettings(
     fail('recurrence-schedule');
   }
   const recurrence = parseRecurrence(raw.recurrence);
+  if (
+    !isEpochMs(raw.firstStartsAt)
+    || !isEpochMs(raw.recurrenceEndsAt)
+    || raw.firstStartsAt !== schedule.startsAt
+    || raw.recurrenceEndsAt < raw.firstStartsAt
+  ) {
+    fail('recurrence-boundary');
+  }
+  const firstStartsAt = raw.firstStartsAt;
+  const recurrenceEndsAt = raw.recurrenceEndsAt;
   const visibleLeadMs = safeIntegerIn(
     raw.visibleLeadMs,
     0,
@@ -251,7 +269,13 @@ function parseRecurrenceSettings(
       : 'recurrence-lead',
   );
   if (visibleLeadMs < registrationLeadMs) fail('recurrence-lead');
-  return { recurrence, visibleLeadMs, registrationLeadMs };
+  return {
+    recurrence,
+    firstStartsAt,
+    recurrenceEndsAt,
+    visibleLeadMs,
+    registrationLeadMs,
+  };
 }
 
 function materializePresetStructure(
