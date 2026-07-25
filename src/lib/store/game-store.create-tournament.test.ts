@@ -45,6 +45,8 @@ describe('game store persistent tournament creation', () => {
         manualStartExpiresAt: null,
       },
       recurrence: null,
+      firstStartsAt: null,
+      recurrenceEndsAt: null,
       visibleLeadMs: null,
       registrationLeadMs: null,
       turnTimeSeconds: 15,

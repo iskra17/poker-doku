@@ -374,6 +374,10 @@ export interface CreatePersistentTournamentRequest {
     manualStartExpiresAt: number | null;
   };
   recurrence: TournamentRecurrence | null;
+  /** 반복 템플릿의 첫 회차 (schedule.startsAt과 같아야 한다). 단발성은 null */
+  firstStartsAt: number | null;
+  /** 반복 템플릿의 마지막 회차 (포함). 단발성은 null */
+  recurrenceEndsAt: number | null;
   visibleLeadMs: number | null;
   registrationLeadMs: number | null;
   turnTimeSeconds: 8 | 15 | 30;

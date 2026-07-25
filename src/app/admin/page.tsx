@@ -216,6 +216,8 @@ interface AdminTournamentTemplate {
   enabled: boolean;
   timezone: 'Asia/Seoul';
   recurrence: { kind: string; minute: number; hour?: number; weekday?: number };
+  firstStartsAt: number | null;
+  recurrenceEndsAt: number | null;
   visibleLeadMs: number;
   registrationLeadMs: number;
   config: {
@@ -1588,11 +1590,18 @@ function TemplatePanel({
               <span className="ml-auto text-ink-dim">rev.{template.revision}</span>
             </div>
             <p className="mt-1 text-ink-dim">
-              {template.recurrence.kind} · 최소 {template.config.field.minEntrants} / 최대 {template.config.field.maxEntrants}
+              {RECURRENCE_LABELS[template.recurrence.kind] ?? template.recurrence.kind}
+              {' · '}최소 {template.config.field.minEntrants} / 최대 {template.config.field.maxEntrants}
+              {template.config.field.minEntrants === template.config.field.maxEntrants && ' (정원 고정)'}
               {' · '}{template.config.economy.mode === 'freeroll' ? '프리롤' : '유료 토너먼트'}
             </p>
             <p className="text-ink-dim">
-              노출 리드 {Math.round(template.visibleLeadMs / 60_000)}분 · 등록 리드 {Math.round(template.registrationLeadMs / 60_000)}분
+              첫 회차 {formatTemplateBoundary(template.firstStartsAt)}
+              {' · '}반복 마감 {formatTemplateBoundary(template.recurrenceEndsAt)}
+            </p>
+            <p className="text-ink-dim">
+              로비 노출 리드 {Math.round(template.visibleLeadMs / 60_000)}분
+              {' · '}등록 시작 리드 {Math.round(template.registrationLeadMs / 60_000)}분
             </p>
             <div className="mt-2 flex gap-1.5">
               <button
@@ -1618,6 +1627,29 @@ function TemplatePanel({
       </div>
     </SectionBox>
   );
+}
+
+const RECURRENCE_LABELS: Record<string, string> = {
+  hourly: '매시간 반복',
+  daily: '매일 반복',
+  weekly: '매주 반복',
+};
+
+const TEMPLATE_BOUNDARY_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+/** 마이그레이션 v29 이전 템플릿은 경계가 비어 있고 비활성 상태로만 남는다. */
+function formatTemplateBoundary(epoch: number | null): string {
+  return epoch === null
+    ? '미지정(레거시)'
+    : TEMPLATE_BOUNDARY_FORMATTER.format(epoch);
 }
 
 function AdminModal({
