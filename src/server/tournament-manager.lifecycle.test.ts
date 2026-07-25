@@ -3,6 +3,7 @@ import { RoomManager } from './room-manager';
 import {
   TournamentManager,
   type CreateTournamentInput,
+  type TournamentManagerOptions,
 } from './tournament-manager';
 
 const EMPTY_TTL_MS = 10_000;
@@ -24,6 +25,52 @@ function tournamentInput(
     hostId,
     ...overrides,
   };
+}
+
+function persistentSnapshot(id: string) {
+  return {
+    id,
+    status: 'starting',
+    economyMode: 'freeroll',
+    directorProfileId: 'director-1',
+    registrationState: 'open-late',
+    registrationGeneration: 1,
+    registrationOwnerToken: null,
+    config: {
+      version: 2,
+      name: 'Persistent MTT',
+      economy: { mode: 'freeroll', promotionAccountId: 'global' },
+      tableSize: 6,
+      field: {
+        minEntrants: 8,
+        maxEntrants: 12,
+        botFillToMinimum: true,
+      },
+      turnTimeSeconds: 15,
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [{
+          kind: 'level',
+          durationMs: 480_000,
+          smallBlind: 50,
+          bigBlind: 100,
+          bigBlindAnte: 0,
+        }],
+      },
+      prizePool: { kind: 'promotion-funded', totalPrize: 100_000 },
+      payout: {
+        tableVersion: 2,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+      },
+      lateRegistration: {
+        enabled: true,
+        durationLevels: 2,
+        minStartingStackBb: 20,
+      },
+    },
+  } as const;
 }
 
 describe('TournamentManager registering lifecycle', () => {
@@ -263,6 +310,66 @@ describe('TournamentManager registering lifecycle', () => {
     expect(manager.listTournaments()).toHaveLength(1);
     expect(seated).toHaveBeenCalledOnce();
     expect(updates).toHaveBeenCalled();
+  });
+
+  it('routes every persistent next-hand gate through the repository-backed coordinator', () => {
+    const readInstance = vi.fn(() => ({
+      status: 'running',
+      registrationState: 'open-late',
+      registrationGeneration: 1,
+      registrationOwnerToken: null,
+    }));
+    const persistentOptions = {
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance,
+        commitLateMttBatch: vi.fn(),
+      },
+    };
+    manager.shutdown();
+    manager = new TournamentManager(
+      roomManager,
+      {},
+      persistentOptions as TournamentManagerOptions,
+    );
+    const snapshot = persistentSnapshot('persistent-gate');
+    const prepared = manager.prepareFromInstance(
+      snapshot,
+      [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      'owner-1',
+    );
+    manager.activatePreparedTournament(
+      snapshot.id,
+      'owner-1',
+      Date.now(),
+    );
+
+    expect(manager.roomHooks.checkNextHandGate?.(prepared.roomIds[0]!))
+      .toEqual({ status: 'allow' });
+    expect(readInstance).toHaveBeenCalledWith(snapshot.id);
+  });
+
+  it('fails a persistent next-hand gate closed when runtime ports are missing', () => {
+    const persistentOptions = { persistentRuntimeEnabled: true };
+    manager.shutdown();
+    manager = new TournamentManager(
+      roomManager,
+      {},
+      persistentOptions as TournamentManagerOptions,
+    );
+    const snapshot = persistentSnapshot('persistent-no-ports');
+    const prepared = manager.prepareFromInstance(
+      snapshot,
+      [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      'owner-1',
+    );
+    manager.activatePreparedTournament(snapshot.id, 'owner-1', Date.now());
+
+    expect(manager.roomHooks.checkNextHandGate?.(prepared.roomIds[0]!))
+      .toMatchObject({
+        status: 'retry',
+        generation: 1,
+      });
   });
 
   it('preserves a scheduled start after a manual wallet escrow failure', () => {

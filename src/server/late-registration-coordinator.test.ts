@@ -47,12 +47,15 @@ function plan(overrides: Partial<LateRegistrationSeatingPlan> = {}): LateRegistr
 
 function harness(overrides: Partial<LateRegistrationCoordinatorPorts> = {}) {
   const events: string[] = [];
+  const applyCommittedPlan = vi.fn(() => {
+    events.push('field');
+  });
   const journal = {
     affectedRoomIds: ['table-a'],
     rollback: vi.fn(() => events.push('rollback')),
     publish: vi.fn(() => events.push('publish')),
   };
-  const ports: LateRegistrationCoordinatorPorts = {
+  const ports = {
     readProjection: vi.fn(() => ({
       status: 'running',
       registrationState: 'open-late',
@@ -81,6 +84,7 @@ function harness(overrides: Partial<LateRegistrationCoordinatorPorts> = {}) {
     projectSessions: vi.fn(() => {
       events.push('sessions');
     }),
+    applyCommittedPlan,
     ...overrides,
   };
   const coordinator = new LateRegistrationCoordinator(ports, {
@@ -88,7 +92,7 @@ function harness(overrides: Partial<LateRegistrationCoordinatorPorts> = {}) {
     registrationState: 'open-late',
     ownerToken: null,
   });
-  return { coordinator, ports, events, journal };
+  return { coordinator, ports, events, journal, applyCommittedPlan };
 }
 
 describe('LateRegistrationCoordinator', () => {
@@ -119,6 +123,16 @@ describe('LateRegistrationCoordinator', () => {
     expect(h.events).not.toContain(
       'release:table-a:late-reg-closing:close-owner',
     );
+  });
+
+  it('idempotently reuses only the exact same operation kind', () => {
+    const h = harness();
+    expect(h.coordinator.begin('seating', operation, ['table-a'])).toBe(true);
+    expect(h.coordinator.begin('seating', operation, ['table-a'])).toBe(true);
+    expect(h.coordinator.begin('balance', operation, ['table-a'])).toBe(false);
+    expect(h.events).toEqual([
+      'hold:table-a:late-reg-seating:seat-owner',
+    ]);
   });
 
   it('upgrades a changed one-player target into global balance', () => {
@@ -159,6 +173,7 @@ describe('LateRegistrationCoordinator', () => {
       'hold:table-a:late-reg-seating:seat-owner',
       'apply',
       'commit',
+      'field',
       'sessions',
       'publish',
     ]);
@@ -166,6 +181,39 @@ describe('LateRegistrationCoordinator', () => {
       expect.anything(),
       expect.objectContaining({ broadcast: false }),
     );
+  });
+
+  it('disposes broken tables only after commit and before live projection', () => {
+    const h = harness();
+    h.coordinator.begin('balance', operation, ['table-a', 'table-old']);
+
+    expect(h.coordinator.commitSeating({
+      operation,
+      plan: plan({
+        breakTables: [{ tableId: 'table-old' }],
+        incumbentMoves: [{
+          playerId: 'incumbent',
+          fromTableId: 'table-old',
+          fromSeatIndex: 0,
+          toTableId: 'table-a',
+          toSeatIndex: 0,
+        }],
+        finalTableSizes: new Map([['table-a', 3]]),
+      }),
+      entries: [entry],
+      latePlayers: new Map([['late-1', latePlayer]]),
+    })).toBe(true);
+
+    expect(h.events).toEqual([
+      'hold:table-a:late-reg-balance:seat-owner',
+      'hold:table-old:late-reg-balance:seat-owner',
+      'apply',
+      'commit',
+      'dispose:table-old',
+      'field',
+      'sessions',
+      'publish',
+    ]);
   });
 
   it('rolls the journal back and disposes a new table after db failure', () => {
@@ -187,6 +235,7 @@ describe('LateRegistrationCoordinator', () => {
             { seatIndex: 1, nextBigBlindOrder: 1 },
           ],
         }],
+        breakTables: [{ tableId: 'table-old' }],
         finalTableSizes: new Map([
           ['table-a', 1],
           ['table-new', 1],
@@ -207,6 +256,7 @@ describe('LateRegistrationCoordinator', () => {
     ]);
     expect(h.ports.projectSessions).not.toHaveBeenCalled();
     expect(h.journal.publish).not.toHaveBeenCalled();
+    expect(h.events).not.toContain('dispose:table-old');
   });
 
   it('lets cancel take ownership before freeze without deadlock', () => {
@@ -220,6 +270,10 @@ describe('LateRegistrationCoordinator', () => {
       generation: 5,
       ownerToken: 'cancel-owner',
     }, ['table-a'])).toBe(true);
+    expect(h.events.slice(-2)).toEqual([
+      'release:table-a:late-reg-closing:close-owner',
+      'hold:table-a:tournament-cancel:cancel-owner',
+    ]);
     expect(h.coordinator.runCallback(
       { generation: 4, ownerToken: 'close-owner' },
       () => h.events.push('freeze'),

@@ -33,6 +33,7 @@ import {
   type AuthenticatedSocketData,
   type SocketRuntime,
 } from './socket-handler';
+import type { PersistentLateRegistrationPorts } from './tournament-manager';
 
 export interface ConnectedTestClient {
   socket: PokerClientSocket;
@@ -92,6 +93,8 @@ export interface SocketTestHarnessOptions {
   profileConcurrency?: number;
   profileAuthLimit?: number;
   arenaEnabled?: boolean;
+  persistentRuntimeEnabled?: boolean;
+  persistentLateRegistration?: PersistentLateRegistrationPorts;
 }
 
 const fastTestKdf: ProfileKdf = {
@@ -220,6 +223,8 @@ export async function createSocketTestHarness(
     economy: economyRuntime,
     tournamentOperatorProfileIds,
     progressionService,
+    persistentRuntimeEnabled: options.persistentRuntimeEnabled,
+    persistentLateRegistration: options.persistentLateRegistration,
     ...(arenaService
       ? {
         arena: {

@@ -66,6 +66,11 @@ export interface LateRegistrationCoordinatorPorts {
     entries: readonly LateEntryKey[],
     tableCount: number,
   ): void;
+  applyCommittedPlan(
+    plan: LateRegistrationSeatingPlan,
+    entries: readonly LateEntryKey[],
+    latePlayers: ReadonlyMap<string, Player>,
+  ): void;
   projectSessions(plan: LateRegistrationSeatingPlan): void;
 }
 
@@ -143,6 +148,9 @@ export class LateRegistrationCoordinator {
     identity: LateRegistrationOperationIdentity,
     roomIds: readonly string[],
   ): boolean {
+    if (this.active && sameIdentity(this.active, identity)) {
+      return this.active.kind === kind;
+    }
     if (
       identity.generation < this.projection.generation
       || (
@@ -249,6 +257,16 @@ export class LateRegistrationCoordinator {
     roomIds: readonly string[],
   ): boolean {
     if (identity.generation <= this.projection.generation) return false;
+    const previous = this.active;
+    if (previous) {
+      for (const roomId of previous.roomIds) {
+        this.ports.release(
+          roomId,
+          previous.heldReason,
+          previous.ownerToken,
+        );
+      }
+    }
     for (const roomId of new Set(roomIds)) {
       this.ports.hold(roomId, 'tournament-cancel', identity.ownerToken);
     }
@@ -335,9 +353,19 @@ export class LateRegistrationCoordinator {
     // disconnected client recovers it through resync, so never roll back the
     // committed ledger because a best-effort notification failed.
     try {
+      for (const table of input.plan.breakTables) {
+        this.ports.disposeTable(table.tableId);
+      }
+      this.ports.applyCommittedPlan(
+        input.plan,
+        input.entries,
+        input.latePlayers,
+      );
       this.ports.projectSessions(input.plan);
     } catch {
-      // best effort
+      // The ledger is already committed, so never roll it back. Keep the
+      // operation hold and fail closed for reconciliation/cancellation.
+      return false;
     }
     try {
       journal.publish();

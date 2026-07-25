@@ -30,12 +30,20 @@ import type {
 import type {
   TournamentConfigSnapshotV2,
 } from '../lib/tournament/tournament-config';
+import type { LateRegistrationSeatingPlan } from '../lib/tournament/late-registration-seating';
 import type {
   MttRoomHooks,
   NextHandGateResult,
   RoomManager,
 } from './room-manager';
 import { eventLog } from './event-log';
+import {
+  LateRegistrationCoordinator,
+  type CommitLateRegistrationSeating,
+  type LateRegistrationOperationIdentity,
+  type LateRegistrationOperationKind,
+} from './late-registration-coordinator';
+import type { LateEntryKey } from './tournament-enrollment-repository';
 
 export type {
   TournamentDetailView,
@@ -160,6 +168,24 @@ export interface TournamentManagerOptions {
     tournamentId: string;
     roomId: string;
   }): NextHandGateResult;
+  persistentRuntimeEnabled?: boolean;
+  persistentLateRegistration?: PersistentLateRegistrationPorts;
+}
+
+export interface PersistentLateRegistrationInstance {
+  readonly status: string;
+  readonly registrationState: string;
+  readonly registrationGeneration: number;
+  readonly registrationOwnerToken: string | null;
+}
+
+export interface PersistentLateRegistrationPorts {
+  readInstance(tournamentId: string): PersistentLateRegistrationInstance | null;
+  commitLateMttBatch(
+    tournamentId: string,
+    entries: readonly LateEntryKey[],
+    tableCount: number,
+  ): void;
 }
 
 export type MttOperationHoldReason =
@@ -184,6 +210,9 @@ export interface PersistentTournamentStartSnapshot {
     readonly profileId?: string | null;
   };
   readonly config: TournamentConfigSnapshotV2;
+  readonly registrationState?: string;
+  readonly registrationGeneration?: number;
+  readonly registrationOwnerToken?: string | null;
 }
 
 export interface PreparedTournamentRuntime {
@@ -275,6 +304,10 @@ interface StagedLevelSnapshot {
 
 interface TournamentRuntime {
   id: string;
+  persistent: boolean;
+  registrationState: string;
+  registrationGeneration: number;
+  registrationOwnerToken: string | null;
   hostId: string;
   config: CreateTournamentInput & { payoutPreset: PayoutPresetId };
   structure: MttStructure;
@@ -363,7 +396,11 @@ export class TournamentManager {
   private tournaments = new Map<string, TournamentRuntime>();
   private byRoom = new Map<string, string>();
   private preparedTournaments = new Map<string, PreparedTournamentState>();
+  private lateRegistrationCoordinators =
+    new Map<string, LateRegistrationCoordinator>();
   private readonly emptyTournamentTtlMs: number;
+  private readonly persistentRuntimeEnabled: boolean;
+  private readonly persistentLateRegistration?: PersistentLateRegistrationPorts;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
   readonly roomHooks: MttRoomHooks;
 
@@ -375,6 +412,8 @@ export class TournamentManager {
     this.emptyTournamentTtlMs = normalizeEmptyTournamentTtlMs(
       options.emptyTournamentTtlMs ?? process.env.MTT_EMPTY_TOURNAMENT_TTL_MS,
     );
+    this.persistentRuntimeEnabled = options.persistentRuntimeEnabled ?? false;
+    this.persistentLateRegistration = options.persistentLateRegistration;
     this.roomHooks = {
       applyLevel: (roomId, engine) => this.applyLevel(roomId, engine),
       onHandStartFailed: roomId => this.onHandStartFailed(roomId),
@@ -384,6 +423,18 @@ export class TournamentManager {
       checkNextHandGate: roomId => {
         const t = this.byTable(roomId);
         if (!t) return { status: 'terminal' };
+        if (t.persistent) {
+          const coordinator = this.lateRegistrationCoordinator(t);
+          if (!coordinator) {
+            return {
+              status: 'retry',
+              generation: t.registrationGeneration,
+              ownerToken: t.registrationOwnerToken
+                ?? `persistent-runtime-missing:${t.id}`,
+            };
+          }
+          return coordinator.checkNextHandGate([...t.tables.keys()]);
+        }
         return options.checkNextHandGate?.({
           tournamentId: t.id,
           roomId,
@@ -607,6 +658,7 @@ export class TournamentManager {
     if (!prepared || prepared.ownerToken !== ownerToken) return;
     this.preparedTournaments.delete(instanceId);
     this.tournaments.delete(instanceId);
+    this.lateRegistrationCoordinators.delete(instanceId);
     for (const roomId of prepared.roomIds) {
       this.byRoom.delete(roomId);
       this.roomManager.disposeRoom(
@@ -673,6 +725,10 @@ export class TournamentManager {
     const id = `mtt-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const t: TournamentRuntime = {
       id,
+      persistent: false,
+      registrationState: 'closed',
+      registrationGeneration: 0,
+      registrationOwnerToken: null,
       hostId: input.hostId,
       config: {
         ...input,
@@ -1161,6 +1217,7 @@ export class TournamentManager {
       if (t.cleanupTimer) clearTimeout(t.cleanupTimer);
       if (t.settleRetryTimer) clearTimeout(t.settleRetryTimer);
     }
+    this.lateRegistrationCoordinators.clear();
   }
 
   /** wallet 정산 시도 — 성공 여부만 반환 (재호출은 리포지토리가 멱등 처리) */
@@ -1224,6 +1281,11 @@ export class TournamentManager {
       ?? 'tournament-operator';
     return {
       id: snapshot.id,
+      persistent: true,
+      registrationState: snapshot.registrationState
+        ?? (snapshot.config.lateRegistration.enabled ? 'open-late' : 'closed'),
+      registrationGeneration: snapshot.registrationGeneration ?? 1,
+      registrationOwnerToken: snapshot.registrationOwnerToken ?? null,
       hostId,
       config: {
         name: snapshot.config.name,
@@ -1587,6 +1649,7 @@ export class TournamentManager {
     }
     t.tables.clear();
     t.holds.clear();
+    this.lateRegistrationCoordinators.delete(t.id);
     t.pendingLevel = null;
     t.appliedLevelGenerationByRoom.clear();
     t.stagedLevelByRoom.clear();
@@ -2086,6 +2149,7 @@ export class TournamentManager {
     t.cleanupTimer = setTimeout(() => {
       for (const roomId of t.tables.keys()) this.byRoom.delete(roomId);
       this.tournaments.delete(t.id);
+      this.lateRegistrationCoordinators.delete(t.id);
       this.hooks.onTournamentsChanged?.();
     }, COMPLETED_RETENTION_MS + 30_000);
     return true;
@@ -2546,6 +2610,197 @@ export class TournamentManager {
 
   // --- 브레이크/시계 ---
 
+  private lateRegistrationCoordinator(
+    t: TournamentRuntime,
+  ): LateRegistrationCoordinator | null {
+    const existing = this.lateRegistrationCoordinators.get(t.id);
+    if (existing) return existing;
+    if (
+      !t.persistent
+      || !this.persistentRuntimeEnabled
+      || !this.persistentLateRegistration
+    ) {
+      return null;
+    }
+    const persistence = this.persistentLateRegistration;
+    const coordinator = new LateRegistrationCoordinator({
+      readProjection: () => {
+        const instance = persistence.readInstance(t.id);
+        if (!instance) {
+          return {
+            status: 'cancelled',
+            registrationState: 'closed',
+            generation: t.registrationGeneration,
+            ownerToken: null,
+          };
+        }
+        t.registrationState = instance.registrationState;
+        t.registrationGeneration = instance.registrationGeneration;
+        t.registrationOwnerToken = instance.registrationOwnerToken;
+        return {
+          status: instance.status,
+          registrationState: instance.registrationState,
+          generation: instance.registrationGeneration,
+          ownerToken: instance.registrationOwnerToken,
+        };
+      },
+      hold: (roomId, reason, ownerToken) => {
+        this.addHold(
+          t,
+          roomId,
+          reason,
+          ownerToken,
+          reason !== 'late-reg-seating' && reason !== 'late-reg-balance',
+        );
+      },
+      release: (roomId, reason, ownerToken) => {
+        this.removeHold(
+          t,
+          roomId,
+          reason,
+          ownerToken,
+          reason !== 'late-reg-seating' && reason !== 'late-reg-balance',
+        );
+      },
+      createTable: table => {
+        const roomId = this.createLateRegistrationTable(t.id, table.tableId);
+        if (roomId !== table.tableId) {
+          throw new Error(`Could not create late table ${table.tableId}`);
+        }
+      },
+      disposeTable: roomId => {
+        if (!this.disposeLateRegistrationTable(t.id, roomId)) {
+          throw new Error(`Could not dispose late table ${roomId}`);
+        }
+      },
+      applyBatch: (plan, batchOptions) => (
+        this.roomManager.transferMttSeatsBatch(plan, batchOptions)
+      ),
+      commitBatch: (entries, tableCount) => {
+        persistence.commitLateMttBatch(t.id, entries, tableCount);
+      },
+      applyCommittedPlan: (plan, entries, latePlayers) => {
+        this.applyCommittedLateRegistrationPlan(
+          t,
+          plan,
+          entries,
+          latePlayers,
+        );
+      },
+      projectSessions: plan => {
+        this.projectLateRegistrationSessions(t, plan);
+      },
+    }, {
+      generation: t.registrationGeneration,
+      registrationState: t.registrationState,
+      ownerToken: t.registrationOwnerToken,
+    });
+    this.lateRegistrationCoordinators.set(t.id, coordinator);
+    return coordinator;
+  }
+
+  beginLateRegistrationOperation(
+    tournamentId: string,
+    kind: LateRegistrationOperationKind,
+    identity: LateRegistrationOperationIdentity,
+    roomIds?: readonly string[],
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    const coordinator = t ? this.lateRegistrationCoordinator(t) : null;
+    return coordinator?.begin(
+      kind,
+      identity,
+      roomIds ?? [...(t?.tables.keys() ?? [])],
+    ) ?? false;
+  }
+
+  commitLateRegistrationSeating(
+    tournamentId: string,
+    input: CommitLateRegistrationSeating,
+  ): boolean {
+    const t = this.tournaments.get(tournamentId);
+    return (t ? this.lateRegistrationCoordinator(t) : null)
+      ?.commitSeating(input) ?? false;
+  }
+
+  private applyCommittedLateRegistrationPlan(
+    t: TournamentRuntime,
+    plan: LateRegistrationSeatingPlan,
+    entries: readonly LateEntryKey[],
+    latePlayers: ReadonlyMap<string, Player>,
+  ): void {
+    let added = 0;
+    for (const entry of entries) {
+      if (t.entrants.has(entry.profileId)) continue;
+      const player = latePlayers.get(entry.profileId);
+      if (!player) throw new Error(`Committed late player missing: ${entry.profileId}`);
+      t.entrants.set(entry.profileId, {
+        id: player.id,
+        name: player.name,
+        avatar: player.avatar,
+      });
+      added += 1;
+    }
+    t.seatedCount += added;
+    t.remaining += added;
+    if (t.config.economyMode === 'wallet') {
+      t.prizePool += added * (t.config.entryBuyIn ?? 0);
+    }
+    t.prizes = computePayouts(
+      t.prizePool,
+      t.seatedCount,
+      t.config.payoutPreset,
+    );
+    for (const roomId of t.tables.keys()) {
+      const state = this.roomManager.getRoom(roomId)?.engine;
+      if (!state) throw new Error(`Committed late table missing: ${roomId}`);
+      state.setTournamentField(
+        t.seatedCount,
+        t.prizes,
+        false,
+        t.results,
+      );
+      const tournament = state.state.tournament;
+      if (!tournament) throw new Error(`Committed MTT state missing: ${roomId}`);
+      tournament.fieldRemaining = t.remaining;
+      tournament.stage = t.stage;
+      tournament.holdReasons = this.publicHoldReasons(t, roomId);
+      tournament.stageEndsAt = t.stageEndsAt;
+      tournament.finalTheme = t.finalTheme;
+      tournament.milestone = t.milestone;
+    }
+    for (const [roomId, expectedSize] of plan.finalTableSizes) {
+      const actual = this.roomManager.getRoom(roomId)?.engine.state.players.length;
+      if (actual !== expectedSize) {
+        throw new Error(`Committed late table size mismatch: ${roomId}`);
+      }
+    }
+  }
+
+  private projectLateRegistrationSessions(
+    t: TournamentRuntime,
+    plan: LateRegistrationSeatingPlan,
+  ): void {
+    for (const move of plan.incumbentMoves) {
+      const player = this.roomManager.getRoom(move.toTableId)?.engine.state.players
+        .find(candidate => candidate.id === move.playerId);
+      if (player?.type !== 'human') continue;
+      this.hooks.onPlayerMoved?.({
+        tournamentId: t.id,
+        playerId: move.playerId,
+        fromRoomId: move.fromTableId,
+        toRoomId: move.toTableId,
+      });
+    }
+    for (const seat of plan.lateSeats) {
+      this.hooks.onSeated?.({
+        tournamentId: t.id,
+        playerId: seat.playerId,
+        roomId: seat.tableId,
+      });
+    }
+  }
+
   acquireMttOperationHold(
     tournamentId: string,
     reason: MttOperationHoldReason,
@@ -2602,7 +2857,10 @@ export class TournamentManager {
    * No room update is emitted here: the seating journal publishes only after
    * the enrollment transaction commits.
    */
-  createLateRegistrationTable(tournamentId: string): string | null {
+  createLateRegistrationTable(
+    tournamentId: string,
+    requestedRoomId?: string,
+  ): string | null {
     const t = this.tournaments.get(tournamentId);
     if (!t || t.phase !== 'running' || t.tables.size === 0) return null;
     const pos = this.clockPos(t);
@@ -2629,7 +2887,7 @@ export class TournamentManager {
       difficulty: 'normal',
       botCount: 0,
       tableType: 'mixed',
-    });
+    }, false, requestedRoomId);
     try {
       const room = this.roomManager.getRoom(roomId);
       if (!room) throw new Error('late table disappeared');
@@ -2752,6 +3010,7 @@ export class TournamentManager {
     roomId: string,
     reason: InternalHoldReason,
     ownerToken = `system:${reason}`,
+    publish = true,
   ): void {
     const reasons = t.holds.get(roomId) ?? new Map();
     const owners = reasons.get(reason) ?? new Set<string>();
@@ -2759,7 +3018,7 @@ export class TournamentManager {
     owners.add(ownerToken);
     reasons.set(reason, owners);
     t.holds.set(roomId, reasons);
-    this.syncTournamentPresentation(t, [roomId]);
+    if (publish) this.syncTournamentPresentation(t, [roomId]);
   }
 
   private removeHold(
@@ -2767,6 +3026,7 @@ export class TournamentManager {
     roomId: string,
     reason: InternalHoldReason,
     ownerToken = `system:${reason}`,
+    publish = true,
   ): void {
     const reasons = t.holds.get(roomId);
     if (!reasons) return;
@@ -2774,7 +3034,7 @@ export class TournamentManager {
     if (!owners?.delete(ownerToken)) return;
     if (owners.size === 0) reasons!.delete(reason);
     if (reasons.size === 0) t.holds.delete(roomId);
-    this.syncTournamentPresentation(t, [roomId]);
+    if (publish) this.syncTournamentPresentation(t, [roomId]);
   }
 
   private hasHolds(t: TournamentRuntime, roomId: string): boolean {

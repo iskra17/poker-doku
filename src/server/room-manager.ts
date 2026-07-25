@@ -333,7 +333,11 @@ export class RoomManager {
     if (room) this.onUpdate(roomId, room.engine);
   }
 
-  createRoom(config: RoomConfig, persistent = false): string {
+  createRoom(
+    config: RoomConfig,
+    persistent = false,
+    requestedRoomId?: string,
+  ): string {
     const normalizedConfig: RoomConfig = config.competitionMode
       ? {
           ...config,
@@ -354,7 +358,18 @@ export class RoomManager {
           ),
         }
       : config;
-    const id = `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    if (
+      requestedRoomId !== undefined
+      && (
+        requestedRoomId.length < 1
+        || requestedRoomId.length > 128
+        || this.rooms.has(requestedRoomId)
+      )
+    ) {
+      throw new Error('Requested room id is unavailable');
+    }
+    const id = requestedRoomId
+      ?? `room-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const runId = this.reserveRoomRunId();
     const engine = new PokerEngine(
       normalizedConfig,

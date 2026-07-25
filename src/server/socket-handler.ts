@@ -61,7 +61,12 @@ import {
 } from './arena-matchmaker';
 import { ArenaRuntime } from './arena-runtime';
 import type { ArenaService } from './arena-service';
-import { TournamentManager } from './tournament-manager';
+import {
+  TournamentManager,
+  type PersistentLateRegistrationInstance,
+  type PersistentLateRegistrationPorts,
+} from './tournament-manager';
+import type { LateEntryKey } from './tournament-enrollment-repository';
 import {
   TournamentCommandService,
   parseTournamentOperatorIds,
@@ -79,6 +84,28 @@ const MTT_ELIMINATION_EXIT_MS = 8_000;
 // 방 수 상한은 핫 컨피그 cfg('table.maxRooms') — 하향해도 기존 방은 유지, 생성만 차단
 const MIN_BUYIN_BB = 40; // 캐시 게임 바이인 하한 (BB 배수)
 const MAX_BUYIN_BB = 200; // 캐시 게임 바이인 상한 (BB 배수)
+
+export function createPersistentLateRegistrationPorts(
+  instances: {
+    getInstance(
+      tournamentId: string,
+    ): PersistentLateRegistrationInstance | null;
+  },
+  enrollments: {
+    commitLateMttBatch(
+      tournamentId: string,
+      entries: readonly LateEntryKey[],
+      tableCount: number,
+    ): void;
+  },
+): PersistentLateRegistrationPorts {
+  return {
+    readInstance: tournamentId => instances.getInstance(tournamentId),
+    commitLateMttBatch: (tournamentId, entries, tableCount) => {
+      enrollments.commitLateMttBatch(tournamentId, entries, tableCount);
+    },
+  };
+}
 
 export interface SocketRuntimeOptions {
   profileAuth: {
@@ -98,6 +125,8 @@ export interface SocketRuntimeOptions {
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & MttAdmissionEconomy & RoomEconomyHooks;
   tournamentOperatorProfileIds?: ReadonlySet<string>;
   persistentTournamentStart?: PersistentTournamentStartPorts;
+  persistentRuntimeEnabled?: boolean;
+  persistentLateRegistration?: PersistentLateRegistrationPorts;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
   arena?: {
@@ -524,6 +553,10 @@ export function setupSocketHandlers(
           refundAll: tournamentId => economy.voidMttTournament(tournamentId),
         }
       : undefined,
+  }, {
+    persistentRuntimeEnabled: options.persistentRuntimeEnabled
+      ?? options.persistentTournamentStart !== undefined,
+    persistentLateRegistration: options.persistentLateRegistration,
   });
   const tournamentCommands = new TournamentCommandService(
     tournamentManager,

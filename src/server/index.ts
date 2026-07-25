@@ -46,6 +46,7 @@ import { ProgressionRepository } from './progression-repository';
 import { ProgressionService } from './progression-service';
 import { isSocketOriginAllowed, parseSocketAllowedOrigins } from './socket-origin';
 import {
+  createPersistentLateRegistrationPorts,
   setupSocketHandlers,
   type AuthenticatedSocketData,
 } from './socket-handler';
@@ -63,6 +64,7 @@ import type {
   PersistentTournamentStartPorts,
 } from './tournament-command-service';
 import type { StartClaimSource } from './tournament-instance-repository';
+import type { PersistentLateRegistrationPorts } from './tournament-manager';
 
 const dev = process.env.NODE_ENV !== 'production';
 const hostname = '0.0.0.0';
@@ -94,6 +96,7 @@ let arenaScheduler: ArenaScheduler | undefined;
 let arenaMetrics: ArenaMetrics | undefined;
 let tournamentScheduler: TournamentScheduler | undefined;
 let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
+let persistentLateRegistration: PersistentLateRegistrationPorts | undefined;
 const pendingTournamentStarts: Array<{
   instance: ClaimedTournamentStartSnapshot;
   source: StartClaimSource;
@@ -199,6 +202,12 @@ function initializePersistenceAndRecover(): void {
   };
   const persistentStartEnabled =
     process.env.MTT_PERSISTENT_START_ENABLED === 'true';
+  persistentLateRegistration = persistentStartEnabled
+    ? createPersistentLateRegistrationPorts(
+        tournamentInstances,
+        tournamentEnrollments,
+      )
+    : undefined;
   persistentTournamentStart = persistentStartEnabled
     ? {
         claimManualStart: tournamentId => {
@@ -518,6 +527,8 @@ async function listen(): Promise<void> {
     },
     economy: economyRuntime,
     persistentTournamentStart,
+    persistentRuntimeEnabled: persistentTournamentStart !== undefined,
+    persistentLateRegistration,
     progressionService,
     handHistory: handHistoryService,
     ...(arenaService
