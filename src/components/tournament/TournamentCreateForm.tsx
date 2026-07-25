@@ -16,6 +16,8 @@ import {
   TOURNAMENT_FIELD_LIMITS,
   fieldPolicyError,
   isFixedSizeField,
+  kstDateTimeLabel,
+  kstInputValue,
   leadTimeExample,
   normalizeFieldPolicy,
   recurrenceEndError,
@@ -59,15 +61,6 @@ const PAYOUTS: TournamentPayoutPolicy[] = [
     paidFieldPercent: 20,
   },
 ];
-const KST_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
-  timeZone: 'Asia/Seoul',
-  month: 'long',
-  day: 'numeric',
-  hour: '2-digit',
-  minute: '2-digit',
-  hour12: false,
-});
-
 export type TournamentCreateDraft = CreatePersistentTournamentRequest;
 
 interface TournamentCreateFormProps {
@@ -79,17 +72,14 @@ interface TournamentCreateFormProps {
   allowRecurrence?: boolean;
 }
 
-function toLocalInput(epoch: number): string {
-  return new Date(epoch + 9 * 60 * MINUTE).toISOString().slice(0, 16);
-}
+const toLocalInput = kstInputValue;
 
 function parseKstInput(value: string): number {
   return Date.parse(`${value}:00+09:00`);
 }
 
-function formatKst(epoch: number): string {
-  return KST_DATE_TIME_FORMATTER.format(epoch);
-}
+/** 입력 도중의 미완성 값(NaN)에도 던지지 않는다 — 폼 언마운트 방지 */
+const formatKst = kstDateTimeLabel;
 
 function materializeStructure(
   speed: MttSpeed,
@@ -359,6 +349,12 @@ export default function TournamentCreateForm({
                 <Field label="시작 일시">
                   <input type="datetime-local" value={startInput} onChange={event => setStartInput(event.target.value)} className="form-input" />
                 </Field>
+                {!Number.isFinite(startsAt) && (
+                  <p className="text-[11px] leading-5 text-blossom">
+                    시작 일시를 끝까지 입력해 주세요. 완성되기 전에는 아래 시각이
+                    계산되지 않습니다.
+                  </p>
+                )}
                 <NumberField
                   label="로비 노출 리드(분)"
                   help="예정 시작 몇 분 전부터 로비에 토너먼트 카드가 보이기 시작할지."

@@ -3,6 +3,8 @@ import {
   TOURNAMENT_FIELD_LIMITS,
   fieldPolicyError,
   isFixedSizeField,
+  kstDateTimeLabel,
+  kstInputValue,
   leadTimeExample,
   normalizeFieldPolicy,
   recurrenceEndError,
@@ -194,6 +196,35 @@ describe('tournament create policy', () => {
         FIRST,
         FIRST,
       )).toBeNull();
+    });
+  });
+
+  describe('kstDateTimeLabel', () => {
+    it('formats a valid epoch on the KST wall clock', () => {
+      expect(kstDateTimeLabel(FIRST)).toContain('20:00');
+    });
+
+    it('returns a placeholder instead of throwing on an unparsed input', () => {
+      // datetime-local을 다시 입력하는 동안 값이 잠깐 비면 Date.parse가 NaN을 낸다.
+      // Intl.DateTimeFormat.format(NaN)은 RangeError를 던져 폼 전체를 언마운트시켰다.
+      for (const bad of [NaN, Infinity, -Infinity, null, undefined]) {
+        expect(() => kstDateTimeLabel(bad as number)).not.toThrow();
+        expect(kstDateTimeLabel(bad as number)).toBe('—');
+      }
+    });
+  });
+
+  describe('kstInputValue', () => {
+    it('round-trips a valid epoch into datetime-local form', () => {
+      expect(kstInputValue(FIRST)).toBe('2026-07-27T20:00');
+    });
+
+    it('returns an empty string instead of throwing on a bad epoch', () => {
+      // new Date(NaN).toISOString()도 같은 RangeError를 던진다.
+      for (const bad of [NaN, Infinity, null, undefined]) {
+        expect(() => kstInputValue(bad as number)).not.toThrow();
+        expect(kstInputValue(bad as number)).toBe('');
+      }
     });
   });
 

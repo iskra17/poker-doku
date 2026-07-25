@@ -194,6 +194,39 @@ export function recurrenceEndError(
   return null;
 }
 
+/** 시각이 아직 유효하지 않을 때 표시할 자리표시자 */
+export const MISSING_TIME_LABEL = '—';
+
+const KST_DATE_TIME_FORMATTER = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  month: 'long',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+});
+
+/**
+ * KST 날짜·시각 라벨. **유효하지 않은 입력에 절대 던지지 않는다** —
+ * datetime-local을 다시 입력하는 동안 값이 잠깐 비면 Date.parse가 NaN을 내는데,
+ * 그대로 Intl.DateTimeFormat.format에 넘기면 RangeError로 폼 전체가 죽는다
+ * (2026-07-25 운영자 신고: "This page couldn't load").
+ */
+export function kstDateTimeLabel(epoch: number | null | undefined): string {
+  return typeof epoch === 'number' && Number.isFinite(epoch)
+    ? KST_DATE_TIME_FORMATTER.format(epoch)
+    : MISSING_TIME_LABEL;
+}
+
+/**
+ * epoch → datetime-local 입력값(KST). `new Date(NaN).toISOString()`도 같은
+ * RangeError를 던지므로 유효하지 않으면 빈 문자열을 준다.
+ */
+export function kstInputValue(epoch: number | null | undefined): string {
+  if (typeof epoch !== 'number' || !Number.isFinite(epoch)) return '';
+  return new Date(epoch + KST_OFFSET_MS).toISOString().slice(0, 16);
+}
+
 export interface LeadTimeExample {
   readonly startsAtLabel: string;
   readonly visibleAtLabel: string;
