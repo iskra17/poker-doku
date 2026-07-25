@@ -113,7 +113,7 @@ export interface PersistentTournamentSocketPorts {
   ): TournamentRegistrationEngagement | null;
 }
 
-type PersistentTournamentRuntimePorts = PersistentLateRegistrationPorts
+export type PersistentTournamentRuntimePorts = PersistentLateRegistrationPorts
   & Partial<PersistentTournamentSocketPorts>;
 
 function registrationResult(
@@ -173,6 +173,7 @@ export function createPersistentLateRegistrationPorts(
     ): TournamentRegistrationEngagement | null;
   },
   options: {
+    readonly lateRegistrationEnabled?: boolean;
     readonly walletLateRegistrationEnabled?: boolean;
   } = {},
 ): PersistentTournamentRuntimePorts {
@@ -207,6 +208,16 @@ export function createPersistentLateRegistrationPorts(
             const { command, profileId, publicPlayer } = input;
             const instance = instances.getInstance(command.tournamentId);
             if (!instance) {
+              return {
+                ok: false,
+                requestId: command.requestId,
+                reason: 'not-open',
+              };
+            }
+            if (
+              instance.status === 'running'
+              && options.lateRegistrationEnabled !== true
+            ) {
               return {
                 ok: false,
                 requestId: command.requestId,
@@ -294,6 +305,8 @@ export interface SocketRuntimeOptions {
   tournamentOperatorProfileIds?: ReadonlySet<string>;
   persistentTournamentStart?: PersistentTournamentStartPorts;
   persistentRuntimeEnabled?: boolean;
+  persistentTournamentRegistration?:
+    Partial<PersistentTournamentSocketPorts>;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
   persistentSettlement?: PersistentTournamentSettlementPorts;
   progressionService?: ProgressionRuntimeService;
@@ -384,10 +397,12 @@ export function setupSocketHandlers(
     arena,
   } = options;
   const sessions = new SessionManager();
-  const persistentTournamentPorts = (
-    options.persistentLateRegistration as
-      PersistentTournamentRuntimePorts | undefined
-  );
+  const persistentTournamentPorts =
+    options.persistentTournamentRegistration
+    ?? (
+      options.persistentLateRegistration as
+        PersistentTournamentRuntimePorts | undefined
+    );
   // 투척 개인 쿨다운 — playerId 키의 공유 인스턴스라 재접속/탭 교체로 우회 불가.
   // (소켓별 rateLimiter는 커넥션 수명이라 쿨다운 저장소로 부적합)
   const throwCooldowns = new SocketRateLimiter();

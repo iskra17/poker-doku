@@ -125,6 +125,7 @@ describe('persistent late-registration production runtime wiring', () => {
         registerPreStart: vi.fn(),
         reserveLateMttEntry,
       },
+      { lateRegistrationEnabled: true },
     );
     expect(disabled.registerTournament?.(input)).toEqual({
       ok: false,
@@ -140,12 +141,123 @@ describe('persistent late-registration production runtime wiring', () => {
         registerPreStart: vi.fn(),
         reserveLateMttEntry,
       },
-      { walletLateRegistrationEnabled: true },
+      {
+        lateRegistrationEnabled: true,
+        walletLateRegistrationEnabled: true,
+      },
     );
     expect(enabled.registerTournament?.(input)).toMatchObject({
       ok: true,
       status: 'seating',
     });
+    expect(reserveLateMttEntry).toHaveBeenCalledOnce();
+  });
+
+  it('keeps prestart registration available in scheduler-only mode', () => {
+    let instance = {
+      status: 'registering',
+      economyMode: 'freeroll' as const,
+      registrationState: 'open-prestart',
+      registrationGeneration: 0,
+      registrationOwnerToken: null,
+    };
+    const registerPreStart = vi.fn(() => ({
+      status: 'reserved' as const,
+      key: {
+        profileId: 'profile-1',
+        economyMode: 'freeroll' as const,
+        requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        registrationAttempt: 1,
+      },
+      acceptedAt: Date.now(),
+    }));
+    const reserveLateMttEntry = vi.fn(() => ({
+      status: 'reserved' as const,
+      key: {
+        profileId: 'profile-1',
+        economyMode: 'freeroll' as const,
+        requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        registrationAttempt: 1,
+      },
+      acceptedAt: Date.now(),
+    }));
+    const ports = createPersistentLateRegistrationPorts(
+      { getInstance: () => instance },
+      {
+        commitLateMttBatch: vi.fn(),
+        registerPreStart,
+        reserveLateMttEntry,
+      },
+      {
+        lateRegistrationEnabled: false,
+        walletLateRegistrationEnabled: false,
+      },
+    );
+    const input = {
+      command: {
+        tournamentId: 'mtt-freeroll',
+        requestId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      },
+      profileId: 'profile-1',
+      publicPlayer: { id: 'profile-1', name: 'Player', avatar: 'ara' },
+    };
+
+    expect(ports.registerTournament?.(input)).toMatchObject({
+      ok: true,
+      status: 'registered',
+    });
+    expect(registerPreStart).toHaveBeenCalledOnce();
+
+    instance = {
+      ...instance,
+      status: 'running',
+      registrationState: 'open-late',
+    };
+    expect(ports.registerTournament?.(input)).toEqual({
+      ok: false,
+      requestId: input.command.requestId,
+      reason: 'not-open',
+    });
+    expect(reserveLateMttEntry).not.toHaveBeenCalled();
+  });
+
+  it('allows freeroll live reserves when late registration is enabled', () => {
+    const reserveLateMttEntry = vi.fn(() => ({
+      status: 'reserved' as const,
+      key: {
+        profileId: 'profile-1',
+        economyMode: 'freeroll' as const,
+        requestId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        registrationAttempt: 1,
+      },
+      acceptedAt: Date.now(),
+    }));
+    const ports = createPersistentLateRegistrationPorts(
+      {
+        getInstance: () => ({
+          status: 'running',
+          economyMode: 'freeroll' as const,
+          registrationState: 'open-late',
+          registrationGeneration: 1,
+          registrationOwnerToken: null,
+        }),
+      },
+      {
+        commitLateMttBatch: vi.fn(),
+        registerPreStart: vi.fn(),
+        reserveLateMttEntry,
+      },
+      {
+        lateRegistrationEnabled: true,
+        walletLateRegistrationEnabled: false,
+      },
+    );
+    const requestId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    expect(ports.registerTournament?.({
+      command: { tournamentId: 'mtt-freeroll', requestId },
+      profileId: 'profile-1',
+      publicPlayer: { id: 'profile-1', name: 'Player', avatar: 'ara' },
+    })).toMatchObject({ ok: true, status: 'seating' });
     expect(reserveLateMttEntry).toHaveBeenCalledOnce();
   });
 

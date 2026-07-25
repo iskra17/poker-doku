@@ -49,6 +49,7 @@ import {
   createPersistentLateRegistrationPorts,
   setupSocketHandlers,
   type AuthenticatedSocketData,
+  type PersistentTournamentRuntimePorts,
 } from './socket-handler';
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 import {
@@ -70,6 +71,7 @@ import {
   type ClaimedTournamentStartSnapshot,
   type PersistentTournamentStartPorts,
 } from './tournament-command-service';
+import { initializeMttRollout } from './mtt-rollout';
 import type {
   StartClaimSource,
 } from './tournament-instance-repository';
@@ -109,6 +111,8 @@ let arenaScheduler: ArenaScheduler | undefined;
 let arenaMetrics: ArenaMetrics | undefined;
 let tournamentScheduler: TournamentScheduler | undefined;
 let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
+let persistentTournamentRegistration:
+  PersistentTournamentRuntimePorts | undefined;
 let persistentLateRegistration: PersistentLateRegistrationPorts | undefined;
 let persistentSettlement: PersistentTournamentSettlementPorts | undefined;
 let persistentRefundPendingHandler:
@@ -236,16 +240,6 @@ function initializePersistenceAndRecover(): void {
         at,
       }),
   };
-  persistentLateRegistration = mttFeatureFlags.lateRegistration
-    ? createPersistentLateRegistrationPorts(
-        tournamentInstances,
-        tournamentEnrollments,
-        {
-          walletLateRegistrationEnabled:
-            mttFeatureFlags.walletLateRegistration,
-        },
-      )
-    : undefined;
   persistentSettlement = mttFeatureFlags.schedulerV2
     ? {
         freezeRegistration: input =>
@@ -372,75 +366,94 @@ function initializePersistenceAndRecover(): void {
         },
       }
     : undefined;
-  tournamentScheduler = new TournamentScheduler({
-    database,
-    startProcessingEnabled: mttFeatureFlags.schedulerV2,
-    onStartClaim: (instance, source) => {
-      const snapshot = { ...instance, startSource: source };
-      if (runtime) {
-        runtime.tournamentCommands.processStartClaim(snapshot);
-      } else {
-        pendingTournamentStarts.push({ instance: snapshot, source });
-      }
-    },
-    onStartLeaseExpired: instance => {
-      if (runtime) {
-        runtime.tournamentCommands.processExpiredStartLease(instance);
-      } else {
-        pendingTournamentLeaseExpiries.push(instance);
-      }
-    },
-    onRefundPending: instance => {
-      resumeTournamentRefund(
-        refundDependencies,
-        instance,
-        Date.now(),
-        instance.statusReason === 'financial-invariant'
-          ? 'financial-invariant'
-          : 'server-restart-unrecoverable',
-      );
-    },
-    onError: (error, context) => {
-      eventLog.log('tournament-scheduler-error', {
-        data: {
-          phase: context.phase,
-          instanceId: context.instanceId,
-          retryAttempt: context.retryAttempt,
-          error: error.message,
+  const mttRollout = initializeMttRollout(mttFeatureFlags, {
+    createScheduler: () => new TournamentScheduler({
+      database: database!,
+      startProcessingEnabled: true,
+      onStartClaim: (instance, source) => {
+        const snapshot = { ...instance, startSource: source };
+        if (runtime) {
+          runtime.tournamentCommands.processStartClaim(snapshot);
+        } else {
+          pendingTournamentStarts.push({ instance: snapshot, source });
+        }
+      },
+      onStartLeaseExpired: instance => {
+        if (runtime) {
+          runtime.tournamentCommands.processExpiredStartLease(instance);
+        } else {
+          pendingTournamentLeaseExpiries.push(instance);
+        }
+      },
+      onRefundPending: instance => {
+        resumeTournamentRefund(
+          refundDependencies,
+          instance,
+          Date.now(),
+          instance.statusReason === 'financial-invariant'
+            ? 'financial-invariant'
+            : 'server-restart-unrecoverable',
+        );
+      },
+      onError: (error, context) => {
+        eventLog.log('tournament-scheduler-error', {
+          data: {
+            phase: context.phase,
+            instanceId: context.instanceId,
+            retryAttempt: context.retryAttempt,
+            error: error.message,
+          },
+        });
+      },
+    }),
+    createRegistrationPorts: () => createPersistentLateRegistrationPorts(
+      tournamentInstances,
+      tournamentEnrollments,
+      {
+        lateRegistrationEnabled: mttFeatureFlags.lateRegistration,
+        walletLateRegistrationEnabled:
+          mttFeatureFlags.walletLateRegistration,
+      },
+    ),
+    recoverV2: scheduler => {
+      const tournamentRecovery = new TournamentRecoveryService({
+        loadAndValidate: () => loadTournamentRecoveryPlan(database!, Date.now()),
+        recoverGeneric: options => {
+          economyService!.recoverActiveCashEscrows();
+          return economyRuntime!.recoverIncompleteEntries(options);
+        },
+        resumeRefund: (instanceId, reason) => {
+          const instance = tournamentInstances.getInstance(instanceId);
+          if (!instance) {
+            throw new Error(`Tournament recovery instance missing: ${instanceId}`);
+          }
+          resumeTournamentRefund(
+            refundDependencies,
+            instance,
+            Date.now(),
+            reason,
+          );
+        },
+        resumePayout: instanceId => {
+          resumeTournamentPayout(
+            payoutDependencies,
+            instanceId,
+            Date.now(),
+          );
+        },
+        reconcileTemplatesAndTimers: () => {
+          scheduler.reconcileAndHydrate();
         },
       });
+      tournamentRecovery.recoverBeforeListen();
+    },
+    recoverLegacy: () => {
+      economyRuntime!.recoverActiveEscrows();
     },
   });
-  const tournamentRecovery = new TournamentRecoveryService({
-    loadAndValidate: () => loadTournamentRecoveryPlan(database!, Date.now()),
-    recoverGeneric: options => {
-      economyService!.recoverActiveCashEscrows();
-      return economyRuntime!.recoverIncompleteEntries(options);
-    },
-    resumeRefund: (instanceId, reason) => {
-      const instance = tournamentInstances.getInstance(instanceId);
-      if (!instance) {
-        throw new Error(`Tournament recovery instance missing: ${instanceId}`);
-      }
-      resumeTournamentRefund(
-        refundDependencies,
-        instance,
-        Date.now(),
-        reason,
-      );
-    },
-    resumePayout: instanceId => {
-      resumeTournamentPayout(
-        payoutDependencies,
-        instanceId,
-        Date.now(),
-      );
-    },
-    reconcileTemplatesAndTimers: () => {
-      tournamentScheduler!.reconcileAndHydrate();
-    },
-  });
-  tournamentRecovery.recoverBeforeListen();
+  tournamentScheduler = mttRollout.scheduler;
+  persistentTournamentRegistration = mttRollout.registration;
+  persistentLateRegistration = mttRollout.lateRegistration;
   const arenaConfig = parseArenaRuntimeConfig(process.env);
   if (arenaConfig.enabled) {
     const arenaRepository = new ArenaRepository(database);
@@ -638,6 +651,7 @@ async function listen(): Promise<void> {
     economy: economyRuntime,
     persistentTournamentStart,
     persistentRuntimeEnabled: mttFeatureFlags.schedulerV2,
+    persistentTournamentRegistration,
     persistentLateRegistration,
     persistentSettlement,
     progressionService,
@@ -651,36 +665,35 @@ async function listen(): Promise<void> {
       }
       : {}),
   });
-  if (!tournamentScheduler) {
-    throw new Error('Tournament scheduler must be initialized before sockets');
-  }
-  runtime.tournamentCommands.configurePersistentAdmin({
-    database,
-    instances: new TournamentInstanceRepository(database),
-    scheduler: tournamentScheduler,
-    onRefundPending: persistentRefundPendingHandler,
-  });
+  if (tournamentScheduler) {
+    runtime.tournamentCommands.configurePersistentAdmin({
+      database,
+      instances: new TournamentInstanceRepository(database),
+      scheduler: tournamentScheduler,
+      onRefundPending: persistentRefundPendingHandler,
+    });
 
-  for (const pending of pendingTournamentLeaseExpiries.splice(0)) {
-    runtime.tournamentCommands.processExpiredStartLease(pending);
-  }
-  const startupInstances = new TournamentInstanceRepository(database!);
-  for (const pending of pendingTournamentStarts.splice(0)) {
-    const current = startupInstances.getInstance(pending.instance.id);
-    if (
-      current?.status !== 'starting'
-      || current.startOwnerId !== pending.instance.startOwnerId
-    ) {
-      continue;
+    for (const pending of pendingTournamentLeaseExpiries.splice(0)) {
+      runtime.tournamentCommands.processExpiredStartLease(pending);
     }
-    if (
-      current.startLeaseUntil !== null
-      && current.startLeaseUntil <= Date.now()
-    ) {
-      runtime.tournamentCommands.processExpiredStartLease(current);
-      continue;
+    const startupInstances = new TournamentInstanceRepository(database!);
+    for (const pending of pendingTournamentStarts.splice(0)) {
+      const current = startupInstances.getInstance(pending.instance.id);
+      if (
+        current?.status !== 'starting'
+        || current.startOwnerId !== pending.instance.startOwnerId
+      ) {
+        continue;
+      }
+      if (
+        current.startLeaseUntil !== null
+        && current.startLeaseUntil <= Date.now()
+      ) {
+        runtime.tournamentCommands.processExpiredStartLease(current);
+        continue;
+      }
+      runtime.tournamentCommands.processStartClaim(pending.instance);
     }
-    runtime.tournamentCommands.processStartClaim(pending.instance);
   }
 
   await new Promise<void>((resolve, reject) => {

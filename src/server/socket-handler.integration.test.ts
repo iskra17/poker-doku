@@ -242,6 +242,53 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     });
   });
 
+  it('routes scheduler-only prestart registration without live gates', async () => {
+    const requestId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const registerTournament = vi.fn((input: {
+      command: { tournamentId: string; requestId: string };
+    }): RegisterTournamentResult => ({
+      ok: true,
+      status: 'registered',
+      tournamentId: input.command.tournamentId,
+      requestId: input.command.requestId,
+    }));
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentTournamentRegistration: {
+        registerTournament,
+        listPublicTournaments: vi.fn(() => []),
+      },
+    });
+    const client = await harness.connect('persistent-prestart-only');
+
+    const response = await withAck<RegisterTournamentResult>(done =>
+      client.socket.emit('register-tournament', {
+        tournamentId: 'mtt-prestart',
+        requestId,
+      }, done));
+
+    expect(response).toEqual({
+      ok: true,
+      data: {
+        ok: true,
+        status: 'registered',
+        tournamentId: 'mtt-prestart',
+        requestId,
+      },
+    });
+    expect(registerTournament).toHaveBeenCalledWith(
+      expect.objectContaining({
+        command: { tournamentId: 'mtt-prestart', requestId },
+        profileId: client.playerId,
+      }),
+    );
+    expect(harness.runtime.tournamentManager.beginLateRegistrationOperation(
+      'mtt-prestart',
+      'seating',
+      { generation: 1, ownerToken: 'none' },
+    )).toBe(false);
+  });
+
   it('emits tournament seat assigned only to the newest lobby socket', async () => {
     const tournamentId = 'mtt-late-seat';
     const requestId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';

@@ -31,6 +31,7 @@ import { getCollectionItemDefinition } from '../lib/collection/catalog';
 import {
   setupSocketHandlers,
   type AuthenticatedSocketData,
+  type PersistentTournamentSocketPorts,
   type SocketRuntime,
 } from './socket-handler';
 import type { PersistentLateRegistrationPorts } from './tournament-manager';
@@ -94,6 +95,8 @@ export interface SocketTestHarnessOptions {
   profileAuthLimit?: number;
   arenaEnabled?: boolean;
   persistentRuntimeEnabled?: boolean;
+  persistentTournamentRegistration?:
+    Partial<PersistentTournamentSocketPorts>;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
 }
 
@@ -224,6 +227,8 @@ export async function createSocketTestHarness(
     tournamentOperatorProfileIds,
     progressionService,
     persistentRuntimeEnabled: options.persistentRuntimeEnabled,
+    persistentTournamentRegistration:
+      options.persistentTournamentRegistration,
     persistentLateRegistration: options.persistentLateRegistration,
     ...(arenaService
       ? {
