@@ -82,4 +82,72 @@ describe('payout table', () => {
     expect(() => payoutPercents(1)).toThrow();
     expect(() => payoutPercents(2.5)).toThrow();
   });
+
+  describe('table version 3 small fields', () => {
+    it('pays the winner everything at two entrants', () => {
+      for (const preset of ['standard', 'flat', 'top-heavy'] as const) {
+        expect(payoutPercents(2, preset, 3)).toEqual([100]);
+      }
+    });
+
+    it('follows the approved three-entrant ladders', () => {
+      expect(payoutPercents(3, 'standard', 3)).toEqual([70, 30]);
+      expect(payoutPercents(3, 'flat', 3)).toEqual([60, 40]);
+      expect(payoutPercents(3, 'top-heavy', 3)).toEqual([100]);
+    });
+
+    it('follows the approved four-to-five entrant ladders', () => {
+      for (const entrants of [4, 5] as const) {
+        expect(payoutPercents(entrants, 'standard', 3)).toEqual([65, 35]);
+        expect(payoutPercents(entrants, 'flat', 3)).toEqual([60, 40]);
+        expect(payoutPercents(entrants, 'top-heavy', 3)).toEqual([75, 25]);
+      }
+    });
+
+    it('delegates six or more entrants to the v2 bands', () => {
+      for (const preset of ['standard', 'flat', 'top-heavy'] as const) {
+        for (let entrants = 6; entrants <= 48; entrants += 1) {
+          expect(payoutPercents(entrants, preset, 3))
+            .toEqual(payoutPercents(entrants, preset, 2));
+        }
+      }
+    });
+
+    it('keeps every v3 ladder summing to 100 and descending', () => {
+      for (const preset of ['standard', 'flat', 'top-heavy'] as const) {
+        for (let entrants = 2; entrants <= 48; entrants += 1) {
+          const percents = payoutPercents(entrants, preset, 3);
+          expect(percents.length).toBeLessThanOrEqual(entrants);
+          expect(percents.reduce((sum, value) => sum + value, 0))
+            .toBeCloseTo(100, 8);
+
+          const payouts = computePayouts(480_001, entrants, preset, 3);
+          expect(payouts).toHaveLength(paidPlaces(entrants, preset, 3));
+          expect(payouts.reduce((sum, value) => sum + value, 0)).toBe(480_001);
+          for (let index = 1; index < payouts.length; index += 1) {
+            expect(payouts[index]).toBeLessThanOrEqual(payouts[index - 1]);
+          }
+        }
+      }
+    });
+  });
+
+  it('leaves table version 2 output untouched', () => {
+    // Existing settlements are frozen against v2 — the small-field ladders
+    // must only change for tournaments that opted into v3.
+    expect(payoutPercents(2, 'standard', 2)).toEqual([100]);
+    expect(payoutPercents(3, 'standard', 2)).toEqual([100]);
+    expect(payoutPercents(4, 'standard', 2)).toEqual([100]);
+    expect(payoutPercents(5, 'standard', 2)).toEqual([65, 35]);
+    expect(payoutPercents(4, 'flat', 2)).toEqual([65, 35]);
+    expect(payoutPercents(4, 'top-heavy', 2)).toEqual([100]);
+    expect(payoutPercents(4, 'standard')).toEqual([100]);
+    expect(paidPlaces(4, 'standard')).toBe(1);
+  });
+
+  it('rejects unknown table versions', () => {
+    expect(() => payoutPercents(8, 'standard', 1 as never)).toThrow();
+    expect(() => payoutPercents(8, 'standard', 4 as never)).toThrow();
+    expect(() => computePayouts(1_000, 8, 'standard', 4 as never)).toThrow();
+  });
 });

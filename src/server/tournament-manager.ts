@@ -15,10 +15,13 @@ import {
   type MttStructure,
 } from '../lib/poker/mtt-structure';
 import {
+  DEFAULT_PAYOUT_TABLE_VERSION,
   PAYOUT_PRESET_IDS,
+  PAYOUT_TABLE_VERSIONS,
   computePayouts,
   paidPlaces,
   type PayoutPresetId,
+  type PayoutTableVersion,
 } from '../lib/poker/payout-table';
 import { createBot, getUsedCharacterIds } from '../lib/bot/bot-manager';
 import type {
@@ -73,6 +76,7 @@ export type {
 export interface CreateTournamentInput {
   name: string;
   payoutPreset?: PayoutPresetId;
+  payoutTableVersion?: PayoutTableVersion;
   speed: MttSpeed;
   maxEntrants: number; // 8~48 (v1 상한 — 확장 시 payout-table 밴드 추가와 함께 올린다)
   tableSize: number; // v1 UI는 6 고정 노출, 내부는 2~9 지원
@@ -119,6 +123,7 @@ export interface MttEconomyHooks {
     tournamentId: string,
     results: ReadonlyArray<{ playerId: string; place: number; prize: number }>,
     payoutPreset: PayoutPresetId,
+    payoutTableVersion: PayoutTableVersion,
   ): void;
   refundAll(tournamentId: string): number;
 }
@@ -354,7 +359,10 @@ interface TournamentRuntime {
   registrationGeneration: number;
   registrationOwnerToken: string | null;
   hostId: string;
-  config: CreateTournamentInput & { payoutPreset: PayoutPresetId };
+  config: CreateTournamentInput & {
+    payoutPreset: PayoutPresetId;
+    payoutTableVersion: PayoutTableVersion;
+  };
   structure: MttStructure;
   phase: TournamentPhase;
   createdAt: number;
@@ -656,7 +664,12 @@ export class TournamentManager {
     t.seatedCount = total;
     t.remaining = total;
     t.prizePool = prepared.prizePool;
-    t.prizes = computePayouts(t.prizePool, total, t.config.payoutPreset);
+    t.prizes = computePayouts(
+      t.prizePool,
+      total,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    );
     t.startedAt = actualStartedAt;
     t.phase = 'running';
     const registration = this.persistentRuntimeRegistration?.readInstance(
@@ -798,7 +811,12 @@ export class TournamentManager {
     }
     const economyMode = input.economyMode ?? 'practice';
     const payoutPreset = input.payoutPreset ?? 'standard';
-    if (!PAYOUT_PRESET_IDS.includes(payoutPreset)) {
+    const payoutTableVersion =
+      input.payoutTableVersion ?? DEFAULT_PAYOUT_TABLE_VERSION;
+    if (
+      !PAYOUT_PRESET_IDS.includes(payoutPreset)
+      || !PAYOUT_TABLE_VERSIONS.includes(payoutTableVersion)
+    ) {
       return { ok: false, reason: 'invalid' };
     }
     // wallet은 봇 충원 불가(봇은 바이인을 못 낸다) + 경제 훅 필수 + 상품가 필수
@@ -833,6 +851,7 @@ export class TournamentManager {
         entryBuyIn,
         entryFee,
         payoutPreset,
+        payoutTableVersion,
       },
       structure: MTT_STRUCTURES[input.speed],
       phase: 'registering',
@@ -1202,7 +1221,12 @@ export class TournamentManager {
       ? t.config.maxEntrants * this.entryUnit(t)
       : previewPool;
     const payouts = t.phase === 'registering'
-      ? computePayouts(pool, previewEntrants, t.config.payoutPreset)
+      ? computePayouts(
+        pool,
+        previewEntrants,
+        t.config.payoutPreset,
+        t.config.payoutTableVersion,
+      )
         .map((prize, i) => ({ place: i + 1, prize }))
       : t.prizes.map((prize, i) => ({ place: i + 1, prize }));
     return {
@@ -1331,6 +1355,7 @@ export class TournamentManager {
         t.id,
         results.map(r => ({ playerId: r.playerId, place: r.place, prize: r.prize })),
         t.config.payoutPreset,
+        t.config.payoutTableVersion,
       );
       return true;
     } catch {
@@ -1405,6 +1430,7 @@ export class TournamentManager {
         entryBuyIn: economy.mode === 'wallet' ? economy.buyIn : 0,
         entryFee: economy.mode === 'wallet' ? economy.fee : 0,
         payoutPreset: snapshot.config.payout.presetId,
+        payoutTableVersion: snapshot.config.payout.tableVersion,
       },
       structure,
       phase: 'registering',
@@ -1680,7 +1706,12 @@ export class TournamentManager {
     t.prizePool = isWallet
       ? total * t.config.entryBuyIn!
       : total * t.structure.startingStack;
-    t.prizes = computePayouts(t.prizePool, total, t.config.payoutPreset);
+    t.prizes = computePayouts(
+      t.prizePool,
+      total,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    );
     t.startedAt = Date.now();
     t.phase = 'running';
 
@@ -1707,7 +1738,7 @@ export class TournamentManager {
       this.roomManager.postSystemChat(
         roomId,
         `🏆 ${t.config.name} 시작! 참가 ${total}명 · 테이블 ${tableCount}개 · `
-        + `${paidPlaces(total, t.config.payoutPreset)}명 입상 · 우승 상금 ${t.prizes[0].toLocaleString()}`,
+        + `${paidPlaces(total, t.config.payoutPreset, t.config.payoutTableVersion)}명 입상 · 우승 상금 ${t.prizes[0].toLocaleString()}`,
       );
     }
     let formingFinal = false;
@@ -2016,7 +2047,11 @@ export class TournamentManager {
     const enteringH4h = (
       !t.h4h.active
       && t.tables.size > 1
-      && t.remaining === paidPlaces(t.seatedCount, t.config.payoutPreset) + 1
+      && t.remaining === paidPlaces(
+      t.seatedCount,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    ) + 1
     );
     // 파이널 전환이 아니면 테이블 브레이크/밸런싱을 먼저 확정한 뒤 다음 H4H를 무장한다.
     // H4H 진입 경계에서는 방금 끝난 테이블이 숏이어도 전역 최다 테이블에서 이동할 수 있다.
@@ -2025,7 +2060,11 @@ export class TournamentManager {
       if (
         enteringH4h
         && t.tables.size > 1
-        && t.remaining === paidPlaces(t.seatedCount, t.config.payoutPreset) + 1
+        && t.remaining === paidPlaces(
+      t.seatedCount,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    ) + 1
       ) {
         this.enterH4hBarrier(t);
       }
@@ -2036,7 +2075,11 @@ export class TournamentManager {
     if (
       !t.h4h.active
       && t.tables.size > 1
-      && t.remaining === paidPlaces(t.seatedCount, t.config.payoutPreset) + 1
+      && t.remaining === paidPlaces(
+      t.seatedCount,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    ) + 1
     ) {
       this.enterH4hBarrier(t);
       return 'hold';
@@ -2305,7 +2348,11 @@ export class TournamentManager {
     remainingBeforeBatch: number,
   ): void {
     if (t.milestone?.kind === 'itm') return;
-    const paid = paidPlaces(t.seatedCount, t.config.payoutPreset);
+    const paid = paidPlaces(
+      t.seatedCount,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    );
     if (remainingBeforeBatch <= paid || t.remaining > paid) return;
 
     const reachedAt = Date.now();
@@ -3062,7 +3109,11 @@ export class TournamentManager {
     const onBreak = this.clockPos(t).onBreak;
 
     // 버블이 터졌으면 H4H 종료
-    if (t.remaining <= paidPlaces(t.seatedCount, t.config.payoutPreset)) {
+    if (t.remaining <= paidPlaces(
+      t.seatedCount,
+      t.config.payoutPreset,
+      t.config.payoutTableVersion,
+    )) {
       t.h4h.active = false;
       t.h4h.roundOpen = false;
       t.h4h.armed.clear();
@@ -3304,6 +3355,7 @@ export class TournamentManager {
       t.prizePool,
       t.seatedCount,
       t.config.payoutPreset,
+      t.config.payoutTableVersion,
     );
     for (const roomId of t.tables.keys()) {
       const state = this.roomManager.getRoom(roomId)?.engine;

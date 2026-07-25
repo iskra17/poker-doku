@@ -6,6 +6,7 @@ import {
 } from './tournament-manager';
 import type { PokerEngine } from '../lib/poker/engine';
 import { computePayouts } from '../lib/poker/payout-table';
+import type { PersistentTournamentStartSnapshot } from './tournament-manager';
 
 /**
  * MTT 오케스트레이션 통합 테스트.
@@ -200,6 +201,70 @@ function runCrossTableTie(
     local.manager.shutdown();
     local.roomManager.shutdown();
   }
+}
+
+/** 소필드(2~7인) 프리롤 스냅샷 — 정원과 하한을 인원수에 맞춘 프리즈아웃 */
+function smallFieldSnapshot(
+  id: string,
+  entrants: number,
+): PersistentTournamentStartSnapshot {
+  return {
+    id,
+    economyMode: 'freeroll',
+    directorProfileId: 'director-1',
+    registrationState: 'closed',
+    registrationGeneration: 1,
+    registrationOwnerToken: null,
+    config: {
+      version: 2,
+      name: `소필드 ${entrants}인`,
+      economy: { mode: 'freeroll', promotionAccountId: 'global' },
+      tableSize: 6,
+      field: {
+        minEntrants: entrants,
+        maxEntrants: entrants,
+        botFillToMinimum: false,
+      },
+      turnTimeSeconds: 15,
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [{
+          kind: 'level',
+          durationMs: 480_000,
+          smallBlind: 50,
+          bigBlind: 100,
+          bigBlindAnte: 0,
+        }],
+      },
+      prizePool: { kind: 'promotion-funded', totalPrize: 100_000 },
+      payout: {
+        tableVersion: 3,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+      },
+      lateRegistration: {
+        enabled: false,
+        durationLevels: 0,
+        minStartingStackBb: 20,
+      },
+    },
+  };
+}
+
+function startSmallField(h: Harness, entrants: number): string {
+  const id = `small-field-${entrants}`;
+  h.manager.prepareFromInstance(
+    smallFieldSnapshot(id, entrants),
+    Array.from({ length: entrants }, (_, index) => ({
+      id: `h${index + 1}`,
+      name: `유저${index + 1}`,
+      avatar: 'ara',
+    })),
+    'start-owner',
+  );
+  h.manager.activatePreparedTournament(id, 'start-owner', Date.now());
+  return id;
 }
 
 describe('TournamentManager', () => {
@@ -974,6 +1039,37 @@ describe('TournamentManager', () => {
     expect(after).toBeDefined();
     expect(after!.finishPlace).toBeUndefined();
     expect(after!.pendingRemoval).not.toBe(true);
+  });
+
+  it.each([2, 3, 4, 5, 6])(
+    'starts a %i-entrant field directly as one final table',
+    entrants => {
+      const id = startSmallField(h, entrants);
+
+      expect(mttTableIds(h.roomManager)).toHaveLength(1);
+      expect(h.manager.getDetail(id)?.summary.stage).toBe('final-intro');
+
+      vi.advanceTimersByTime(5_000);
+      expect(h.manager.getDetail(id)?.summary.stage).toBe('final-playing');
+      expect(h.manager.getDetail(id)?.holdReasons).toEqual([]);
+    },
+  );
+
+  it('still splits a seven-entrant field across two tables', () => {
+    const id = startSmallField(h, 7);
+
+    expect(mttTableIds(h.roomManager)).toHaveLength(2);
+    expect(h.manager.getDetail(id)?.summary.stage).toBe('multi-table');
+  });
+
+  it('pays a small field from the v3 ladder its config froze', () => {
+    const id = startSmallField(h, 3);
+
+    // v2였다면 3인 필드는 winner-take-all이라 준우승이 빈손이 된다.
+    expect(h.manager.getDetail(id)?.payouts.map(row => row.prize))
+      .toEqual(computePayouts(100_000, 3, 'standard', 3));
+    expect(h.manager.getDetail(id)?.payouts.map(row => row.prize))
+      .toEqual([70_000, 30_000]);
   });
 
   it('records an explicit leave as elimination at current place', () => {

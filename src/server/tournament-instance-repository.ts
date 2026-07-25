@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { PokerDatabase } from './persistence/database';
 import {
+  PAYOUT_TABLE_VERSIONS,
   computePayouts,
   payoutPercents,
 } from '@/lib/poker/payout-table';
@@ -1648,10 +1649,12 @@ function projectDetail(
     totalPrize,
     entrantBasis,
     instance.config.payout.presetId,
+    instance.config.payout.tableVersion,
   );
   const percents = payoutPercents(
     entrantBasis,
     instance.config.payout.presetId,
+    instance.config.payout.tableVersion,
   );
   const payoutRows = payoutAmounts.map((amount, index) => ({
     place: index + 1,
@@ -2240,7 +2243,7 @@ function assertConfig(value: unknown): asserts value is TournamentConfigSnapshot
     !isIntegerIn(value.structure.startingStack, 1, Number.MAX_SAFE_INTEGER)
     || !Array.isArray(value.structure.segments)
     || value.structure.segments.length === 0
-    || value.payout.tableVersion !== 2
+    || !PAYOUT_TABLE_VERSIONS.includes(value.payout.tableVersion as never)
     || !['top-heavy', 'standard', 'flat'].includes(
       value.payout.presetId as string,
     )

@@ -1,3 +1,5 @@
+import type { PayoutTableVersion } from '@/lib/poker/payout-table';
+
 export interface TournamentFieldPolicy {
   readonly minEntrants: number;
   readonly maxEntrants: number;
@@ -48,17 +50,17 @@ export interface TournamentStructure {
 
 export type TournamentPayoutPolicy =
   | {
-      readonly tableVersion: 2;
+      readonly tableVersion: PayoutTableVersion;
       readonly presetId: 'top-heavy';
       readonly paidFieldPercent: 10;
     }
   | {
-      readonly tableVersion: 2;
+      readonly tableVersion: PayoutTableVersion;
       readonly presetId: 'standard';
       readonly paidFieldPercent: 15;
     }
   | {
-      readonly tableVersion: 2;
+      readonly tableVersion: PayoutTableVersion;
       readonly presetId: 'flat';
       readonly paidFieldPercent: 20;
     };

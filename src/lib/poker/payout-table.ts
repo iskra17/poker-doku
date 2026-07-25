@@ -53,13 +53,58 @@ export const PAYOUT_PRESETS = {
   bands: readonly PayoutBand[];
 }>;
 
+/**
+ * 계단표 버전. v2는 이미 정산된 토너먼트가 고정된 계약이라 절대 바꾸지 않고,
+ * 신규 토너먼트만 v3로 개설한다 (2~5인 소필드 밴드 추가).
+ */
+export const PAYOUT_TABLE_VERSIONS = [2, 3] as const;
+export type PayoutTableVersion = (typeof PAYOUT_TABLE_VERSIONS)[number];
+export const DEFAULT_PAYOUT_TABLE_VERSION: PayoutTableVersion = 2;
+export const CURRENT_PAYOUT_TABLE_VERSION: PayoutTableVersion = 3;
+
+/**
+ * v3 소필드 밴드 (2~5인). v2는 2~4인을 winner-take-all로 묶어 3~5인 필드에서
+ * 준우승이 빈손이었다. 6인 이상은 v2 밴드에 그대로 위임한다.
+ */
+const V3_SMALL_FIELD_BANDS: Record<PayoutPresetId, readonly PayoutBand[]> = {
+  standard: [
+    { maxEntrants: 2, percents: [100] },
+    { maxEntrants: 3, percents: [70, 30] },
+    { maxEntrants: 5, percents: [65, 35] },
+  ],
+  flat: [
+    { maxEntrants: 2, percents: [100] },
+    { maxEntrants: 3, percents: [60, 40] },
+    { maxEntrants: 5, percents: [60, 40] },
+  ],
+  'top-heavy': [
+    { maxEntrants: 3, percents: [100] },
+    { maxEntrants: 5, percents: [75, 25] },
+  ],
+};
+
+function assertTableVersion(
+  tableVersion: PayoutTableVersion,
+): asserts tableVersion is PayoutTableVersion {
+  if (!PAYOUT_TABLE_VERSIONS.includes(tableVersion)) {
+    throw new Error(`invalid payout table version: ${tableVersion}`);
+  }
+}
+
 /** 필드 크기 → 배분율 (1위부터, %). 48명 초과는 마지막 밴드로 폴백 (확장 시 밴드 추가) */
 export function payoutPercents(
   entrants: number,
   presetId: PayoutPresetId = 'standard',
+  tableVersion: PayoutTableVersion = DEFAULT_PAYOUT_TABLE_VERSION,
 ): readonly number[] {
+  assertTableVersion(tableVersion);
   if (!Number.isInteger(entrants) || entrants < 2) {
     throw new Error(`invalid entrant count: ${entrants}`);
+  }
+  if (tableVersion === 3) {
+    for (const band of V3_SMALL_FIELD_BANDS[presetId]) {
+      if (entrants <= band.maxEntrants) return band.percents;
+    }
   }
   const bands = PAYOUT_PRESETS[presetId].bands;
   for (const band of bands) {
@@ -72,8 +117,9 @@ export function payoutPercents(
 export function paidPlaces(
   entrants: number,
   presetId: PayoutPresetId = 'standard',
+  tableVersion: PayoutTableVersion = DEFAULT_PAYOUT_TABLE_VERSION,
 ): number {
-  return payoutPercents(entrants, presetId).length;
+  return payoutPercents(entrants, presetId, tableVersion).length;
 }
 
 /**
@@ -84,11 +130,12 @@ export function computePayouts(
   prizePool: number,
   entrants: number,
   presetId: PayoutPresetId = 'standard',
+  tableVersion: PayoutTableVersion = DEFAULT_PAYOUT_TABLE_VERSION,
 ): number[] {
   if (!Number.isSafeInteger(prizePool) || prizePool < 0) {
     throw new Error(`invalid prize pool: ${prizePool}`);
   }
-  const percents = payoutPercents(entrants, presetId);
+  const percents = payoutPercents(entrants, presetId, tableVersion);
   const payouts = percents.map(pct => Math.floor((prizePool * pct) / 100));
   const distributed = payouts.reduce((s, v) => s + v, 0);
   payouts[0] += prizePool - distributed;

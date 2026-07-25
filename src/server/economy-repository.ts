@@ -1,8 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PublicProfile } from '@/lib/profile/types';
 import {
+  DEFAULT_PAYOUT_TABLE_VERSION,
   computePayouts,
   type PayoutPresetId,
+  type PayoutTableVersion,
 } from '@/lib/poker/payout-table';
 import type { PokerDatabase } from './persistence/database';
 
@@ -1029,6 +1031,7 @@ export class EconomyRepository {
     fee: number,
     at: number,
     payoutPreset: PayoutPresetId = 'standard',
+    payoutTableVersion: PayoutTableVersion = DEFAULT_PAYOUT_TABLE_VERSION,
   ): string {
     this.assertSngIdentity('settlement', tournamentId);
     this.assertSngAmounts(buyIn, fee);
@@ -1037,10 +1040,23 @@ export class EconomyRepository {
       let entries = this.listActiveSngEntriesByRoom(tournamentId);
       if (entries.length === 0) {
         entries = this.listLatestSettledSngEntries(tournamentId);
-        this.assertSettledMttDuplicate(entries, results, buyIn, fee, payoutPreset);
+        this.assertSettledMttDuplicate(
+          entries,
+          results,
+          buyIn,
+          fee,
+          payoutPreset,
+          payoutTableVersion,
+        );
         return entries[0].tournamentId;
       }
-      const expectedPrizes = this.assertMttResults(results, buyIn, fee, payoutPreset);
+      const expectedPrizes = this.assertMttResults(
+        results,
+        buyIn,
+        fee,
+        payoutPreset,
+        payoutTableVersion,
+      );
       this.assertExactSngProfiles(
         entries,
         results.map(result => result.playerId),
@@ -2287,6 +2303,7 @@ export class EconomyRepository {
     buyIn: number,
     fee: number,
     payoutPreset: PayoutPresetId = 'standard',
+    payoutTableVersion: PayoutTableVersion = DEFAULT_PAYOUT_TABLE_VERSION,
   ): readonly number[] {
     this.assertSngAmounts(buyIn, fee);
     const count = Array.isArray(results) ? results.length : 0;
@@ -2309,7 +2326,12 @@ export class EconomyRepository {
       throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
     }
     const pool = this.safeMultiply(buyIn, count, 'SNG_SETTLEMENT_INVALID');
-    const ladder = computePayouts(pool, count, payoutPreset);
+    const ladder = computePayouts(
+      pool,
+      count,
+      payoutPreset,
+      payoutTableVersion,
+    );
     const prizes = Array.from(
       { length: count },
       (_, index) => ladder[index] ?? 0,
@@ -2760,6 +2782,7 @@ export class EconomyRepository {
     buyIn: number,
     fee: number,
     payoutPreset: PayoutPresetId,
+    payoutTableVersion: PayoutTableVersion,
   ): void {
     let persisted: SngResult[];
     const persistedBuyIn = entries[0]?.buyIn;
@@ -2785,7 +2808,13 @@ export class EconomyRepository {
         place: entry.place as number,
         prize: entry.prize,
       }));
-      this.assertMttResults(persisted, persistedBuyIn, persistedFee, payoutPreset);
+      this.assertMttResults(
+        persisted,
+        persistedBuyIn,
+        persistedFee,
+        payoutPreset,
+        payoutTableVersion,
+      );
     } catch (error) {
       if (
         error instanceof EconomyDomainError
@@ -2800,7 +2829,13 @@ export class EconomyRepository {
       throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
     }
     try {
-      this.assertMttResults(results, buyIn, fee, payoutPreset);
+      this.assertMttResults(
+        results,
+        buyIn,
+        fee,
+        payoutPreset,
+        payoutTableVersion,
+      );
     } catch {
       throw new EconomyDomainError('SNG_SETTLEMENT_CONFLICT');
     }

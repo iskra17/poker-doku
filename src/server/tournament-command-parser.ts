@@ -3,6 +3,11 @@ import {
   MTT_WALLET_ENTRY_FEE,
 } from '../lib/economy/mtt-entry';
 import { MTT_STRUCTURES } from '../lib/poker/mtt-structure';
+import {
+  DEFAULT_PAYOUT_TABLE_VERSION,
+  PAYOUT_TABLE_VERSIONS,
+  type PayoutTableVersion,
+} from '../lib/poker/payout-table';
 import type {
   CreateTournamentCommand,
   LateRegistrationPolicy,
@@ -450,20 +455,26 @@ function parseLateRegistration(value: unknown): LateRegistrationPolicy {
 function parsePayout(value: unknown): TournamentPayoutPolicy {
   if (value === undefined) {
     return {
-      tableVersion: 2,
+      tableVersion: DEFAULT_PAYOUT_TABLE_VERSION,
       presetId: 'standard',
       paidFieldPercent: 15,
     };
   }
-  if (!isRecord(value) || value.tableVersion !== 2) fail('payout');
+  if (
+    !isRecord(value)
+    || !PAYOUT_TABLE_VERSIONS.includes(value.tableVersion as never)
+  ) {
+    fail('payout');
+  }
+  const tableVersion = value.tableVersion as PayoutTableVersion;
   if (value.presetId === 'top-heavy' && value.paidFieldPercent === 10) {
-    return { tableVersion: 2, presetId: 'top-heavy', paidFieldPercent: 10 };
+    return { tableVersion, presetId: 'top-heavy', paidFieldPercent: 10 };
   }
   if (value.presetId === 'standard' && value.paidFieldPercent === 15) {
-    return { tableVersion: 2, presetId: 'standard', paidFieldPercent: 15 };
+    return { tableVersion, presetId: 'standard', paidFieldPercent: 15 };
   }
   if (value.presetId === 'flat' && value.paidFieldPercent === 20) {
-    return { tableVersion: 2, presetId: 'flat', paidFieldPercent: 20 };
+    return { tableVersion, presetId: 'flat', paidFieldPercent: 20 };
   }
   return fail('payout');
 }
