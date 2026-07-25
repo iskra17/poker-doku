@@ -12,6 +12,8 @@ import {
   MTT_WALLET_ENTRY_COST,
   MTT_WALLET_ENTRY_FEE,
 } from '@/lib/economy/mtt-entry';
+import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-config';
+import { TournamentInstanceRepository } from './tournament-instance-repository';
 
 /**
  * wallet MTT 토너 단위 에스크로 회귀 (Phase 2 — spec-mtt §4-7).
@@ -256,6 +258,42 @@ describe('wallet MTT 에스크로', () => {
     for (const id of ids) expect(balanceOf(id)).toBe(5_000);
   });
 
+  it('preserves exact scheduled entries and defers active instances during recovery', () => {
+    createPersistentWalletInstance('preserved-mtt', 'registering');
+    createPersistentWalletInstance('deferred-mtt', 'running');
+    for (const id of ['preserved', 'deferred', 'orphan', 'sng']) {
+      seedProfile(id);
+    }
+    const preserved = service.reserveMttEntry('preserved', 'preserved-mtt', 48);
+    service.reserveMttEntry('deferred', 'deferred-mtt', 48);
+    service.reserveMttEntry('orphan', 'orphan-mtt', 48);
+    service.reserveSngEntry('sng', 'sng-room-recovery');
+
+    const result = service.recoverIncompleteEntries({
+      preserveReservedMttEntries: new Map([
+        ['preserved-mtt', new Map([
+          ['preserved', {
+            economyEntryAttempt: preserved.entryAttempt,
+            buyIn: MTT_WALLET_BUY_IN,
+            fee: MTT_WALLET_ENTRY_FEE,
+          }],
+        ])],
+      ]),
+      deferToMttVoidInstanceIds: new Set(['deferred-mtt']),
+    });
+
+    expect(result).toEqual({
+      refunded: 2,
+      failed: 0,
+      preserved: 1,
+      deferred: 1,
+    });
+    expect(balanceOf('preserved')).toBe(5_000 - MTT_WALLET_ENTRY_COST);
+    expect(balanceOf('deferred')).toBe(5_000 - MTT_WALLET_ENTRY_COST);
+    expect(balanceOf('orphan')).toBe(5_000);
+    expect(balanceOf('sng')).toBe(5_000);
+  });
+
   it('상수 무결성 — 참가비 = 바이인 + 수수료', () => {
     expect(MTT_WALLET_ENTRY_COST).toBe(MTT_WALLET_BUY_IN + MTT_WALLET_ENTRY_FEE);
   });
@@ -276,3 +314,85 @@ describe('wallet MTT 에스크로', () => {
     expect(balanceOf('p1')).toBe(5_000 - MTT_WALLET_ENTRY_COST + ladder[0]);
   });
 });
+
+function createPersistentWalletInstance(
+  id: string,
+  target: 'registering' | 'running',
+): void {
+  const instances = new TournamentInstanceRepository(database, () => NOW);
+  instances.createInstance({
+    id,
+    templateId: null,
+    templateRevision: null,
+    idempotencyKey: `instance:${id}`,
+    occurrenceKey: id,
+    schedule: {
+      visibleAt: NOW - 20_000,
+      registrationOpensAt: NOW - 10_000,
+      startsAt: NOW + 300_000,
+      manualStartExpiresAt: null,
+    },
+    config: persistentWalletConfig(),
+    createdBy: { kind: 'system', profileId: null },
+    now: NOW - 30_000,
+  });
+  database.db.prepare(`
+    UPDATE tournament_instance
+    SET status = 'registering', registration_state = 'open-prestart',
+        updated_at = ?
+    WHERE id = ?
+  `).run(NOW - 1, id);
+  if (target === 'registering') return;
+  database.db.exec(`
+    UPDATE tournament_instance
+    SET status = 'starting', registration_state = 'locked-for-start',
+        start_attempt = 1, start_owner_id = 'recovery-owner',
+        start_lease_until = ${NOW + 30_000}, updated_at = ${NOW}
+    WHERE id = '${id}';
+    UPDATE tournament_instance
+    SET status = 'running', registration_state = 'open-late',
+        initial_entrants = 2, initial_bot_entrants = 0,
+        committed_entrants = 2, actual_started_at = ${NOW},
+        start_owner_id = NULL, start_lease_until = NULL,
+        updated_at = ${NOW}
+    WHERE id = '${id}';
+  `);
+}
+
+function persistentWalletConfig(): TournamentConfigSnapshotV2 {
+  return {
+    version: 2,
+    name: 'Recovery MTT',
+    economy: {
+      mode: 'wallet',
+      productVersion: 1,
+      buyIn: MTT_WALLET_BUY_IN,
+      fee: MTT_WALLET_ENTRY_FEE,
+    },
+    tableSize: 6,
+    field: { minEntrants: 2, maxEntrants: 48, botFillToMinimum: false },
+    turnTimeSeconds: 15,
+    structure: {
+      sourcePresetId: 'standard',
+      startingStack: 1_500,
+      segments: [{
+        kind: 'level',
+        durationMs: 300_000,
+        smallBlind: 10,
+        bigBlind: 20,
+        bigBlindAnte: 0,
+      }],
+    },
+    prizePool: { kind: 'entry-pool' },
+    payout: {
+      tableVersion: 2,
+      presetId: 'standard',
+      paidFieldPercent: 15,
+    },
+    lateRegistration: {
+      enabled: true,
+      durationLevels: 2,
+      minStartingStackBb: 20,
+    },
+  };
+}

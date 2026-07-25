@@ -7,6 +7,8 @@ import {
   type CashHandStack,
   type EconomyRepository,
   type EconomyResult,
+  type IncompleteEntryRecoveryOptions,
+  type IncompleteEntryRecoveryResult,
   type SngEntry,
   type SngResult,
 } from './economy-repository';
@@ -312,6 +314,13 @@ export class EconomyService {
 
   recoverIncompleteSngEntries(at = this.clock()): number {
     return this.repository.recoverIncompleteSngEntries(at);
+  }
+
+  recoverIncompleteEntries(
+    options: IncompleteEntryRecoveryOptions,
+    at = this.clock(),
+  ): IncompleteEntryRecoveryResult {
+    return this.repository.recoverIncompleteEntries(options, at);
   }
 
   // --- wallet MTT (토너 단위 에스크로 — 키는 토너먼트 ID) ---

@@ -1,7 +1,11 @@
 import type { PokerEngine } from '../lib/poker/engine';
 import type { Player } from '../lib/poker/types';
 import type { PayoutPresetId } from '../lib/poker/payout-table';
-import { EconomyDomainError } from './economy-repository';
+import {
+  EconomyDomainError,
+  type IncompleteEntryRecoveryOptions,
+  type IncompleteEntryRecoveryResult,
+} from './economy-repository';
 import { ECONOMY_RULES, type EconomyService } from './economy-service';
 
 export interface CashHandPersistenceResult {
@@ -257,6 +261,12 @@ export class EconomyRuntime implements
       this.economy.recoverActiveCashEscrows(),
       this.economy.recoverIncompleteSngEntries(),
     );
+  }
+
+  recoverIncompleteEntries(
+    options: IncompleteEntryRecoveryOptions,
+  ): IncompleteEntryRecoveryResult {
+    return this.economy.recoverIncompleteEntries(options);
   }
 
   private requireWalletSng(engine: PokerEngine): {

@@ -233,6 +233,7 @@ export interface SngEntry {
   place: number | null;
   prize: number;
   startAttempt: number;
+  entryAttempt: number;
 }
 
 export interface SngResult {
@@ -252,6 +253,35 @@ interface SngEntryRow {
   place: number | null;
   prize: number;
   start_attempt: number;
+  entry_attempt: number;
+}
+
+export interface MttInstanceProduct {
+  readonly instanceId: string;
+  readonly productVersion: number;
+  readonly buyIn: number;
+  readonly fee: number;
+}
+
+export interface MttRecoveryEntryExpectation {
+  readonly economyEntryAttempt: number;
+  readonly buyIn: number;
+  readonly fee: number;
+}
+
+export interface IncompleteEntryRecoveryOptions {
+  readonly preserveReservedMttEntries: ReadonlyMap<
+    string,
+    ReadonlyMap<string, MttRecoveryEntryExpectation>
+  >;
+  readonly deferToMttVoidInstanceIds: ReadonlySet<string>;
+}
+
+export interface IncompleteEntryRecoveryResult {
+  readonly refunded: number;
+  readonly failed: number;
+  readonly preserved: number;
+  readonly deferred: number;
 }
 
 interface ActiveSeatEscrowRow {
@@ -725,6 +755,172 @@ export class EconomyRepository {
   // 재사용해 잔액 보존·복구(recoverIncompleteSngEntries)·이중 착석 가드를 공짜로 승계한다.
   // SnG와 다른 곳은 정원(6 고정 → 2~maxEntrants)과 상금표(50/30/20 고정 → payout-table)뿐.
 
+  reserveMttEntryInTransaction(
+    profileId: string,
+    instanceProduct: MttInstanceProduct,
+    attempt: number,
+    at: number,
+  ): SngEntry {
+    this.database.assertTransactionActive();
+    this.assertMttInstanceProduct(instanceProduct);
+    this.assertSngIdentity(profileId, instanceProduct.instanceId);
+    if (!Number.isSafeInteger(attempt) || attempt < 1) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    assertValidEconomyTimestamp(at);
+    const total = this.assertSngAmounts(
+      instanceProduct.buyIn,
+      instanceProduct.fee,
+    );
+    const replay = this.getMttEntryByAttempt(
+      instanceProduct.instanceId,
+      profileId,
+      attempt,
+    );
+    if (replay) {
+      if (
+        replay.status !== 'reserved'
+        || replay.buyIn !== instanceProduct.buyIn
+        || replay.fee !== instanceProduct.fee
+      ) {
+        throw new EconomyDomainError('SNG_ENTRY_INVALID');
+      }
+      this.requireMatchingSngSeat(replay, total);
+      return replay;
+    }
+    if (this.getActiveSngEntry(profileId) || this.getActiveSeatEscrow(profileId)) {
+      throw new EconomyDomainError('SNG_ACTIVE_SEAT');
+    }
+
+    const profile = this.requirePublicProfile(profileId);
+    if (profile.wallet.balance < total) {
+      throw new EconomyDomainError('INSUFFICIENT_BALANCE');
+    }
+    const entryId = randomUUID();
+    const nextBalance = this.safeAdd(
+      profile.wallet.balance,
+      -total,
+      'WALLET_BALANCE_OVERFLOW',
+    );
+    this.database.db.prepare(`
+      UPDATE wallets SET balance = ?, updated_at = ? WHERE profile_id = ?
+    `).run(nextBalance, at, profileId);
+    this.database.db.prepare(`
+      INSERT INTO sng_entries (
+        id, tournament_id, room_id, profile_id, buy_in, fee,
+        status, place, prize, start_attempt, entry_attempt,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'reserved', NULL, 0, 0, ?, ?, ?)
+    `).run(
+      entryId,
+      instanceProduct.instanceId,
+      instanceProduct.instanceId,
+      profileId,
+      instanceProduct.buyIn,
+      instanceProduct.fee,
+      attempt,
+      at,
+      at,
+    );
+    this.database.db.prepare(`
+      INSERT INTO seat_escrows (
+        id, profile_id, room_id, mode, amount, checkpoint_amount,
+        checkpoint_hand, status, updated_at
+      ) VALUES (?, ?, ?, 'sng', ?, ?, 0, 'active', ?)
+    `).run(
+      entryId,
+      profileId,
+      instanceProduct.instanceId,
+      total,
+      total,
+      at,
+    );
+    this.insertLedger({
+      profileId,
+      account: 'wallet',
+      delta: -total,
+      reason: 'SNG_ENTRY_RESERVE',
+      refId: instanceProduct.instanceId,
+      idempotencyKey: `sng-reserve:${entryId}:wallet`,
+      at,
+    });
+    this.insertLedger({
+      profileId,
+      account: 'escrow',
+      delta: total,
+      reason: 'SNG_ENTRY_RESERVE',
+      refId: instanceProduct.instanceId,
+      idempotencyKey: `sng-reserve:${entryId}:escrow`,
+      at,
+    });
+    return this.requireSngEntry(entryId);
+  }
+
+  startMttEntryInTransaction(
+    entryId: string,
+    expectedAttempt: number,
+    at: number,
+  ): SngEntry {
+    this.database.assertTransactionActive();
+    assertValidEconomyTimestamp(at);
+    const entry = this.requireMttEntryAttempt(entryId, expectedAttempt);
+    if (entry.status === 'started') {
+      this.assertSngStartLedger(entry);
+      return entry;
+    }
+    if (entry.status !== 'reserved') {
+      throw new EconomyDomainError('SNG_START_INVALID');
+    }
+    this.burnEntryFee(entry, entry.roomId, entry.buyIn, entry.fee, at);
+    return this.requireMttEntryAttempt(entryId, expectedAttempt);
+  }
+
+  refundMttEntryInTransaction(
+    entryId: string,
+    expectedAttempt: number,
+    reason: 'SNG_ENTRY_REFUND' | 'SNG_VOID_REFUND',
+    at: number,
+  ): SngEntry {
+    this.database.assertTransactionActive();
+    assertValidEconomyTimestamp(at);
+    const entry = this.requireMttEntryAttempt(entryId, expectedAttempt);
+    if (entry.status === 'refunded') return entry;
+    if (entry.status !== 'reserved' && entry.status !== 'started') {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    this.refundSngEntry(entry, reason, at);
+    return this.requireMttEntryAttempt(entryId, expectedAttempt);
+  }
+
+  creditFreerollPrizeInTransaction(
+    profileId: string,
+    instanceId: string,
+    place: number,
+    amount: number,
+    at: number,
+  ): void {
+    this.database.assertTransactionActive();
+    this.assertSngIdentity(profileId, instanceId);
+    if (
+      !Number.isSafeInteger(place)
+      || place < 1
+      || !Number.isSafeInteger(amount)
+      || amount < 0
+    ) {
+      throw new EconomyDomainError('SNG_SETTLEMENT_INVALID');
+    }
+    assertValidEconomyTimestamp(at);
+    if (amount === 0) return;
+    this.applyWalletDeltaInTransaction(
+      profileId,
+      amount,
+      'MTT_FREEROLL_PRIZE',
+      `mtt-freeroll-prize:${instanceId}:${place}`,
+      instanceId,
+      at,
+    );
+  }
+
   reserveMttEntry(
     profileId: string,
     tournamentId: string,
@@ -932,7 +1128,14 @@ export class EconomyRepository {
   recoverIncompleteSngEntries(at: number): number {
     assertValidEconomyTimestamp(at);
     return this.database.transaction(() => {
-      const entries = this.listAllIncompleteSngEntries();
+      const persistentMttRows = this.database.db.prepare(`
+        SELECT id FROM tournament_instance
+      `).all() as unknown as Array<{ id: string }>;
+      const persistentMttIds = new Set(
+        persistentMttRows.map(row => row.id),
+      );
+      const entries = this.listAllIncompleteSngEntries()
+        .filter(entry => !persistentMttIds.has(entry.roomId));
       for (const entry of entries) {
         const total = this.assertSngAmounts(entry.buyIn, entry.fee);
         this.requireMatchingSngSeat(entry, total);
@@ -946,6 +1149,55 @@ export class EconomyRepository {
       }
       return entries.length;
     });
+  }
+
+  recoverIncompleteEntries(
+    options: IncompleteEntryRecoveryOptions,
+    at: number,
+  ): IncompleteEntryRecoveryResult {
+    assertValidEconomyTimestamp(at);
+    const entries = this.listAllIncompleteSngEntries();
+    let refunded = 0;
+    let failed = 0;
+    let preserved = 0;
+    let deferred = 0;
+
+    for (const entry of entries) {
+      if (options.deferToMttVoidInstanceIds.has(entry.roomId)) {
+        deferred += 1;
+        continue;
+      }
+      const expected = options.preserveReservedMttEntries
+        .get(entry.roomId)
+        ?.get(entry.profileId);
+      if (
+        entry.status === 'reserved'
+        && expected
+        && expected.economyEntryAttempt === entry.entryAttempt
+        && expected.buyIn === entry.buyIn
+        && expected.fee === entry.fee
+      ) {
+        preserved += 1;
+        continue;
+      }
+
+      try {
+        this.database.transaction(() => {
+          const total = this.assertSngAmounts(entry.buyIn, entry.fee);
+          this.requireMatchingSngSeat(entry, total);
+          if (entry.status === 'started' && entry.startAttempt <= 0) {
+            throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+          }
+          if (entry.status === 'started') this.assertSngStartLedger(entry);
+          this.refundSngEntry(entry, 'SNG_VOID_REFUND', at);
+        });
+        refunded += 1;
+      } catch {
+        failed += 1;
+      }
+    }
+
+    return { refunded, failed, preserved, deferred };
   }
 
   openCashEscrow(
@@ -2025,17 +2277,31 @@ export class EconomyRepository {
   private getActiveSngEntry(profileId: string): SngEntry | null {
     const row = this.database.db.prepare(`
       SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
-             status, place, prize, start_attempt
+             status, place, prize, start_attempt, entry_attempt
       FROM sng_entries
       WHERE profile_id = ? AND status IN ('reserved', 'started')
     `).get(profileId) as SngEntryRow | undefined;
     return row ? this.toSngEntry(row) : null;
   }
 
+  private getMttEntryByAttempt(
+    instanceId: string,
+    profileId: string,
+    entryAttempt: number,
+  ): SngEntry | null {
+    const row = this.database.db.prepare(`
+      SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
+             status, place, prize, start_attempt, entry_attempt
+      FROM sng_entries
+      WHERE tournament_id = ? AND profile_id = ? AND entry_attempt = ?
+    `).get(instanceId, profileId, entryAttempt) as SngEntryRow | undefined;
+    return row ? this.toSngEntry(row) : null;
+  }
+
   private listActiveSngEntriesByRoom(roomId: string): SngEntry[] {
     const rows = this.database.db.prepare(`
       SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
-             status, place, prize, start_attempt
+             status, place, prize, start_attempt, entry_attempt
       FROM sng_entries
       WHERE room_id = ? AND status IN ('reserved', 'started')
       ORDER BY profile_id
@@ -2046,7 +2312,7 @@ export class EconomyRepository {
   private listAllIncompleteSngEntries(): SngEntry[] {
     const rows = this.database.db.prepare(`
       SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
-             status, place, prize, start_attempt
+             status, place, prize, start_attempt, entry_attempt
       FROM sng_entries
       WHERE status IN ('reserved', 'started')
       ORDER BY room_id, tournament_id, profile_id
@@ -2065,7 +2331,7 @@ export class EconomyRepository {
     if (!latest) throw new EconomyDomainError('SNG_ENTRY_NOT_FOUND');
     const rows = this.database.db.prepare(`
       SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
-             status, place, prize, start_attempt
+             status, place, prize, start_attempt, entry_attempt
       FROM sng_entries
       WHERE tournament_id = ?
       ORDER BY profile_id
@@ -2076,11 +2342,41 @@ export class EconomyRepository {
   private requireSngEntry(entryId: string): SngEntry {
     const row = this.database.db.prepare(`
       SELECT id, tournament_id, room_id, profile_id, buy_in, fee,
-             status, place, prize, start_attempt
+             status, place, prize, start_attempt, entry_attempt
       FROM sng_entries WHERE id = ?
     `).get(entryId) as SngEntryRow | undefined;
     if (!row) throw new EconomyDomainError('SNG_ENTRY_NOT_FOUND');
     return this.toSngEntry(row);
+  }
+
+  private requireMttEntryAttempt(
+    entryId: string,
+    expectedAttempt: number,
+  ): SngEntry {
+    if (!Number.isSafeInteger(expectedAttempt) || expectedAttempt < 1) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    const entry = this.requireSngEntry(entryId);
+    if (
+      entry.entryAttempt !== expectedAttempt
+      || entry.tournamentId !== entry.roomId
+    ) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    return entry;
+  }
+
+  private assertMttInstanceProduct(
+    product: MttInstanceProduct,
+  ): void {
+    this.assertSngIdentity('mtt-product', product.instanceId);
+    if (
+      !Number.isSafeInteger(product.productVersion)
+      || product.productVersion < 1
+    ) {
+      throw new EconomyDomainError('SNG_ENTRY_INVALID');
+    }
+    this.assertSngAmounts(product.buyIn, product.fee);
   }
 
   private toSngEntry(row: SngEntryRow): SngEntry {
@@ -2098,6 +2394,8 @@ export class EconomyRepository {
       || row.prize < 0
       || !Number.isSafeInteger(row.start_attempt)
       || row.start_attempt < 0
+      || !Number.isSafeInteger(row.entry_attempt)
+      || row.entry_attempt < 1
       // MTT(토너 단위 참가)는 순위가 6위를 넘는다 — DDL(v26)과 동일 상한
       || (row.place !== null && (
         !Number.isSafeInteger(row.place) || row.place < 1 || row.place > 1000
@@ -2121,6 +2419,7 @@ export class EconomyRepository {
       place: row.place,
       prize: row.prize,
       startAttempt: row.start_attempt,
+      entryAttempt: row.entry_attempt,
     };
   }
 
