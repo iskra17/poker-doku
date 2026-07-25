@@ -160,72 +160,131 @@ describe('TournamentRecoveryService', () => {
     });
   });
 
-  it('quarantines config-mismatched reserved entries without active registration', () => {
-    const database = testDatabase();
-    const instances = new TournamentInstanceRepository(database, () => NOW);
-    const economy = new EconomyRepository(database);
-    const economyService = new EconomyService(economy, () => NOW);
-    const enrollment = new TournamentEnrollmentRepository(
-      database,
-      economy,
-      () => NOW,
-    );
-    instances.createInstance(instanceCommand('config-mismatch'));
-    database.db.prepare(`
-      UPDATE tournament_instance
-      SET status = 'registering', registration_state = 'open-prestart',
-          updated_at = ?
-      WHERE id = 'config-mismatch'
-    `).run(NOW);
-    seedProfile(database, 'mismatch-player', 5_000);
-    enrollment.registerPreStart({
-      tournamentId: 'config-mismatch',
-      profileId: 'mismatch-player',
-      requestId: randomUUID(),
-      publicPlayer: {
-        id: 'mismatch-player',
-        name: 'Mismatch',
-        avatar: 'sakura',
+  it.each([
+    {
+      name: 'valid exact reserved incarnation',
+      valid: true,
+      corrupt: () => undefined,
+    },
+    {
+      name: 'missing economy entry',
+      valid: false,
+      corrupt: (database: PokerDatabase, id: string) => {
+        database.db.prepare(
+          `DELETE FROM sng_entries WHERE tournament_id = ?`,
+        ).run(id);
       },
-      at: NOW,
-    });
-    database.db.exec(`
-      DROP TRIGGER protect_tournament_instance_identity;
-      UPDATE tournament_instance
-      SET config_json = json_set(
-        config_json,
-        '$.economy.buyIn',
-        1600
-      )
-      WHERE id = 'config-mismatch';
-    `);
+    },
+    {
+      name: 'refunded economy entry',
+      valid: false,
+      corrupt: (database: PokerDatabase, id: string) => {
+        database.db.prepare(`
+          UPDATE sng_entries SET status = 'refunded'
+          WHERE tournament_id = ?
+        `).run(id);
+      },
+    },
+    {
+      name: 'started economy entry',
+      valid: false,
+      corrupt: (database: PokerDatabase, id: string) => {
+        database.db.prepare(`
+          UPDATE sng_entries SET status = 'started', start_attempt = 1
+          WHERE tournament_id = ?
+        `).run(id);
+      },
+    },
+    {
+      name: 'wrong economy incarnation',
+      valid: false,
+      corrupt: (database: PokerDatabase, id: string) => {
+        database.db.prepare(`
+          UPDATE sng_entries SET entry_attempt = 2
+          WHERE tournament_id = ?
+        `).run(id);
+      },
+    },
+    {
+      name: 'multiple active economy links',
+      valid: false,
+      corrupt: addConflictingEntry,
+    },
+    {
+      name: 'config product mismatch',
+      valid: false,
+      corrupt: (database: PokerDatabase, id: string) => {
+        database.db.exec(`
+          DROP TRIGGER protect_tournament_instance_identity;
+        `);
+        database.db.prepare(`
+          UPDATE tournament_instance
+          SET config_json = json_set(config_json, '$.economy.buyIn', 1600)
+          WHERE id = ?
+        `).run(id);
+      },
+    },
+  ])('classifies $name from the complete prestart registration set', ({
+    name,
+    valid,
+    corrupt,
+  }) => {
+    const { database, id } = createRecoveryEnrollment(
+      name.replaceAll(' ', '-'),
+    );
+    corrupt(database, id);
 
     const plan = loadTournamentRecoveryPlan(database, NOW);
-    expect(plan.preserveReservedMttEntries.has('config-mismatch')).toBe(false);
-    expect(plan.refundInstanceIds).toContain('config-mismatch');
-    expect(plan.refundReasons.get('config-mismatch')).toBe(
-      'financial-invariant',
-    );
 
-    resumeTournamentRefund({
+    expect(plan.preserveReservedMttEntries.has(id)).toBe(valid);
+    expect(plan.refundInstanceIds.includes(id)).toBe(!valid);
+    expect(plan.deferToMttVoidInstanceIds.has(id)).toBe(!valid);
+    expect(plan.refundReasons.get(id)).toBe(
+      valid ? undefined : 'financial-invariant',
+    );
+    if (valid) {
+      expect(plan.preserveReservedMttEntries.get(id)?.get(`${id}-player`))
+        .toEqual({
+          economyEntryAttempt: 1,
+          productVersion: 7,
+          buyIn: 1_500,
+          fee: 150,
+        });
+    }
+  });
+
+  it('terminalizes the registration claim before an incoherent void fails', () => {
+    const {
+      database,
+      economyService,
+      id,
+      instances,
+    } = createRecoveryEnrollment('conflicting-terminalization');
+    addConflictingEntry(database, id);
+    const plan = loadTournamentRecoveryPlan(database, NOW);
+
+    expect(() => resumeTournamentRefund({
       database,
       instances,
       funds: new PromotionFundRepository(database),
-      voidWallet: (id, at) => economyService.voidMttTournament(id, at),
-    }, instances.getInstance('config-mismatch')!, NOW, 'financial-invariant');
+      voidWallet: (instanceId, at) =>
+        economyService.voidMttTournament(instanceId, at),
+    }, instances.getInstance(id)!, NOW, 'financial-invariant')).toThrowError(
+      TournamentRecoveryError,
+    );
 
-    expect(instances.getInstance('config-mismatch')).toMatchObject({
-      status: 'cancelled',
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration WHERE instance_id = ?
+    `).get(id)).toEqual({ status: 'refunded' });
+    expect(database.db.prepare(`
+      SELECT status FROM tournament_registration_attempt
+      WHERE instance_id = ?
+    `).get(id)).toEqual({ status: 'refunded' });
+    expect(instances.getInstance(id)).toMatchObject({
+      status: 'refund-pending',
       statusReason: 'financial-invariant',
     });
-    expect(database.db.prepare(`
-      SELECT status FROM tournament_registration
-      WHERE instance_id = 'config-mismatch'
-    `).get()).toEqual({ status: 'refunded' });
-    expect(database.db.prepare(`
-      SELECT status FROM sng_entries
-      WHERE tournament_id = 'config-mismatch'
-    `).get()).toEqual({ status: 'refunded' });
+    expect(plan.deferToMttVoidInstanceIds.has(id)).toBe(true);
   });
 });
 
@@ -237,6 +296,61 @@ function testDatabase(): PokerDatabase {
   const database = openPokerDatabase(':memory:');
   databases.push(database);
   return database;
+}
+
+function createRecoveryEnrollment(id: string): {
+  readonly database: PokerDatabase;
+  readonly economyService: EconomyService;
+  readonly id: string;
+  readonly instances: TournamentInstanceRepository;
+} {
+  const database = testDatabase();
+  const instances = new TournamentInstanceRepository(database, () => NOW);
+  const economy = new EconomyRepository(database);
+  const economyService = new EconomyService(economy, () => NOW);
+  const enrollment = new TournamentEnrollmentRepository(
+    database,
+    economy,
+    () => NOW,
+  );
+  instances.createInstance(instanceCommand(id));
+  database.db.prepare(`
+    UPDATE tournament_instance
+    SET status = 'registering', registration_state = 'open-prestart',
+        updated_at = ?
+    WHERE id = ?
+  `).run(NOW, id);
+  seedProfile(database, `${id}-player`, 5_000);
+  enrollment.registerPreStart({
+    tournamentId: id,
+    profileId: `${id}-player`,
+    requestId: randomUUID(),
+    publicPlayer: {
+      id: `${id}-player`,
+      name: 'Recovery',
+      avatar: 'sakura',
+    },
+    at: NOW,
+  });
+  return { database, economyService, id, instances };
+}
+
+function addConflictingEntry(database: PokerDatabase, id: string): void {
+  database.db.exec(`DROP INDEX one_active_sng_entry_per_profile;`);
+  database.db.prepare(`
+    INSERT INTO sng_entries (
+      id, tournament_id, room_id, profile_id, buy_in, fee, status,
+      place, prize, start_attempt, entry_attempt, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 1500, 150, 'reserved',
+      NULL, 0, 0, 2, ?, ?)
+  `).run(
+    `conflict-${id}`,
+    id,
+    id,
+    `${id}-player`,
+    NOW,
+    NOW,
+  );
 }
 
 function walletConfig(): TournamentConfigSnapshotV2 {

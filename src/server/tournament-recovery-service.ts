@@ -104,13 +104,19 @@ interface RecoveryInstanceRow {
   readonly payout_freeze_json: string | null;
 }
 
-interface PreservedEntryRow {
+interface RecoveryEnrollmentLinkRow {
   readonly instance_id: string;
   readonly profile_id: string;
-  readonly economy_entry_attempt: number;
-  readonly entry_attempt: number;
-  readonly buy_in: number;
-  readonly fee: number;
+  readonly registration_status: string;
+  readonly registration_attempt: number;
+  readonly economy_entry_attempt: number | null;
+  readonly attempt_status: string | null;
+  readonly attempt_economy_entry_attempt: number | null;
+  readonly entry_id: string | null;
+  readonly entry_attempt: number | null;
+  readonly entry_status: string | null;
+  readonly buy_in: number | null;
+  readonly fee: number | null;
   readonly economy_mode: string;
   readonly config_json: string;
 }
@@ -164,12 +170,18 @@ export function loadTournamentRecoveryPlan(
     string,
     Map<string, RecoveryEntryExpectation>
   >();
-  const entries = database.db.prepare(`
+  const links = database.db.prepare(`
     SELECT
       registration.instance_id,
       registration.profile_id,
+      registration.status AS registration_status,
+      registration.registration_attempt,
       registration.economy_entry_attempt,
+      attempt.status AS attempt_status,
+      attempt.economy_entry_attempt AS attempt_economy_entry_attempt,
+      entry.id AS entry_id,
       entry.entry_attempt,
+      entry.status AS entry_status,
       entry.buy_in,
       entry.fee,
       instance.economy_mode,
@@ -177,7 +189,11 @@ export function loadTournamentRecoveryPlan(
     FROM tournament_registration registration
     JOIN tournament_instance instance
       ON instance.id = registration.instance_id
-    JOIN sng_entries entry
+    LEFT JOIN tournament_registration_attempt attempt
+      ON attempt.instance_id = registration.instance_id
+     AND attempt.profile_id = registration.profile_id
+     AND attempt.registration_attempt = registration.registration_attempt
+    LEFT JOIN sng_entries entry
       ON entry.tournament_id = registration.instance_id
      AND entry.profile_id = registration.profile_id
     WHERE instance.status IN (
@@ -187,33 +203,59 @@ export function loadTournamentRecoveryPlan(
       'start-delayed'
     )
       AND instance.economy_mode = 'wallet'
-      AND registration.status = 'registered'
-      AND registration.economy_entry_attempt IS NOT NULL
-      AND entry.status = 'reserved'
-      AND entry.entry_attempt = registration.economy_entry_attempt
-    ORDER BY registration.instance_id, registration.profile_id
-  `).all() as unknown as PreservedEntryRow[];
-  for (const entry of entries) {
-    const product = persistedWalletProduct(entry);
-    if (
-      !product
-      || product.buyIn !== entry.buy_in
-      || product.fee !== entry.fee
-    ) {
-      refundInstanceIds.add(entry.instance_id);
-      refundReasons.set(entry.instance_id, 'financial-invariant');
+      AND registration.status IN (
+        'registered',
+        'seat-claimed',
+        'late-pending',
+        'seated'
+      )
+    ORDER BY
+      registration.instance_id,
+      registration.profile_id,
+      entry.entry_attempt,
+      entry.id
+  `).all() as unknown as RecoveryEnrollmentLinkRow[];
+  const registrations = groupRecoveryLinks(links);
+  for (const registration of registrations) {
+    const first = registration[0]!;
+    const product = persistedWalletProduct(first);
+    const exactLinks = registration.filter(link => (
+      link.entry_id !== null
+      && link.entry_attempt === first.economy_entry_attempt
+    ));
+    const activeLinks = registration.filter(link => (
+      link.entry_id !== null
+      && (link.entry_status === 'reserved' || link.entry_status === 'started')
+    ));
+    const exact = exactLinks.length === 1 ? exactLinks[0]! : null;
+    const coherent = (
+      first.registration_status === 'registered'
+      && first.economy_entry_attempt !== null
+      && first.attempt_status === 'registered'
+      && first.attempt_economy_entry_attempt === first.economy_entry_attempt
+      && exact !== null
+      && exact.entry_status === 'reserved'
+      && activeLinks.length === 1
+      && activeLinks[0]!.entry_id === exact.entry_id
+      && product !== null
+      && product.buyIn === exact.buy_in
+      && product.fee === exact.fee
+    );
+    if (!coherent || !product || !exact) {
+      refundInstanceIds.add(first.instance_id);
+      refundReasons.set(first.instance_id, 'financial-invariant');
       continue;
     }
-    let byProfile = preserved.get(entry.instance_id);
+    let byProfile = preserved.get(first.instance_id);
     if (!byProfile) {
       byProfile = new Map();
-      preserved.set(entry.instance_id, byProfile);
+      preserved.set(first.instance_id, byProfile);
     }
-    byProfile.set(entry.profile_id, {
-      economyEntryAttempt: entry.economy_entry_attempt,
+    byProfile.set(first.profile_id, {
+      economyEntryAttempt: first.economy_entry_attempt!,
       productVersion: product.productVersion,
-      buyIn: entry.buy_in,
-      fee: entry.fee,
+      buyIn: product.buyIn,
+      fee: product.fee,
     });
   }
 
@@ -273,8 +315,9 @@ export function resumeTournamentRefund(
       }
     }
     if (instance.economyMode === 'wallet') {
-      dependencies.voidWallet(instance.id, at);
       terminateWalletRegistrations(dependencies.database, instance.id, at);
+      dependencies.voidWallet(instance.id, at);
+      assertNoActiveWalletLiability(dependencies.database, instance.id);
       dependencies.instances.finishCancellation(
         instance.id,
         instance.registrationGeneration,
@@ -311,7 +354,7 @@ export function recoveryOperationUuid(value: string): string {
   ].join('-');
 }
 
-function persistedWalletProduct(entry: PreservedEntryRow): {
+function persistedWalletProduct(entry: RecoveryEnrollmentLinkRow): {
   readonly productVersion: number;
   readonly buyIn: number;
   readonly fee: number;
@@ -343,6 +386,19 @@ function persistedWalletProduct(entry: PreservedEntryRow): {
   } catch {
     return null;
   }
+}
+
+function groupRecoveryLinks(
+  links: readonly RecoveryEnrollmentLinkRow[],
+): RecoveryEnrollmentLinkRow[][] {
+  const grouped = new Map<string, RecoveryEnrollmentLinkRow[]>();
+  for (const link of links) {
+    const key = `${link.instance_id}\u0000${link.profile_id}`;
+    const current = grouped.get(key);
+    if (current) current.push(link);
+    else grouped.set(key, [link]);
+  }
+  return [...grouped.values()];
 }
 
 function terminateWalletRegistrations(
@@ -383,6 +439,26 @@ function terminateWalletRegistrations(
   if (active.count !== 0) {
     throw new TournamentRecoveryError(
       `Tournament registrations remain active: ${instanceId}`,
+    );
+  }
+}
+
+function assertNoActiveWalletLiability(
+  database: PokerDatabase,
+  instanceId: string,
+): void {
+  const row = database.db.prepare(`
+    SELECT (
+      SELECT COUNT(*) FROM sng_entries
+      WHERE tournament_id = ? AND status IN ('reserved', 'started')
+    ) + (
+      SELECT COUNT(*) FROM seat_escrows
+      WHERE room_id = ? AND mode = 'sng' AND status = 'active'
+    ) AS count
+  `).get(instanceId, instanceId) as { count: number };
+  if (row.count !== 0) {
+    throw new TournamentRecoveryError(
+      `Tournament wallet liability remains active: ${instanceId}`,
     );
   }
 }
