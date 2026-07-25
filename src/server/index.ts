@@ -72,7 +72,10 @@ import {
   type ClaimedTournamentStartSnapshot,
   type PersistentTournamentStartPorts,
 } from './tournament-command-service';
-import { initializeMttRollout } from './mtt-rollout';
+import {
+  commitPersistentRunningRegistrationPolicy,
+  initializeMttRollout,
+} from './mtt-rollout';
 import type {
   StartClaimSource,
 } from './tournament-instance-repository';
@@ -317,35 +320,29 @@ function initializePersistenceAndRecover(): void {
           );
         },
         commitRunning: input => {
-          const committed = tournamentEnrollments.commitStartingRoster({
-            tournamentId: input.snapshot.id,
-            ownerId: input.ownerToken,
-            startAttempt: input.snapshot.startAttempt,
-            humanEntrants:
-              input.initialEntrants - input.initialBotEntrants,
-            initialEntrants: input.initialEntrants,
-            initialBotEntrants: input.initialBotEntrants,
-            committedEntrants: input.committedEntrants,
-            everMultiTable: input.everMultiTable,
-            actualStartedAt: input.actualStartedAt,
-          });
-          if (
-            !committed
-            || input.snapshot.config.lateRegistration.enabled
-          ) {
-            return committed;
-          }
           const ownerToken = `late-disabled:${process.pid}`;
-          const close = tournamentInstances.claimRegistrationClose(
-            input.snapshot.id,
+          return commitPersistentRunningRegistrationPolicy(
+            mttFeatureFlags,
+            input.snapshot.config,
             ownerToken,
-            'late-reg-disabled',
+            () => tournamentEnrollments.commitStartingRoster({
+              tournamentId: input.snapshot.id,
+              ownerId: input.ownerToken,
+              startAttempt: input.snapshot.startAttempt,
+              humanEntrants:
+                input.initialEntrants - input.initialBotEntrants,
+              initialEntrants: input.initialEntrants,
+              initialBotEntrants: input.initialBotEntrants,
+              committedEntrants: input.committedEntrants,
+              everMultiTable: input.everMultiTable,
+              actualStartedAt: input.actualStartedAt,
+            }),
+            closeOwnerToken => tournamentInstances.claimRegistrationClose(
+              input.snapshot.id,
+              closeOwnerToken,
+              'late-reg-disabled',
+            ),
           );
-          return close.status === 'claimed'
-            || (
-              close.status === 'already-owned'
-              && close.ownerToken === ownerToken
-            );
         },
         restoreStartSource: (snapshot, ownerToken, source) => {
           tournamentEnrollments.rollbackStartClaim({
@@ -664,6 +661,8 @@ async function listen(): Promise<void> {
     persistentTournamentStart,
     persistentRuntimeEnabled: mttFeatureFlags.schedulerV2,
     persistentTournamentRegistration,
+    persistentTournamentRuntimeRegistration:
+      persistentTournamentRegistration,
     persistentLateRegistration,
     persistentSettlement,
     progressionService,

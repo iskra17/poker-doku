@@ -34,7 +34,10 @@ import {
   type PersistentTournamentSocketPorts,
   type SocketRuntime,
 } from './socket-handler';
-import type { PersistentLateRegistrationPorts } from './tournament-manager';
+import type {
+  PersistentLateRegistrationPorts,
+  PersistentTournamentRuntimeRegistrationPorts,
+} from './tournament-manager';
 
 export interface ConnectedTestClient {
   socket: PokerClientSocket;
@@ -97,6 +100,8 @@ export interface SocketTestHarnessOptions {
   persistentRuntimeEnabled?: boolean;
   persistentTournamentRegistration?:
     Partial<PersistentTournamentSocketPorts>;
+  persistentTournamentRuntimeRegistration?:
+    PersistentTournamentRuntimeRegistrationPorts;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
 }
 
@@ -229,6 +234,8 @@ export async function createSocketTestHarness(
     persistentRuntimeEnabled: options.persistentRuntimeEnabled,
     persistentTournamentRegistration:
       options.persistentTournamentRegistration,
+    persistentTournamentRuntimeRegistration:
+      options.persistentTournamentRuntimeRegistration,
     persistentLateRegistration: options.persistentLateRegistration,
     ...(arenaService
       ? {

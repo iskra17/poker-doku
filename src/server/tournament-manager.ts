@@ -182,6 +182,7 @@ export interface TournamentManagerOptions {
     roomId: string;
   }): NextHandGateResult;
   persistentRuntimeEnabled?: boolean;
+  persistentRuntimeRegistration?: PersistentTournamentRuntimeRegistrationPorts;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
   persistentSettlement?: PersistentTournamentSettlementPorts;
 }
@@ -201,6 +202,10 @@ export interface PersistentLateRegistrationPorts {
     entries: readonly LateEntryKey[],
     tableCount: number,
   ): void;
+}
+
+export interface PersistentTournamentRuntimeRegistrationPorts {
+  readInstance(tournamentId: string): PersistentLateRegistrationInstance | null;
 }
 
 export interface PersistentTournamentParticipant {
@@ -450,6 +455,8 @@ export class TournamentManager {
     new Map<string, LateRegistrationCoordinator>();
   private readonly emptyTournamentTtlMs: number;
   private readonly persistentRuntimeEnabled: boolean;
+  private readonly persistentRuntimeRegistration?:
+    PersistentTournamentRuntimeRegistrationPorts;
   private readonly persistentLateRegistration?: PersistentLateRegistrationPorts;
   private readonly persistentSettlement?: PersistentTournamentSettlementPorts;
   /** RoomManager에 주입하는 훅 — 테스트에서 직접 호출할 수 있도록 공개 */
@@ -464,6 +471,9 @@ export class TournamentManager {
       options.emptyTournamentTtlMs ?? process.env.MTT_EMPTY_TOURNAMENT_TTL_MS,
     );
     this.persistentRuntimeEnabled = options.persistentRuntimeEnabled ?? false;
+    this.persistentRuntimeRegistration =
+      options.persistentRuntimeRegistration
+      ?? options.persistentLateRegistration;
     this.persistentLateRegistration = options.persistentLateRegistration;
     this.persistentSettlement = options.persistentSettlement;
     this.roomHooks = {
@@ -477,15 +487,9 @@ export class TournamentManager {
         if (!t) return { status: 'terminal' };
         if (t.persistent) {
           const coordinator = this.lateRegistrationCoordinator(t);
-          if (!coordinator) {
-            return {
-              status: 'retry',
-              generation: t.registrationGeneration,
-              ownerToken: t.registrationOwnerToken
-                ?? `persistent-runtime-missing:${t.id}`,
-            };
-          }
-          return coordinator.checkNextHandGate([...t.tables.keys()]);
+          return coordinator
+            ? coordinator.checkNextHandGate([...t.tables.keys()])
+            : this.checkPersistentRuntimeRegistrationGate(t);
         }
         return options.checkNextHandGate?.({
           tournamentId: t.id,
@@ -655,7 +659,7 @@ export class TournamentManager {
     t.prizes = computePayouts(t.prizePool, total, t.config.payoutPreset);
     t.startedAt = actualStartedAt;
     t.phase = 'running';
-    const registration = this.persistentLateRegistration?.readInstance(
+    const registration = this.persistentRuntimeRegistration?.readInstance(
       instanceId,
     );
     if (registration?.status === 'running') {
@@ -1772,8 +1776,56 @@ export class TournamentManager {
   private isSettlementProtected(t: TournamentRuntime): boolean {
     if (t.settlementPending) return true;
     if (!t.persistent) return false;
-    return this.persistentLateRegistration?.readInstance(t.id)?.status
+    return this.persistentRuntimeRegistration?.readInstance(t.id)?.status
       === 'payout-pending';
+  }
+
+  private checkPersistentRuntimeRegistrationGate(
+    t: TournamentRuntime,
+  ): NextHandGateResult {
+    const persistence = this.persistentRuntimeRegistration;
+    if (!persistence) {
+      return {
+        status: 'retry',
+        generation: t.registrationGeneration,
+        ownerToken: t.registrationOwnerToken
+          ?? `persistent-runtime-missing:${t.id}`,
+      };
+    }
+    let instance: PersistentLateRegistrationInstance | null;
+    try {
+      instance = persistence.readInstance(t.id);
+    } catch {
+      return {
+        status: 'retry',
+        generation: t.registrationGeneration,
+        ownerToken: t.registrationOwnerToken
+          ?? `persistent-runtime-read:${t.id}`,
+      };
+    }
+    if (!instance) return { status: 'terminal' };
+    t.registrationState = instance.registrationState;
+    t.registrationGeneration = instance.registrationGeneration;
+    t.registrationOwnerToken = instance.registrationOwnerToken;
+    if (
+      ['refund-pending', 'payout-pending', 'completed', 'cancelled']
+        .includes(instance.status)
+    ) {
+      return { status: 'terminal' };
+    }
+    if (
+      instance.status === 'running'
+      && ['open-late', 'closed'].includes(instance.registrationState)
+      && instance.registrationOwnerToken === null
+    ) {
+      return { status: 'allow' };
+    }
+    return {
+      status: 'retry',
+      generation: instance.registrationGeneration,
+      ownerToken: instance.registrationOwnerToken
+        ?? `persistent-runtime-reconcile:${t.id}`,
+    };
   }
 
   private armEmptyExpiry(t: TournamentRuntime): void {

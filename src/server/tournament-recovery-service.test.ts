@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-config';
-import { buildTournamentPayoutFreeze } from '@/lib/tournament/tournament-settlement';
+import {
+  buildTournamentPayoutFreeze,
+  buildTournamentSettlementPlan,
+} from '@/lib/tournament/tournament-settlement';
 import { EconomyRepository } from './economy-repository';
 import { EconomyService } from './economy-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
@@ -154,6 +157,48 @@ describe('TournamentRecoveryService', () => {
     expect(settleWallet).toHaveBeenCalledWith(persisted.id, NOW);
     expect(persisted.status).toBe('payout-pending');
     expect(resumeRefund).not.toHaveBeenCalled();
+  });
+
+  it('accepts an exact persisted payout plan for restart recovery', () => {
+    const { database, id } = createPayoutPendingRecovery('valid-payout-plan');
+
+    const plan = loadTournamentRecoveryPlan(database, NOW);
+
+    expect(plan.payoutInstanceIds).toContain(id);
+    expect(plan.refundInstanceIds).not.toContain(id);
+  });
+
+  it('fails closed when persisted human prizes are swapped without changing totals', () => {
+    const { database, id } = createPayoutPendingRecovery('swapped-payout-plan');
+    database.db.exec('DROP TRIGGER freeze_tournament_settlement_result_update');
+    database.db.prepare(`
+      UPDATE tournament_settlement_result
+      SET prize = CASE place
+        WHEN 1 THEN 1000
+        WHEN 2 THEN 2000
+        ELSE prize
+      END
+      WHERE instance_id = ?
+    `).run(id);
+
+    expect(() => loadTournamentRecoveryPlan(database, NOW)).toThrowError(
+      TournamentRecoveryError,
+    );
+  });
+
+  it('fails closed when persisted payout checksum and fingerprint are replaced', () => {
+    const { database, id } = createPayoutPendingRecovery('changed-payout-header');
+    database.db.exec('DROP TRIGGER protect_tournament_settlement_update');
+    database.db.prepare(`
+      UPDATE tournament_settlement
+      SET payout_freeze_checksum = ?,
+          fingerprint = ?
+      WHERE instance_id = ?
+    `).run('changed-checksum', 'changed-fingerprint', id);
+
+    expect(() => loadTournamentRecoveryPlan(database, NOW)).toThrowError(
+      TournamentRecoveryError,
+    );
   });
 
   it('freezes a closing field once and resolves provisional human identities', () => {
@@ -614,6 +659,101 @@ function createRunningClosingEnrollment(id: string): {
   );
   if (close.status !== 'claimed') throw new Error('close claim failed');
   return { database, id: instanceId, instances, playerId };
+}
+
+function createPayoutPendingRecovery(id: string): {
+  readonly database: PokerDatabase;
+  readonly id: string;
+} {
+  const database = testDatabase();
+  const instances = new TournamentInstanceRepository(database, () => NOW);
+  const economy = new EconomyRepository(database);
+  const enrollment = new TournamentEnrollmentRepository(
+    database,
+    economy,
+    () => NOW,
+  );
+  const playerIds = [`${id}-player-a`, `${id}-player-b`];
+  instances.createInstance(instanceCommand(id));
+  database.db.prepare(`
+    UPDATE tournament_instance
+    SET status = 'registering', registration_state = 'open-prestart',
+        updated_at = ?
+    WHERE id = ?
+  `).run(NOW, id);
+  for (const [index, playerId] of playerIds.entries()) {
+    seedProfile(database, playerId, 5_000);
+    enrollment.registerPreStart({
+      tournamentId: id,
+      profileId: playerId,
+      requestId: randomUUID(),
+      publicPlayer: {
+        id: playerId,
+        name: `Recovery ${index + 1}`,
+        avatar: 'sakura',
+      },
+      at: NOW,
+    });
+  }
+  const start = instances.claimStart(id, 'starter', NOW + 30_000);
+  if (start.status !== 'claimed') throw new Error('start claim failed');
+  enrollment.claimStartingRoster({
+    tournamentId: id,
+    ownerId: 'starter',
+    startAttempt: start.startAttempt,
+    checkedInProfileIds: playerIds,
+    at: NOW,
+  });
+  if (!enrollment.commitStartingRoster({
+    tournamentId: id,
+    ownerId: 'starter',
+    startAttempt: start.startAttempt,
+    humanEntrants: 2,
+    initialEntrants: 2,
+    initialBotEntrants: 0,
+    committedEntrants: 2,
+    everMultiTable: false,
+    actualStartedAt: NOW,
+  })) {
+    throw new Error('running commit failed');
+  }
+  const close = instances.claimRegistrationClose(id, 'close-owner', 'time');
+  if (close.status !== 'claimed') throw new Error('close claim failed');
+  const freeze = buildTournamentPayoutFreeze({
+    version: 1,
+    finalEntrants: 2,
+    prizePool: 3_000,
+    payouts: [2_000, 1_000],
+  });
+  if (!persistTournamentPayoutFreeze(database, {
+    instanceId: id,
+    generation: close.generation,
+    ownerToken: close.ownerToken,
+    freeze,
+    eliminatedPlayerIds: [],
+    now: NOW,
+  })) {
+    throw new Error('freeze persistence failed');
+  }
+  const settlement = buildTournamentSettlementPlan({
+    instanceId: id,
+    configVersion: 2,
+    freeze,
+    results: playerIds.map((playerId, index) => ({
+      place: index + 1,
+      playerId,
+      participantType: 'human' as const,
+      profileId: playerId,
+      registrationAttempt: 1,
+      displayName: `Recovery ${index + 1}`,
+      prize: index === 0 ? 2_000 : 1_000,
+      disposition: 'wallet-credit' as const,
+    })),
+    now: NOW,
+  });
+  const payout = instances.claimPayoutPending(id, settlement);
+  if (payout.status !== 'claimed') throw new Error('payout claim failed');
+  return { database, id };
 }
 
 function addConflictingEntry(database: PokerDatabase, id: string): void {

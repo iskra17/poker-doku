@@ -4,7 +4,11 @@ import type { TournamentConfigSnapshotV2 } from '@/lib/tournament/tournament-con
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { TournamentInstanceRepository } from './tournament-instance-repository';
 import { TournamentScheduler } from './tournament-scheduler';
-import { initializeMttRollout } from './mtt-rollout';
+import {
+  commitPersistentRunningRegistrationPolicy,
+  initializeMttRollout,
+  shouldKeepPersistentLateRegistrationOpen,
+} from './mtt-rollout';
 
 const NOW = Date.parse('2026-07-25T03:00:00.000Z');
 
@@ -151,5 +155,49 @@ describe('ordered MTT rollout initialization', () => {
     );
     expect(freerollLate.registration).toBe(registration);
     expect(freerollLate.lateRegistration).toBe(registration);
+  });
+
+  it('keeps config-enabled late registration open only when the rollout gate is enabled', () => {
+    expect(shouldKeepPersistentLateRegistrationOpen({
+      schedulerV2: true,
+      lateRegistration: false,
+      walletLateRegistration: false,
+    }, config())).toBe(false);
+    expect(shouldKeepPersistentLateRegistrationOpen({
+      schedulerV2: true,
+      lateRegistration: true,
+      walletLateRegistration: false,
+    }, config())).toBe(true);
+    expect(shouldKeepPersistentLateRegistrationOpen({
+      schedulerV2: true,
+      lateRegistration: true,
+      walletLateRegistration: false,
+    }, {
+      ...config(),
+      lateRegistration: {
+        enabled: false,
+        durationLevels: 0,
+        minStartingStackBb: 20,
+      },
+    })).toBe(false);
+  });
+
+  it('does not claim registration close while both late gates remain enabled', () => {
+    const commitRunning = vi.fn(() => true);
+    const claimClose = vi.fn(() => ({ status: 'claimed' }));
+
+    expect(commitPersistentRunningRegistrationPolicy(
+      {
+        schedulerV2: true,
+        lateRegistration: true,
+        walletLateRegistration: false,
+      },
+      config(),
+      'late-disabled:test',
+      commitRunning,
+      claimClose,
+    )).toBe(true);
+    expect(commitRunning).toHaveBeenCalledOnce();
+    expect(claimClose).not.toHaveBeenCalled();
   });
 });

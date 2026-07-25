@@ -11,6 +11,7 @@ import {
 import { EconomyRepository } from './economy-repository';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
 import { PromotionFundRepository } from './promotion-fund-repository';
+import { RoomManager } from './room-manager';
 import { TournamentEnrollmentRepository } from './tournament-enrollment-repository';
 import {
   TournamentInstanceRepository,
@@ -23,6 +24,11 @@ import {
   resumeTournamentPayout,
   resumeTournamentRefund,
 } from './tournament-recovery-service';
+import {
+  commitPersistentRunningRegistrationPolicy,
+  shouldKeepPersistentLateRegistrationOpen,
+} from './mtt-rollout';
+import { TournamentManager } from './tournament-manager';
 import { TournamentScheduler } from './tournament-scheduler';
 
 const BASE = Date.now() - 1_000;
@@ -36,6 +42,146 @@ afterEach(() => {
 });
 
 describe('persistent scheduled MTT integrated lifecycle', () => {
+  it('closes and freezes a config-enabled field when the live late gate is off', () => {
+    const database = openPokerDatabase(':memory:');
+    const now = BASE + 10;
+    const instances = new TournamentInstanceRepository(database, () => now);
+    const economy = new EconomyRepository(database);
+    const enrollments = new TournamentEnrollmentRepository(
+      database,
+      economy,
+      () => now,
+    );
+    const funds = new PromotionFundRepository(database);
+    funds.adjustFund({
+      requestId: randomUUID(),
+      delta: 10_000,
+      reason: 'scheduler-only start integration',
+      actor: { kind: 'backoffice-admin', id: 'admin' },
+      at: BASE,
+    });
+    instances.createInstance(instanceCommand(
+      'scheduler-only-close',
+      freerollConfig(),
+      {
+        visibleAt: BASE,
+        registrationOpensAt: BASE,
+        startsAt: BASE + 1_000,
+        manualStartExpiresAt: null,
+      },
+    ));
+    funds.reserveFreerollPrize({
+      instanceId: 'scheduler-only-close',
+      amount: 10_000,
+      idempotencyKey: randomUUID(),
+      actor: { kind: 'system', id: 'scheduler' },
+      at: BASE,
+    });
+    for (const playerId of ['scheduler-player-a', 'scheduler-player-b']) {
+      seedProfile(database, playerId, 0);
+      enrollments.registerPreStart({
+        tournamentId: 'scheduler-only-close',
+        profileId: playerId,
+        requestId: randomUUID(),
+        publicPlayer: {
+          id: playerId,
+          name: playerId,
+          avatar: 'sakura',
+        },
+        at: BASE,
+      });
+    }
+    const candidates = enrollments.listStartingCandidates(
+      'scheduler-only-close',
+    );
+    const start = instances.claimStart(
+      'scheduler-only-close',
+      'scheduler-owner',
+      now + 30_000,
+    );
+    if (start.status !== 'claimed') throw new Error('start claim failed');
+    enrollments.claimStartingRoster({
+      tournamentId: start.instance.id,
+      ownerId: start.ownerId,
+      startAttempt: start.startAttempt,
+      checkedInProfileIds: candidates.map(player => player.id),
+      at: now,
+    });
+
+    const rooms = new RoomManager(() => {}, () => {});
+    const manager = new TournamentManager(rooms, {}, {
+      persistentRuntimeEnabled: true,
+      persistentRuntimeRegistration: {
+        readInstance: id => instances.getInstance(id),
+      },
+      persistentSettlement: {
+        freezeRegistration: input =>
+          persistTournamentPayoutFreeze(database, input),
+        listParticipants: () => [],
+        claimPayoutPending: () => 'not-claimable',
+        settlePayout: () => {},
+      },
+    });
+    const prepared = manager.prepareFromInstance(
+      start.instance,
+      candidates,
+      start.ownerId,
+    );
+    const schedulerOnlyFlags = {
+      schedulerV2: true,
+      lateRegistration: false,
+      walletLateRegistration: false,
+    };
+    expect(shouldKeepPersistentLateRegistrationOpen(
+      schedulerOnlyFlags,
+      start.instance.config,
+    )).toBe(false);
+    expect(commitPersistentRunningRegistrationPolicy(
+      schedulerOnlyFlags,
+      start.instance.config,
+      'late-disabled:test',
+      () => enrollments.commitStartingRoster({
+        tournamentId: start.instance.id,
+        ownerId: start.ownerId,
+        startAttempt: start.startAttempt,
+        humanEntrants: 2,
+        initialEntrants: 2,
+        initialBotEntrants: 0,
+        committedEntrants: 2,
+        everMultiTable: false,
+        actualStartedAt: now,
+      }),
+      ownerToken => instances.claimRegistrationClose(
+        start.instance.id,
+        ownerToken,
+        'late-reg-disabled',
+      ),
+    )).toBe(true);
+    expect(instances.getInstance(start.instance.id)).toMatchObject({
+      registrationState: 'closing',
+      registrationOwnerToken: 'late-disabled:test',
+    });
+
+    manager.activatePreparedTournament(
+      start.instance.id,
+      start.ownerId,
+      now,
+    );
+
+    expect(instances.getInstance(start.instance.id)).toMatchObject({
+      status: 'running',
+      registrationState: 'closed',
+      registrationOwnerToken: null,
+      finalEntrants: 2,
+      payoutFreezeVersion: 1,
+    });
+    expect(manager.roomHooks.checkNextHandGate?.(prepared.roomIds[0]!))
+      .toEqual({ status: 'allow' });
+    manager.shutdown();
+    rooms.shutdown();
+    database.close();
+  });
+
   it('runs scheduled visible register start late-seat close freeze settle across restart', () => {
     const { database, path } = fileDatabase();
     let now = BASE;

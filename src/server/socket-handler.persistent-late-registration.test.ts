@@ -5,6 +5,7 @@ import {
   type SocketTestHarnessOptions,
 } from './socket-test-harness';
 import { createPersistentLateRegistrationPorts } from './socket-handler';
+import { initializeMttRollout } from './mtt-rollout';
 
 function snapshot() {
   return {
@@ -293,5 +294,72 @@ describe('persistent late-registration production runtime wiring', () => {
       prepared.roomIds[0]!,
     )).toEqual({ status: 'allow' });
     expect(readInstance).toHaveBeenCalledWith(snapshot().id);
+  });
+
+  it('supplies scheduler-only DB registration projections to the manager gate', async () => {
+    let instance = {
+      status: 'registering',
+      economyMode: 'freeroll' as const,
+      registrationState: 'open-prestart',
+      registrationGeneration: 0,
+      registrationOwnerToken: null as string | null,
+    };
+    const reserveLateMttEntry = vi.fn();
+    const registration = createPersistentLateRegistrationPorts(
+      { getInstance: () => instance },
+      {
+        commitLateMttBatch: vi.fn(),
+        registerPreStart: vi.fn(),
+        reserveLateMttEntry,
+      },
+      {
+        lateRegistrationEnabled: false,
+        walletLateRegistrationEnabled: false,
+      },
+    );
+    const rollout = initializeMttRollout(
+      {
+        schedulerV2: true,
+        lateRegistration: false,
+        walletLateRegistration: false,
+      },
+      {
+        createScheduler: () => ({ close: vi.fn() }),
+        createRegistrationPorts: () => registration,
+        recoverV2: vi.fn(),
+        recoverLegacy: vi.fn(),
+      },
+    );
+    expect(rollout.lateRegistration).toBeUndefined();
+
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentTournamentRegistration: rollout.registration,
+      persistentTournamentRuntimeRegistration: rollout.registration,
+    } as SocketTestHarnessOptions);
+    const prepared = harness.runtime.tournamentManager.prepareFromInstance(
+      snapshot(),
+      [{ id: 'human-1', name: 'Human 1', avatar: 'ara' }],
+      'owner-1',
+    );
+    harness.runtime.tournamentManager.activatePreparedTournament(
+      snapshot().id,
+      'owner-1',
+      Date.now(),
+    );
+    const gate = harness.runtime.tournamentManager.roomHooks.checkNextHandGate!;
+
+    expect(gate(prepared.roomIds[0]!)).toMatchObject({
+      status: 'retry',
+      generation: 0,
+    });
+    instance = {
+      ...instance,
+      status: 'running',
+      registrationState: 'closed',
+      registrationGeneration: 1,
+    };
+    expect(gate(prepared.roomIds[0]!)).toEqual({ status: 'allow' });
+    expect(reserveLateMttEntry).not.toHaveBeenCalled();
   });
 });

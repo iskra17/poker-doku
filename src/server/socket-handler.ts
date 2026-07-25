@@ -70,6 +70,7 @@ import {
   TournamentManager,
   type PersistentLateRegistrationInstance,
   type PersistentLateRegistrationPorts,
+  type PersistentTournamentRuntimeRegistrationPorts,
   type PersistentTournamentSettlementPorts,
 } from './tournament-manager';
 import {
@@ -307,6 +308,8 @@ export interface SocketRuntimeOptions {
   persistentRuntimeEnabled?: boolean;
   persistentTournamentRegistration?:
     Partial<PersistentTournamentSocketPorts>;
+  persistentTournamentRuntimeRegistration?:
+    PersistentTournamentRuntimeRegistrationPorts;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
   persistentSettlement?: PersistentTournamentSettlementPorts;
   progressionService?: ProgressionRuntimeService;
@@ -832,6 +835,8 @@ export function setupSocketHandlers(
   }, {
     persistentRuntimeEnabled: options.persistentRuntimeEnabled
       ?? options.persistentTournamentStart !== undefined,
+    persistentRuntimeRegistration:
+      options.persistentTournamentRuntimeRegistration,
     persistentLateRegistration: options.persistentLateRegistration,
     persistentSettlement: options.persistentSettlement,
   });

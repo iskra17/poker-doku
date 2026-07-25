@@ -8,8 +8,10 @@ import type { PokerDatabase } from './persistence/database';
 import type { PromotionFundRepository } from './promotion-fund-repository';
 import {
   computeTournamentPayoutFreezeChecksum,
+  computeTournamentSettlementFingerprint,
   TournamentInstanceRepository,
   type TournamentInstanceRecord,
+  type TournamentPayoutResult,
 } from './tournament-instance-repository';
 import type { PersistentTournamentParticipant } from './tournament-manager';
 
@@ -536,11 +538,14 @@ function hasCompletePersistedSettlementPlan(
     SELECT
       instance.final_entrants,
       instance.initial_bot_entrants,
+      instance.config_version,
       instance.payout_freeze_version,
       instance.payout_freeze_json,
       settlement.status AS settlement_status,
       settlement.final_entrants AS settlement_entrants,
       settlement.prize_pool,
+      settlement.human_payout_total,
+      settlement.bot_return_total,
       settlement.payout_freeze_checksum,
       settlement.fingerprint,
       COUNT(result.place) AS result_count,
@@ -569,9 +574,11 @@ function hasCompletePersistedSettlementPlan(
   `).get(instanceId) as Record<string, unknown> | undefined;
   if (!row) return false;
   const finalEntrants = Number(row.final_entrants);
-  return (
+  const configVersion = row.config_version;
+  const aggregateValid = (
     Number.isSafeInteger(finalEntrants)
     && finalEntrants >= 1
+    && isPositiveInteger(configVersion)
     && Number(row.payout_freeze_version) >= 1
     && typeof row.payout_freeze_json === 'string'
     && row.settlement_status === 'pending'
@@ -587,6 +594,239 @@ function hasCompletePersistedSettlementPlan(
     && typeof row.fingerprint === 'string'
     && row.fingerprint.length > 0
   );
+  if (!aggregateValid) return false;
+
+  const freeze = decodePersistedPayoutFreeze(row.payout_freeze_json);
+  const results = decodePersistedSettlementResults(
+    database,
+    instanceId,
+    finalEntrants,
+  );
+  if (!freeze || !results) return false;
+  if (
+    freeze.version !== row.payout_freeze_version
+    || freeze.finalEntrants !== finalEntrants
+    || freeze.prizePool !== row.prize_pool
+    || freeze.payouts.length !== results.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < results.length; index += 1) {
+    const payout = freeze.payouts[index];
+    const result = results[index];
+    if (
+      !payout
+      || !result
+      || payout.place !== result.place
+      || payout.amount !== result.prize
+    ) {
+      return false;
+    }
+  }
+  const checksum = computeTournamentPayoutFreezeChecksum(freeze);
+  if (checksum !== row.payout_freeze_checksum) return false;
+  let humanPayoutTotal = 0;
+  let botReturnTotal = 0;
+  for (const result of results) {
+    if (result.participantType === 'human') {
+      humanPayoutTotal += result.prize;
+    } else {
+      botReturnTotal += result.prize;
+    }
+    if (
+      !Number.isSafeInteger(humanPayoutTotal)
+      || !Number.isSafeInteger(botReturnTotal)
+    ) {
+      return false;
+    }
+  }
+  if (
+    humanPayoutTotal !== row.human_payout_total
+    || botReturnTotal !== row.bot_return_total
+  ) {
+    return false;
+  }
+  try {
+    return computeTournamentSettlementFingerprint({
+      instanceId,
+      configVersion,
+      payoutFreezeVersion: freeze.version,
+      payoutFreezeChecksum: checksum,
+      prizePool: freeze.prizePool,
+      results,
+    }) === row.fingerprint;
+  } catch {
+    return false;
+  }
+}
+
+interface PersistedPayoutFreezeSnapshot {
+  readonly version: number;
+  readonly finalEntrants: number;
+  readonly prizePool: number;
+  readonly payouts: readonly {
+    readonly place: number;
+    readonly amount: number;
+  }[];
+}
+
+function decodePersistedPayoutFreeze(
+  raw: unknown,
+): PersistedPayoutFreezeSnapshot | null {
+  if (typeof raw !== 'string') return null;
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !isPlainRecord(value)
+    || !hasExactKeys(value, [
+      'version',
+      'finalEntrants',
+      'prizePool',
+      'payouts',
+    ])
+    || !isPositiveInteger(value.version)
+    || !isPositiveInteger(value.finalEntrants)
+    || !isPositiveInteger(value.prizePool)
+    || !Array.isArray(value.payouts)
+    || value.payouts.length !== value.finalEntrants
+  ) {
+    return null;
+  }
+  const payouts: Array<{ place: number; amount: number }> = [];
+  let total = 0;
+  for (let index = 0; index < value.payouts.length; index += 1) {
+    const payout = value.payouts[index];
+    if (
+      !isPlainRecord(payout)
+      || !hasExactKeys(payout, ['place', 'amount'])
+      || payout.place !== index + 1
+      || !isNonNegativeInteger(payout.amount)
+    ) {
+      return null;
+    }
+    total += payout.amount;
+    if (!Number.isSafeInteger(total)) return null;
+    payouts.push({ place: payout.place, amount: payout.amount });
+  }
+  if (total !== value.prizePool) return null;
+  return {
+    version: value.version,
+    finalEntrants: value.finalEntrants,
+    prizePool: value.prizePool,
+    payouts,
+  };
+}
+
+function decodePersistedSettlementResults(
+  database: PokerDatabase,
+  instanceId: string,
+  finalEntrants: number,
+): TournamentPayoutResult[] | null {
+  const rows = database.db.prepare(`
+    SELECT
+      place, player_id, participant_type, profile_id,
+      registration_attempt, display_name_snapshot, prize, disposition
+    FROM tournament_settlement_result
+    WHERE instance_id = ?
+    ORDER BY place
+  `).all(instanceId) as Record<string, unknown>[];
+  if (rows.length !== finalEntrants) return null;
+  const playerIds = new Set<string>();
+  const profileIds = new Set<string>();
+  const results: TournamentPayoutResult[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index]!;
+    if (
+      row.place !== index + 1
+      || !isBoundedIdentifier(row.player_id, 200)
+      || playerIds.has(row.player_id)
+      || !isBoundedIdentifier(row.display_name_snapshot, 100)
+      || !isNonNegativeInteger(row.prize)
+    ) {
+      return null;
+    }
+    playerIds.add(row.player_id);
+    if (row.participant_type === 'human') {
+      if (
+        !isBoundedIdentifier(row.profile_id, 200)
+        || profileIds.has(row.profile_id)
+        || !isPositiveInteger(row.registration_attempt)
+        || (
+          row.prize > 0
+            ? row.disposition !== 'wallet-credit'
+            : row.disposition !== 'none'
+        )
+      ) {
+        return null;
+      }
+      profileIds.add(row.profile_id);
+      const disposition = row.prize > 0 ? 'wallet-credit' : 'none';
+      results.push({
+        place: row.place,
+        playerId: row.player_id,
+        participantType: 'human',
+        profileId: row.profile_id,
+        registrationAttempt: row.registration_attempt,
+        displayName: row.display_name_snapshot,
+        prize: row.prize,
+        disposition,
+      });
+      continue;
+    }
+    if (
+      row.participant_type !== 'bot'
+      || row.profile_id !== null
+      || row.registration_attempt !== null
+      || (
+        row.prize > 0
+          ? row.disposition !== 'promotion-return'
+          : row.disposition !== 'none'
+      )
+    ) {
+      return null;
+    }
+    const disposition = row.prize > 0 ? 'promotion-return' : 'none';
+    results.push({
+      place: row.place,
+      playerId: row.player_id,
+      participantType: 'bot',
+      profileId: null,
+      registrationAttempt: null,
+      displayName: row.display_name_snapshot,
+      prize: row.prize,
+      disposition,
+    });
+  }
+  return results;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+): boolean {
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  return actual.length === required.length
+    && actual.every((key, index) => key === required[index]);
+}
+
+function isBoundedIdentifier(value: unknown, maximum: number): value is string {
+  return typeof value === 'string'
+    && value.trim() === value
+    && value.length >= 1
+    && value.length <= maximum;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
 export interface TournamentRefundRecoveryDependencies {
