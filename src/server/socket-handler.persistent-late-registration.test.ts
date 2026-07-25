@@ -90,6 +90,65 @@ describe('persistent late-registration production runtime wiring', () => {
       .toHaveBeenCalledWith('mtt-1', 'profile-1');
   });
 
+  it('keeps wallet late registration behind its dependent feature flag', () => {
+    const instance = {
+      status: 'running',
+      economyMode: 'wallet' as const,
+      registrationState: 'open-late',
+      registrationGeneration: 1,
+      registrationOwnerToken: null,
+    };
+    const reserveLateMttEntry = vi.fn(() => ({
+      status: 'reserved' as const,
+      key: {
+        profileId: 'profile-1',
+        economyMode: 'wallet' as const,
+        requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        registrationAttempt: 1,
+        economyEntryAttempt: 1,
+        entryId: 'entry-1',
+      },
+      acceptedAt: Date.now(),
+    }));
+    const input = {
+      command: {
+        tournamentId: 'mtt-wallet',
+        requestId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      },
+      profileId: 'profile-1',
+      publicPlayer: { id: 'profile-1', name: 'Player', avatar: 'ara' },
+    };
+    const disabled = createPersistentLateRegistrationPorts(
+      { getInstance: () => instance },
+      {
+        commitLateMttBatch: vi.fn(),
+        registerPreStart: vi.fn(),
+        reserveLateMttEntry,
+      },
+    );
+    expect(disabled.registerTournament?.(input)).toEqual({
+      ok: false,
+      requestId: input.command.requestId,
+      reason: 'not-open',
+    });
+    expect(reserveLateMttEntry).not.toHaveBeenCalled();
+
+    const enabled = createPersistentLateRegistrationPorts(
+      { getInstance: () => instance },
+      {
+        commitLateMttBatch: vi.fn(),
+        registerPreStart: vi.fn(),
+        reserveLateMttEntry,
+      },
+      { walletLateRegistrationEnabled: true },
+    );
+    expect(enabled.registerTournament?.(input)).toMatchObject({
+      ok: true,
+      status: 'seating',
+    });
+    expect(reserveLateMttEntry).toHaveBeenCalledOnce();
+  });
+
   it('passes the persistent repository adapter into every live MTT gate', async () => {
     const readInstance = vi.fn(() => ({
       status: 'running',

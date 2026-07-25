@@ -171,6 +171,11 @@ export type TemplatePatchResult =
   | { readonly status: 'revision-conflict'; readonly actualRevision: number }
   | { readonly status: 'not-found' };
 
+export type TemplateRevisionLeaseResult<T> =
+  | { readonly status: 'leased'; readonly value: T }
+  | { readonly status: 'revision-conflict'; readonly actualRevision: number }
+  | { readonly status: 'not-found' };
+
 export interface CreateInstanceCommand {
   readonly id: string;
   readonly templateId: string | null;
@@ -463,6 +468,26 @@ export class TournamentInstanceRepository {
         : { status: 'not-found' };
     }
     return { status: 'updated', record: this.#requireTemplate(id) };
+  }
+
+  withTemplateRevisionLease<T>(
+    id: string,
+    revision: number,
+    work: (template: TournamentTemplateRecord) => T,
+  ): TemplateRevisionLeaseResult<T> {
+    assertIdentifier(id);
+    assertPositiveInteger(revision);
+    return this.database.transaction((): TemplateRevisionLeaseResult<T> => {
+      const current = this.#templateById(id);
+      if (!current) return { status: 'not-found' };
+      if (current.revision !== revision) {
+        return {
+          status: 'revision-conflict',
+          actualRevision: current.revision,
+        };
+      }
+      return { status: 'leased', value: work(current) };
+    });
   }
 
   createInstance(command: CreateInstanceCommand): TournamentInstanceRecord {

@@ -188,6 +188,7 @@ export interface TournamentManagerOptions {
 
 export interface PersistentLateRegistrationInstance {
   readonly status: string;
+  readonly economyMode?: 'freeroll' | 'wallet';
   readonly registrationState: string;
   readonly registrationGeneration: number;
   readonly registrationOwnerToken: string | null;

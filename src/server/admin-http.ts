@@ -357,6 +357,8 @@ function parseTournamentAction(body: unknown): TournamentDirectorAction | 'start
 function isTournamentAdminPath(pathname: string): boolean {
   return pathname === '/api/admin/tournaments'
     || pathname === '/api/admin/tournament-templates'
+    || pathname === '/api/admin/promotion-fund'
+    || pathname === '/api/admin/promotion-fund/adjust'
     || pathname.startsWith('/api/admin/tournaments/')
     || pathname.startsWith('/api/admin/tournament-templates/');
 }
@@ -477,7 +479,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     if (pathname === '/api/admin/promotion-fund') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         drainRequest(req);
-        send(res, 405, { error: 'method-not-allowed', allow: 'GET' });
+        sendTournament(405, { error: 'method-not-allowed', allow: 'GET' });
         return true;
       }
       const limitRaw = one(query.limit);
@@ -489,17 +491,21 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         || limit > 100
         || (before !== undefined && before.length === 0)
       ) {
-        send(res, 400, { error: 'invalid-query' });
+        sendTournament(400, { error: 'invalid-query' });
         return true;
       }
       try {
-        send(res, 200, options.promotionFunds.getFundPage({
-          limit,
-          ...(before === undefined ? {} : { before }),
-        }));
+        sendTournament(
+          200,
+          {
+            ...options.promotionFunds.getFundPage({
+              limit,
+              ...(before === undefined ? {} : { before }),
+            }),
+          },
+        );
       } catch (error) {
-        send(
-          res,
+        sendTournament(
           error instanceof PromotionFundError && error.code === 'invalid-input'
             ? 400
             : 500,
@@ -516,7 +522,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
     if (pathname === '/api/admin/promotion-fund/adjust') {
       if (req.method !== 'POST') {
         drainRequest(req);
-        send(res, 405, { error: 'method-not-allowed', allow: 'POST' });
+        sendTournament(405, { error: 'method-not-allowed', allow: 'POST' });
         return true;
       }
       if (!options.promotionFundRateLimiter.allow(
@@ -528,7 +534,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           principal,
           resultCode: 'rate-limited',
         });
-        send(res, 429, { error: 'rate-limited' });
+        sendTournament(429, { error: 'rate-limited' });
         return true;
       }
       let body: unknown;
@@ -539,7 +545,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           principal,
           resultCode: 'invalid-body',
         });
-        send(res, 400, { error: 'invalid-body' });
+        sendTournament(400, { error: 'invalid-body' });
         return true;
       }
       if (
@@ -558,7 +564,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
             ? { delta: body.delta as number }
             : {}),
         });
-        send(res, 400, { error: 'invalid-body' });
+        sendTournament(400, { error: 'invalid-body' });
         return true;
       }
       try {
@@ -578,7 +584,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
           balanceAfter: adjustment.ledger.balanceAfter,
           replayed: adjustment.replayed,
         });
-        send(res, 200, adjustment);
+        sendTournament(200, { ...adjustment });
       } catch (error) {
         if (error instanceof PromotionFundError) {
           auditPromotionFundAdjustment({
@@ -594,7 +600,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
               : error.code === 'idempotency-conflict'
                 ? 409
                 : 500;
-          send(res, status, { error: error.code });
+          sendTournament(status, { error: error.code });
         } else {
           auditPromotionFundAdjustment({
             principal,
@@ -602,7 +608,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
             requestId: body.requestId,
             delta: body.delta as number,
           });
-          send(res, 500, { error: 'internal-error' });
+          sendTournament(500, { error: 'internal-error' });
         }
       }
       return true;

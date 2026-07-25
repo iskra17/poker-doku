@@ -59,20 +59,27 @@ import {
   resumeTournamentPayout,
   TournamentRecoveryService,
 } from './tournament-recovery-service';
-import { TournamentInstanceRepository } from './tournament-instance-repository';
+import {
+  TournamentInstanceRepository,
+  type TournamentInstanceRecord,
+} from './tournament-instance-repository';
 import { TournamentEnrollmentRepository } from './tournament-enrollment-repository';
 import { TournamentScheduler } from './tournament-scheduler';
-import type {
-  ClaimedTournamentStartSnapshot,
-  PersistentTournamentStartPorts,
+import {
+  resolveMttFeatureFlags,
+  type ClaimedTournamentStartSnapshot,
+  type PersistentTournamentStartPorts,
 } from './tournament-command-service';
-import type { StartClaimSource } from './tournament-instance-repository';
+import type {
+  StartClaimSource,
+} from './tournament-instance-repository';
 import type {
   PersistentLateRegistrationPorts,
   PersistentTournamentSettlementPorts,
 } from './tournament-manager';
 
 const dev = process.env.NODE_ENV !== 'production';
+const mttFeatureFlags = resolveMttFeatureFlags(process.env);
 const hostname = '0.0.0.0';
 const port = parseInt(process.env.PORT || '3000', 10);
 const FORCE_EXIT_MS = 10_000;
@@ -104,6 +111,8 @@ let tournamentScheduler: TournamentScheduler | undefined;
 let persistentTournamentStart: PersistentTournamentStartPorts | undefined;
 let persistentLateRegistration: PersistentLateRegistrationPorts | undefined;
 let persistentSettlement: PersistentTournamentSettlementPorts | undefined;
+let persistentRefundPendingHandler:
+  ((instance: TournamentInstanceRecord) => void) | undefined;
 const pendingTournamentStarts: Array<{
   instance: ClaimedTournamentStartSnapshot;
   source: StartClaimSource;
@@ -207,8 +216,14 @@ function initializePersistenceAndRecover(): void {
     voidWallet: (instanceId: string, at: number) =>
       economyService!.voidMttTournament(instanceId, at),
   };
-  const persistentStartEnabled =
-    process.env.MTT_PERSISTENT_START_ENABLED === 'true';
+  persistentRefundPendingHandler = instance => {
+    resumeTournamentRefund(
+      refundDependencies,
+      instance,
+      Date.now(),
+      'financial-invariant',
+    );
+  };
   const payoutDependencies = {
     getInstance: (instanceId: string) =>
       tournamentInstances.getInstance(instanceId),
@@ -221,13 +236,17 @@ function initializePersistenceAndRecover(): void {
         at,
       }),
   };
-  persistentLateRegistration = persistentStartEnabled
+  persistentLateRegistration = mttFeatureFlags.lateRegistration
     ? createPersistentLateRegistrationPorts(
         tournamentInstances,
         tournamentEnrollments,
+        {
+          walletLateRegistrationEnabled:
+            mttFeatureFlags.walletLateRegistration,
+        },
       )
     : undefined;
-  persistentSettlement = persistentStartEnabled
+  persistentSettlement = mttFeatureFlags.schedulerV2
     ? {
         freezeRegistration: input =>
           persistTournamentPayoutFreeze(database!, input),
@@ -248,7 +267,7 @@ function initializePersistenceAndRecover(): void {
         },
       }
     : undefined;
-  persistentTournamentStart = persistentStartEnabled
+  persistentTournamentStart = mttFeatureFlags.schedulerV2
     ? {
         claimManualStart: tournamentId => {
           const claim = tournamentInstances.claimStart(
@@ -355,7 +374,7 @@ function initializePersistenceAndRecover(): void {
     : undefined;
   tournamentScheduler = new TournamentScheduler({
     database,
-    startProcessingEnabled: persistentStartEnabled,
+    startProcessingEnabled: mttFeatureFlags.schedulerV2,
     onStartClaim: (instance, source) => {
       const snapshot = { ...instance, startSource: source };
       if (runtime) {
@@ -618,7 +637,7 @@ async function listen(): Promise<void> {
     },
     economy: economyRuntime,
     persistentTournamentStart,
-    persistentRuntimeEnabled: persistentTournamentStart !== undefined,
+    persistentRuntimeEnabled: mttFeatureFlags.schedulerV2,
     persistentLateRegistration,
     persistentSettlement,
     progressionService,
@@ -639,6 +658,7 @@ async function listen(): Promise<void> {
     database,
     instances: new TournamentInstanceRepository(database),
     scheduler: tournamentScheduler,
+    onRefundPending: persistentRefundPendingHandler,
   });
 
   for (const pending of pendingTournamentLeaseExpiries.splice(0)) {

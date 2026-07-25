@@ -121,6 +121,7 @@ describe('admin promotion fund HTTP API', () => {
       reservedTotal: 0,
       ledger: [{ delta: 300 }, { delta: 200 }],
       nextCursor: expect.any(String),
+      serverNow: NOW,
     });
     const second = await (await fetch(
       `${baseUrl}/api/admin/promotion-fund?limit=2&before=${encodeURIComponent(first.nextCursor!)}`,
@@ -192,7 +193,10 @@ describe('admin promotion fund HTTP API', () => {
       reason: 'Attempt an unavailable debit',
     });
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: 'promotion-insufficient' });
+    expect(await response.json()).toEqual({
+      error: 'promotion-insufficient',
+      serverNow: NOW,
+    });
     const page = await (await fetch(
       `${baseUrl}/api/admin/promotion-fund`,
       { headers: { cookie } },

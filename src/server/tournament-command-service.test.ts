@@ -6,6 +6,7 @@ import {
   TournamentCommandService,
   parseTournamentOperatorIds,
 } from './tournament-command-service';
+import * as tournamentCommandModule from './tournament-command-service';
 import { eventLog } from './event-log';
 import { randomUUID } from 'node:crypto';
 import { openPokerDatabase } from './persistence/database';
@@ -421,5 +422,135 @@ describe('TournamentCommandService', () => {
   it('keeps profile operators outside the separate promotion adjustment boundary', () => {
     expect(service.canOperateProfile('operator-1')).toBe(true);
     expect('adjustPromotionFund' in service).toBe(false);
+  });
+
+  it('routes known persistent actions to durable cancel/refund paths', () => {
+    const actionNow = Date.now();
+    const database = openPokerDatabase(':memory:');
+    const instances = new TournamentInstanceRepository(database, () => actionNow);
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => actionNow,
+    });
+    const onRefundPending = vi.fn();
+    new PromotionFundRepository(database).adjustFund({
+      requestId: randomUUID(),
+      delta: 500_000,
+      reason: 'Persistent action test funding',
+      actor: { kind: 'backoffice-admin', id: 'test' },
+      at: actionNow,
+    });
+    const persistent = {
+      claimManualStart: vi.fn(() => null),
+      claimStartingRoster: vi.fn(),
+      startEconomy: vi.fn(),
+      commitRunning: vi.fn(),
+      handoffRefund: vi.fn(),
+    };
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      persistent,
+      {
+        database,
+        instances,
+        scheduler,
+        now: () => actionNow,
+        onRefundPending,
+      },
+    );
+    const create = (schedule: Record<string, unknown>) => {
+      const command = persistentFreeroll({ schedule });
+      expect(durableService.createPersistentInstance(
+        { kind: 'backoffice' },
+        command,
+        actionNow,
+      ).ok).toBe(true);
+      return command.requestId;
+    };
+    const hiddenId = create({
+      visibleAt: actionNow + 60_000,
+      registrationOpensAt: actionNow + 120_000,
+      startsAt: actionNow + 600_000,
+      manualStartExpiresAt: null,
+    });
+    const fundedId = create({
+      visibleAt: actionNow,
+      registrationOpensAt: actionNow,
+      startsAt: actionNow + 600_000,
+      manualStartExpiresAt: null,
+    });
+    const knownId = create({
+      visibleAt: actionNow + 180_000,
+      registrationOpensAt: actionNow + 240_000,
+      startsAt: actionNow + 900_000,
+      manualStartExpiresAt: null,
+    });
+
+    expect(durableService.act(
+      { kind: 'backoffice' },
+      hiddenId,
+      { kind: 'cancel' },
+    )).toBe('ok');
+    expect(instances.getInstance(hiddenId)?.status).toBe('cancelled');
+
+    expect(durableService.act(
+      { kind: 'backoffice' },
+      fundedId,
+      { kind: 'cancel' },
+    )).toBe('ok');
+    expect(instances.getInstance(fundedId)?.status).toBe('refund-pending');
+    expect(onRefundPending).toHaveBeenCalledWith(expect.objectContaining({
+      id: fundedId,
+      status: 'refund-pending',
+    }));
+
+    expect(durableService.act(
+      { kind: 'backoffice' },
+      knownId,
+      { kind: 'pause' },
+    )).toBe('bad-state');
+    expect(durableService.start({ kind: 'backoffice' }, knownId))
+      .toBe('not-registering');
+
+    scheduler.close();
+    database.close();
+  });
+
+  it('keeps ordered persistent tournament flags off and enforces dependencies', () => {
+    const resolve = (
+      tournamentCommandModule as unknown as {
+        resolveMttFeatureFlags?: (
+          env: Record<string, string | undefined>,
+        ) => {
+          schedulerV2: boolean;
+          lateRegistration: boolean;
+          walletLateRegistration: boolean;
+        };
+      }
+    ).resolveMttFeatureFlags;
+    expect(resolve).toBeTypeOf('function');
+    if (!resolve) return;
+
+    expect(resolve({})).toEqual({
+      schedulerV2: false,
+      lateRegistration: false,
+      walletLateRegistration: false,
+    });
+    expect(() => resolve({ MTT_LATE_REG_ENABLED: 'true' }))
+      .toThrow('MTT_SCHEDULER_V2_ENABLED');
+    expect(() => resolve({
+      MTT_SCHEDULER_V2_ENABLED: 'true',
+      MTT_WALLET_LATE_REG_ENABLED: 'true',
+    })).toThrow('MTT_LATE_REG_ENABLED');
+    expect(resolve({
+      MTT_SCHEDULER_V2_ENABLED: 'true',
+      MTT_LATE_REG_ENABLED: 'true',
+      MTT_WALLET_LATE_REG_ENABLED: 'true',
+    })).toEqual({
+      schedulerV2: true,
+      lateRegistration: true,
+      walletLateRegistration: true,
+    });
   });
 });

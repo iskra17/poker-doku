@@ -461,4 +461,41 @@ describe('scheduled tournament admin HTTP API', () => {
     expect(crossOrigin.status).toBe(403);
     expect(instances.listAdminProjections(NOW)).toEqual([]);
   });
+
+  it('rejects unknown and no-op template mutations without advancing revision', async () => {
+    const created = await mutate(
+      '/api/admin/tournament-templates',
+      recurring(),
+    );
+    const body = await created.json() as {
+      template: { id: string; revision: number };
+    };
+    const path = `/api/admin/tournament-templates/${body.template.id}`;
+    const patch = (value: unknown) => fetch(`${baseUrl}${path}`, {
+      method: 'PATCH',
+      headers: {
+        cookie,
+        origin: baseUrl,
+        'content-type': 'application/json',
+        'x-csrf-token': csrfToken,
+        'if-match': '1',
+      },
+      body: JSON.stringify(value),
+    });
+
+    expect((await patch({})).status).toBe(400);
+    expect((await patch({ enabled: true })).status).toBe(400);
+    expect((await patch({ unknown: true })).status).toBe(400);
+    expect((await mutate(`${path}/actions`, {
+      action: 'generate-next',
+      unknown: true,
+    }, { 'if-match': '1' })).status).toBe(400);
+
+    const listed = await (await fetch(
+      `${baseUrl}/api/admin/tournament-templates`,
+      { headers: { cookie } },
+    )).json() as { templates: Array<{ id: string; revision: number }> };
+    expect(listed.templates.find(item => item.id === body.template.id)?.revision)
+      .toBe(1);
+  });
 });

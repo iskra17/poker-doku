@@ -160,6 +160,63 @@ describe('TournamentScheduler', () => {
     expect(once.count).toBeGreaterThan(48);
   });
 
+  it('disabling a template preserves every already generated occurrence', () => {
+    const template = instances.createTemplate(templateCommand(
+      'disabled-preserves',
+      { kind: 'hourly', minute: 30 },
+    ));
+    const scheduler = new TournamentScheduler({ database, clock: () => NOW });
+    scheduler.reconcileTemplates();
+    const before = database.db.prepare(`
+      SELECT id, status FROM tournament_instance
+      WHERE template_id = ? ORDER BY id
+    `).all(template.id);
+    expect(before.length).toBeGreaterThan(0);
+    expect(instances.patchTemplateIfRevision(template.id, 1, {
+      enabled: false,
+      updatedAt: NOW + 1,
+    }).status).toBe('updated');
+
+    scheduler.reconcileTemplates(NOW + 1);
+
+    expect(database.db.prepare(`
+      SELECT id, status FROM tournament_instance
+      WHERE template_id = ? ORDER BY id
+    `).all(template.id)).toEqual(before);
+  });
+
+  it('generates only while holding the requested template revision', () => {
+    const template = instances.createTemplate(templateCommand(
+      'revision-lease',
+      { kind: 'daily', hour: 12, minute: 0 },
+    ));
+    const scheduler = new TournamentScheduler({ database, clock: () => NOW });
+    expect(instances.patchTemplateIfRevision(template.id, 1, {
+      name: 'revision two',
+      updatedAt: NOW + 1,
+    }).status).toBe('updated');
+
+    const generate = (
+      scheduler as unknown as {
+        generateTemplateOccurrencesIfRevision?: (
+          id: string,
+          revision: number,
+          at: number,
+        ) => { status: string; actualRevision?: number; generated?: number };
+      }
+    ).generateTemplateOccurrencesIfRevision;
+    expect(generate).toBeTypeOf('function');
+    if (!generate) return;
+    expect(generate.call(scheduler, template.id, 1, NOW + 1)).toEqual({
+      status: 'revision-conflict',
+      actualRevision: 2,
+    });
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM tournament_instance
+      WHERE template_id = ?
+    `).get(template.id)).toEqual({ count: 0 });
+  });
+
   it('tombstones superseded hidden occurrences and preserves visible occupancy', () => {
     const original = instances.createTemplate(templateCommand(
       'daily-main',

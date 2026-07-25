@@ -172,6 +172,9 @@ export function createPersistentLateRegistrationPorts(
       profileId: string,
     ): TournamentRegistrationEngagement | null;
   },
+  options: {
+    readonly walletLateRegistrationEnabled?: boolean;
+  } = {},
 ): PersistentTournamentRuntimePorts {
   return {
     readInstance: tournamentId => instances.getInstance(tournamentId),
@@ -204,6 +207,17 @@ export function createPersistentLateRegistrationPorts(
             const { command, profileId, publicPlayer } = input;
             const instance = instances.getInstance(command.tournamentId);
             if (!instance) {
+              return {
+                ok: false,
+                requestId: command.requestId,
+                reason: 'not-open',
+              };
+            }
+            if (
+              instance.status === 'running'
+              && instance.economyMode === 'wallet'
+              && options.walletLateRegistrationEnabled !== true
+            ) {
               return {
                 ok: false,
                 requestId: command.requestId,

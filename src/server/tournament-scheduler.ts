@@ -93,6 +93,11 @@ export interface DueReconciliationResult {
   readonly cancelled: number;
 }
 
+export type TemplateGenerationResult =
+  | { readonly status: 'generated'; readonly generated: number }
+  | { readonly status: 'revision-conflict'; readonly actualRevision: number }
+  | { readonly status: 'not-found' };
+
 /**
  * Returns recurrences through the full durable materialization horizon. The
  * first occurrence at or after the horizon is included so reconciliation never
@@ -174,24 +179,7 @@ export class TournamentScheduler {
     assertTimestamp(at);
     let created = 0;
     for (const template of this.listTemplates()) {
-      if (!template.enabled) {
-        const revisions = this.options.database.db.prepare(`
-          SELECT DISTINCT template_revision AS revision
-          FROM tournament_instance
-          WHERE template_id = ?
-            AND status = 'scheduled-hidden'
-          ORDER BY template_revision
-        `).all(template.id) as unknown as Array<{ revision: number }>;
-        for (const row of revisions) {
-          this.instances.replaceHiddenTemplateOccurrences(
-            template.id,
-            row.revision,
-            [],
-            at,
-          );
-        }
-        continue;
-      }
+      if (!template.enabled) continue;
       const commands = kstOccurrenceStarts(
         template.recurrence,
         at,
@@ -238,6 +226,47 @@ export class TournamentScheduler {
       }
     }
     return created;
+  }
+
+  generateTemplateOccurrencesIfRevision(
+    templateId: string,
+    revision: number,
+    at = this.clock(),
+  ): TemplateGenerationResult {
+    assertTimestamp(at);
+    const result = this.instances.withTemplateRevisionLease(
+      templateId,
+      revision,
+      template => {
+        let generated = 0;
+        const commands = kstOccurrenceStarts(
+          template.recurrence,
+          at,
+          template.visibleLeadMs,
+        ).map(startsAt => occurrenceCommand(template, startsAt, at));
+        for (const command of commands) {
+          const exists = this.options.database.db.prepare(`
+            SELECT 1 FROM tournament_instance WHERE idempotency_key = ?
+          `).get(command.idempotencyKey);
+          if (exists) continue;
+          const occupied = this.options.database.db.prepare(`
+            SELECT 1
+            FROM tournament_instance
+            WHERE template_id = ? AND occurrence_key = ?
+              AND (
+                status <> 'cancelled'
+                OR COALESCE(status_reason, '') <> 'template-superseded'
+              )
+          `).get(template.id, command.occurrenceKey);
+          if (occupied) continue;
+          this.instances.createInstance(command);
+          generated += 1;
+        }
+        return generated;
+      },
+    );
+    if (result.status !== 'leased') return result;
+    return { status: 'generated', generated: result.value };
   }
 
   reconcileDue(at = this.clock()): DueReconciliationResult {
