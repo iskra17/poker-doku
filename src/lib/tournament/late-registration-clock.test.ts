@@ -54,6 +54,31 @@ describe('lateRegistrationClosesAt', () => {
     expect(closeAt).toBe(START + 12 * MINUTE);
     expect(closeAt).toBeLessThan(START + 5 * MINUTE + 10 * MINUTE + 7 * MINUTE);
   });
+
+  it.each([
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    -1,
+  ])('rejects invalid actual-start timestamp %s', actualStartedAt => {
+    expect(() => lateRegistrationClosesAt(
+      SEGMENTS,
+      actualStartedAt,
+      2,
+    )).toThrow('invalid-late-registration-clock');
+  });
+
+  it.each([
+    0,
+    -1,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+  ])('rejects invalid level duration %s', durationMs => {
+    const invalid = SEGMENTS.map((segment, index) => (
+      index === 0 ? { ...segment, durationMs } : segment
+    )) as readonly TournamentStructureSegment[];
+    expect(() => lateRegistrationClosesAt(invalid, START, 2))
+      .toThrow('invalid-late-registration-clock');
+  });
 });
 
 describe('evaluateRegistrationClose', () => {
@@ -113,5 +138,39 @@ describe('evaluateRegistrationClose', () => {
       enabled: false,
       aliveSeated: 1,
     })).toBe('late-reg-disabled');
+  });
+
+  it.each([
+    { now: Number.NaN },
+    { now: Number.POSITIVE_INFINITY },
+    { now: -1 },
+    { lateRegistrationClosesAt: Number.NaN },
+    { lateRegistrationClosesAt: -1 },
+    { currentBigBlind: 0 },
+    { currentBigBlind: Number.POSITIVE_INFINITY },
+    { acceptedEntrants: -1 },
+    { acceptedEntrants: 25 },
+    { maxEntrants: 0 },
+    { startingStack: 0 },
+    { paidPlaces: -1 },
+    { aliveSeated: -1 },
+    { pendingLateEntrants: -1 },
+    { previousEffectiveRemaining: -1 },
+    { tableSize: 0 },
+  ])('rejects invalid evaluator input %#', override => {
+    expect(() => evaluateRegistrationClose({ ...open, ...override }))
+      .toThrow('invalid-registration-close-evaluation');
+  });
+
+  it('rejects impossible entrant count relationships', () => {
+    expect(() => evaluateRegistrationClose({
+      ...open,
+      aliveSeated: 9,
+      pendingLateEntrants: 2,
+    })).toThrow('invalid-registration-close-evaluation');
+    expect(() => evaluateRegistrationClose({
+      ...open,
+      paidPlaces: 25,
+    })).toThrow('invalid-registration-close-evaluation');
   });
 });

@@ -54,6 +54,12 @@ export interface LateRegistrationSeatingInput {
   readonly tieBreak: (maxExclusive: number) => number;
 }
 
+const TABLE_MAX_PLAYERS = 6;
+const MAX_FIELD_PLAYERS = 48;
+const MAX_TABLES = MAX_FIELD_PLAYERS / TABLE_MAX_PLAYERS;
+const MAX_IDENTIFIER_LENGTH = 128;
+const MAX_TARGET_ASSIGNMENTS = 256;
+
 interface Occupant {
   playerId: string;
   tableId: string;
@@ -110,68 +116,117 @@ function occupants(table: LateRegistrationTable): Occupant[] {
     }));
 }
 
-function validateInput(input: LateRegistrationSeatingInput): void {
+function validIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string'
+    && value.length > 0
+    && value.length <= MAX_IDENTIFIER_LENGTH
+  );
+}
+
+function validateInput(input: LateRegistrationSeatingInput): number {
   if (
-    input.batchId.length === 0
-    || !Number.isSafeInteger(input.tableMaxPlayers)
-    || input.tableMaxPlayers < 2
-    || input.lateEntrants.length === 0
+    !validIdentifier(input.batchId)
+    || input.tableMaxPlayers !== TABLE_MAX_PLAYERS
+    || !Array.isArray(input.tables)
+    || input.tables.length < 1
+    || input.tables.length > MAX_TABLES
+    || !Array.isArray(input.lateEntrants)
+    || input.lateEntrants.length < 1
+    || input.lateEntrants.length > MAX_FIELD_PLAYERS
+    || !Array.isArray(input.newTableIds)
+    || input.newTableIds.length > MAX_TABLES
+    || typeof input.tieBreak !== 'function'
   ) {
     throw new Error('invalid-seating-input');
   }
   const tableIds = new Set<string>();
   const playerIds = new Set<string>();
+  let incumbentTotal = 0;
   for (const table of input.tables) {
-    if (table.tableId.length === 0 || tableIds.has(table.tableId)) {
+    if (!validIdentifier(table.tableId) || tableIds.has(table.tableId)) {
       throw new Error('duplicate-table');
     }
     tableIds.add(table.tableId);
-    if (table.seats.length !== input.tableMaxPlayers) {
+    if (
+      !Array.isArray(table.seats)
+      || table.seats.length !== TABLE_MAX_PLAYERS
+    ) {
       throw new Error('invalid-table-capacity');
     }
     const seatIndices = new Set<number>();
+    const blindOrders = new Set<number>();
     for (const seat of table.seats) {
       if (
         !Number.isSafeInteger(seat.seatIndex)
         || seat.seatIndex < 0
-        || seat.seatIndex >= input.tableMaxPlayers
+        || seat.seatIndex >= TABLE_MAX_PLAYERS
         || seatIndices.has(seat.seatIndex)
         || !Number.isSafeInteger(seat.nextBigBlindOrder)
         || seat.nextBigBlindOrder < 0
+        || seat.nextBigBlindOrder >= TABLE_MAX_PLAYERS
+        || blindOrders.has(seat.nextBigBlindOrder)
       ) {
         throw new Error('invalid-seat');
       }
       seatIndices.add(seat.seatIndex);
+      blindOrders.add(seat.nextBigBlindOrder);
       if (seat.playerId !== null) {
-        if (seat.playerId.length === 0 || playerIds.has(seat.playerId)) {
+        if (
+          !validIdentifier(seat.playerId)
+          || playerIds.has(seat.playerId)
+        ) {
           throw new Error('duplicate-player');
         }
         playerIds.add(seat.playerId);
+        incumbentTotal += 1;
+        if (
+          incumbentTotal + input.lateEntrants.length > MAX_FIELD_PLAYERS
+        ) {
+          throw new Error('invalid-seating-input');
+        }
       }
     }
   }
   for (const entrant of input.lateEntrants) {
-    if (entrant.playerId.length === 0 || playerIds.has(entrant.playerId)) {
+    if (
+      !validIdentifier(entrant.playerId)
+      || playerIds.has(entrant.playerId)
+    ) {
       throw new Error('duplicate-player');
     }
     playerIds.add(entrant.playerId);
   }
+  const allTableIds = new Set(tableIds);
   for (const newTableId of input.newTableIds) {
     if (
-      newTableId.length === 0
-      || tableIds.has(newTableId)
-      || input.newTableIds.indexOf(newTableId)
-        !== input.newTableIds.lastIndexOf(newTableId)
+      !validIdentifier(newTableId)
+      || allTableIds.has(newTableId)
     ) {
       throw new Error('duplicate-table');
     }
+    allTableIds.add(newTableId);
   }
+  return incumbentTotal;
 }
 
 function extraAssignments(tableCount: number, extraCount: number): number[][] {
+  if (
+    !Number.isSafeInteger(tableCount)
+    || tableCount < 1
+    || tableCount > MAX_TABLES
+    || !Number.isSafeInteger(extraCount)
+    || extraCount < 0
+    || extraCount >= tableCount
+  ) {
+    throw new Error('invalid-seating-input');
+  }
   const result: number[][] = [];
   const visit = (next: number, selected: number[]): void => {
     if (selected.length === extraCount) {
+      if (result.length >= MAX_TARGET_ASSIGNMENTS) {
+        throw new Error('seating-plan-too-complex');
+      }
       result.push(selected);
       return;
     }
@@ -300,11 +355,12 @@ function chooseCandidate(
 export function planLateRegistrationSeating(
   input: LateRegistrationSeatingInput,
 ): LateRegistrationSeatingPlan {
-  validateInput(input);
-  const incumbentTotal = input.tables
-    .reduce((sum, current) => sum + occupants(current).length, 0);
+  const incumbentTotal = validateInput(input);
   const total = incumbentTotal + input.lateEntrants.length;
   const targetTableCount = Math.ceil(total / input.tableMaxPlayers);
+  if (targetTableCount < 1 || targetTableCount > MAX_TABLES) {
+    throw new Error('invalid-seating-input');
+  }
   const rankedTables = shuffle(input.tables, input.tieBreak)
     .sort((left, right) => occupants(right).length - occupants(left).length);
   const keptTables = rankedTables.slice(
@@ -440,7 +496,9 @@ export function planLateRegistrationSeating(
     for (const target of tableOrder) {
       const remaining = remainingLate.get(target.tableId) ?? 0;
       if (remaining === 0 || entrantIndex >= shuffledEntrants.length) continue;
-      const seat = availableSeats.get(target.tableId)!.shift();
+      const seats = availableSeats.get(target.tableId)!;
+      const seatIndex = draw(input.tieBreak, seats.length);
+      const [seat] = seats.splice(seatIndex, 1);
       if (!seat) throw new Error('late-seat-impossible');
       lateSeats.push({
         playerId: shuffledEntrants[entrantIndex++].playerId,

@@ -28,6 +28,19 @@ function zeroTieBreak(maxExclusive: number): number {
   return 0;
 }
 
+function lastTieBreak(maxExclusive: number): number {
+  expect(maxExclusive).toBeGreaterThan(0);
+  return maxExclusive - 1;
+}
+
+function sequenceTieBreak(values: readonly number[]) {
+  let index = 0;
+  return (maxExclusive: number): number => {
+    const value = values[index++ % values.length];
+    return value % maxExclusive;
+  };
+}
+
 const generatedFields = Array.from({ length: 32 }, (_, index) => {
   const alive = 2 + index;
   const batch = 1 + (index % Math.min(8, 48 - alive));
@@ -111,19 +124,149 @@ describe('planLateRegistrationSeating properties', () => {
   });
 
   it('moves soon-BB incumbents into soon-BB empty seats', () => {
-    const plan = planLateRegistrationSeating({
+    const input = {
       batchId: 'soon-bb',
       tables: [table('a', 6)],
       lateEntrants: entrants(1),
       tableMaxPlayers: CAPACITY,
       newTableIds: ['b'],
+    } as const;
+    const plan = planLateRegistrationSeating({
+      ...input,
       tieBreak: zeroTieBreak,
+    });
+    const alternate = planLateRegistrationSeating({
+      ...input,
+      tieBreak: lastTieBreak,
     });
 
     expect(plan.incumbentMoves.map(move => move.playerId))
       .toEqual(['a-p0', 'a-p1']);
     expect(plan.incumbentMoves.map(move => move.toSeatIndex))
       .toEqual([0, 1]);
+    expect(alternate.incumbentMoves.map(move => move.playerId))
+      .toEqual(['a-p0', 'a-p1']);
+    expect(alternate.incumbentMoves.map(move => move.toSeatIndex))
+      .toEqual([0, 1]);
+  });
+
+  it('draws a late entrant seat from the legal empty-seat pool', () => {
+    const first = planLateRegistrationSeating({
+      batchId: 'late-seat-first',
+      tables: [table('a', 3)],
+      lateEntrants: entrants(1),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+      tieBreak: zeroTieBreak,
+    });
+    const last = planLateRegistrationSeating({
+      batchId: 'late-seat-last',
+      tables: [table('a', 3)],
+      lateEntrants: entrants(1),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+      tieBreak: lastTieBreak,
+    });
+
+    expect([3, 4, 5]).toContain(first.lateSeats[0].seatIndex);
+    expect([3, 4, 5]).toContain(last.lateSeats[0].seatIndex);
+    expect(first.lateSeats[0].seatIndex)
+      .not.toBe(last.lateSeats[0].seatIndex);
+  });
+
+  it('replays an injected bounded random sequence reproducibly', () => {
+    const input = {
+      batchId: 'late-seat-sequence',
+      tables: [table('a', 3)],
+      lateEntrants: entrants(2),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+    } as const;
+
+    const first = planLateRegistrationSeating({
+      ...input,
+      tieBreak: sequenceTieBreak([1, 0, 2, 1]),
+    });
+    const replay = planLateRegistrationSeating({
+      ...input,
+      tieBreak: sequenceTieBreak([1, 0, 2, 1]),
+    });
+
+    expect(replay).toEqual(first);
+  });
+
+  it('rejects a field above 48 before invoking tie-break or recursion', () => {
+    const tieBreak = vi.fn(zeroTieBreak);
+
+    expect(() => planLateRegistrationSeating({
+      batchId: 'too-large',
+      tables: Array.from({ length: 8 }, (_, index) => (
+        table(`t${index}`, CAPACITY)
+      )),
+      lateEntrants: entrants(1),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: ['ninth'],
+      tieBreak,
+    })).toThrow('invalid-seating-input');
+    expect(tieBreak).not.toHaveBeenCalled();
+  });
+
+  it('rejects illegal table capacity and table count before planning', () => {
+    const fiveSeatTable: LateRegistrationTable = {
+      tableId: 'five',
+      seats: Array.from({ length: 5 }, (_, seatIndex) => ({
+        seatIndex,
+        playerId: seatIndex < 2 ? `five-p${seatIndex}` : null,
+        nextBigBlindOrder: seatIndex,
+      })),
+    };
+    const capacityTieBreak = vi.fn(zeroTieBreak);
+    expect(() => planLateRegistrationSeating({
+      batchId: 'wrong-capacity',
+      tables: [fiveSeatTable],
+      lateEntrants: entrants(1),
+      tableMaxPlayers: 5,
+      newTableIds: [],
+      tieBreak: capacityTieBreak,
+    })).toThrow('invalid-seating-input');
+    expect(capacityTieBreak).not.toHaveBeenCalled();
+
+    const tableCountTieBreak = vi.fn(zeroTieBreak);
+    expect(() => planLateRegistrationSeating({
+      batchId: 'too-many-tables',
+      tables: Array.from({ length: 9 }, (_, index) => table(`t${index}`, 2)),
+      lateEntrants: entrants(1),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+      tieBreak: tableCountTieBreak,
+    })).toThrow('invalid-seating-input');
+    expect(tableCountTieBreak).not.toHaveBeenCalled();
+  });
+
+  it('rejects duplicate runtime IDs and seat coordinates', () => {
+    const duplicateSeat: LateRegistrationTable = {
+      tableId: 'duplicate-seat',
+      seats: table('source', 2).seats.map((seat, index) => ({
+        ...seat,
+        seatIndex: index === 1 ? 0 : seat.seatIndex,
+      })),
+    };
+    expect(() => planLateRegistrationSeating({
+      batchId: 'duplicate-seat',
+      tables: [duplicateSeat],
+      lateEntrants: entrants(1),
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+      tieBreak: zeroTieBreak,
+    })).toThrow('invalid-seat');
+    expect(() => planLateRegistrationSeating({
+      batchId: 'duplicate-player',
+      tables: [table('a', 2)],
+      lateEntrants: [{ playerId: 'a-p0' }],
+      tableMaxPlayers: CAPACITY,
+      newTableIds: [],
+      tieBreak: zeroTieBreak,
+    })).toThrow('duplicate-player');
   });
 
   it('uses only the injected CSPRNG tie-break path', () => {
