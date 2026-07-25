@@ -28,6 +28,7 @@ const START_LEASE_MS = 30_000;
 const MAX_LIVE_TOURNAMENTS = 4;
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
 const MIN_RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 30_000;
 const SYSTEM_ACTOR = { kind: 'system' as const, id: 'tournament-scheduler' };
 const CREATED_BY: TournamentActor = {
   kind: 'system',
@@ -64,8 +65,19 @@ export interface TournamentSchedulerOptions {
   readonly database: PokerDatabase;
   readonly clock?: () => number;
   readonly ownerId?: string;
+  readonly startProcessingEnabled?: boolean;
   readonly onStartClaim?: (instance: TournamentInstanceRecord) => unknown;
+  readonly onStartLeaseExpired?:
+    (instance: TournamentInstanceRecord) => unknown;
   readonly onRefundPending?: (instance: TournamentInstanceRecord) => unknown;
+  readonly onError?: (
+    error: Error,
+    context: {
+      readonly phase: 'timer';
+      readonly instanceId: string;
+      readonly retryAttempt: number;
+    },
+  ) => unknown;
   readonly setTimer?: typeof setTimeout;
   readonly clearTimer?: typeof clearTimeout;
 }
@@ -111,18 +123,37 @@ export class TournamentScheduler {
   private readonly funds: PromotionFundRepository;
   private readonly clock: () => number;
   private readonly ownerId: string;
+  private readonly startProcessingEnabled: boolean;
   private readonly onStartClaim: (instance: TournamentInstanceRecord) => unknown;
+  private readonly onStartLeaseExpired:
+    (instance: TournamentInstanceRecord) => unknown;
   private readonly onRefundPending:
     (instance: TournamentInstanceRecord) => unknown;
+  private readonly onError: NonNullable<TournamentSchedulerOptions['onError']>;
   private readonly setTimer: typeof setTimeout;
   private readonly clearTimer: typeof clearTimeout;
   private readonly timers = new Map<string, SchedulerTimer>();
+  private readonly retryAttempts = new Map<string, number>();
 
   constructor(private readonly options: TournamentSchedulerOptions) {
     this.clock = options.clock ?? Date.now;
     this.ownerId = options.ownerId ?? `tournament-scheduler-${process.pid}`;
+    this.startProcessingEnabled = options.startProcessingEnabled ?? false;
+    if (
+      this.startProcessingEnabled
+      && (!options.onStartClaim || !options.onStartLeaseExpired)
+    ) {
+      throw new Error(
+        'Start processing requires prepared-start and lease watchdog handlers',
+      );
+    }
     this.onStartClaim = options.onStartClaim ?? (() => undefined);
+    this.onStartLeaseExpired =
+      options.onStartLeaseExpired ?? (() => undefined);
     this.onRefundPending = options.onRefundPending ?? (() => undefined);
+    this.onError = options.onError ?? ((error, context) => {
+      console.error('[tournament-scheduler]', context, error);
+    });
     this.setTimer = options.setTimer ?? setTimeout;
     this.clearTimer = options.clearTimer ?? clearTimeout;
     this.instances = new TournamentInstanceRepository(
@@ -208,6 +239,27 @@ export class TournamentScheduler {
     let opened = 0;
     let startClaims = 0;
     let cancelled = 0;
+
+    if (this.startProcessingEnabled) {
+      const expiredLeases = this.options.database.db.prepare(`
+        SELECT id FROM tournament_instance
+        WHERE status = 'starting'
+          AND start_owner_id IS NOT NULL
+          AND start_lease_until IS NOT NULL
+          AND start_lease_until <= ?
+        ORDER BY start_lease_until, id
+      `).all(at) as unknown as DueRow[];
+      for (const row of expiredLeases) {
+        const instance = this.instances.getInstance(row.id);
+        if (
+          instance?.status === 'starting'
+          && instance.startLeaseUntil !== null
+          && instance.startLeaseUntil <= at
+        ) {
+          this.onStartLeaseExpired(instance);
+        }
+      }
+    }
 
     const hidden = this.options.database.db.prepare(`
       SELECT id FROM tournament_instance
@@ -343,6 +395,7 @@ export class TournamentScheduler {
         }
         continue;
       }
+      if (!this.startProcessingEnabled) continue;
       if (active >= MAX_LIVE_TOURNAMENTS) break;
       const claim = this.instances.claimStart(
         instance.id,
@@ -386,6 +439,10 @@ export class TournamentScheduler {
         FROM tournament_instance
         WHERE status = 'start-delayed' AND next_retry_at IS NOT NULL
         UNION ALL
+        SELECT id, start_lease_until AS deadline
+        FROM tournament_instance
+        WHERE status = 'starting' AND start_lease_until IS NOT NULL
+        UNION ALL
         SELECT id, manual_expires_at AS deadline
         FROM tournament_instance
         WHERE status IN ('scheduled-hidden', 'scheduled-visible', 'registering')
@@ -408,13 +465,7 @@ export class TournamentScheduler {
         MAX_TIMER_DELAY_MS,
         Math.max(MIN_RETRY_DELAY_MS, row.deadline - at),
       );
-      const handle = this.setTimer(() => {
-        this.timers.delete(row.id);
-        // The callback is only a wake-up. reconcileDue reloads the row and
-        // compares its persisted deadline before every CAS transition.
-        this.reconcileDue(this.clock());
-        this.hydrateTimers(this.clock());
-      }, delay);
+      const handle = this.setTimer(() => this.runTimer(row.id), delay);
       this.timers.set(row.id, { handle, deadline: row.deadline });
     }
   }
@@ -424,6 +475,37 @@ export class TournamentScheduler {
       this.clearTimer(timer.handle);
     }
     this.timers.clear();
+    this.retryAttempts.clear();
+  }
+
+  private runTimer(instanceId: string): void {
+    this.timers.delete(instanceId);
+    try {
+      // A timer only wakes reconciliation. Every transition reloads the row,
+      // checks its persisted deadline and uses a CAS update/claim.
+      this.reconcileDue(this.clock());
+      this.retryAttempts.delete(instanceId);
+      this.hydrateTimers(this.clock());
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      const retryAttempt = (this.retryAttempts.get(instanceId) ?? 0) + 1;
+      this.retryAttempts.set(instanceId, retryAttempt);
+      try {
+        this.onError(error, { phase: 'timer', instanceId, retryAttempt });
+      } catch {
+        // Diagnostic hooks cannot turn a contained timer failure into an
+        // uncaught process exception.
+      }
+      const delay = Math.min(
+        MAX_RETRY_DELAY_MS,
+        MIN_RETRY_DELAY_MS * (2 ** Math.min(retryAttempt - 1, 10)),
+      );
+      const handle = this.setTimer(() => this.runTimer(instanceId), delay);
+      this.timers.set(instanceId, {
+        handle,
+        deadline: safeAdd(this.clock(), delay),
+      });
+    }
   }
 
   private liveTournamentCount(): number {

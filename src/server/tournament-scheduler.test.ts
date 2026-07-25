@@ -243,7 +243,9 @@ describe('TournamentScheduler', () => {
     const scheduler = new TournamentScheduler({
       database,
       clock: () => NOW,
+      startProcessingEnabled: true,
       onStartClaim,
+      onStartLeaseExpired: vi.fn(),
     });
     for (let index = 0; index < 5; index += 1) {
       const id = `scheduled-${index}`;
@@ -268,7 +270,13 @@ describe('TournamentScheduler', () => {
   });
 
   it('recovers a missed start within ten minutes and cancels beyond it', () => {
-    const scheduler = new TournamentScheduler({ database, clock: () => NOW });
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => NOW,
+      startProcessingEnabled: true,
+      onStartClaim: vi.fn(),
+      onStartLeaseExpired: vi.fn(),
+    });
     for (const [id, startsAt] of [
       ['within-grace', NOW - 10 * MINUTE],
       ['beyond-grace', NOW - 10 * MINUTE - 1],
@@ -321,5 +329,100 @@ describe('TournamentScheduler', () => {
     scheduler.reconcileDue();
     expect(instances.getInstance(command.id)?.status).toBe('registering');
     scheduler.close();
+  });
+
+  it('holds due starts unless a prepared-start handler is explicitly enabled', () => {
+    const id = 'held-without-prepared-handler';
+    instances.createInstance({
+      ...manualCommand(id, 'wallet', NOW, NOW + 20 * MINUTE),
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: NOW,
+        manualStartExpiresAt: null,
+      },
+    });
+    const scheduler = new TournamentScheduler({ database, clock: () => NOW });
+
+    scheduler.reconcileDue();
+
+    expect(instances.getInstance(id)?.status).toBe('registering');
+  });
+
+  it('requires start and expired-lease watchdog handlers together', () => {
+    expect(() => new TournamentScheduler({
+      database,
+      startProcessingEnabled: true,
+      onStartClaim: vi.fn(),
+    })).toThrowError(/lease/i);
+  });
+
+  it('reports expired start leases to the watchdog contract', () => {
+    let clock = NOW;
+    const watchdog = vi.fn();
+    const id = 'start-watchdog';
+    instances.createInstance({
+      ...manualCommand(id, 'wallet', NOW, NOW + 20 * MINUTE),
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: NOW,
+        manualStartExpiresAt: null,
+      },
+    });
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => clock,
+      startProcessingEnabled: true,
+      onStartClaim: vi.fn(),
+      onStartLeaseExpired: watchdog,
+    });
+    scheduler.reconcileDue();
+    clock = NOW + 30_000;
+
+    scheduler.reconcileDue();
+
+    expect(watchdog).toHaveBeenCalledWith(expect.objectContaining({ id }));
+  });
+
+  it('records timer errors and schedules a bounded database recheck', () => {
+    let callback: (() => void) | undefined;
+    const delays: number[] = [];
+    const onError = vi.fn();
+    const id = 'timer-error-retry';
+    instances.createInstance({
+      ...manualCommand(id, 'wallet', NOW, NOW + 2 * MINUTE),
+      schedule: {
+        visibleAt: NOW,
+        registrationOpensAt: NOW,
+        startsAt: NOW,
+        manualStartExpiresAt: null,
+      },
+    });
+    const scheduler = new TournamentScheduler({
+      database,
+      clock: () => NOW,
+      startProcessingEnabled: true,
+      onStartClaim: () => {
+        throw new Error('prepared start failed');
+      },
+      onStartLeaseExpired: vi.fn(),
+      onError,
+      setTimer: ((work: () => void, delay?: number) => {
+        callback = work;
+        delays.push(delay ?? 0);
+        return delays.length as unknown as ReturnType<typeof setTimeout>;
+      }) as typeof setTimeout,
+      clearTimer: vi.fn() as unknown as typeof clearTimeout,
+    });
+    scheduler.hydrateTimers();
+
+    expect(() => callback?.()).not.toThrow();
+    expect(onError).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ instanceId: id, phase: 'timer' }),
+    );
+    expect(delays.at(-1)).toBeGreaterThanOrEqual(1_000);
+    expect(delays.at(-1)).toBeLessThanOrEqual(30_000);
   });
 });

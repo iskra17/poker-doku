@@ -52,13 +52,10 @@ import {
 import { createServerShutdown, startServerLifecycle } from './server-shutdown';
 import {
   loadTournamentRecoveryPlan,
-  recoveryOperationUuid,
+  resumeTournamentRefund,
   TournamentRecoveryService,
 } from './tournament-recovery-service';
-import {
-  TournamentInstanceRepository,
-  type TournamentInstanceRecord,
-} from './tournament-instance-repository';
+import { TournamentInstanceRepository } from './tournament-instance-repository';
 import { TournamentScheduler } from './tournament-scheduler';
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -177,62 +174,54 @@ function initializePersistenceAndRecover(): void {
   // migration → cash/SnG 회수 → Arena refund → 주간/시즌 reconcile → socket accept.
   const tournamentInstances = new TournamentInstanceRepository(database);
   const promotionFunds = new PromotionFundRepository(database);
-  const resumeTournamentRefund = (
-    persisted: TournamentInstanceRecord,
-    at: number,
-  ): void => {
-    let instance = persisted;
-    if (instance.status !== 'refund-pending') {
-      const claim = tournamentInstances.claimRefundPending(
-        instance.id,
-        'server-restart-unrecoverable',
-        'startup-recovery',
-      );
-      if (claim.status !== 'claimed') {
-        tournamentInstances.claimDirectCancellation(
-          instance.id,
-          'server-restart-unrecoverable',
-          'startup-recovery',
-          at,
-        );
-        return;
-      }
-      instance = claim.instance;
-    }
-    if (instance.economyMode === 'wallet') {
-      economyService!.voidMttTournament(instance.id, at);
-      tournamentInstances.finishCancellation(
-        instance.id,
-        instance.registrationGeneration,
-        at,
-      );
-      return;
-    }
-    promotionFunds.refundFreerollPrize({
-      instanceId: instance.id,
-      generation: instance.registrationGeneration,
-      idempotencyKey: recoveryOperationUuid(
-        `freeroll-refund:${instance.id}`,
-      ),
-      actor: { kind: 'system', id: 'startup-recovery' },
-      at,
-    });
+  const refundDependencies = {
+    database,
+    instances: tournamentInstances,
+    funds: promotionFunds,
+    voidWallet: (instanceId: string, at: number) =>
+      economyService!.voidMttTournament(instanceId, at),
   };
   tournamentScheduler = new TournamentScheduler({
     database,
+    startProcessingEnabled: false,
     onRefundPending: instance => {
-      resumeTournamentRefund(instance, Date.now());
+      resumeTournamentRefund(
+        refundDependencies,
+        instance,
+        Date.now(),
+        instance.statusReason === 'financial-invariant'
+          ? 'financial-invariant'
+          : 'server-restart-unrecoverable',
+      );
+    },
+    onError: (error, context) => {
+      eventLog.log('tournament-scheduler-error', {
+        data: {
+          phase: context.phase,
+          instanceId: context.instanceId,
+          retryAttempt: context.retryAttempt,
+          error: error.message,
+        },
+      });
     },
   });
   const tournamentRecovery = new TournamentRecoveryService({
     loadAndValidate: () => loadTournamentRecoveryPlan(database!, Date.now()),
     recoverGeneric: options => {
       economyService!.recoverActiveCashEscrows();
-      economyRuntime!.recoverIncompleteEntries(options);
+      return economyRuntime!.recoverIncompleteEntries(options);
     },
-    resumeRefund: instanceId => {
+    resumeRefund: (instanceId, reason) => {
       const instance = tournamentInstances.getInstance(instanceId);
-      if (instance) resumeTournamentRefund(instance, Date.now());
+      if (!instance) {
+        throw new Error(`Tournament recovery instance missing: ${instanceId}`);
+      }
+      resumeTournamentRefund(
+        refundDependencies,
+        instance,
+        Date.now(),
+        reason,
+      );
     },
     resumePayout: instanceId => {
       // The stored-plan executor is supplied with settlement integration.
