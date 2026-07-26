@@ -337,7 +337,14 @@ export interface TournamentStandingRow {
 }
 
 export interface TournamentDetailView {
-  summary: TournamentSummary;
+  /**
+   * 상세도 목록과 **같은 v2 공개 투영**을 싣는다. 레거시 `TournamentSummary`를
+   * 두면 v2 필드가 전부 optional이라, 상세만 v1을 흘려도 타입 검사를 통과한다
+   * (실제로 라이브 토너먼트 상세가 v1이라 모달이 `structure.segments`에서 죽었다 —
+   * 2026-07-26 프리롤 실주행). 런타임이 만드는 v1 형태는
+   * `TournamentRuntimeDetailView`이며 소켓 계층이 v2로 승격해야 한다.
+   */
+  summary: PublicTournamentSummary;
   levels: Array<{ level: number; smallBlind: number; bigBlind: number; ante: number }>;
   levelDurationMs: number;
   payouts: Array<{ place: number; prize: number }>;
@@ -349,6 +356,15 @@ export interface TournamentDetailView {
   stageEndsAt?: number;
   finalTheme?: FinalTableTheme;
 }
+
+/**
+ * 인메모리 `TournamentManager`가 만드는 상세 — 좌석·순위·시계 같은 **런타임 사실**은
+ * 이쪽만 알고, `summary`는 아직 레거시 v1 투영이다. 등록 상태·일정·상금 계단표의
+ * 정본은 영속 v2이므로, 소켓 계층이 목록과 같은 공개 투영을 씌워
+ * `TournamentDetailView`를 완성한다.
+ */
+export type TournamentRuntimeDetailView =
+  Omit<TournamentDetailView, 'summary'> & { summary: TournamentSummary };
 
 export interface CreateTournamentRequest {
   name: string;

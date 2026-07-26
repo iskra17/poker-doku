@@ -751,6 +751,39 @@ export function setupSocketHandlers(
     };
   }
 
+  /**
+   * 라이브(인메모리 런타임이 있는) 토너먼트의 상세.
+   *
+   * 런타임은 좌석·순위·시계를 알지만 `summary`는 레거시 v1 투영이라 v2 필드
+   * (`structure`/`schedule`/`payout`/`registrationState`/`mySeat`)가 전부 비어 있다.
+   * 그대로 내보내면 상세 모달이 `structure.segments`를 읽다 죽어서 페이지 전체가
+   * 날아간다 (2026-07-26 프리롤 실주행 — 로비 카드·게임 중 배지 양쪽에서 재현).
+   * 등록 상태·일정·상금 계단표의 정본은 영속 v2이므로 **목록과 같은 공개 투영**을
+   * summary로 싣고 런타임 사실만 런타임에서 가져온다.
+   *
+   * 목록 투영에 없으면 상세도 주지 않는다 — 그 상태는 정리된 토너먼트이고,
+   * 클라이언트가 "종료되어 정리되었습니다"를 보여주는 것이 옳다. 여기서 v1을
+   * v2처럼 꾸며 내보내면 같은 종류의 비대칭이 다시 생긴다.
+   */
+  function liveTournamentDetail(
+    tournamentId: string,
+    playerId: string | undefined,
+  ): TournamentDetailView | null {
+    const runtime = tournamentManager.getDetail(tournamentId, playerId);
+    if (!runtime) return null;
+    const canonical = publicTournamentList(playerId).tournaments
+      .find(candidate => candidate.id === tournamentId);
+    if (!canonical) return null;
+    return {
+      ...runtime,
+      // 런타임의 v1 summary는 여기서 v2 정본으로 **덮어쓴다**.
+      summary: {
+        ...canonical,
+        phase: canonical.phase ?? legacyPhase(canonical.lifecycle),
+      },
+    };
+  }
+
   function broadcastTournamentList(): void {
     for (const [socketId, sock] of io.sockets.sockets) {
       sock.emit(
@@ -3026,7 +3059,7 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
-      const detail = tournamentManager.getDetail(payload.tournamentId, session.playerId)
+      const detail = liveTournamentDetail(payload.tournamentId, session.playerId)
         ?? persistentTournamentDetail(payload.tournamentId, session.playerId);
       if (!detail) {
         ack?.({ ok: false, code: 'room-not-found', message: '토너먼트를 찾을 수 없어요.' });
