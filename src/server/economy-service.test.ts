@@ -986,6 +986,108 @@ describe('EconomyService casual wallet Sit & Go', () => {
       .toEqual({ count: 0 });
   });
 
+  it('tops a short stack up to the target, charging only the shortfall', () => {
+    const service = openShortStack(2_500);
+
+    const topped = service.topUpCashEscrow('cash-player', 'cash-room', 4_000);
+
+    expect(topped).toMatchObject({ amount: 4_000, checkpointAmount: 4_000 });
+    // 지갑에서는 부족분 1,500만 빠진다 (최초 바이인 4,000은 이미 나갔다)
+    expect(walletBalance('cash-player')).toBe(10_000 - 4_000 - 1_500);
+    expect(database.db.prepare(`
+      SELECT account, delta FROM chip_ledger
+      WHERE reason = 'CASH_TOP_UP' ORDER BY account
+    `).all()).toEqual([
+      { account: 'escrow', delta: 1_500 },
+      { account: 'wallet', delta: -1_500 },
+    ]);
+  });
+
+  it('replays the same target without charging the wallet twice', () => {
+    const service = openShortStack(2_500);
+
+    service.topUpCashEscrow('cash-player', 'cash-room', 4_000);
+    service.topUpCashEscrow('cash-player', 'cash-room', 4_000);
+
+    expect(walletBalance('cash-player')).toBe(10_000 - 4_000 - 1_500);
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM chip_ledger WHERE reason = 'CASH_TOP_UP'
+    `).get()).toEqual({ count: 2 });
+  });
+
+  it('allows a second, larger top-up at the same hand boundary', () => {
+    const service = openShortStack(2_500);
+
+    service.topUpCashEscrow('cash-player', 'cash-room', 3_000);
+    const second = service.topUpCashEscrow('cash-player', 'cash-room', 4_000);
+
+    // 멱등키가 목표 금액을 포함하므로 두 번째 요청이 조용히 삼켜지지 않는다
+    expect(second).toMatchObject({ amount: 4_000 });
+    expect(walletBalance('cash-player')).toBe(10_000 - 4_000 - 1_500);
+  });
+
+  it('refuses a top-up the wallet cannot fund and leaves the seat untouched', () => {
+    const service = openShortStack(2_500, 4_500);
+
+    expectEconomyError(
+      () => service.topUpCashEscrow('cash-player', 'cash-room', 4_000),
+      'INSUFFICIENT_BALANCE',
+    );
+    expect(walletBalance('cash-player')).toBe(500);
+    expect(cashEscrowAmount('cash-player')).toBe(2_500);
+  });
+
+  it('rejects a target that does not raise the stack', () => {
+    const service = openShortStack(2_500);
+
+    for (const bad of [2_500, 2_000, 0, -100, 1.5]) {
+      expectEconomyError(
+        () => service.topUpCashEscrow('cash-player', 'cash-room', bad),
+        'CASH_TOP_UP_INVALID',
+      );
+    }
+    expect(cashEscrowAmount('cash-player')).toBe(2_500);
+    expect(walletBalance('cash-player')).toBe(6_000);
+  });
+
+  it('rejects a top-up without an open seat', () => {
+    seedProfile('seatless', 10_000);
+    const service = new EconomyService(repository, () => 100);
+
+    expectEconomyError(
+      () => service.topUpCashEscrow('seatless', 'cash-room', 4_000),
+      'CASH_ESCROW_NOT_FOUND',
+    );
+    expect(walletBalance('seatless')).toBe(10_000);
+  });
+
+  it('refuses to top up a busted seat - that is a rebuy, not a top-up', () => {
+    const service = openShortStack(0);
+
+    // 0칩 좌석은 리바이 경로가 소유한다. 두 경로가 같은 좌석을 두고 경합하면
+    // 지갑이 두 번 빠지거나 좌석 칩이 어긋난다.
+    expectEconomyError(
+      () => service.topUpCashEscrow('cash-player', 'cash-room', 4_000),
+      'CASH_TOP_UP_INVALID',
+    );
+    expect(walletBalance('cash-player')).toBe(6_000);
+  });
+
+  it('refuses to top up while a hand is prepared', () => {
+    const service = openShortStack(2_500);
+    // 핸드 시작 = 스택 fingerprint 확정. 이때 칩을 더하면 정산 검증이 깨진다.
+    service.checkpointCashHand('cash-room', 2, [
+      { profileId: 'cash-player', amount: 2_500 },
+    ]);
+
+    expectEconomyError(
+      () => service.topUpCashEscrow('cash-player', 'cash-room', 4_000),
+      'CASH_TOP_UP_INVALID',
+    );
+    expect(walletBalance('cash-player')).toBe(6_000);
+    expect(cashEscrowAmount('cash-player')).toBe(2_500);
+  });
+
   it('refunds a waiting cancellation once and permits a new room incarnation', () => {
     seedProfile('profile-1', 10_000);
     const service = new EconomyService(repository, () => 100);
@@ -1300,6 +1402,38 @@ describe('hot config overrides (game-config live)', () => {
     expect(ECONOMY_RULES.startingChips).toBe(10_000);
   });
 });
+
+/**
+ * 4,000 바이인으로 앉은 뒤 한 핸드를 정산해 스택을 `endAmount`로 만든다 —
+ * "올인은 아닌데 좀 잃은" 탑업 대상 상태.
+ */
+function openShortStack(
+  endAmount: number,
+  balance = 10_000,
+  roomId = 'cash-room',
+): EconomyService {
+  seedProfile('cash-player', balance);
+  const service = new EconomyService(repository, () => 100);
+  service.openCashEscrow('cash-player', roomId, 4_000);
+  service.checkpointCashHand(roomId, 1, [
+    { profileId: 'cash-player', amount: 4_000 },
+  ]);
+  service.settleCashHand(
+    roomId,
+    1,
+    [{ profileId: 'cash-player', startAmount: 4_000, endAmount }],
+    4_000 - endAmount,
+    0,
+  );
+  return service;
+}
+
+function cashEscrowAmount(profileId: string): number {
+  return (database.db.prepare(`
+    SELECT amount FROM seat_escrows
+    WHERE profile_id = ? AND mode = 'cash' AND status = 'active'
+  `).get(profileId) as { amount: number }).amount;
+}
 
 function walletBalance(profileId = 'profile-1'): number {
   return (database.db.prepare(`

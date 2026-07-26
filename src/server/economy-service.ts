@@ -414,6 +414,15 @@ export class EconomyService {
     return this.repository.rebuyCashEscrow(profileId, roomId, buyIn, at);
   }
 
+  topUpCashEscrow(
+    profileId: string,
+    roomId: string,
+    targetAmount: number,
+    at = this.clock(),
+  ): CashEscrow {
+    return this.repository.topUpCashEscrow(profileId, roomId, targetAmount, at);
+  }
+
   cancelCashEscrow(
     profileId: string,
     roomId: string,

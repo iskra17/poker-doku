@@ -32,6 +32,7 @@ export type EconomyErrorCode =
   | 'CASH_ESCROW_NOT_FOUND'
   | 'CASH_ESCROW_MISMATCH'
   | 'CASH_CHECKPOINT_INVALID'
+  | 'CASH_TOP_UP_INVALID'
   | 'CASH_CONSERVATION_INVALID'
   | 'CASH_SETTLEMENT_INVALID'
   | 'SNG_ENTRY_INVALID'
@@ -1551,6 +1552,98 @@ export class EconomyRepository {
         account: 'escrow',
         delta: buyIn,
         reason: 'CASH_REBUY',
+        refId: roomId,
+        idempotencyKey: `${prefix}:escrow`,
+        at,
+      });
+      return this.requireActiveCashEscrow(profileId, roomId);
+    });
+  }
+
+  /**
+   * 앉은 자리의 스택을 `targetAmount`까지 지갑에서 끌어올린다 (바이인 탑업).
+   *
+   * 리바이와 다른 점: 리바이는 0칩 좌석을 되살리고, 탑업은 **살아 있는 좌석**을
+   * 채운다. 두 경로가 같은 좌석을 두고 겹치면 지갑이 두 번 빠지므로 0칩은 여기서
+   * 거절한다.
+   *
+   * **핸드 사이에서만 허용한다.** 핸드가 시작되면 checkpointCashHand가 스택
+   * fingerprint를 확정하고 정산이 그걸 검증하는데, 중간에 칩이 늘면 그 검증이
+   * 깨진다. prepared 정산 행이 있으면 거절하는 이유다.
+   *
+   * 멱등키에 목표 금액을 포함해, 같은 목표의 중복 요청은 조용히 통과시키되
+   * 같은 핸드 경계에서의 두 번째(더 큰) 탑업은 정상 처리한다.
+   */
+  topUpCashEscrow(
+    profileId: string,
+    roomId: string,
+    targetAmount: number,
+    at: number,
+  ): CashEscrow {
+    this.assertCashAmount(targetAmount, false, 'CASH_TOP_UP_INVALID');
+    assertValidEconomyTimestamp(at);
+    return this.database.transaction(() => {
+      const escrow = this.requireActiveCashEscrow(profileId, roomId);
+      const prefix = `cash-topup:${escrow.id}:${escrow.checkpointHand}:${targetAmount}`;
+      const existing = this.database.db.prepare(`
+        SELECT profile_id, account, delta, reason, ref_id
+        FROM chip_ledger WHERE idempotency_key = ?
+      `).get(`${prefix}:wallet`) as LedgerOperationRow | undefined;
+      if (existing) {
+        // 멱등키가 (좌석, 핸드 경계, 목표 금액)을 모두 담으므로 키가 맞으면 같은
+        // 연산이다. 델타는 이미 반영돼 escrow에서 역산할 수 없으니 검증하지 않는다.
+        if (
+          existing.profile_id !== profileId
+          || existing.account !== 'wallet'
+          || existing.reason !== 'CASH_TOP_UP'
+          || existing.ref_id !== roomId
+        ) {
+          throw new EconomyDomainError('ECONOMY_PERSISTENCE_INVALID');
+        }
+        return escrow;
+      }
+      // 0칩은 리바이 소관, 목표가 현재 스택보다 크지 않으면 탑업이 아니다
+      if (escrow.amount <= 0 || targetAmount <= escrow.amount) {
+        throw new EconomyDomainError('CASH_TOP_UP_INVALID');
+      }
+      // 정산 대기 중인 핸드가 있으면 스택을 건드리지 않는다
+      const prepared = this.database.db.prepare(`
+        SELECT 1 FROM cash_hand_settlements
+        WHERE room_id = ? AND status = 'prepared' LIMIT 1
+      `).get(roomId);
+      if (prepared) {
+        throw new EconomyDomainError('CASH_TOP_UP_INVALID');
+      }
+
+      const delta = targetAmount - escrow.amount;
+      const profile = this.requirePublicProfile(profileId);
+      if (profile.wallet.balance < delta) {
+        throw new EconomyDomainError('INSUFFICIENT_BALANCE');
+      }
+      this.database.db.prepare(`
+        UPDATE wallets SET balance = ?, updated_at = ? WHERE profile_id = ?
+      `).run(profile.wallet.balance - delta, at, profileId);
+      // checkpoint_amount도 함께 올린다 — 다음 핸드의 checkpointCashHand가
+      // escrow.amount와 좌석 스택이 같은지 확인하기 때문
+      this.database.db.prepare(`
+        UPDATE seat_escrows
+        SET amount = ?, checkpoint_amount = ?, updated_at = ?
+        WHERE id = ? AND status = 'active'
+      `).run(targetAmount, targetAmount, at, escrow.id);
+      this.insertLedger({
+        profileId,
+        account: 'wallet',
+        delta: -delta,
+        reason: 'CASH_TOP_UP',
+        refId: roomId,
+        idempotencyKey: `${prefix}:wallet`,
+        at,
+      });
+      this.insertLedger({
+        profileId,
+        account: 'escrow',
+        delta,
+        reason: 'CASH_TOP_UP',
         refId: roomId,
         idempotencyKey: `${prefix}:escrow`,
         at,
