@@ -136,6 +136,9 @@ interface GameStore {
     onDone?: (status: 'applied' | 'queued') => void,
   ) => void;
   cancelCashTopUp: () => void;
+  resolveInvite: (
+    code: string,
+  ) => Promise<{ kind: 'room' | 'tournament'; id: string } | null>;
   useTimeBank: () => void;
   sngFillBots: () => void;
   createRoom: (config: CreateRoomConfig) => void;
@@ -616,6 +619,23 @@ export const useGameStore = create<GameStore>((set, get) => ({
       if (!ack.ok) set({ tableNotice: ack.message });
     });
   },
+
+  resolveInvite: code => new Promise(resolve => {
+    const { socket } = get();
+    if (!socket?.connected) {
+      resolve(null);
+      return;
+    }
+    socket.emit('resolve-invite', { code }, ack => {
+      if (!ack.ok || !ack.data) {
+        set({ joinError: ack.ok ? null : ack.message ?? null });
+        resolve(null);
+        return;
+      }
+      set({ joinError: null });
+      resolve(ack.data);
+    });
+  }),
 
   useTimeBank: () => {
     const { socket, currentRoomId } = get();

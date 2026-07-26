@@ -5,6 +5,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { useCountdownTo, formatCountdown } from '@/lib/hooks/use-countdown';
 import { useInviteLink } from '@/lib/hooks/use-invite-link';
+import { formatInviteCode } from '@/lib/invite/invite-code';
 import { useServerNow } from '@/lib/hooks/use-server-now';
 import { TournamentState } from '@/lib/poker/types';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
@@ -76,7 +77,10 @@ export default function TopBar({ onLeave }: TopBarProps) {
           (tournamentPresentation.registrationDeadline - serverNow) / 1_000,
         ),
       );
-  const { copied, copy } = useInviteLink(currentRoomId);
+  // 방 목록에 실린 초대 코드를 함께 복사 — 링크가 주 경로, 코드는 음성/오프라인 대안
+  const inviteCode = useGameStore(state => state.rooms
+    .find(room => room.id === currentRoomId)?.inviteCode ?? null);
+  const { copied, copy } = useInviteLink(currentRoomId, inviteCode);
 
   return (
     // 바 배경은 전체 폭, 내용물은 게임 영역 중앙 컨테이너(1100px — GameRoomView와 동일)에 정렬:
@@ -156,10 +160,21 @@ export default function TopBar({ onLeave }: TopBarProps) {
             + 칩
           </button>
         )}
+        {/* 코드를 눈에 보이게 둔다 — 음성으로 불러주려면 호스트가 읽을 수 있어야 한다 */}
+        {inviteCode && (
+          <span
+            className="hidden shrink-0 font-mono text-[10px] tracking-wider text-ink-dim md:inline"
+            title="초대 코드"
+          >
+            {formatInviteCode(inviteCode)}
+          </span>
+        )}
         <button
           onClick={copy}
           aria-label="초대 링크 복사"
-          title="초대 링크 복사"
+          title={inviteCode
+            ? `초대 링크 + 코드 ${formatInviteCode(inviteCode)} 복사`
+            : '초대 링크 복사'}
           className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
         >
           {copied ? <span className="text-green-400 text-xs font-bold">✓</span> : <LinkIcon />}

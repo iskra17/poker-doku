@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { InviteRegistry } from './invite-registry';
 import { ARENA_CONFIG_V1 } from '../lib/arena/config';
 import { PokerEngine, type EngineRuntimeHooks } from '../lib/poker/engine';
 import { cfg } from './game-config/live';
@@ -239,6 +240,9 @@ export interface RoomManagerRuntimeStats {
 }
 
 export class RoomManager {
+  /** 방·토너먼트 공용 초대 코드 저장소 (소켓 계층이 토너먼트 코드도 여기에 발급한다) */
+  readonly invites = new InviteRegistry();
+
   private rooms: Map<string, {
     engine: PokerEngine;
     config: RoomConfig;
@@ -395,7 +399,19 @@ export class RoomManager {
       persistent,
     });
     this.chatHistory.set(id, []);
+    this.invites.issue('room', id);
     return id;
+  }
+
+  getInviteCode(roomId: string): string | null {
+    return this.invites.codeFor('room', roomId);
+  }
+
+  /** 코드로 살아 있는 방을 찾는다 (사라진 방은 null) */
+  resolveRoomInvite(input: string): string | null {
+    const target = this.invites.resolve(input);
+    if (!target || target.kind !== 'room') return null;
+    return this.rooms.has(target.id) ? target.id : null;
   }
 
   getRoom(roomId: string): { engine: PokerEngine; config: RoomConfig; createdAt: number } | undefined {
@@ -569,6 +585,7 @@ export class RoomManager {
     }
     this.cancelAllSeatWaiters(roomId, 'room-closed');
 
+    this.invites.release('room', roomId);
     this.rooms.delete(roomId);
     this.preparedMttRooms.delete(roomId);
     this.chatHistory.delete(roomId);
@@ -655,6 +672,7 @@ export class RoomManager {
         playerCount: room.engine.state.players.length,
         maxPlayers: room.config.maxPlayers,
         blinds: `${room.config.smallBlind}/${room.config.bigBlind}`,
+        inviteCode: this.getInviteCode(id),
         status: room.engine.state.isHandInProgress ? 'Playing' : 'Waiting',
         mode: room.config.gameMode ?? 'cash',
         // 시트앤고는 시작 후 참가 불가

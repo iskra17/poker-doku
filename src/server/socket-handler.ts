@@ -644,9 +644,17 @@ export function setupSocketHandlers(
     } catch {
       // Persistent public state fails closed. A later poll/resync retries it.
     }
+    // 목록에 뜬 토너먼트마다 초대 코드를 보장한다 (이미 있으면 그대로 유지).
+    // 방과 같은 코드 공간을 쓰므로 사용자는 코드가 어느 쪽인지 몰라도 된다.
+    for (const tournament of tournaments) {
+      roomManager.invites.issue('tournament', tournament.id);
+    }
     return {
       serverNow,
-      tournaments,
+      tournaments: tournaments.map(tournament => ({
+        ...tournament,
+        inviteCode: roomManager.invites.codeFor('tournament', tournament.id),
+      })),
     };
   }
 
@@ -2567,6 +2575,40 @@ export function setupSocketHandlers(
               ? '토너먼트에서는 칩을 추가할 수 없어요.'
               : '지금은 칩을 추가할 수 없어요.';
       ack?.({ ok: false, code: 'action-rejected', message });
+    });
+
+    // 초대 코드 조회 — 6자리는 인증이 아니라 조회 키다. 무차별 대입을 막으려면
+    // 반드시 레이트리밋을 건다(입장 버킷 공유: 5회/10초).
+    socket.on('resolve-invite', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{
+        kind: 'room' | 'tournament';
+        id: string;
+      }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || typeof payload.code !== 'string') {
+        invalidPayload(ack);
+        return;
+      }
+      if (!ensureRateLimit('joinRoom', '코드 확인이 너무 잦습니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const target = roomManager.invites.resolve(payload.code);
+      // 방은 살아 있어야 의미가 있다 (토너먼트는 매니저가 다시 확인한다)
+      const alive = target?.kind === 'room'
+        ? roomManager.resolveRoomInvite(payload.code) !== null
+        : target !== null;
+      if (!target || !alive) {
+        ack?.({
+          ok: false,
+          code: 'room-not-found',
+          message: '그런 초대 코드는 없어요. 다시 확인해 주세요.',
+        });
+        return;
+      }
+      ack?.({ ok: true, data: { kind: target.kind, id: target.id } });
     });
 
     socket.on('cancel-cash-top-up', (...rawArgs: unknown[]) => {

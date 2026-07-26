@@ -47,6 +47,14 @@ export default function Home() {
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
   );
+  // 토너먼트 초대 — MTT 테이블은 방 목록에 없어 ?room=으로 찾을 수 없다.
+  // 목적지는 상태에 담아 두므로 신규 유저의 온보딩(성인 확인·캐릭터·복구 코드)을
+  // 거친 뒤에도 그대로 살아 있다.
+  const [inviteTournamentId, setInviteTournamentId] = useState<string | null>(() =>
+    typeof window === 'undefined'
+      ? null
+      : new URLSearchParams(window.location.search).get('tournament'),
+  );
 
   useEffect(() => {
     void bootstrap();
@@ -207,7 +215,14 @@ export default function Home() {
                 )}
               </div>
             )}
-            <RoomList onJoin={handleJoinRoom} />
+            <RoomList
+              onJoin={handleJoinRoom}
+              inviteTournamentId={inviteTournamentId}
+              onInviteTournamentSeen={() => {
+                setInviteTournamentId(null);
+                window.history.replaceState(null, '', window.location.pathname);
+              }}
+            />
           </div>
         )}
       </main>

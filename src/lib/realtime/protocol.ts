@@ -68,6 +68,8 @@ export interface RoomListItem {
   mode?: string;
   locked?: boolean;
   hasPassword?: boolean;
+  /** 6자리 초대 코드 — 링크를 못 쓰는 자리(음성·오프라인)용 보조 수단 */
+  inviteCode?: string | null;
   bigBlind?: number;
   minBuyIn?: number;
   maxBuyIn?: number;
@@ -243,6 +245,8 @@ export interface TournamentSummary {
   registered?: boolean; // 요청자 기준 등록 여부 (개인화 필드)
   myTableRoomId?: string; // 참가 중이면 내 테이블
   payoutPreset: PayoutPresetId;
+  /** 6자리 초대 코드 — 방과 같은 코드 공간 */
+  inviteCode?: string | null;
   stage?: TournamentStage;
   holdReasons?: TournamentHoldReason[];
   stageEndsAt?: number;
@@ -537,6 +541,11 @@ export interface ClientToServerEvents {
     ack?: AckCallback<{ status: 'applied' | 'queued'; chips: number }>,
   ) => void;
   'cancel-cash-top-up': (ack?: AckCallback) => void;
+  /** 초대 코드 → 대상. 방/토너먼트를 구분해 돌려준다 (무차별 대입 방지 레이트리밋 필수) */
+  'resolve-invite': (
+    payload: { code: string },
+    ack?: AckCallback<{ kind: 'room' | 'tournament'; id: string }>,
+  ) => void;
   'use-time-bank': (ack?: AckCallback) => void;
   'send-chat': (data: unknown, ack?: AckCallback) => void;
   'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;

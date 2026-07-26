@@ -8,11 +8,15 @@ import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 import { useServerNow } from '@/lib/hooks/use-server-now';
 import Button from '../ui/Button';
 import TournamentDetailModal from './TournamentDetailModal';
+import InviteCodeEntry from './InviteCodeEntry';
 import CreateTournamentModal from './CreateTournamentModal';
 import TournamentCard from './TournamentCard';
 
 interface RoomListProps {
   onJoin: (roomId: string) => void;
+  /** 초대 링크(?tournament=)로 들어온 목적지 — 목록이 도착하면 상세를 자동으로 연다 */
+  inviteTournamentId?: string | null;
+  onInviteTournamentSeen?: () => void;
 }
 // 난이도 배지 — normal은 표기 생략 (배지 과밀 방지)
 const DIFFICULTY_BADGES: Record<string, { label: string; className: string }> = {
@@ -91,7 +95,11 @@ function applyFilters(rooms: RoomInfo[], mode: ModeFilter, type: TypeFilter, joi
   });
 }
 
-export default function RoomList({ onJoin }: RoomListProps) {
+export default function RoomList({
+  onJoin,
+  inviteTournamentId = null,
+  onInviteTournamentSeen,
+}: RoomListProps) {
   const { rooms } = useGameStore();
   const tournaments = useGameStore(s => s.tournaments);
   const serverClockOffsetMs = useGameStore(s => s.serverClockOffsetMs);
@@ -105,6 +113,8 @@ export default function RoomList({ onJoin }: RoomListProps) {
   const [joinableOnly, setJoinableOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>('default');
   const [mttDetailId, setMttDetailId] = useState<string | null>(null);
+  // 초대 목적지는 한 번만 연다 — 사용자가 닫은 모달이 다시 열리면 안 된다
+  const [inviteOpened, setInviteOpened] = useState(false);
   const [mttCreateOpen, setMttCreateOpen] = useState(false);
 
   const visible = useMemo(
@@ -123,6 +133,10 @@ export default function RoomList({ onJoin }: RoomListProps) {
     }
     return list;
   }, [tournaments, modeFilter, joinableOnly]);
+  // 초대로 들어온 토너먼트는 목록 도착을 기다리지 않고 바로 상세를 연다.
+  // effect로 setState 하지 않고 파생값으로 처리한다 (렌더 순수성 규칙).
+  const activeDetailId = mttDetailId ?? (inviteOpened ? null : inviteTournamentId);
+
   // 자리비움 등으로 좌석이 보존된 방 — 필터와 무관하게 상단 복귀 배너로 노출
   const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
   // 자리비움으로 떠난 MTT 생존 좌석 — 방 목록엔 MTT 테이블이 없으므로 토너 목록에서 판별
@@ -256,6 +270,11 @@ export default function RoomList({ onJoin }: RoomListProps) {
         </button>
       </div>
 
+      <InviteCodeEntry
+        onRoom={onJoin}
+        onTournament={id => setMttDetailId(id)}
+      />
+
       {tournamentError && (
         <button
           type="button"
@@ -386,8 +405,17 @@ export default function RoomList({ onJoin }: RoomListProps) {
         ))}
       </div>
 
-      {mttDetailId && (
-        <TournamentDetailModal tournamentId={mttDetailId} onClose={() => setMttDetailId(null)} />
+      {activeDetailId && (
+        <TournamentDetailModal
+          tournamentId={activeDetailId}
+          onClose={() => {
+            setMttDetailId(null);
+            if (!inviteOpened && inviteTournamentId) {
+              setInviteOpened(true);
+              onInviteTournamentSeen?.();
+            }
+          }}
+        />
       )}
       {mttCreateOpen && canCreateTournament && (
         <CreateTournamentModal

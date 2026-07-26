@@ -1,14 +1,23 @@
 'use client';
 
 import { useState } from 'react';
+import { formatInviteCode } from '@/lib/invite/invite-code';
 
-/** 방 초대 링크(origin/?room=id) 복사 — copied는 1.5초간 true 유지 */
-export function useInviteLink(roomId: string | null) {
+/**
+ * 초대 복사 — 링크가 주 경로이고, 코드가 있으면 같이 붙여 보낸다.
+ * 링크가 깨지거나 음성으로 불러줘야 할 때 코드가 대안이 된다.
+ * copied는 1.5초간 true 유지.
+ */
+export function useInviteLink(roomId: string | null, inviteCode?: string | null) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
     if (!roomId) return;
-    const url = `${window.location.origin}/?room=${roomId}`;
+    const link = `${window.location.origin}/?room=${roomId}`;
+    const url = inviteCode
+      ? `${link}
+초대 코드: ${formatInviteCode(inviteCode)}`
+      : link;
     try {
       await navigator.clipboard.writeText(url);
     } catch {
