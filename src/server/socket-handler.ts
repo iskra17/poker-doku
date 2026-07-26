@@ -2523,6 +2523,69 @@ export function setupSocketHandlers(
       ack?.({ ok: true });
     });
 
+    // 칩 추가(바이인 탑업) — 목표 스택까지 지갑에서 채운다
+    socket.on('cash-top-up', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{
+        status: 'applied' | 'queued';
+        chips: number;
+      }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!isRecord(payload) || !Number.isSafeInteger(payload.targetChips)) {
+        invalidPayload(ack);
+        return;
+      }
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
+      if (!ensureRateLimit('playerAction', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const result = roomManager.requestCashTopUp(
+        session.roomId,
+        session.playerId,
+        payload.targetChips as number,
+      );
+      if (result.status === 'applied') {
+        ack?.({ ok: true, data: { status: 'applied', chips: result.chips } });
+        return;
+      }
+      if (result.status === 'queued') {
+        ack?.({ ok: true, data: { status: 'queued', chips: result.target } });
+        return;
+      }
+      const message = result.status === 'invalid'
+        ? `현재 스택보다 많고 ${result.maxTarget.toLocaleString()} 이하로 정해 주세요.`
+        : result.status === 'busted'
+          ? '칩이 모두 떨어졌어요 — 리바이로 다시 앉아 주세요.'
+          : result.status === 'declined'
+            ? '지갑 잔액이 부족하거나 지금은 칩을 추가할 수 없어요.'
+            : result.status === 'not-cash'
+              ? '토너먼트에서는 칩을 추가할 수 없어요.'
+              : '지금은 칩을 추가할 수 없어요.';
+      ack?.({ ok: false, code: 'action-rejected', message });
+    });
+
+    socket.on('cancel-cash-top-up', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!session.roomId) {
+        ack?.({ ok: false, code: 'action-rejected', message: '현재 참가 중인 방이 없어요.' });
+        return;
+      }
+      if (!ensureRateLimit('playerAction', '요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
+      roomManager.cancelCashTopUp(session.roomId, session.playerId);
+      ack?.({ ok: true });
+    });
+
     // 타임칩 사용
     socket.on('use-time-bank', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs(rawArgs);

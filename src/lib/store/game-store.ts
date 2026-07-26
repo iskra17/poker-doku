@@ -131,6 +131,11 @@ interface GameStore {
   /** 아이템 투척 — 성공 ack 시 onAck(cooldownMs)로 발사대 쿨다운 표시 갱신 */
   throwItem: (itemId: string, targetPlayerId: string, onAck?: (cooldownMs: number) => void) => void;
   toggleSitOut: () => void;
+  requestCashTopUp: (
+    targetChips: number,
+    onDone?: (status: 'applied' | 'queued') => void,
+  ) => void;
+  cancelCashTopUp: () => void;
   useTimeBank: () => void;
   sngFillBots: () => void;
   createRoom: (config: CreateRoomConfig) => void;
@@ -582,6 +587,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const { socket, currentRoomId } = get();
     if (!socket?.connected || !currentRoomId) return;
     socket.emit('toggle-sit-out', ack => {
+      if (!ack.ok) set({ tableNotice: ack.message });
+    });
+  },
+
+  requestCashTopUp: (targetChips, onDone) => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    socket.emit('cash-top-up', { targetChips }, ack => {
+      if (!ack.ok) {
+        set({ tableNotice: ack.message });
+        return;
+      }
+      const status = ack.data?.status ?? 'applied';
+      set({
+        tableNotice: status === 'queued'
+          ? '이번 핸드가 끝나면 칩이 추가돼요.'
+          : '칩을 추가했어요.',
+      });
+      onDone?.(status);
+    });
+  },
+
+  cancelCashTopUp: () => {
+    const { socket, currentRoomId } = get();
+    if (!socket?.connected || !currentRoomId) return;
+    socket.emit('cancel-cash-top-up', ack => {
       if (!ack.ok) set({ tableNotice: ack.message });
     });
   },

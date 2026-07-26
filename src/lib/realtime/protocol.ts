@@ -528,6 +528,15 @@ export interface ClientToServerEvents {
     ack?: AckCallback<{ handNumber: number; actionSeq: number }>,
   ) => void;
   'toggle-sit-out': (ack?: AckCallback) => void;
+  /**
+   * 캐시 좌석 칩 추가(바이인 탑업). `targetChips`는 채우고 싶은 **최종 스택**이다.
+   * 핸드 중이면 서버가 예약하고 status 'queued'를 준다.
+   */
+  'cash-top-up': (
+    payload: { targetChips: number },
+    ack?: AckCallback<{ status: 'applied' | 'queued'; chips: number }>,
+  ) => void;
+  'cancel-cash-top-up': (ack?: AckCallback) => void;
   'use-time-bank': (ack?: AckCallback) => void;
   'send-chat': (data: unknown, ack?: AckCallback) => void;
   'throw-item': (data: unknown, ack?: AckCallback<{ cooldownMs: number }>) => void;

@@ -16,6 +16,7 @@ import HelpModal from '../help/HelpModal';
 import HandHistoryModal from '../history/HandHistoryModal';
 import TournamentDetailModal from '../lobby/TournamentDetailModal';
 import TournamentStatusBanner from '../table/TournamentStatusBanner';
+import TopUpModal from '../table/TopUpModal';
 
 const STREET_LABELS: Record<string, string> = {
   preflop: '프리플랍',
@@ -45,10 +46,21 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
   // MTT 게임 중 토너 상세(내 순위/순위표/구조) — 배지 탭으로 진입 (2026-07-24 모바일 QA)
   const [tournamentOpen, setTournamentOpen] = useState(false);
+  const [topUpOpen, setTopUpOpen] = useState(false);
   const mttTournamentId = gameState?.tournament?.tournamentId;
   const tournaments = useGameStore(state => state.tournaments);
   const serverClockOffsetMs = useGameStore(state => state.serverClockOffsetMs);
   const serverNow = useServerNow(serverClockOffsetMs);
+  // 칩 추가 진입점 — 캐시 좌석에서 아직 테이블 맥시멈(200BB)이 아닐 때만.
+  // 파산(0칩)은 BustNotice의 리바이 소관이라 여기서 제외한다.
+  const myPlayerId = useGameStore(state => state.myPlayerId);
+  const topUpSeat = gameState?.players.find(player => player.id === myPlayerId);
+  const canTopUp = !!gameState
+    && !gameState.tournament
+    && !!topUpSeat
+    && topUpSeat.chips > 0
+    && topUpSeat.chips < gameState.bigBlind * 200;
+
   const tournamentSummary = (tournaments as PublicTournamentSummary[])
     .find(tournament => tournament.id === mttTournamentId);
   const tournamentPresentation = tournamentSummary
@@ -134,6 +146,16 @@ export default function TopBar({ onLeave }: TopBarProps) {
             <span className="text-mystic">{STREET_LABELS[gameState.street] ?? gameState.street}</span>
           </span>
         )}
+        {canTopUp && (
+          <button
+            onClick={() => setTopUpOpen(true)}
+            aria-label="칩 추가"
+            title="칩 추가 (바이인 탑업)"
+            className="flex h-7 shrink-0 items-center rounded-md border border-gilded/40 px-1.5 text-[10px] font-bold text-gilded transition-colors hover:bg-gilded/10"
+          >
+            + 칩
+          </button>
+        )}
         <button
           onClick={copy}
           aria-label="초대 링크 복사"
@@ -180,6 +202,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
         </div>
       </div>
       </div>
+      {topUpOpen && <TopUpModal onClose={() => setTopUpOpen(false)} />}
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />

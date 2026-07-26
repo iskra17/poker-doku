@@ -21,6 +21,12 @@ export interface RoomEconomyHooks {
   cancelPreparedHand(roomId: string, engine: PokerEngine): boolean;
   afterHand(roomId: string, engine: PokerEngine): CashHandPersistenceResult;
   settleExit(roomId: string, player: Player): void;
+  /**
+   * 살아 있는 좌석을 목표 스택까지 지갑에서 채운다. 자금 부족·핸드 진행 중 등
+   * 도메인 거절은 false로 알린다 (throw는 방 진행을 막으므로 삼킨다).
+   * 무료(practice) 방은 지갑을 쓰지 않으므로 이 훅 없이도 동작한다 — optional.
+   */
+  topUpSeat?(roomId: string, profileId: string, targetAmount: number): boolean;
   voidRoom(roomId: string): void;
   beforeTournament(roomId: string, engine: PokerEngine): void;
   cancelTournamentStart(roomId: string, engine: PokerEngine): boolean;
@@ -259,6 +265,15 @@ export class EconomyRuntime implements
   settleExit(roomId: string, player: Player): void {
     if (player.type !== 'human') return;
     this.economy.settleCashExit(player.id, roomId);
+  }
+
+  topUpSeat(roomId: string, profileId: string, targetAmount: number): boolean {
+    try {
+      this.economy.topUpCashEscrow(profileId, roomId, targetAmount);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   voidRoom(roomId: string): void {

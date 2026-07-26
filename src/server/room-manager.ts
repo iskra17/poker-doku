@@ -88,6 +88,16 @@ export interface RoomHandHistoryHooks {
   }): void;
 }
 
+export type CashTopUpResult =
+  | { status: 'applied'; chips: number }
+  | { status: 'queued'; target: number }
+  | { status: 'invalid'; maxTarget: number }
+  | { status: 'declined' }
+  | { status: 'busted' }
+  | { status: 'no-seat' }
+  | { status: 'not-cash' }
+  | { status: 'no-room' };
+
 export interface RoomManagerOptions {
   sngRetentionMs?: number;
   /** 올인 런아웃 스트리트 간 지연 (ms) — 테스트에서 짧게 줄이기 위한 옵션 */
@@ -2299,6 +2309,108 @@ export class RoomManager {
    * 없으면 자리 뜬 예약자가 방치 타이머까지 좌석을 붙잡는다.
    * leaveRoom 실패(지갑 정산 실패로 방 잠금)면 예약을 유지해 다음 핸드 종료 때 재시도한다.
    */
+  /**
+   * 캐시 좌석의 칩 추가(바이인 탑업) — 목표 스택까지 채운다.
+   *
+   * 핸드 중이면 즉시 올리지 않고 예약한다. 핸드 시작 시점 스택이 정산 fingerprint로
+   * 굳어 있어 중간에 칩이 늘면 그 검증이 깨지기 때문이다(PokerStars도 같은 이유로
+   * 다음 핸드부터 반영한다). 예약은 핸드 종료 때 processPendingTopUps가 처리한다.
+   */
+  requestCashTopUp(
+    roomId: string,
+    playerId: string,
+    targetAmount: number,
+  ): CashTopUpResult {
+    const room = this.rooms.get(roomId);
+    if (!room) return { status: 'no-room' };
+    if (room.config.gameMode === 'sng' || room.config.gameMode === 'mtt') {
+      return { status: 'not-cash' };
+    }
+    const player = room.engine.state.players.find(p => p.id === playerId);
+    if (!player || player.type !== 'human' || player.pendingRemoval) {
+      return { status: 'no-seat' };
+    }
+    // 0칩은 리바이 경로가 소유한다 — 두 경로가 겹치면 지갑이 두 번 빠진다
+    if (player.chips <= 0) return { status: 'busted' };
+    const ceiling = room.config.maxBuyIn;
+    if (
+      !Number.isSafeInteger(targetAmount)
+      || targetAmount <= player.chips
+      || targetAmount > ceiling
+    ) {
+      return { status: 'invalid', maxTarget: ceiling };
+    }
+    if (room.engine.state.isHandInProgress) {
+      player.pendingTopUpTarget = targetAmount;
+      this.onUpdate(roomId, room.engine);
+      return { status: 'queued', target: targetAmount };
+    }
+    if (!this.applyTopUp(roomId, player, targetAmount)) {
+      return { status: 'declined' };
+    }
+    this.onUpdate(roomId, room.engine);
+    return { status: 'applied', chips: player.chips };
+  }
+
+  /** 예약 취소 (모달에서 무르기) */
+  cancelCashTopUp(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    const player = room?.engine.state.players.find(p => p.id === playerId);
+    if (!player || player.pendingTopUpTarget === undefined) return false;
+    player.pendingTopUpTarget = undefined;
+    this.onUpdate(roomId, room!.engine);
+    return true;
+  }
+
+  /**
+   * 지갑에서 칩을 옮겨 좌석 스택을 올린다. 지갑 방은 에스크로가 성공해야만 칩이
+   * 늘고(선 정산·후 반영), 무료 방은 지갑이 없으므로 바로 올린다.
+   */
+  private applyTopUp(
+    roomId: string,
+    player: Player,
+    targetAmount: number,
+  ): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    const walletRoom = (room.config.economyMode ?? 'practice') === 'wallet';
+    if (walletRoom) {
+      const ok = this.options.economy?.topUpSeat?.(
+        roomId,
+        player.id,
+        targetAmount,
+      );
+      if (!ok) return false;
+    }
+    // 탑업은 chips > 0에서만 허용하므로 파산 회수 유예가 걸려 있을 수 없다
+    player.chips = targetAmount;
+    return true;
+  }
+
+  /**
+   * 핸드 종료 후 예약된 칩 추가를 반영한다 (정산 확정 뒤·다음 핸드 예약 전).
+   * handleCompletedHand가 부르는 핸드 경계 단계 — 회귀 테스트도 직접 호출한다.
+   */
+  applyPendingTopUps(roomId: string): void {
+    const room = this.rooms.get(roomId);
+    if (!room || room.engine.state.isHandInProgress) return;
+    for (const player of room.engine.state.players) {
+      const target = player.pendingTopUpTarget;
+      if (target === undefined) continue;
+      // 예약 후 상황이 바뀌었을 수 있다 — 이번 핸드로 스택이 목표를 넘었거나 파산했거나
+      player.pendingTopUpTarget = undefined;
+      if (
+        player.pendingRemoval
+        || player.chips <= 0
+        || target <= player.chips
+        || target > room.config.maxBuyIn
+      ) {
+        continue;
+      }
+      this.applyTopUp(roomId, player, target);
+    }
+  }
+
   private processLeaveReservations(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
@@ -3142,6 +3254,10 @@ export class RoomManager {
       }
       return;
     }
+
+    // 예약된 칩 추가를 먼저 반영한다 — 나가기 예약보다 앞이어야 퇴장하는 좌석에
+    // 헛되이 지갑을 쓰지 않는다.
+    this.applyPendingTopUps(roomId);
 
     // 나가기 예약('이번 핸드 후'/'다음 BB 전') 실행 — 정산 확정 후·다음 핸드 예약 전.
     // 마지막 휴먼이 예약 퇴장하면 leaveRoom이 방을 정리하므로 남은 인원은 그 뒤에 다시 센다.

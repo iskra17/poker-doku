@@ -84,6 +84,11 @@ export interface Player {
    * 본인 클라이언트가 예약 배너/취소 버튼을 그리는 데도 쓴다.
    */
   leaveReservation?: 'hand' | 'bb';
+  /**
+   * 핸드 진행 중에 들어온 칩 추가 요청의 목표 스택. 핸드가 끝나면 적용하고 지운다.
+   * 핸드 중에 바로 칩을 올리면 정산이 검증하는 핸드 시작 스택 fingerprint가 깨진다.
+   */
+  pendingTopUpTarget?: number;
   timeBankChips?: number; // 타임칩 보유 수 (내 턴에 사용해 시간 연장)
   handsPlayed?: number; // 참여 핸드 수 — 타임칩 적립 기준
   /** 다른 좌석에 공개해도 되는 최소 꾸미기 정보. */
