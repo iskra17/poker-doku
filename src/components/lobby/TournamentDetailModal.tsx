@@ -2,10 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
-import type {
-  PublicTournamentSummary,
-  TournamentDetailView,
-} from '@/lib/realtime/protocol';
+import type { TournamentDetailView } from '@/lib/realtime/protocol';
 import { formatCountdown, useCountdownTo } from '@/lib/hooks/use-countdown';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 import { useServerNow } from '@/lib/hooks/use-server-now';
@@ -45,7 +42,10 @@ export default function TournamentDetailModal({
   const [gone, setGone] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmKey, setConfirmKey] = useState<string | null>(null);
-  const summary = detail?.summary as PublicTournamentSummary | undefined;
+  // 캐스팅 금지 — 서버가 v2 투영을 싣는다는 계약을 타입이 지켜야 한다.
+  // `as PublicTournamentSummary`로 덮었더니 상세만 v1을 흘리던 버그를 컴파일러가
+  // 놓쳤고, `structure.segments`에서 페이지 전체가 죽었다 (2026-07-26).
+  const summary = detail?.summary;
   const presentation = summary
     ? presentTournament(summary, serverNow)
     : null;

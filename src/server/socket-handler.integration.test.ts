@@ -29,6 +29,86 @@ function withAck<T>(
   });
 }
 
+/**
+ * 목록·상세가 **공유해야 하는** v2 공개 투영 픽스처.
+ * 상세가 이 shape을 싣지 않고 인메모리 v1 summary를 흘리면 클라이언트가
+ * `structure.segments`를 읽다 죽는다 (2026-07-26 프리롤 실주행).
+ */
+function publicTournamentSummaryFixture(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): PublicTournamentSummary {
+  const now = Date.now();
+  return {
+    id,
+    name: '예약 프리롤',
+    lifecycle: 'registering',
+    statusReason: null,
+    speed: 'standard',
+    entrantCount: 3,
+    maxEntrants: 24,
+    tableSize: 6,
+    remaining: 3,
+    tableCount: 0,
+    prizePool: 180_000,
+    startAt: now + 30 * 60_000,
+    startedAt: null,
+    botFill: true,
+    hostId: 'operator',
+    level: 0,
+    paused: false,
+    economyMode: 'freeroll',
+    entryBuyIn: 0,
+    entryFee: 0,
+    payoutPreset: 'standard',
+    schedule: {
+      visibleAt: now - 60_000,
+      registrationOpensAt: now - 60_000,
+      scheduledStartsAt: now + 30 * 60_000,
+      manualStartExpiresAt: null,
+      actualStartedAt: null,
+    },
+    structure: {
+      sourcePresetId: 'standard',
+      startingStack: 10_000,
+      segments: [
+        { kind: 'level', durationMs: 8 * 60_000, smallBlind: 100, bigBlind: 200, bigBlindAnte: 0 },
+        { kind: 'break', durationMs: 5 * 60_000 },
+        { kind: 'level', durationMs: 8 * 60_000, smallBlind: 200, bigBlind: 400, bigBlindAnte: 400 },
+      ],
+      currentSegmentIndex: null,
+      currentSegmentEndsAt: null,
+    },
+    payout: {
+      tableVersion: 3,
+      presetId: 'standard',
+      paidFieldPercent: 15,
+      status: 'provisional',
+      totalPrize: 180_000,
+      payouts: [
+        { place: 1, percent: 60, amount: 108_000 },
+        { place: 2, percent: 40, amount: 72_000 },
+      ],
+      fundingStatus: 'promotion-reserved',
+    },
+    registrationState: 'open-prestart',
+    registrationCloseReason: null,
+    lateRegistrationClosesAt: null,
+    minEntrants: 8,
+    initialEntrants: 0,
+    acceptedEntrants: 3,
+    pendingLateEntrants: 0,
+    aliveSeated: 0,
+    finalEntrants: null,
+    botFillToMinimum: true,
+    myRegistrationStatus: null,
+    mySeat: null,
+    canRegister: true,
+    canCancelRegistration: false,
+    ...overrides,
+  } as unknown as PublicTournamentSummary;
+}
+
 const HUMAN_ROOM: RoomConfig = {
   name: '테스트 방',
   smallBlind: 10,
@@ -280,73 +360,7 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     // room-not-found를 냈고, 등록 버튼이 상세 모달에만 있어 로비에서 참가가 불가능했다
     // (2026-07-26 QA). 목록과 같은 공개 투영으로 상세를 구성해야 한다.
     const tournamentId = 'mtt-prestart-detail';
-    const summary = {
-      id: tournamentId,
-      name: '예약 프리롤',
-      lifecycle: 'registering',
-      statusReason: null,
-      speed: 'standard',
-      entrantCount: 3,
-      maxEntrants: 24,
-      tableSize: 6,
-      remaining: 3,
-      tableCount: 0,
-      prizePool: 180_000,
-      startAt: Date.now() + 30 * 60_000,
-      startedAt: null,
-      botFill: true,
-      hostId: 'operator',
-      level: 0,
-      paused: false,
-      economyMode: 'freeroll',
-      entryBuyIn: 0,
-      entryFee: 0,
-      payoutPreset: 'standard',
-      schedule: {
-        visibleAt: Date.now() - 60_000,
-        registrationOpensAt: Date.now() - 60_000,
-        scheduledStartsAt: Date.now() + 30 * 60_000,
-        manualStartExpiresAt: null,
-        actualStartedAt: null,
-      },
-      structure: {
-        sourcePresetId: 'standard',
-        startingStack: 10_000,
-        segments: [
-          { kind: 'level', durationMs: 8 * 60_000, smallBlind: 100, bigBlind: 200, bigBlindAnte: 0 },
-          { kind: 'break', durationMs: 5 * 60_000 },
-          { kind: 'level', durationMs: 8 * 60_000, smallBlind: 200, bigBlind: 400, bigBlindAnte: 400 },
-        ],
-        currentSegmentIndex: null,
-        currentSegmentEndsAt: null,
-      },
-      payout: {
-        tableVersion: 3,
-        presetId: 'standard',
-        paidFieldPercent: 15,
-        status: 'provisional',
-        totalPrize: 180_000,
-        payouts: [
-          { place: 1, percent: 60, amount: 108_000 },
-          { place: 2, percent: 40, amount: 72_000 },
-        ],
-        fundingStatus: 'promotion-reserved',
-      },
-      registrationState: 'open-prestart',
-      registrationCloseReason: null,
-      lateRegistrationClosesAt: null,
-      minEntrants: 8,
-      initialEntrants: 0,
-      acceptedEntrants: 3,
-      pendingLateEntrants: 0,
-      aliveSeated: 0,
-      finalEntrants: null,
-      botFillToMinimum: true,
-      myRegistrationStatus: null,
-      mySeat: null,
-      canRegister: true,
-      canCancelRegistration: false,
-    } as unknown as PublicTournamentSummary;
+    const summary = publicTournamentSummaryFixture(tournamentId);
     harness = await createSocketTestHarness({
       persistentRuntimeEnabled: true,
       persistentLateRegistration: {
@@ -385,6 +399,67 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
     expect(missing.ok).toBe(false);
     if (missing.ok) throw new Error('unknown tournament must stay not-found');
     expect(missing.code).toBe('room-not-found');
+  });
+
+  it('serves the v2 public projection for a live tournament detail', async () => {
+    // 회귀: 라이브 토너먼트(=인메모리 런타임이 있는) 상세는 런타임의 v1 summary를
+    // 그대로 내보내 structure/schedule/payout/registrationState가 전부 비어 있었다.
+    // 상세 모달이 `structure.segments`를 읽다 죽어 페이지 전체가 날아갔다
+    // (2026-07-26 프리롤 실주행 — 로비 카드·게임 중 TopBar 배지 양쪽에서 재현).
+    let liveId = 'mtt-live-detail-pending';
+    harness = await createSocketTestHarness({
+      persistentLateRegistration: {
+        readInstance: () => null,
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [
+          publicTournamentSummaryFixture(liveId, {
+            lifecycle: 'running',
+            registrationState: 'open-late',
+            canRegister: false,
+          }),
+        ]),
+      } as never,
+    });
+    const operatorProfile = await harness.createProfile();
+    harness.grantTournamentOperator(operatorProfile.profile.id);
+    const operator = await harness.connect('live-detail', {
+      profileCookie: operatorProfile.cookie,
+    });
+    const created = await withAck<{ tournamentId: string }>(done =>
+      operator.socket.emit('create-tournament', {
+        name: '라이브 상세 토너먼트',
+        speed: 'standard' as const,
+        maxEntrants: 8,
+        startAt: null,
+        botFill: true,
+        turnTime: 15,
+        economyMode: 'practice' as const,
+        payoutPreset: 'standard' as const,
+      }, done));
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error('create failed');
+    liveId = created.data!.tournamentId;
+    // 인메모리 런타임이 실제로 있는 경로여야 이 회귀를 덮는다.
+    expect(harness.runtime.tournamentManager.getDetail(liveId)).not.toBeNull();
+
+    const ack = await withAck<TournamentDetailView>(done =>
+      operator.socket.emit('get-tournament', { tournamentId: liveId }, done));
+
+    expect(ack.ok).toBe(true);
+    if (!ack.ok) throw new Error('live detail should resolve');
+    const detail = ack.data!;
+    // 상세 모달이 옵셔널 체이닝 없이 읽는 v2 필드가 모두 실려야 한다.
+    expect(detail.summary.structure.segments.length).toBeGreaterThan(0);
+    expect(detail.summary.structure.startingStack).toBe(10_000);
+    expect(detail.summary.schedule.registrationOpensAt).toBeTypeOf('number');
+    expect(detail.summary.payout.totalPrize).toBe(180_000);
+    expect(detail.summary.payout.payouts).toHaveLength(2);
+    expect(detail.summary.registrationState).toBe('open-late');
+    expect(detail.summary.lifecycle).toBe('running');
+    expect(detail.summary.mySeat).toBeNull();
+    // 좌석·순위·시계 같은 런타임 사실은 런타임에서 온다.
+    expect(detail.entrants).toEqual([]);
+    expect(detail.standings).toEqual([]);
   });
 
   it('returns an idempotent register result for one request id', async () => {

@@ -25,8 +25,8 @@ import {
 } from '../lib/poker/payout-table';
 import { createBot, getUsedCharacterIds } from '../lib/bot/bot-manager';
 import type {
-  TournamentDetailView,
   TournamentPhase,
+  TournamentRuntimeDetailView,
   TournamentStandingRow,
   TournamentSummary,
 } from '../lib/realtime/protocol';
@@ -66,8 +66,8 @@ import type {
 } from './tournament-enrollment-repository';
 
 export type {
-  TournamentDetailView,
   TournamentPhase,
+  TournamentRuntimeDetailView,
   TournamentStandingRow,
   TournamentSummary,
 };
@@ -1304,7 +1304,14 @@ export class TournamentManager {
       .map(t => this.toSummary(t, forPlayerId));
   }
 
-  getDetail(tournamentId: string, forPlayerId?: string): TournamentDetailView | null {
+  /**
+   * 런타임이 아는 상세(좌석·순위·시계). `summary`는 레거시 v1 투영이므로 소켓 계층이
+   * 목록과 같은 v2 공개 투영으로 승격해야 한다 — 반환 타입이 그것을 강제한다.
+   */
+  getDetail(
+    tournamentId: string,
+    forPlayerId?: string,
+  ): TournamentRuntimeDetailView | null {
     const t = this.tournaments.get(tournamentId);
     if (!t) return null;
     const clockPos = t.startedAt !== null && t.phase === 'running'

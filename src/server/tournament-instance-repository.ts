@@ -1322,7 +1322,7 @@ export class TournamentInstanceRepository {
         now,
       );
       if (!detail) return [];
-      const summary = detail.summary as PublicTournamentSummary;
+      const summary = detail.summary;
       const templateId = nullableString(row.template_id);
       if (templateId === null) return [summary];
       const shown = perTemplate.get(templateId) ?? 0;
@@ -1661,8 +1661,8 @@ function projectDetail(
     percent: percents[index],
     amount,
   }));
-  const myStatus = projection.myRegistrationStatus as
-    | TournamentSummary['myRegistrationStatus'];
+  const myStatus = (projection.myRegistrationStatus
+    ?? null) as PublicTournamentSummary['myRegistrationStatus'];
   const myEverSeated = row.my_ever_seated === null
     ? false
     : booleanInteger(row.my_ever_seated);
@@ -1719,7 +1719,7 @@ function projectDetail(
     segment => segment.kind === 'level',
   );
   const levelDurationMs = firstLevel?.durationMs ?? 0;
-  const summary: TournamentSummary = {
+  const summary: PublicTournamentSummary = {
     id: instance.id,
     name: instance.config.name,
     lifecycle,
