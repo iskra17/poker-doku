@@ -967,9 +967,16 @@ export function setupSocketHandlers(
     },
   });
 
-  // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준
-  // 봇 전용 연습 방: 휴먼 1명 제한 — 다른 사람 방해 없이 봇들과 연습 (도장의 입구)
+  // Create default rooms — persistent: 유휴 정리 대상에서 제외. 바이인 범위는 40~200BB 표준.
+  //
+  // **스테이크 사다리** — 세 방이 블라인드·난이도·경제로 한 줄에 꿰인다:
+  //   Practice Dojo(10/20 · 무료 · 혼자) → Sakura Lounge(25/50 · 지갑 · 봇+사람)
+  //   → Moonlight Table(50/100 · 지갑 · 고수).
+  // 이전엔 Dojo와 Sakura가 둘 다 10/20이라 로비에서 같은 방으로 보였다 — 실제 차이는
+  // '혼자만/사람도'와 '무료/지갑'인데 이름과 블라인드가 그걸 전혀 전달하지 못했다
+  // (2026-07-26 유저 지적). 방을 늘리지 말고 각 방에 뚜렷한 이유를 줄 것.
   if (createDefaultRooms) {
+    // 입구: 휴먼 1명 제한 — 다른 사람 방해 없이 봇들과 연습. 무료라 지갑 부담도 없다
     roomManager.createRoom({
       name: 'Practice Dojo',
       smallBlind: 10,
@@ -984,23 +991,9 @@ export function setupSocketHandlers(
       economyMode: 'practice',
     }, true);
 
-    // 초보 방: 순한 봇 + 여유 턴 시간 (난이도 사다리의 입구)
+    // 첫 실전: 사람이 낄 수 있는 가장 낮은 지갑 테이블
     roomManager.createRoom({
       name: 'Sakura Lounge',
-      smallBlind: 10,
-      bigBlind: 20,
-      minBuyIn: 20 * MIN_BUYIN_BB,
-      maxBuyIn: 20 * MAX_BUYIN_BB,
-      maxPlayers: 6,
-      turnTime: 20,
-      difficulty: 'easy',
-      botCount: 5, // 솔로 쇼케이스 방 — 캐릭터 전원 등장 (휴먼이 오면 봇이 양보)
-      tableType: 'mixed',
-      economyMode: 'wallet',
-    }, true);
-
-    roomManager.createRoom({
-      name: "Dragon's Den",
       smallBlind: 25,
       bigBlind: 50,
       minBuyIn: 50 * MIN_BUYIN_BB,
@@ -1008,11 +1001,12 @@ export function setupSocketHandlers(
       maxPlayers: 6,
       turnTime: 15,
       difficulty: 'normal',
-      botCount: 5,
+      botCount: 5, // 캐릭터 쇼케이스 — 휴먼이 오면 봇이 양보
       tableType: 'mixed',
       economyMode: 'wallet',
     }, true);
 
+    // 상위: 공격적인 봇 + 높은 블라인드
     roomManager.createRoom({
       name: 'Moonlight Table',
       smallBlind: 50,
