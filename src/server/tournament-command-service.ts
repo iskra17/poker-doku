@@ -617,11 +617,18 @@ export class TournamentCommandService {
       action,
       this.auditActor(authority),
     );
-    if (memoryResult !== 'not-found') return memoryResult;
+    // 취소는 인메모리 런타임 해체와 DB 영속 취소(등록 동결·에스크로 환불)를 **둘 다** 해야 한다.
+    // 여기서 인메모리 성공만 보고 early-return하면 라이브 토너먼트는 영속 경로에 영영 닿지
+    // 못하고, DB에는 status='running' 인스턴스와 잠긴 에스크로가 남는다. 운영자는 라이브
+    // 목록에서 사라진 것만 보고 취소가 끝난 줄 안다 (2026-07-26 QA — 두 번 눌러야 정리됐다).
+    const memoryCancelled = action.kind === 'cancel' && memoryResult === 'ok';
+    if (memoryResult !== 'not-found' && !memoryCancelled) return memoryResult;
+    // 인메모리 취소가 이미 성공했다면 영속 단계가 실패해도 그 성공을 뒤집지 않는다.
+    const fallback: TournamentActionResult = memoryCancelled ? 'ok' : 'not-found';
     const admin = this.persistentAdmin;
-    if (!admin) return 'not-found';
+    if (!admin) return fallback;
     const instance = admin.instances.getInstance(tournamentId);
-    if (!instance) return 'not-found';
+    if (!instance) return fallback;
     if (action.kind !== 'cancel') return 'bad-state';
 
     const at = admin.now?.() ?? Date.now();
@@ -643,13 +650,15 @@ export class TournamentCommandService {
       admin.scheduler.hydrateTimers(at);
       return 'ok';
     }
-    if (!admin.onRefundPending) return 'bad-state';
+    if (!admin.onRefundPending) return fallback === 'ok' ? 'ok' : 'bad-state';
     const refund = admin.instances.claimRefundPending(
       tournamentId,
       'operator-cancel',
       ownerToken,
     );
-    if (refund.status !== 'claimed') return 'bad-state';
+    if (refund.status !== 'claimed') {
+      return fallback === 'ok' ? 'ok' : 'bad-state';
+    }
     admin.onRefundPending(refund.instance);
     this.auditPersistentCommand(
       'mtt-director-action',

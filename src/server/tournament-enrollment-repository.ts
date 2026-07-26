@@ -849,6 +849,37 @@ export class TournamentEnrollmentRepository {
       });
   }
 
+  /**
+   * 아직 착석하지 못한 지각 등록(late-pending)을 취소·환불에 쓸 수 있는 키와 함께
+   * 열거한다. `listStartingCandidates`와 같은 "현재 attempt" 읽기 계약이고, 반환한
+   * key는 그대로 `releaseLateMttEntry`에 넘길 수 있다.
+   *
+   * 마감(freeze) CAS가 `pending_late_entrants = 0`을 요구하므로 이 목록을 비우지
+   * 않고서는 등록 창을 닫을 수 없다 — 마감 드라이버의 필수 입력이다.
+   */
+  listPendingLateEntries(tournamentId: string): Array<{
+    key: LateEntryKey;
+    player: PublicTournamentPlayer;
+  }> {
+    this.assertIdentity(tournamentId);
+    const instance = this.requireInstance(tournamentId);
+    return this.listCurrentRegistrations(tournamentId)
+      .filter(row => row.status === 'late-pending')
+      .map(row => {
+        const attempt = this.requireAttempt(
+          tournamentId,
+          row.profile_id,
+          row.registration_attempt,
+        );
+        const player = JSON.parse(row.public_player_json) as PublicTournamentPlayer;
+        this.assertPublicPlayer(player);
+        return {
+          key: this.makeKeyFromRows(instance, row, attempt),
+          player,
+        };
+      });
+  }
+
   commitStartingRoster(input: CommitStartingRosterInput): boolean {
     this.assertIdentity(input.tournamentId);
     this.assertIdentity(input.ownerId);

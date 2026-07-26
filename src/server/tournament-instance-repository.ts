@@ -1841,7 +1841,11 @@ function isEngagedRegistrationStatus(status: string | null): boolean {
     || status === 'finished';
 }
 
-function legacyPhase(
+/**
+ * 공개 lifecycle → 구 `phase` 어댑터. 목록 투영이 쓰는 것과 **같은 매핑**을 상세 폴백
+ * (socket-handler `persistentTournamentDetail`)도 써야 목록/상세가 어긋나지 않는다.
+ */
+export function legacyPhase(
   lifecycle: PublicTournamentLifecycle,
 ): TournamentSummary['phase'] {
   if (

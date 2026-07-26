@@ -698,6 +698,72 @@ describe('TournamentCommandService', () => {
     database.close();
   });
 
+  it('persists the durable cancellation on the first call when a live runtime also handled it', () => {
+    // 회귀: 라이브 런타임이 있는 토너먼트를 취소하면 인메모리만 정리되고 DB는 그대로 남아
+    // (status='running' + 잠긴 에스크로) 운영자가 두 번 눌러야 정리됐다 (2026-07-26 QA).
+    const actionNow = Date.now();
+    const database = openPokerDatabase(':memory:');
+    const instances = new TournamentInstanceRepository(database, () => actionNow);
+    const scheduler = new TournamentScheduler({ database, clock: () => actionNow });
+    new PromotionFundRepository(database).adjustFund({
+      requestId: randomUUID(),
+      delta: 500_000,
+      reason: 'Live cancel regression funding',
+      actor: { kind: 'backoffice-admin', id: 'test' },
+      at: actionNow,
+    });
+    const durableService = new TournamentCommandService(
+      manager,
+      new Set(['operator-1']),
+      {
+        claimManualStart: vi.fn(() => null),
+        claimStartingRoster: vi.fn(),
+        startEconomy: vi.fn(),
+        commitRunning: vi.fn(),
+        handoffRefund: vi.fn(),
+      },
+      {
+        database,
+        instances,
+        scheduler,
+        now: () => actionNow,
+        onRefundPending: vi.fn(),
+      },
+    );
+    const command = persistentFreeroll({
+      schedule: {
+        visibleAt: actionNow + 60_000,
+        registrationOpensAt: actionNow + 120_000,
+        startsAt: actionNow + 600_000,
+        manualStartExpiresAt: null,
+      },
+    });
+    expect(durableService.createPersistentInstance(
+      { kind: 'backoffice' },
+      command,
+      actionNow,
+    ).ok).toBe(true);
+
+    // 라이브 런타임이 취소를 처리한 상황을 재현한다 (인메모리 'ok').
+    const runtimeCancel = vi
+      .spyOn(manager, 'directorActionAsOperator')
+      .mockReturnValue('ok');
+
+    expect(durableService.act(
+      { kind: 'backoffice' },
+      command.requestId,
+      { kind: 'cancel' },
+    )).toBe('ok');
+
+    expect(runtimeCancel).toHaveBeenCalledTimes(1);
+    // 핵심: 단 한 번의 호출로 DB까지 취소되어야 한다.
+    expect(instances.getInstance(command.requestId)?.status).toBe('cancelled');
+
+    runtimeCancel.mockRestore();
+    scheduler.close();
+    database.close();
+  });
+
   it('keeps ordered persistent tournament flags off and enforces dependencies', () => {
     const resolve = (
       tournamentCommandModule as unknown as {

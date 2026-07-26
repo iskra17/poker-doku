@@ -148,7 +148,9 @@ export default function TournamentCreateForm({
   const [turnTime, setTurnTime] = useState<8 | 15 | 30>(15);
   const [payout, setPayout] = useState<TournamentPayoutPolicy>(PAYOUTS[1]);
   const [totalPrize, setTotalPrize] = useState(180_000);
-  const [lateLevels, setLateLevels] = useState<0 | 1 | 2 | 3>(2);
+  // 기본값 '사용 안 함' — 지각 등록은 아직 착석까지 가지 않고 마감 시 취소·환불된다.
+  // 운영자가 그 동작을 알고 의식적으로 켤 때만 쓰이게 한다.
+  const [lateLevels, setLateLevels] = useState<0 | 1 | 2 | 3>(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

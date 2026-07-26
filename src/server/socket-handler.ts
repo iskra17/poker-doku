@@ -70,6 +70,8 @@ import {
   TournamentManager,
   type PersistentLateRegistrationInstance,
   type PersistentLateRegistrationPorts,
+  type PersistentPendingLateEntry,
+  type PersistentRegistrationCloseClaim,
   type PersistentTournamentRuntimeRegistrationPorts,
   type PersistentTournamentSettlementPorts,
 } from './tournament-manager';
@@ -85,7 +87,9 @@ import {
   parseTournamentOperatorIds,
   type PersistentTournamentStartPorts,
 } from './tournament-command-service';
+import { legacyPhase } from './tournament-instance-repository';
 import type { MttSpeed } from '../lib/poker/mtt-structure';
+import type { RegistrationCloseReason } from '../lib/tournament/tournament-state';
 import { PAYOUT_PRESET_IDS } from '../lib/poker/payout-table';
 
 const VALID_DIFFICULTIES: RoomDifficulty[] = ['easy', 'normal', 'hard'];
@@ -149,6 +153,12 @@ export function createPersistentLateRegistrationPorts(
       profileId: string | undefined,
       now: number,
     ): PublicTournamentSummary[];
+    /** 등록 마감 CAS — 주입돼야 TournamentManager의 마감 드라이버가 켜진다 */
+    claimRegistrationClose?(
+      tournamentId: string,
+      ownerToken: string,
+      reason: RegistrationCloseReason,
+    ): PersistentRegistrationCloseClaim;
   },
   enrollments: {
     commitLateMttBatch(
@@ -156,6 +166,15 @@ export function createPersistentLateRegistrationPorts(
       entries: readonly LateEntryKey[],
       tableCount: number,
     ): void;
+    /** 미착석 late-pending 열거 + 취소·환불 — 마감 드라이버의 드레인 경로 */
+    listPendingLateEntries?(
+      tournamentId: string,
+    ): readonly PersistentPendingLateEntry[];
+    releaseLateMttEntry?(
+      tournamentId: string,
+      entry: LateEntryKey,
+      closeCandidate: null,
+    ): { readonly status: string };
     registerPreStart?(input: {
       tournamentId: string;
       profileId: string;
@@ -189,6 +208,35 @@ export function createPersistentLateRegistrationPorts(
             profileId: string | undefined,
             now: number,
           ) => instances.listPublicProjections!(profileId, now),
+        }
+      : {}),
+    // 마감 드라이버 3종은 전부 옵셔널 — 하나라도 빠지면 매니저가 드라이버를 켜지 않는다
+    ...(instances.claimRegistrationClose
+      ? {
+          claimRegistrationClose: (
+            tournamentId: string,
+            ownerToken: string,
+            reason: RegistrationCloseReason,
+          ) => instances.claimRegistrationClose!(
+            tournamentId,
+            ownerToken,
+            reason,
+          ),
+        }
+      : {}),
+    ...(enrollments.listPendingLateEntries
+      ? {
+          listPendingLateEntries: (tournamentId: string) => (
+            enrollments.listPendingLateEntries!(tournamentId)
+          ),
+        }
+      : {}),
+    ...(enrollments.releaseLateMttEntry
+      ? {
+          releaseLateMttEntry: (
+            tournamentId: string,
+            entry: LateEntryKey,
+          ) => enrollments.releaseLateMttEntry!(tournamentId, entry, null),
         }
       : {}),
     ...(enrollments.readTournamentEngagement
@@ -658,6 +706,51 @@ export function setupSocketHandlers(
     };
   }
 
+  /**
+   * 시작 전(=인메모리 런타임이 아직 없는) 영속 토너먼트의 상세 뷰.
+   *
+   * `TournamentManager`는 `activatePreparedTournament()` 시점에야 런타임을 만들기 때문에
+   * 예약 토너먼트는 등록 기간 내내 인메모리 맵에 없다. 목록(`listPublicTournaments`)은 DB를
+   * 보고 상세만 인메모리를 보면 "로비 카드는 등록 중인데 열어보면 종료됨"이 되고, 등록 버튼이
+   * 상세 모달에만 있으므로 **참가 자체가 불가능**해진다 (2026-07-26 QA).
+   * 목록과 같은 공개 투영을 재료로 상세를 구성해 그 비대칭을 없앤다.
+   */
+  function persistentTournamentDetail(
+    tournamentId: string,
+    playerId: string | undefined,
+  ): TournamentDetailView | null {
+    const summary = publicTournamentList(playerId).tournaments
+      .find(candidate => candidate.id === tournamentId);
+    if (!summary) return null;
+    const levels: TournamentDetailView['levels'] = [];
+    let levelDurationMs = 0;
+    for (const segment of summary.structure.segments) {
+      if (segment.kind !== 'level') continue;
+      if (levelDurationMs === 0) levelDurationMs = segment.durationMs;
+      levels.push({
+        level: levels.length + 1,
+        smallBlind: segment.smallBlind,
+        bigBlind: segment.bigBlind,
+        ante: segment.bigBlindAnte,
+      });
+    }
+    return {
+      // `phase`는 구 클라이언트용 어댑터라 공개 투영에서 optional이다.
+      // 목록과 동일한 매핑으로 채워 상세/목록이 어긋나지 않게 한다.
+      summary: { ...summary, phase: summary.phase ?? legacyPhase(summary.lifecycle) },
+      levels,
+      levelDurationMs,
+      payouts: summary.payout.payouts.map(row => ({
+        place: row.place,
+        prize: row.amount,
+      })),
+      // 시작 전에는 좌석도 순위도 없다. 시계는 런타임이 생긴 뒤에만 의미가 있다.
+      entrants: [],
+      standings: [],
+      clock: null,
+    };
+  }
+
   function broadcastTournamentList(): void {
     for (const [socketId, sock] of io.sockets.sockets) {
       sock.emit(
@@ -818,6 +911,22 @@ export function setupSocketHandlers(
         });
         sessions.releaseIfIdle(targetSession);
       }, MTT_ELIMINATION_EXIT_MS);
+    },
+    // 등록 마감으로 미착석 지각 등록이 취소·환불됐다 — 세션 잠김을 풀고 로비로 돌려보낸다.
+    // (이 통지가 없으면 클라이언트가 '좌석 배정 대기' 화면에 영원히 갇힌다)
+    onLateRegistrationReleased: ({ tournamentId, profileId }) => {
+      const targetSession = sessions.getByPlayerId(profileId);
+      if (!targetSession) return;
+      const engagement = targetSession.tournamentEngagement;
+      if (engagement && engagement.tournamentId !== tournamentId) return;
+      targetSession.tournamentEngagement = null;
+      const targetSocket = targetSession.socketId
+        ? io.sockets.sockets.get(targetSession.socketId)
+        : undefined;
+      targetSocket?.emit('room-lost', {
+        message: '등록이 마감돼 지각 등록이 취소됐어요 — 참가비는 환불됩니다.',
+      });
+      sessions.releaseIfIdle(targetSession);
     },
     onTournamentsChanged: () => broadcastTournamentList(),
     // v1 상세(순위표)는 get-tournament 폴링 — 상세 브로드캐스트는 확장 시 도입
@@ -2917,7 +3026,8 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('roomSync', '동기화 요청이 너무 빠릅니다. 잠시 후 다시 시도해 주세요.', ack)) return;
-      const detail = tournamentManager.getDetail(payload.tournamentId, session.playerId);
+      const detail = tournamentManager.getDetail(payload.tournamentId, session.playerId)
+        ?? persistentTournamentDetail(payload.tournamentId, session.playerId);
       if (!detail) {
         ack?.({ ok: false, code: 'room-not-found', message: '토너먼트를 찾을 수 없어요.' });
         return;

@@ -3,8 +3,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   ArenaQueueState,
   GameUpdatePayload,
+  PublicTournamentSummary,
   RegisterTournamentResult,
   RealtimeAck,
+  TournamentDetailView,
   TournamentListPayload,
 } from '../lib/realtime/protocol';
 import type { RoomConfig } from '../lib/poker/types';
@@ -271,6 +273,118 @@ describe('Socket.IO 멀티클라이언트 경계', () => {
       },
       draft,
     );
+  });
+
+  it('serves pre-start tournament detail from the persistent projection', async () => {
+    // 회귀: 영속 토너먼트는 시작 전까지 인메모리 런타임이 없어 get-tournament가 항상
+    // room-not-found를 냈고, 등록 버튼이 상세 모달에만 있어 로비에서 참가가 불가능했다
+    // (2026-07-26 QA). 목록과 같은 공개 투영으로 상세를 구성해야 한다.
+    const tournamentId = 'mtt-prestart-detail';
+    const summary = {
+      id: tournamentId,
+      name: '예약 프리롤',
+      lifecycle: 'registering',
+      statusReason: null,
+      speed: 'standard',
+      entrantCount: 3,
+      maxEntrants: 24,
+      tableSize: 6,
+      remaining: 3,
+      tableCount: 0,
+      prizePool: 180_000,
+      startAt: Date.now() + 30 * 60_000,
+      startedAt: null,
+      botFill: true,
+      hostId: 'operator',
+      level: 0,
+      paused: false,
+      economyMode: 'freeroll',
+      entryBuyIn: 0,
+      entryFee: 0,
+      payoutPreset: 'standard',
+      schedule: {
+        visibleAt: Date.now() - 60_000,
+        registrationOpensAt: Date.now() - 60_000,
+        scheduledStartsAt: Date.now() + 30 * 60_000,
+        manualStartExpiresAt: null,
+        actualStartedAt: null,
+      },
+      structure: {
+        sourcePresetId: 'standard',
+        startingStack: 10_000,
+        segments: [
+          { kind: 'level', durationMs: 8 * 60_000, smallBlind: 100, bigBlind: 200, bigBlindAnte: 0 },
+          { kind: 'break', durationMs: 5 * 60_000 },
+          { kind: 'level', durationMs: 8 * 60_000, smallBlind: 200, bigBlind: 400, bigBlindAnte: 400 },
+        ],
+        currentSegmentIndex: null,
+        currentSegmentEndsAt: null,
+      },
+      payout: {
+        tableVersion: 3,
+        presetId: 'standard',
+        paidFieldPercent: 15,
+        status: 'provisional',
+        totalPrize: 180_000,
+        payouts: [
+          { place: 1, percent: 60, amount: 108_000 },
+          { place: 2, percent: 40, amount: 72_000 },
+        ],
+        fundingStatus: 'promotion-reserved',
+      },
+      registrationState: 'open-prestart',
+      registrationCloseReason: null,
+      lateRegistrationClosesAt: null,
+      minEntrants: 8,
+      initialEntrants: 0,
+      acceptedEntrants: 3,
+      pendingLateEntrants: 0,
+      aliveSeated: 0,
+      finalEntrants: null,
+      botFillToMinimum: true,
+      myRegistrationStatus: null,
+      mySeat: null,
+      canRegister: true,
+      canCancelRegistration: false,
+    } as unknown as PublicTournamentSummary;
+    harness = await createSocketTestHarness({
+      persistentRuntimeEnabled: true,
+      persistentLateRegistration: {
+        readInstance: () => null,
+        commitLateMttBatch: vi.fn(),
+        listPublicTournaments: vi.fn(() => [summary]),
+      } as never,
+    });
+    const client = await harness.connect('prestart-detail');
+    const ack = await withAck<TournamentDetailView>(done =>
+      client.socket.emit('get-tournament', { tournamentId }, done));
+
+    expect(ack.ok).toBe(true);
+    if (!ack.ok) throw new Error('detail should resolve before start');
+    const detail = ack.data!;
+    expect(detail.summary.id).toBe(tournamentId);
+    // 구 클라이언트 어댑터 필드도 목록과 같은 매핑으로 채워야 한다.
+    expect(detail.summary.phase).toBe('registering');
+    // 브레이크 세그먼트는 레벨 번호를 소비하지 않는다.
+    expect(detail.levels).toEqual([
+      { level: 1, smallBlind: 100, bigBlind: 200, ante: 0 },
+      { level: 2, smallBlind: 200, bigBlind: 400, ante: 400 },
+    ]);
+    expect(detail.levelDurationMs).toBe(8 * 60_000);
+    expect(detail.payouts).toEqual([
+      { place: 1, prize: 108_000 },
+      { place: 2, prize: 72_000 },
+    ]);
+    // 시작 전이라 좌석·순위·시계는 없다.
+    expect(detail.entrants).toEqual([]);
+    expect(detail.standings).toEqual([]);
+    expect(detail.clock).toBeNull();
+
+    const missing = await withAck<TournamentDetailView>(done =>
+      client.socket.emit('get-tournament', { tournamentId: 'mtt-unknown' }, done));
+    expect(missing.ok).toBe(false);
+    if (missing.ok) throw new Error('unknown tournament must stay not-found');
+    expect(missing.code).toBe('room-not-found');
   });
 
   it('returns an idempotent register result for one request id', async () => {

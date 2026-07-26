@@ -31,8 +31,15 @@ import type {
   TournamentSummary,
 } from '../lib/realtime/protocol';
 import type {
+  LateRegistrationPolicy,
   TournamentConfigSnapshotV2,
+  TournamentStructureSegment,
 } from '../lib/tournament/tournament-config';
+import type { RegistrationCloseReason } from '../lib/tournament/tournament-state';
+import {
+  evaluateRegistrationClose,
+  lateRegistrationClosesAt,
+} from '../lib/tournament/late-registration-clock';
 import type { LateRegistrationSeatingPlan } from '../lib/tournament/late-registration-seating';
 import {
   appendProvisionalEliminationBatch,
@@ -53,7 +60,10 @@ import {
   type LateRegistrationOperationIdentity,
   type LateRegistrationOperationKind,
 } from './late-registration-coordinator';
-import type { LateEntryKey } from './tournament-enrollment-repository';
+import type {
+  LateEntryKey,
+  PublicTournamentPlayer,
+} from './tournament-enrollment-repository';
 
 export type {
   TournamentDetailView,
@@ -173,6 +183,16 @@ export interface TournamentRuntimeHooks {
   onTournamentUpdate?(tournamentId: string): void;
   /** wallet MTT 에스크로 — 미주입 시 wallet 토너먼트 개설 불가 */
   economy?: MttEconomyHooks;
+  /**
+   * 미착석 지각 등록의 취소·환불 통지 — 소켓 계층이 세션 잠김
+   * (`tournamentEngagement`)을 풀고 로비 복귀를 안내한다. 이 통지가 없으면
+   * 등록이 환불돼도 클라이언트가 "좌석 배정 대기" 화면에 영원히 갇힌다.
+   */
+  onLateRegistrationReleased?(input: {
+    tournamentId: string;
+    profileId: string;
+    reason: 'registration-closed';
+  }): void;
 }
 
 export interface TournamentManagerOptions {
@@ -198,6 +218,22 @@ export interface PersistentLateRegistrationInstance {
   readonly registrationState: string;
   readonly registrationGeneration: number;
   readonly registrationOwnerToken: string | null;
+  /** 아직 착석하지 못한 지각 등록 수 — 마감 판정과 freeze CAS 전제조건의 입력 */
+  readonly pendingLateEntrants?: number;
+  /** 착석 확정 인원 (DB 권위). 미제공이면 런타임 seatedCount를 쓴다 */
+  readonly committedEntrants?: number | null;
+}
+
+/** 마감 CAS 결과 — 리포지토리 `CloseClaim`의 좁은 구조적 투영 */
+export interface PersistentRegistrationCloseClaim {
+  readonly status: string;
+  readonly ownerToken?: string;
+  readonly generation?: number;
+}
+
+export interface PersistentPendingLateEntry {
+  readonly key: LateEntryKey;
+  readonly player: PublicTournamentPlayer;
 }
 
 export interface PersistentLateRegistrationPorts {
@@ -207,6 +243,36 @@ export interface PersistentLateRegistrationPorts {
     entries: readonly LateEntryKey[],
     tableCount: number,
   ): void;
+  /**
+   * 아래 3종은 **옵셔널**이다 — 하나라도 없으면 마감 드라이버 전체가 비활성화된다.
+   * 필수로 올리면 기존 테스트 더블과 기능 플래그 off 경로가 전부 깨진다.
+   */
+  claimRegistrationClose?(
+    tournamentId: string,
+    ownerToken: string,
+    reason: RegistrationCloseReason,
+  ): PersistentRegistrationCloseClaim;
+  listPendingLateEntries?(
+    tournamentId: string,
+  ): readonly PersistentPendingLateEntry[];
+  releaseLateMttEntry?(
+    tournamentId: string,
+    entry: LateEntryKey,
+  ): { readonly status: string };
+}
+
+/** 마감 드라이버가 동작하기 위해 모두 주입돼야 하는 포트 묶음 */
+interface LateRegistrationDriverPorts {
+  readInstance: PersistentLateRegistrationPorts['readInstance'];
+  claimRegistrationClose: NonNullable<
+    PersistentLateRegistrationPorts['claimRegistrationClose']
+  >;
+  listPendingLateEntries: NonNullable<
+    PersistentLateRegistrationPorts['listPendingLateEntries']
+  >;
+  releaseLateMttEntry: NonNullable<
+    PersistentLateRegistrationPorts['releaseLateMttEntry']
+  >;
 }
 
 export interface PersistentTournamentRuntimeRegistrationPorts {
@@ -420,6 +486,22 @@ interface TournamentRuntime {
   cleanupTimer: NodeJS.Timeout | null;
   /** wallet 정산 재시도 (1회) — 완주 시 settle 실패하면 잠시 후 다시 시도 */
   settleRetryTimer: NodeJS.Timeout | null;
+  // --- 레이트 레지스트레이션 마감 (영속 v2 전용, 인메모리 토너먼트는 전부 비활성값) ---
+  /** 개설 시 확정한 지각 등록 정책 — null이면 마감 드라이버가 돌지 않는다 */
+  lateRegPolicy: LateRegistrationPolicy | null;
+  /** `lateRegistrationClosesAt` 계산에 필요한 원본 구조 세그먼트 */
+  structureSegments: readonly TournamentStructureSegment[];
+  /** 절대 벽시계 마감 시각 (일시정지 보정 없음 — 등록 컷오프와 같은 값이어야 한다) */
+  lateRegClosesAt: number | null;
+  /** 시간 마감 타이머 겸 마감 재시도 타이머 (한 슬롯을 순차 재사용) */
+  lateRegTimer: NodeJS.Timeout | null;
+  /** DB가 'closing'으로 넘어간 뒤 런타임이 이어받은 소유권 */
+  lateRegClosing: LateRegistrationOperationIdentity | null;
+  lateRegCloseAttempts: number;
+  /** 테이블이 2개 이상이었던 적이 있는가 (파이널 테이블 조기 마감 판정 입력) */
+  everMultiTable: boolean;
+  /** 직전 마감 판정 시점의 (생존 + 미착석 지각 등록) 인원 */
+  previousEffectiveRemaining: number;
 }
 
 const MAX_TOURNAMENTS = 4; // 동시 개설 상한 (테이블 수 폭주 방지 — MAX_ROOMS와 별개 가드)
@@ -430,6 +512,12 @@ const MIN_MTT_STARTERS = 8;
 const DEFAULT_EMPTY_TOURNAMENT_TTL_MS = 5 * 60_000;
 const NODE_MAX_TIMEOUT_MS = 2_147_483_647;
 const COMPLETED_RETENTION_MS = 10 * 60_000;
+/**
+ * 마감 동결이 실패했을 때의 유한 재시도 — 모든 테이블이 hold로 멈춘 뒤라
+ * 핸드 경계가 더는 오지 않는다. 이 백스톱이 없으면 실패 한 번이 영구 교착이 된다.
+ */
+const LATE_REG_CLOSE_RETRY_MS = 2_000;
+const LATE_REG_CLOSE_MAX_ATTEMPTS = 15;
 
 function initialHold(reason: InternalHoldReason): OwnerScopedHolds {
   return new Map([[reason, new Set([`system:${reason}`])]]);
@@ -663,6 +751,9 @@ export class TournamentManager {
     const total = prepared.public.committedEntrants;
     t.seatedCount = total;
     t.remaining = total;
+    // 마감 판정 입력의 초기값 — DB의 ever_multi_table / 시작 필드와 같은 기준으로 맞춘다
+    t.everMultiTable = prepared.public.everMultiTable;
+    t.previousEffectiveRemaining = total;
     t.prizePool = prepared.prizePool;
     t.prizes = computePayouts(
       t.prizePool,
@@ -740,6 +831,9 @@ export class TournamentManager {
     } else {
       for (const roomId of prepared.roomIds) this.resumeIfUnheld(t, roomId);
     }
+    // 등록 창 마감 드라이버 무장. 이게 없으면 registrationState가 'open-late'에 영원히
+    // 머물러 checkCompletion이 완료를 영구 거부한다 (2026-07-26 QA P0-1).
+    this.armLateRegistrationClock(t);
     eventLog.log('mtt-start', {
       data: {
         tournamentId: instanceId,
@@ -893,6 +987,15 @@ export class TournamentManager {
       emptyTimer: null,
       cleanupTimer: null,
       settleRetryTimer: null,
+      // 인메모리(레거시) 토너먼트는 레이트 레지가 없다 — 드라이버 전부 비활성값
+      lateRegPolicy: null,
+      structureSegments: [],
+      lateRegClosesAt: null,
+      lateRegTimer: null,
+      lateRegClosing: null,
+      lateRegCloseAttempts: 0,
+      everMultiTable: false,
+      previousEffectiveRemaining: 0,
     };
     if (input.startAt !== null) {
       const delay = Math.max(1_000, input.startAt - Date.now());
@@ -1344,6 +1447,8 @@ export class TournamentManager {
       if (t.breakTimer) clearTimeout(t.breakTimer);
       if (t.cleanupTimer) clearTimeout(t.cleanupTimer);
       if (t.settleRetryTimer) clearTimeout(t.settleRetryTimer);
+      this.clearLateRegistrationClock(t);
+      t.lateRegClosing = null;
     }
     this.lateRegistrationCoordinators.clear();
   }
@@ -1472,6 +1577,14 @@ export class TournamentManager {
       emptyTimer: null,
       cleanupTimer: null,
       settleRetryTimer: null,
+      lateRegPolicy: snapshot.config.lateRegistration,
+      structureSegments: snapshot.config.structure.segments,
+      lateRegClosesAt: null,
+      lateRegTimer: null,
+      lateRegClosing: null,
+      lateRegCloseAttempts: 0,
+      everMultiTable: false,
+      previousEffectiveRemaining: 0,
     };
   }
 
@@ -1772,6 +1885,12 @@ export class TournamentManager {
     this.clearEmptyExpiry(t);
     if (t.finalIntroTimer) { clearTimeout(t.finalIntroTimer); t.finalIntroTimer = null; }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
+    // 마감 타이머·소유권 해제. 잔여 late-pending을 여기서 개별 환불하지는 않는다 —
+    // 영속 취소 경로(claimRefundPending → terminateWalletRegistrations/voidWallet /
+    // 프리롤 escrow 반환)가 late-pending을 포함한 인스턴스 전체를 이미 회수하므로
+    // 여기서 releaseLateMttEntry를 또 부르면 이중 환불이 된다.
+    this.clearLateRegistrationClock(t);
+    t.lateRegClosing = null;
     // wallet 무효화 환불 — 등록 중(reserved)·진행 중(started) 전원 전액(수수료 포함) 반환.
     // 프리즈아웃 중도 취소는 순위 확정이 불가능하므로 전원 환불이 유일하게 공정하다.
     if (t.config.economyMode === 'wallet') {
@@ -2027,6 +2146,10 @@ export class TournamentManager {
         busted.map(p => this.pendingBust(roomId, engine, p)),
       );
     }
+    // 마감이 진행 중이면 여기가 유일한 재개 지점이다 — 전 테이블이 유휴가 되는 순간
+    // 미착석 지각 등록을 드레인하고 등록을 동결한다. 성공하면 finishLateRegistration이
+    // 이미 hold 해제와 다음 핸드 예약을 마쳤으므로 'hold'로 빠져 이중 예약을 피한다.
+    if (t.lateRegClosing && this.tryFinishLateRegistrationClose(t)) return 'hold';
     if (
       this.hasHoldReason(t, roomId, 'late-reg-seating')
       || this.hasHoldReason(t, roomId, 'late-reg-balance')
@@ -2036,6 +2159,10 @@ export class TournamentManager {
     ) {
       return 'hold';
     }
+
+    // 시간 외 마감 사유(마지막 생존자·버블·파이널·스택 하한·정원)는 핸드 경계에서만
+    // 판정한다. checkCompletion보다 **앞**이어야 마지막 탈락이 곧바로 완주로 이어진다.
+    if (this.maybeCloseLateRegistration(t)) return 'hold';
 
     if (this.checkCompletion(t)) return 'hold';
 
@@ -2507,6 +2634,8 @@ export class TournamentManager {
       clearTimeout(t.breakTimer);
       t.breakTimer = null;
     }
+    this.clearLateRegistrationClock(t);
+    t.lateRegClosing = null;
     for (const roomId of t.tables.keys()) {
       this.roomManager.getRoom(roomId)?.engine
         .setTournamentField(t.seatedCount, t.prizes, true, results);
@@ -2612,6 +2741,8 @@ export class TournamentManager {
       t.finalIntroTimer = null;
     }
     if (t.breakTimer) { clearTimeout(t.breakTimer); t.breakTimer = null; }
+    this.clearLateRegistrationClock(t);
+    t.lateRegClosing = null;
 
     if (winner) {
       const prize = t.prizes[0] ?? 0;
@@ -3270,6 +3401,362 @@ export class TournamentManager {
     for (const roomId of t.tables.keys()) this.resumeIfUnheld(t, roomId);
     this.checkCompletion(t);
     return true;
+  }
+
+  // --- 레이트 레지스트레이션 마감 드라이버 (Stage 0) ---
+  //
+  // 상태기계(LateRegistrationCoordinator)·DB CAS·순수 판정 함수는 전부 이미 있었지만
+  // 아무도 구동하지 않아 registrationState가 'open-late'에 영원히 머물렀다
+  // (checkCompletion이 완료를 영구 거부 → 정산 미실행·탈락자 화면 정지, 2026-07-26 QA P0-1).
+  //
+  // 이 드라이버는 딱 두 가지만 한다: ①등록 창을 반드시 닫고 ②미착석 지각 등록을
+  // 취소·환불한다. **지각 등록자의 실제 착석은 아직 없다(Stage 1)** — 그래서 개설 폼의
+  // 기본값이 '사용 안 함'이다.
+  //
+  // 소유권 계약: 마감 판정·CAS·freeze·환불은 전부 여기(TournamentManager)에 있고,
+  // RoomManager는 기존 onHandComplete/checkNextHandGate 훅만 쓴다. 타이머는 DB close
+  // CAS + hold 설치까지만 하고, 실제 드레인/동결/재개는 "전 테이블 유휴" 확인 뒤에만 한다.
+
+  /** 3종 포트가 모두 주입됐을 때만 드라이버가 켜진다 (미주입 = 레거시 동작 유지) */
+  private lateRegistrationDriverPorts(
+    t: TournamentRuntime,
+  ): LateRegistrationDriverPorts | null {
+    const ports = this.persistentLateRegistration;
+    if (
+      !t.persistent
+      || !this.persistentRuntimeEnabled
+      || !ports?.claimRegistrationClose
+      || !ports.listPendingLateEntries
+      || !ports.releaseLateMttEntry
+    ) {
+      return null;
+    }
+    const {
+      claimRegistrationClose,
+      listPendingLateEntries,
+      releaseLateMttEntry,
+    } = ports;
+    return {
+      readInstance: tournamentId => ports.readInstance(tournamentId),
+      claimRegistrationClose: (tournamentId, ownerToken, reason) => (
+        claimRegistrationClose.call(ports, tournamentId, ownerToken, reason)
+      ),
+      listPendingLateEntries: tournamentId => (
+        listPendingLateEntries.call(ports, tournamentId)
+      ),
+      releaseLateMttEntry: (tournamentId, entry) => (
+        releaseLateMttEntry.call(ports, tournamentId, entry)
+      ),
+    };
+  }
+
+  /**
+   * 시간 마감 타이머 — **절대 벽시계** `lateRegistrationClosesAt` 기준이다.
+   * 일시정지 보정을 하지 않는 것이 의도: `reserveLateMttEntry`가 같은 절대값으로
+   * 등록을 컷오프하므로 pause-aware로 만들면 "등록은 거부되는데 마감은 안 되는"
+   * 새 불일치가 생긴다.
+   */
+  private armLateRegistrationClock(t: TournamentRuntime): void {
+    this.clearLateRegistrationClock(t);
+    const policy = t.lateRegPolicy;
+    if (
+      !this.lateRegistrationDriverPorts(t)
+      || !policy?.enabled
+      || t.startedAt === null
+      || t.registrationState !== 'open-late'
+    ) {
+      return;
+    }
+    try {
+      t.lateRegClosesAt = lateRegistrationClosesAt(
+        t.structureSegments,
+        t.startedAt,
+        policy.durationLevels,
+      );
+    } catch {
+      // 시계를 세울 수 없으면 '시간' 마감만 포기한다. 핸드 경계의 동적 마감
+      // (마지막 생존자/버블/파이널/스택 하한)은 살아 있어야 교착이 나지 않는다.
+      t.lateRegClosesAt = Number.MAX_SAFE_INTEGER;
+      eventLog.log('mtt-late-reg-close', {
+        data: { tournamentId: t.id, error: 'invalid-clock' },
+      });
+      return;
+    }
+    const delay = Math.min(
+      NODE_MAX_TIMEOUT_MS,
+      Math.max(0, t.lateRegClosesAt - Date.now()) + 250,
+    );
+    t.lateRegTimer = setTimeout(() => {
+      t.lateRegTimer = null;
+      this.maybeCloseLateRegistration(t);
+    }, delay);
+  }
+
+  private clearLateRegistrationClock(t: TournamentRuntime): void {
+    if (t.lateRegTimer) clearTimeout(t.lateRegTimer);
+    t.lateRegTimer = null;
+  }
+
+  /**
+   * 마감 판정 — 현재 필드를 순수 함수 `evaluateRegistrationClose`에 투영한다.
+   * true를 반환하면 등록이 'closing'으로 넘어가 전 테이블에 hold가 걸렸다는 뜻이다.
+   */
+  private maybeCloseLateRegistration(t: TournamentRuntime): boolean {
+    const ports = this.lateRegistrationDriverPorts(t);
+    const policy = t.lateRegPolicy;
+    if (
+      !ports
+      || !policy?.enabled
+      || t.phase !== 'running'
+      || t.lateRegClosing !== null
+      || t.lateRegClosesAt === null
+    ) {
+      return false;
+    }
+
+    let instance: PersistentLateRegistrationInstance | null;
+    try {
+      instance = ports.readInstance(t.id);
+    } catch {
+      return false;
+    }
+    if (!instance || instance.status !== 'running') return false;
+    t.registrationState = instance.registrationState;
+    t.registrationGeneration = instance.registrationGeneration;
+    t.registrationOwnerToken = instance.registrationOwnerToken;
+    // 다른 경로(reserve/release가 반환하는 closeClaim)가 이미 마감을 선점했으면
+    // 그 소유권을 이어받아 끝까지 몰고 간다 — 주인 없는 'closing'이 교착의 다른 얼굴이다.
+    if (
+      instance.registrationState === 'closing'
+      && instance.registrationOwnerToken !== null
+    ) {
+      return this.adoptLateRegistrationClose(t, {
+        generation: instance.registrationGeneration,
+        ownerToken: instance.registrationOwnerToken,
+      }, 'adopted');
+    }
+    if (
+      instance.registrationState !== 'open-late'
+      || instance.registrationOwnerToken !== null
+    ) {
+      return false;
+    }
+
+    t.everMultiTable ||= t.tables.size >= 2;
+    const maxEntrants = t.config.maxEntrants;
+    const aliveSeated = [...this.aliveCounts(t).values()]
+      .reduce((sum, count) => sum + count, 0);
+    const pendingLateEntrants = Math.max(0, instance.pendingLateEntrants ?? 0);
+    const committedEntrants = Math.max(
+      aliveSeated,
+      instance.committedEntrants ?? t.seatedCount,
+    );
+    const effectiveRemaining = Math.min(
+      maxEntrants,
+      aliveSeated + pendingLateEntrants,
+    );
+    let reason: RegistrationCloseReason | null;
+    try {
+      reason = evaluateRegistrationClose({
+        enabled: true,
+        now: Date.now(),
+        lateRegistrationClosesAt: t.lateRegClosesAt,
+        acceptedEntrants: Math.min(
+          maxEntrants,
+          committedEntrants + pendingLateEntrants,
+        ),
+        maxEntrants,
+        startingStack: t.structure.startingStack,
+        currentBigBlind: mttLevelAt(
+          t.structure,
+          this.clockPos(t).levelIndex,
+        ).bigBlind,
+        paidPlaces: paidPlaces(
+          t.seatedCount,
+          t.config.payoutPreset,
+          t.config.payoutTableVersion,
+        ),
+        aliveSeated,
+        pendingLateEntrants,
+        previousEffectiveRemaining: t.previousEffectiveRemaining,
+        tableSize: t.config.tableSize,
+        everMultiTable: t.everMultiTable,
+      });
+    } catch {
+      eventLog.log('mtt-late-reg-close', {
+        data: { tournamentId: t.id, error: 'invalid-evaluation' },
+      });
+      return false;
+    }
+    t.previousEffectiveRemaining = effectiveRemaining;
+    if (reason === null) return false;
+    return this.claimLateRegistrationClose(t, reason);
+  }
+
+  /** DB 마감 CAS → 런타임 소유권 인수 */
+  private claimLateRegistrationClose(
+    t: TournamentRuntime,
+    reason: RegistrationCloseReason,
+  ): boolean {
+    const ports = this.lateRegistrationDriverPorts(t);
+    if (!ports) return false;
+    const ownerToken = `mtt-late-close:${randomUUID()}`;
+    let claim: PersistentRegistrationCloseClaim;
+    try {
+      claim = ports.claimRegistrationClose(t.id, ownerToken, reason);
+    } catch {
+      eventLog.log('mtt-late-reg-close', {
+        data: { tournamentId: t.id, reason, error: 'claim-failed' },
+      });
+      return false;
+    }
+    const generation = claim.generation;
+    if (
+      (claim.status !== 'claimed' && claim.status !== 'already-owned')
+      || !Number.isSafeInteger(generation)
+    ) {
+      return false;
+    }
+    return this.adoptLateRegistrationClose(
+      t,
+      { generation: generation as number, ownerToken: claim.ownerToken ?? ownerToken },
+      reason,
+    );
+  }
+
+  /**
+   * DB가 'closing'인 상태를 런타임이 이어받는다. hold만 만지는 공개 메서드
+   * `adoptLateRegistrationClosing()`이 아니라 반드시 코디네이터의
+   * `adoptClosingProjection()`을 경유해야 한다 — 그러지 않으면 코디네이터의
+   * active operation이 비어 있어 `finishLateRegistration`의 runCallback이 항상 실패한다.
+   */
+  private adoptLateRegistrationClose(
+    t: TournamentRuntime,
+    identity: LateRegistrationOperationIdentity,
+    reason: RegistrationCloseReason | 'adopted',
+  ): boolean {
+    const coordinator = this.lateRegistrationCoordinator(t);
+    if (!coordinator || !Number.isSafeInteger(identity.generation)) return false;
+    let adopted = false;
+    this.batchTournamentPresentation(t, () => {
+      adopted = coordinator.adoptClosingProjection(
+        identity,
+        [...t.tables.keys()],
+      );
+    });
+    if (!adopted) return false;
+    t.registrationState = 'closing';
+    t.registrationGeneration = identity.generation;
+    t.registrationOwnerToken = identity.ownerToken;
+    t.lateRegClosing = identity;
+    t.lateRegCloseAttempts = 0;
+    // 시간 타이머는 역할을 다했다. 아래 재시도가 같은 슬롯을 쓰므로 먼저 비운다.
+    this.clearLateRegistrationClock(t);
+    eventLog.log('mtt-late-reg-close', {
+      data: {
+        tournamentId: t.id,
+        reason,
+        generation: identity.generation,
+      },
+    });
+    this.tryFinishLateRegistrationClose(t);
+    return true;
+  }
+
+  /**
+   * 전 테이블이 유휴일 때만 미착석 지각 등록을 취소·환불하고 등록을 동결한다.
+   * `persistTournamentPayoutFreeze`의 CAS가 `pending_late_entrants = 0`을 요구하므로
+   * 드레인 없이는 마감 자체가 성립하지 않는다 ("닫기만 하고 나중에"는 불가능).
+   */
+  private tryFinishLateRegistrationClose(t: TournamentRuntime): boolean {
+    const identity = t.lateRegClosing;
+    const ports = this.lateRegistrationDriverPorts(t);
+    if (!identity || !ports) return false;
+    // 진행 중인 핸드는 끝까지 — 그 테이블의 핸드 종료 훅이 다시 시도한다
+    for (const roomId of t.tables.keys()) {
+      if (this.roomManager.getRoom(roomId)?.engine.state.isHandInProgress) {
+        return false;
+      }
+    }
+    if (
+      !this.releasePendingLateEntrants(t, ports)
+      || !this.finishLateRegistration(t.id, identity)
+    ) {
+      // fail-closed: hold를 유지한 채 유한 재시도 (핸드 경계가 더는 오지 않으므로)
+      this.scheduleLateRegistrationCloseRetry(t);
+      return false;
+    }
+    t.lateRegClosing = null;
+    t.lateRegCloseAttempts = 0;
+    this.clearLateRegistrationClock(t);
+    return true;
+  }
+
+  /**
+   * 미착석 late-pending을 전부 취소·환불한다. 하나라도 남으면 false —
+   * Stage 0에서 지각 등록은 "등록 → 환불"이고, 세션 잠김은 훅으로 풀어 준다.
+   */
+  private releasePendingLateEntrants(
+    t: TournamentRuntime,
+    ports: LateRegistrationDriverPorts,
+  ): boolean {
+    let pending: readonly PersistentPendingLateEntry[];
+    try {
+      pending = ports.listPendingLateEntries(t.id);
+    } catch {
+      return false;
+    }
+    let handled = 0;
+    for (const entry of pending) {
+      let status: string;
+      try {
+        status = ports.releaseLateMttEntry(t.id, entry.key).status;
+      } catch {
+        eventLog.log('mtt-late-reg-refund', {
+          data: {
+            tournamentId: t.id,
+            profileId: entry.key.profileId,
+            error: 'release-failed',
+          },
+        });
+        continue;
+      }
+      handled += 1;
+      eventLog.log('mtt-late-reg-refund', {
+        data: {
+          tournamentId: t.id,
+          profileId: entry.key.profileId,
+          economyMode: entry.key.economyMode,
+          status,
+        },
+      });
+      // 환불했는데 세션이 계속 잠겨 있으면 클라이언트는 "좌석 배정 대기"에서 못 나온다
+      this.hooks.onLateRegistrationReleased?.({
+        tournamentId: t.id,
+        profileId: entry.key.profileId,
+        reason: 'registration-closed',
+      });
+    }
+    return handled === pending.length;
+  }
+
+  private scheduleLateRegistrationCloseRetry(t: TournamentRuntime): void {
+    if (t.lateRegTimer || !t.lateRegClosing) return;
+    if (t.lateRegCloseAttempts >= LATE_REG_CLOSE_MAX_ATTEMPTS) {
+      eventLog.log('mtt-late-reg-close', {
+        data: {
+          tournamentId: t.id,
+          generation: t.lateRegClosing.generation,
+          error: 'freeze-exhausted',
+        },
+      });
+      return;
+    }
+    t.lateRegCloseAttempts += 1;
+    t.lateRegTimer = setTimeout(() => {
+      t.lateRegTimer = null;
+      this.tryFinishLateRegistrationClose(t);
+    }, LATE_REG_CLOSE_RETRY_MS);
   }
 
   private freezePersistentRegistration(
