@@ -281,7 +281,12 @@ export default function RoomList({ onJoin }: RoomListProps) {
         {modeFilter === 'mtt' && visibleTournaments.length === 0 && (
           <div className="text-center py-12 text-ink-dim">
             <p className="text-4xl mb-3">🏆</p>
-            <p className="text-sm">열려 있는 토너먼트가 없어요 — 직접 개설해 보세요!</p>
+            {/* 토너먼트 개설은 운영자 전용 — 일반 유저에게 개설을 권하면 없는 버튼을 찾게 된다 */}
+            <p className="text-sm">
+              {canCreateTournament
+                ? '열려 있는 토너먼트가 없어요 — 직접 개설해 보세요!'
+                : '지금 열려 있는 토너먼트가 없어요. 새 토너먼트가 열리면 여기에 표시돼요.'}
+            </p>
           </div>
         )}
         {visible.map((room, i) => (
