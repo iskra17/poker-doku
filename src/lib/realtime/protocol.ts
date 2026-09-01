@@ -15,6 +15,17 @@ import type {
 } from '../progression/types';
 import type { ArenaTier } from '../arena/types';
 import type {
+  AbandonStoryRequest,
+  StartStoryChapterRequest,
+  StoryAdvanceRequest,
+  StoryChoiceRequest,
+  StoryDrillAck,
+  StoryDrillRequest,
+  StoryProgressView,
+  StoryQuizRequest,
+  StoryRunView,
+} from '../story/views';
+import type {
   LateRegistrationPolicy,
   PrizePoolPolicy,
   TournamentPayoutPolicy,
@@ -50,6 +61,9 @@ export type RealtimeErrorCode =
   | 'arena-ineligible'
   | 'arena-busy'
   | 'arena-reserved'
+  | 'story-locked'
+  | 'story-busy'
+  | 'story-no-run'
   | 'server-error';
 
 export type RealtimeAck<T = undefined> =
@@ -529,6 +543,8 @@ export interface ServerToClientEvents {
   ) => void;
   'arena-result': (data: ArenaResultPayload) => void;
   'arena-state-replay': (data: ArenaStateReplay) => void;
+  /** 스토리 런 개인 스냅샷 — 방 무관. 드릴 인스턴스는 정답 제거 투영만 실린다 */
+  'story-update': (view: StoryRunView) => void;
 }
 
 export interface ClientToServerEvents {
@@ -591,6 +607,25 @@ export interface ClientToServerEvents {
     data: { offerId: string },
     ack?: AckCallback,
   ) => void;
+  // --- 수련 스토리 모드 (ack 규약: 성공 시 story-update가 뒤따른다) ---
+  'start-story-chapter': (data: unknown, ack?: AckCallback<{ runId: string }>) => void;
+  'story-advance': (data: unknown, ack?: AckCallback) => void;
+  'story-choice': (data: unknown, ack?: AckCallback) => void;
+  'story-drill': (data: unknown, ack?: AckCallback<StoryDrillAck>) => void;
+  'story-quiz': (data: unknown, ack?: AckCallback<{ correct: boolean }>) => void;
+  'story-daily': (dataOrAck?: unknown, ack?: AckCallback<{ runId: string }>) => void;
+  'abandon-story': (data: unknown, ack?: AckCallback) => void;
+  /** 진행 요약(허브) — HTTP GET /api/story와 같은 뷰 */
+  'get-story-progress': (ack?: AckCallback<StoryProgressView>) => void;
 }
+
+export type {
+  AbandonStoryRequest,
+  StartStoryChapterRequest,
+  StoryAdvanceRequest,
+  StoryChoiceRequest,
+  StoryDrillRequest,
+  StoryQuizRequest,
+};
 
 export type PokerClientSocket = Socket<ServerToClientEvents, ClientToServerEvents>;

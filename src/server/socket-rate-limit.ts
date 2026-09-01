@@ -11,6 +11,10 @@ export const SOCKET_RATE_LIMITS = {
   chat: { limit: 1, windowMs: 700 },
   // 소켓별 1차 스팸 가드 — 개인 쿨다운(playerId 키, socket-handler의 공유 리미터)과 별개
   throwItem: { limit: 3, windowMs: 10_000 },
+  // 스토리 모드: 진행·드릴 제출·선택지·퀴즈 합산 (문항당 answer+advance 2회 기준 넉넉히)
+  story: { limit: 10, windowMs: 5_000 },
+  // 챕터/데일리 시작은 run 생성 비용이 있어 별도 저빈도 그룹
+  storyStart: { limit: 2, windowMs: 10_000 },
 } as const satisfies Record<string, SocketRateLimitRule>;
 
 export class SocketRateLimiter {
