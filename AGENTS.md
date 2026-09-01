@@ -264,6 +264,36 @@ npx tsc --noEmit
   영속 계획 검증→일반 경제 복구(보존/위임 집합 적용)→환불→지급→템플릿 조정·타이머 hydration
   순으로 끝낸다. 회귀: `persistent-mtt-lifecycle.integration.test.ts`,
   `tournament-recovery-service.test.ts`.
+- **수련 스토리 모드 (드릴 × 미연시)**: 기획 `docs/spec-story-mode-2026-09.md`. 로비 4번째 탭 [수련 스토리]
+  (`StoryHub`) → 챕터 런은 `StoryStage`(로비 위 풀스크린 포털)가 그린다. **MVP(Phase 1)는 포커 방 코드 0줄** —
+  씬·레슨·드릴·결산은 `src/server/story-run-coordinator.ts`(`StoryRunCoordinator`, 방 무관·프로필당 런 1개·
+  인메모리)가 돌고, 프리셋/스파링 라이브 스텝은 Phase 1b(`LiveTableAdapter`+`StoryRoomHooks`)까지 **스킵**된다.
+  - **데이터**: 챕터는 `src/lib/story/chapters/act1/*.ts` 수기 TS(`STORY_CHAPTERS` 레지스트리, `validateChapters`가
+    id·requires 순환·교사·스텝·프리셋 카드·목표 kind를 검증). 해금은 저장하지 않고 `unlocks.ts`가 완료 집합+requires
+    그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). 띠는 코스메틱(막 완주 → 노란/파란/갈색, 검은띠는
+    `belt:black` 플래그). 통과 = 드릴 세트 완료 + primary 행동 목표 — **스택 같은 결과 조건은 통과 조건이 아니라
+    등급·뱃지 전용**(2026-09-02 검토 개정). 비율형 목표는 "기회 중 실행"만, VPIP 같은 절대 비율 목표 금지.
+  - **드릴**: `src/lib/story/drills/generator.ts`의 12 템플릿(시드 결정론, 모호하면 seed+1 리롤 ≤32). 클라에는
+    `toPublicDrillInstance`(정답·해설·힌트 본문 제거)만 나가고 **채점은 서버가 같은 seed로 재생성해서** 한다.
+    오답은 즉시 풀이 → 세트 끝 재출제(새 seed, 최대 2회, `RETRY_CREDIT` 0.5점) + 복습 노트(Leitner 3박스,
+    `drill_review_notes`). **팟오즈 문항의 '팟'은 상대 벳 포함 중앙 총액**(`computePotOdds(toCall, potTotal)`) —
+    "팟+벳" 표기로 바꾸면 정답이 20%/25%로 갈린다. 계산 코어는 `src/lib/poker/learning.ts`·`range.ts`·
+    `seeded-rng.ts`(딜링 경로 아님 — `deck.ts` CSPRNG 규칙 대상 외). 해설 말투 3종(미야코♪·사쿠라 말더듬·하나 '당신')은
+    `drills/explain.ts`, 수기 문항은 `templates/authored/`.
+  - **영속**: 마이그레이션 v30 `story_progress`·`story_flags`·`drill_attempts`(category는 길이 제약만 — 고정 IN 금지)·
+    `drill_review_notes` + `hand_history.story_tag`(`game_mode`는 'cash' 유지 — CHECK 위반 회피). 보상은
+    `ProgressionService.recordStoryChapterComplete`/`recordStoryDailyDrills`(`progression_events` 키
+    `story-chapter:<chapter>:first|run`, `story-daily-drills:<kstDate>` 멱등, 비파트너 히로인 행은
+    `ensureAffinityInTransaction`으로 생성). **스토리 XP는 카탈로그 영구 아이템을 못 준다** — v13 트리거가
+    completed-hand/sng-finish만 소스로 허용하므로 스토리 XP로 넘긴 레벨의 아이템은 v31 뷰·트리거 확장 전까지 미지급.
+  - **소켓/HTTP**: `story-*` 7 이벤트 + `get-story-progress`(개인 `story-update` emit, 파서 `story-payload.ts`,
+    레이트리밋 `story` 10/5s·`storyStart` 2/10s), `GET /api/story`(허브, 30/분). 명령은 (runId, expectedStepIndex)
+    또는 (setId, index) stale 검사 → 'stale-state'. 방 없는 런의 `resync`는 room-lost 대신 `story-update` 재전송.
+    이벤트 로그 `story-step`·`drill-answer`·`daily-drill`.
+  - **클라**: `story-store.ts`(수신 전용 미러 + `pending` 잠금, 카드 답은 'As' 표기로 전송, 끝난 런은 결산 화면용으로
+    `dismissRun()`까지 보관), VN 커서는 `scene-cursor.ts`(순수), 입력 4종 `DrillAnswerInput`, 함께 풀기는
+    `drill-input.ts`의 로컬 채점(점수 없음). PartnerCard CTA는 보존 좌석 > 스토리 > 자유 연습(`story-hub-rules.ts`).
+    회귀: `story-run-coordinator.test.ts`·`socket-handler.story.test.ts`·`generator.test.ts`·`chapters/act1/act1.test.ts`.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -448,6 +478,9 @@ npx tsc --noEmit
   토너먼트 탭, wallet MTT(토너 단위 에스크로+다인 페이아웃), 레이트 레지/리엔트리, ops_event
   화이트리스트·table_hand.tournament_id, 9-max UI 좌표, 봇 AI 대사 토너 단위 상한
   (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
+- 수련 스토리 Phase 1b 이후 — 라이브 스텝(프리셋 '연습' 덱·스파링/보스전·`StoryRoomHooks`·히어로 타임아웃 hold
+  계약·목표/결정 리뷰), 2~4막 데이터, 라이브 리딩 퀴즈·봇 속마음, 하드 모드·기록실, 스토리 XP 카탈로그 아이템(v31),
+  파트너별 Ch1 대사 변주, 스토리 배경·미야코 표정 아트(폴백 중). 현재 챕터 런은 라이브 스텝을 스킵한다.
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.

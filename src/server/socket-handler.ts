@@ -1509,7 +1509,9 @@ export function setupSocketHandlers(
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
-      replyStory(ack, storyCoordinator!.start(session.playerId, parsed.value.chapterId));
+      const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId);
+      if (started.ok) eventLog.log('story-step', { playerId: session.playerId, data: { chapterId: parsed.value.chapterId, runId: started.value.runId, step: 'start' } });
+      replyStory(ack, started);
     });
 
     socket.on('story-advance', (...rawArgs: unknown[]) => {
@@ -1527,7 +1529,12 @@ export function setupSocketHandlers(
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      replyStory(ack, storyCoordinator!.advance(session.playerId, parsed.value));
+      const advanced = storyCoordinator!.advance(session.playerId, parsed.value);
+      if (advanced.ok) {
+        const view = storyCoordinator!.getView(session.playerId);
+        eventLog.log('story-step', { playerId: session.playerId, data: { runId: parsed.value.runId, from: parsed.value.expectedStepIndex, target: parsed.value.target, to: view?.stepIndex ?? null, phase: view?.phase ?? 'ended' } });
+      }
+      replyStory(ack, advanced);
     });
 
     socket.on('story-choice', (...rawArgs: unknown[]) => {
@@ -1563,7 +1570,11 @@ export function setupSocketHandlers(
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      replyStory(ack as AckCallback<StoryDrillAck> | undefined, storyCoordinator!.drill(session.playerId, parsed.value));
+      const drilled = storyCoordinator!.drill(session.playerId, parsed.value);
+      if (drilled.ok && drilled.value.action === 'answer') {
+        eventLog.log('drill-answer', { playerId: session.playerId, data: { runId: parsed.value.runId, setId: parsed.value.setId, index: parsed.value.index, templateId: drilled.value.result.templateId, correct: drilled.value.result.correct, hintsUsed: drilled.value.result.hintsUsed, streak: drilled.value.result.streak } });
+      }
+      replyStory(ack as AckCallback<StoryDrillAck> | undefined, drilled);
     });
 
     socket.on('story-quiz', (...rawArgs: unknown[]) => {
@@ -1593,7 +1604,9 @@ export function setupSocketHandlers(
       if (!ensureOwnership(ack)) return;
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('storyStart', '오늘의 수련 시작 요청이 너무 빨라요.', ack)) return;
-      replyStory(ack, storyCoordinator!.startDaily(session.playerId));
+      const daily = storyCoordinator!.startDaily(session.playerId);
+      if (daily.ok) eventLog.log('daily-drill', { playerId: session.playerId, data: { runId: daily.value.runId, step: 'start' } });
+      replyStory(ack, daily);
     });
 
     socket.on('abandon-story', (...rawArgs: unknown[]) => {
