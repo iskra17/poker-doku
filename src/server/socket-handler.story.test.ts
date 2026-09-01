@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { RealtimeAck } from '../lib/realtime/protocol';
 import { makeChapterChain } from '../lib/story/test-fixtures';
-import type { StoryProgressView, StoryRunView } from '../lib/story/views';
+import type { StoryDrillAck, StoryProgressView, StoryRunView } from '../lib/story/views';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
 
@@ -120,16 +120,52 @@ describe('story socket events', () => {
     expect(lost).toHaveLength(0);
   });
 
-  it('not-yet-implemented commands answer action-rejected after validation', async () => {
+  it('choice/drill/daily reach the coordinator after validation; quiz is still a stub', async () => {
     const { client } = await setup();
     expect(await withAck(done => client.socket.emit('story-choice', { runId: 'r', expectedStepIndex: 0, choiceId: 'c', optionId: 'o' }, done)))
-      .toMatchObject({ ok: false, code: 'action-rejected' });
+      .toMatchObject({ ok: false, code: 'story-no-run' });
     expect(await withAck(done => client.socket.emit('story-drill', { runId: 'r', setId: 's', index: 0, action: 'hint' }, done)))
-      .toMatchObject({ ok: false, code: 'action-rejected' });
+      .toMatchObject({ ok: false, code: 'story-no-run' });
     expect(await withAck(done => client.socket.emit('story-quiz', { runId: 'r', quizId: 'q', optionIndex: 0 }, done)))
       .toMatchObject({ ok: false, code: 'action-rejected' });
+    // Ch1 미완료 → 오늘의 수련 잠김
     expect(await withAck(done => client.socket.emit('story-daily', done)))
-      .toMatchObject({ ok: false, code: 'action-rejected' });
+      .toMatchObject({ ok: false, code: 'story-locked' });
+  });
+
+  it('answers a drill end-to-end: story-update carries a public instance, the ack carries the graded result', async () => {
+    const { client } = await setup();
+    const updates = collect<StoryRunView>(client, 'story-update');
+    const started = await withAck<{ runId: string }>(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01' }, done));
+    if (!started.ok) throw new Error('start failed');
+    const runId = started.data!.runId;
+    // scene → lesson → drill-set (fixture: rank-who-wins, pos-name)
+    expect(await withAck(done => client.socket.emit('story-advance', { runId, expectedStepIndex: 0 }, done))).toEqual({ ok: true });
+    expect(await withAck(done => client.socket.emit('story-advance', { runId, expectedStepIndex: 1 }, done))).toEqual({ ok: true });
+    await sleep(20);
+    const drillView = updates.at(-1)!;
+    expect(drillView).toMatchObject({ phase: 'drill', stepKind: 'drill-set' });
+    expect(drillView.drill).toMatchObject({ index: 0, total: 2, hint: null });
+    expect(JSON.stringify(drillView.drill!.instance)).not.toMatch(/correct|explanation/i);
+
+    const hint = await withAck<StoryDrillAck>(done => client.socket.emit('story-drill', { runId, setId: drillView.drill!.setId, index: 0, action: 'hint' }, done));
+    expect(hint.ok && hint.data?.action).toBe('hint');
+
+    const answer = await withAck<StoryDrillAck>(done => client.socket.emit('story-drill', {
+      runId, setId: drillView.drill!.setId, index: 0, action: 'answer', answer: { kind: 'multiple-choice', index: 0 }, elapsedMs: 900,
+    }, done));
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    const data = answer.data;
+    if (!data || data.action !== 'answer') throw new Error('expected an answer ack');
+    expect(typeof data.result.correct).toBe('boolean');
+    expect(data.result.explanation.speaker).toBe('miyako');
+    await sleep(20);
+    expect(updates.at(-1)!.drill?.lastResult?.correct).toBe(data.result.correct);
+    // 같은 문항 재제출은 거절
+    expect(await withAck(done => client.socket.emit('story-drill', {
+      runId, setId: drillView.drill!.setId, index: 0, action: 'answer', answer: { kind: 'multiple-choice', index: 1 },
+    }, done))).toMatchObject({ ok: false, code: 'action-rejected' });
   });
 
   it('abandon ends the run, and a replaced socket no longer controls it', async () => {

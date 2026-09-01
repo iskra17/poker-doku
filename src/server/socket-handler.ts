@@ -43,7 +43,7 @@ import {
   parseStoryDrillRequest,
   parseStoryQuizRequest,
 } from './story-payload';
-import type { StoryProgressView } from '../lib/story/views';
+import type { StoryDrillAck, StoryProgressView } from '../lib/story/views';
 import type { Chapter } from '../lib/story/types';
 import {
   parseOptionalPayloadArgs,
@@ -502,6 +502,13 @@ export function setupSocketHandlers(
     ? new StoryRunCoordinator({
       repository: storyRepository,
       chapters: options.storyChapters,
+      // 보상은 progression 런타임이 있을 때만 — 없으면(테스트·비활성) XP 없이 진행
+      rewards: progression
+        ? {
+          completeChapter: input => ({ duplicate: progression.completeStoryChapter(input).duplicate }),
+          completeDaily: input => ({ duplicate: progression.completeStoryDaily(input).duplicate }),
+        }
+        : undefined,
       emit: (profileId, view) => {
         const session = sessions.getByPlayerId(profileId);
         if (!session?.socketId) return;
@@ -1531,13 +1538,14 @@ export function setupSocketHandlers(
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
-      if (!parseStoryChoiceRequest(payload).ok) {
+      const parsed = parseStoryChoiceRequest(payload);
+      if (!parsed.ok) {
         invalidPayload(ack);
         return;
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      storyNotReady(ack); // Phase 1.3: 선택지 → 플래그
+      replyStory(ack, storyCoordinator!.choose(session.playerId, parsed.value));
     });
 
     socket.on('story-drill', (...rawArgs: unknown[]) => {
@@ -1548,13 +1556,14 @@ export function setupSocketHandlers(
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
-      if (!parseStoryDrillRequest(payload).ok) {
+      const parsed = parseStoryDrillRequest(payload);
+      if (!parsed.ok) {
         invalidPayload(ack);
         return;
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      storyNotReady(ack); // Phase 1.1/1.3: 드릴 채점·힌트
+      replyStory(ack as AckCallback<StoryDrillAck> | undefined, storyCoordinator!.drill(session.playerId, parsed.value));
     });
 
     socket.on('story-quiz', (...rawArgs: unknown[]) => {
@@ -1584,7 +1593,7 @@ export function setupSocketHandlers(
       if (!ensureOwnership(ack)) return;
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('storyStart', '오늘의 수련 시작 요청이 너무 빨라요.', ack)) return;
-      storyNotReady(ack); // Phase 1.3: 오늘의 수련 문제 3개
+      replyStory(ack, storyCoordinator!.startDaily(session.playerId));
     });
 
     socket.on('abandon-story', (...rawArgs: unknown[]) => {

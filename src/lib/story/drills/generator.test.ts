@@ -167,8 +167,16 @@ describe('generateDrill', () => {
 });
 
 describe('authored templates', () => {
-  it('starts empty — 콘텐츠 에이전트가 act별 파일을 이어 붙인다', () => {
-    expect(AUTHORED_DRILL_TEMPLATES).toEqual([]);
+  it('registers the Act 1 authored drills (ids unique, all instantiable)', () => {
+    const ids = AUTHORED_DRILL_TEMPLATES.map(template => template.id);
+    expect(ids).toEqual(['act-ch02-fold-utg', 'act-ch02-open-btn']);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const template of AUTHORED_DRILL_TEMPLATES) {
+      expect(DRILL_TEMPLATE_IDS.has(template.id)).toBe(true);
+      const instance = generateDrill(template.id, 0, { teacher: 'sakura' });
+      expect(instance.explanation.speaker).toBe('sakura');
+      expect(gradeDrill(instance, { kind: 'action-pick', action: (instance.answerSpec as { kind: 'action-pick'; correct: readonly ('fold'|'raise'|'call'|'check'|'all-in')[] }).correct[0], sizingBB: 2.5 })).toBe(true);
+    }
   });
 
   it('clones the stored instance and only swaps the speaker', () => {

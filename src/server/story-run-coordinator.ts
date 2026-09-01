@@ -1,26 +1,46 @@
 /**
- * StoryRunCoordinator — 스토리 런(챕터 1회 주행)의 서버 상태 머신. **방(RoomManager)과 무관**하다.
+ * StoryRunCoordinator — 스토리 런(챕터 1회 주행·오늘의 수련)의 서버 상태 머신. **방(RoomManager)과 무관**하다.
  *
  * - runs: profileId당 최대 1개 런(인메모리). 서버 재시작이면 런은 사라지고 허브가
  *   "중단된 챕터 다시 도전"을 보여준다 — attempts·drill_attempts·복습 노트는 즉시 영속이라 유실 없음.
- * - 스텝 진입: scene/lesson은 클라 렌더(데이터는 클라도 가진 STORY_CHAPTERS), drill-set은 드릴 엔진이
- *   (Phase 1.1/1.3), practice-table/sparring은 라이브 어댑터가(Phase 1b) 붙는다. 엔진/어댑터가 주입되지
- *   않은 스텝은 **스킵**된다 — Phase 0.5 스켈레톤은 scene → lesson → result 를 주행할 수 있다.
- * - 모든 명령은 (runId, expectedStepIndex) stale 검사를 통과해야 한다 (`player-action`의
- *   expectedHandNumber 계약과 동형 → 'stale-state').
- * - 성공한 명령마다 `emit(profileId, view)`로 story-update를 보낸다. 뷰의 드릴은 정답 제거 투영만.
+ * - 스텝 진입: scene/lesson은 클라 렌더(데이터는 클라도 가진 STORY_CHAPTERS), drill-set은 드릴 생성기가
+ *   같은 seed로 인스턴스를 만들고 **채점도 서버가 재생성해서** 한다(클라 DTO엔 정답 없음).
+ *   practice-table/sparring은 라이브 어댑터(Phase 1b)가 없으면 스킵된다.
+ * - 모든 명령은 (runId, expectedStepIndex) 또는 (setId, index) stale 검사를 통과해야 한다
+ *   (`player-action`의 expectedHandNumber 계약과 동형 → 'stale-state').
+ * - 성공한 명령마다 `emit(profileId, view)`로 story-update를 보낸다.
  */
+import { hashSeed } from '../lib/poker/seeded-rng';
 import type { RealtimeErrorCode } from '../lib/realtime/protocol';
 import { STORY_CHAPTERS } from '../lib/story/chapters';
-import type { Chapter, ChapterGrade, ChapterId, Step, StoryHeroineId, StoryTeacherId } from '../lib/story/types';
+import { DrillGenerationError, generateDrill, getDrillTemplate, gradeDrill } from '../lib/story/drills/generator';
+import { toPublicDrillInstance } from '../lib/story/drills/public';
+import type { DrillInstance, DrillResult } from '../lib/story/drills/types';
+import { chapterPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet, type DrillSlotOutcome } from '../lib/story/grading';
+import type {
+  Chapter,
+  ChapterGrade,
+  ChapterId,
+  DrillSlot,
+  Step,
+  StoryHeroineId,
+  StoryTeacherId,
+} from '../lib/story/types';
+import { isStoryHeroineId } from '../lib/story/types';
 import { BLACK_BELT_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import type {
   ChapterResultView,
   StoryAdvanceRequest,
+  StoryChoiceRequest,
+  StoryDrillRequest,
+  StoryDrillView,
   StoryProgressView,
   StoryRunPhase,
   StoryRunView,
 } from '../lib/story/views';
+
+// ---------------------------------------------------------------------------
+// 포트
 
 export interface StoryProgressRecord {
   chapterId: ChapterId;
@@ -37,14 +57,58 @@ export interface StoryDrillStatsRecord {
   byCategory: Record<string, { total: number; correct: number }>;
 }
 
+export type StoryAttemptContext = 'chapter' | 'review' | 'daily' | 'hand-review';
+
+export interface StoryAttemptInput {
+  profileId: string;
+  templateId: string;
+  seed: number;
+  category: string;
+  context: StoryAttemptContext;
+  chapterId?: string | null;
+  runId?: string | null;
+  correct: boolean;
+  hintsUsed?: number;
+  elapsedMs: number;
+  answeredAt: number;
+}
+
+export interface StoryReviewNoteRecord {
+  templateId: string;
+  seed: number;
+  box: 1 | 2 | 3;
+  dueAt: number;
+}
+
 /** 코디네이터가 필요로 하는 영속 포트 — StoryRepository가 구현한다 (테스트는 인메모리 fake). */
 export interface StoryRepositoryPort {
   listProgress(profileId: string): StoryProgressRecord[];
   recordAttemptStart(profileId: string, chapterId: ChapterId, now: number): void;
+  recordCompletion(profileId: string, chapterId: ChapterId, grade: ChapterGrade, now: number): unknown;
   getFlags(profileId: string): Record<string, string>;
+  setFlags(profileId: string, flags: Record<string, string>, now: number): void;
   getDrillStats(profileId: string): StoryDrillStatsRecord;
+  insertAttempt(input: StoryAttemptInput): unknown;
+  markWrong(profileId: string, templateId: string, seed: number, now: number): unknown;
+  markCorrect(profileId: string, templateId: string, seed: number, now: number): unknown;
+  listDue(profileId: string, now: number, limit: number): StoryReviewNoteRecord[];
   countNotes(profileId: string): number;
-  countAttemptsBetween(profileId: string, fromMs: number, toMsExclusive: number, context?: 'chapter' | 'review' | 'daily' | 'hand-review'): number;
+  countAttemptsBetween(profileId: string, fromMs: number, toMsExclusive: number, context?: StoryAttemptContext): number;
+}
+
+/** 보상 포트 — ProgressionRuntime이 구현 (없으면 XP 없이 진행: 테스트·비활성 환경) */
+export interface StoryRewardPort {
+  completeChapter(input: {
+    profileId: string;
+    chapterId: ChapterId;
+    runId: string;
+    firstClear: boolean;
+    grade: ChapterGrade;
+    dojoXpMilli: number;
+    affinity: Array<{ characterId: StoryHeroineId; milli: number }>;
+    completedAt: number;
+  }): { duplicate: boolean };
+  completeDaily(input: { profileId: string; kstDate: string; teacherId: StoryHeroineId; completedAt: number }): { duplicate: boolean };
 }
 
 export interface StoryRunCoordinatorDeps {
@@ -52,19 +116,58 @@ export interface StoryRunCoordinatorDeps {
   emit: (profileId: string, view: StoryRunView) => void;
   /** 선택 파트너(인연) — 없으면 null: 'partner' 참조는 미야코로 대체된다 */
   partnerOf: (profileId: string) => StoryHeroineId | null;
+  rewards?: StoryRewardPort;
   chapters?: readonly Chapter[];
   now?: () => number;
   runIdFactory?: () => string;
   /** 오늘의 수련 문제 수 (기본 3) */
   dailyTotal?: number;
+  /** 오답 재출제 상한 (기본 2) */
+  maxRetries?: number;
 }
 
 export type CoordinatorResult<T = undefined> =
   | { ok: true; value: T }
   | { ok: false; code: RealtimeErrorCode; message: string };
 
+// ---------------------------------------------------------------------------
+// 런 상태
+
+interface DrillServe {
+  slotIndex: number;
+  templateId: string;
+  seed: number;
+  attempt: number;
+}
+
+interface DrillSetState {
+  setId: string;
+  teacher: StoryTeacherId;
+  slots: DrillSlot[];
+  queue: DrillServe[];
+  cursor: number;
+  passRule: { minCorrect: number };
+  hintPenalty: number;
+  /** 슬롯별 결과(첫 시도·최종) */
+  outcomes: Map<number, DrillSlotOutcome & { attempts: number }>;
+  streak: number;
+  bestStreak: number;
+  hintsUsed: number;
+  answered: number;
+  correct: number;
+  current: {
+    serve: DrillServe;
+    instance: DrillInstance;
+    hintOpened: boolean;
+    result: DrillResult | null;
+    servedAt: number;
+  } | null;
+  context: StoryAttemptContext;
+}
+
 export interface StoryRun {
   runId: string;
+  kind: 'chapter' | 'daily';
   profileId: string;
   chapter: Chapter;
   stepIndex: number;
@@ -72,13 +175,19 @@ export interface StoryRun {
   partnerId: StoryHeroineId | null;
   choices: Record<string, string>;
   flagsDelta: Record<string, string>;
+  drill: DrillSetState | null;
+  /** 챕터 전체 드릴 요약(세트가 여러 개일 수 있음) */
+  drillSummary: { outcomes: DrillSlotOutcome[]; hintsUsed: number; bestStreak: number; answered: number; correct: number; hintPenalty: number; wrongSlots: number };
   result: ChapterResultView | null;
+  /** 데일리 전용 — 출제 히로인·날짜 */
+  daily: { kstDate: string; teacherId: StoryHeroineId | null } | null;
   startedAt: number;
   updatedAt: number;
 }
 
 const KST_OFFSET_MS = 9 * 60 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+export const DAILY_CHAPTER_ID = 'daily';
 
 /** KST 기준 날짜 키와 [자정, 다음 자정) 범위 */
 export function kstDay(now: number): { date: string; fromMs: number; toMsExclusive: number } {
@@ -97,18 +206,24 @@ function defaultRunId(): string {
   return `story_${Date.now().toString(36)}_${runCounter.toString(36)}`;
 }
 
+function emptySummary(hintPenalty = 0.5): StoryRun['drillSummary'] {
+  return { outcomes: [], hintsUsed: 0, bestStreak: 0, answered: 0, correct: 0, hintPenalty, wrongSlots: 0 };
+}
+
 export class StoryRunCoordinator {
   private readonly runs = new Map<string, StoryRun>();
   private readonly chapters: readonly Chapter[];
   private readonly now: () => number;
   private readonly runIdFactory: () => string;
   private readonly dailyTotal: number;
+  private readonly maxRetries: number;
 
   constructor(private readonly deps: StoryRunCoordinatorDeps) {
     this.chapters = deps.chapters ?? STORY_CHAPTERS;
     this.now = deps.now ?? (() => Date.now());
     this.runIdFactory = deps.runIdFactory ?? defaultRunId;
     this.dailyTotal = deps.dailyTotal ?? 3;
+    this.maxRetries = deps.maxRetries ?? 2;
   }
 
   // ---------------------------------------------------------------------------
@@ -117,13 +232,13 @@ export class StoryRunCoordinator {
   getProgress(profileId: string): StoryProgressView {
     const rows = this.deps.repository.listProgress(profileId);
     const byId = new Map(rows.map(row => [row.chapterId, row]));
-    const completed = new Set(rows.filter(row => row.completions > 0).map(row => row.chapterId));
+    const completed = this.completedSet(rows);
     const unlocked = computeUnlockedChapters(this.chapters, completed);
     const flags = this.deps.repository.getFlags(profileId);
     const day = kstDay(this.now());
-    const firstChapter = this.chapters.find(chapter => chapter.act === 1 && chapter.order === 1);
-    const dailyAvailable = !!firstChapter && completed.has(firstChapter.id);
+    const dailyAvailable = this.dailyAvailable(completed);
     const run = this.runs.get(profileId) ?? null;
+    const dailyTeacher = dailyAvailable ? this.dailyTeacher(profileId, completed, day.date) : null;
 
     return {
       chapters: this.chapters.map(chapter => {
@@ -148,7 +263,7 @@ export class StoryRunCoordinator {
           : 0,
         total: this.dailyTotal,
         available: dailyAvailable,
-        teacherId: null,
+        teacherId: dailyTeacher,
       },
       activeRun: run ? { runId: run.runId, chapterId: run.chapter.id, stepIndex: run.stepIndex } : null,
     };
@@ -176,7 +291,7 @@ export class StoryRunCoordinator {
   }
 
   // ---------------------------------------------------------------------------
-  // 명령
+  // 명령: 시작 / 진행 / 선택 / 포기
 
   start(profileId: string, chapterId: ChapterId): CoordinatorResult<{ runId: string }> {
     if (this.runs.has(profileId)) {
@@ -186,9 +301,7 @@ export class StoryRunCoordinator {
     if (!chapter) {
       return { ok: false, code: 'story-locked', message: '없는 챕터예요.' };
     }
-    const completed = new Set(
-      this.deps.repository.listProgress(profileId).filter(row => row.completions > 0).map(row => row.chapterId),
-    );
+    const completed = this.completedSet(this.deps.repository.listProgress(profileId));
     if (!isChapterUnlocked(chapter, completed)) {
       return { ok: false, code: 'story-locked', message: '아직 열리지 않은 챕터예요. 이전 챕터를 먼저 끝내 주세요.' };
     }
@@ -196,6 +309,7 @@ export class StoryRunCoordinator {
     this.deps.repository.recordAttemptStart(profileId, chapter.id, now);
     const run: StoryRun = {
       runId: this.runIdFactory(),
+      kind: 'chapter',
       profileId,
       chapter,
       stepIndex: -1,
@@ -203,14 +317,95 @@ export class StoryRunCoordinator {
       partnerId: this.deps.partnerOf(profileId),
       choices: {},
       flagsDelta: {},
+      drill: null,
+      drillSummary: emptySummary(),
       result: null,
+      daily: null,
       startedAt: now,
       updatedAt: now,
     };
     this.runs.set(profileId, run);
-    this.enterStep(run, 0);
-    if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
+    try {
+      this.enterStep(run, 0);
+    } catch (error) {
+      this.runs.delete(profileId);
+      return { ok: false, code: 'server-error', message: error instanceof Error ? error.message : '챕터를 시작하지 못했어요.' };
+    }
+    this.deps.emit(profileId, this.buildView(run));
     return { ok: true, value: { runId: run.runId } };
+  }
+
+  /** 오늘의 수련 문제 — 챕터 없는 경량 런(드릴 세트 1개 + 결산). Ch1 완료 후, 하루 1회 완료. */
+  startDaily(profileId: string): CoordinatorResult<{ runId: string }> {
+    if (this.runs.has(profileId)) {
+      return { ok: false, code: 'story-busy', message: '진행 중인 챕터가 있어요. 먼저 끝내거나 포기해 주세요.' };
+    }
+    const rows = this.deps.repository.listProgress(profileId);
+    const completed = this.completedSet(rows);
+    if (!this.dailyAvailable(completed)) {
+      return { ok: false, code: 'story-locked', message: 'Ch1을 끝내면 오늘의 수련 문제가 열려요.' };
+    }
+    const now = this.now();
+    const day = kstDay(now);
+    if (this.deps.repository.countAttemptsBetween(profileId, day.fromMs, day.toMsExclusive, 'daily') >= this.dailyTotal) {
+      return { ok: false, code: 'action-rejected', message: '오늘의 문제는 모두 풀었어요. 내일 다시 만나요.' };
+    }
+    const slots = this.buildDailySlots(profileId, completed, day.date, now);
+    if (slots.length === 0) {
+      return { ok: false, code: 'action-rejected', message: '아직 낼 문제가 없어요.' };
+    }
+    const teacherId = this.dailyTeacher(profileId, completed, day.date);
+    const runId = this.runIdFactory();
+    const chapter: Chapter = {
+      id: DAILY_CHAPTER_ID,
+      act: 1,
+      order: 0,
+      title: '오늘의 수련 문제',
+      subtitle: `${day.date}`,
+      teacher: teacherId ?? 'miyako',
+      belt: 'white',
+      requires: [],
+      steps: [
+        {
+          kind: 'drill-set',
+          id: `daily:${day.date}`,
+          title: '오늘의 수련 문제',
+          teacher: teacherId ?? 'miyako',
+          drills: slots.map(slot => ({ templateId: slot.templateId, seedPolicy: 'fixed', fixedSeed: slot.seed })),
+          passRule: { minCorrect: 0 },
+          hintPenalty: 0.5,
+        },
+        { kind: 'result', id: `daily:${day.date}:result` },
+      ],
+      rewards: { first: { dojoXpMilli: 0, affinity: [] }, replay: { dojoXpMilli: 0 }, gradeBonusMilli: {} },
+      estimatedMinutes: 2,
+    };
+    const run: StoryRun = {
+      runId,
+      kind: 'daily',
+      profileId,
+      chapter,
+      stepIndex: -1,
+      phase: 'drill',
+      partnerId: this.deps.partnerOf(profileId),
+      choices: {},
+      flagsDelta: {},
+      drill: null,
+      drillSummary: emptySummary(),
+      result: null,
+      daily: { kstDate: day.date, teacherId },
+      startedAt: now,
+      updatedAt: now,
+    };
+    this.runs.set(profileId, run);
+    try {
+      this.enterStep(run, 0);
+    } catch (error) {
+      this.runs.delete(profileId);
+      return { ok: false, code: 'server-error', message: error instanceof Error ? error.message : '문제를 준비하지 못했어요.' };
+    }
+    this.deps.emit(profileId, this.buildView(run));
+    return { ok: true, value: { runId } };
   }
 
   advance(profileId: string, request: StoryAdvanceRequest): CoordinatorResult {
@@ -223,18 +418,22 @@ export class StoryRunCoordinator {
       case 'lesson':
         this.enterStep(run, run.stepIndex + 1);
         break;
-      case 'drill-set':
-        // Phase 1.3: 세트를 끝내야 넘어간다. 스켈레톤에선 엔진이 없어 여기 머무를 일이 없다.
-        return { ok: false, code: 'action-rejected', message: '수련 문제를 모두 풀어야 넘어갈 수 있어요.' };
+      case 'drill-set': {
+        const drill = run.drill;
+        if (!drill || !drill.current) {
+          return { ok: false, code: 'action-rejected', message: '문제를 준비하는 중이에요.' };
+        }
+        if (!drill.current.result) {
+          return { ok: false, code: 'action-rejected', message: '답을 제출해야 다음 문제로 넘어갈 수 있어요.' };
+        }
+        this.serveNext(run, drill);
+        break;
+      }
       case 'practice-table':
       case 'sparring':
-        if (request.target !== 'resume') {
-          return { ok: false, code: 'action-rejected', message: '테이블 스텝은 핸드가 끝나야 진행돼요.' };
-        }
         // Phase 1b: 라이브 어댑터 resume. 스켈레톤에선 진입 자체가 스킵된다.
         return { ok: false, code: 'action-rejected', message: '테이블 스텝은 아직 준비 중이에요.' };
       case 'result':
-        // 결산은 런을 닫으므로 최종(ended) 뷰를 명시적으로 보낸다
         this.finishRun(run);
         this.deps.emit(profileId, this.buildView(run));
         return { ok: true, value: undefined };
@@ -243,12 +442,125 @@ export class StoryRunCoordinator {
     return { ok: true, value: undefined };
   }
 
+  /** 선택지 — 정답 없음. 현재 씬에 존재하는 선택지/옵션이어야 하고, 플래그는 결산 때 한꺼번에 영속된다. */
+  choose(profileId: string, request: StoryChoiceRequest): CoordinatorResult {
+    const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
+    if (!checked.ok) return checked;
+    const run = checked.value;
+    const step = run.chapter.steps[run.stepIndex];
+    const scene = step.kind === 'scene' ? step.scene : null;
+    const choiceLine = scene?.lines.find(line => line.kind === 'choice' && line.choice.id === request.choiceId);
+    const choice = choiceLine && choiceLine.kind === 'choice' ? choiceLine.choice : null;
+    const option = choice?.options.find(candidate => candidate.id === request.optionId);
+    if (!choice || !option) {
+      return { ok: false, code: 'action-rejected', message: '이 장면에 없는 선택지예요.' };
+    }
+    run.choices[choice.id] = option.id;
+    Object.assign(run.flagsDelta, option.setFlags ?? {});
+    run.updatedAt = this.now();
+    return { ok: true, value: undefined };
+  }
+
+  /** 드릴 답 제출 / 힌트 — 서버가 같은 seed로 재생성해 채점한다. */
+  drill(profileId: string, request: StoryDrillRequest): CoordinatorResult<{ action: 'answer'; result: DrillResult } | { action: 'hint'; hint: string }> {
+    const run = this.runs.get(profileId);
+    if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
+    const drill = run.drill;
+    if (run.runId !== request.runId || !drill || run.phase !== 'drill' || !drill.current) {
+      return { ok: false, code: 'stale-state', message: '지금은 문제를 푸는 단계가 아니에요.' };
+    }
+    if (drill.setId !== request.setId || drill.cursor !== request.index) {
+      return { ok: false, code: 'stale-state', message: '화면이 최신 문제가 아니에요. 다시 불러올게요.' };
+    }
+    const current = drill.current;
+
+    if (request.action === 'hint') {
+      if (current.result) return { ok: false, code: 'action-rejected', message: '이미 답을 제출한 문제예요.' };
+      const hint = current.instance.hint;
+      if (!hint) return { ok: false, code: 'action-rejected', message: '이 문제엔 힌트가 없어요.' };
+      if (!current.hintOpened) {
+        current.hintOpened = true;
+        drill.hintsUsed += 1;
+        run.updatedAt = this.now();
+        this.deps.emit(profileId, this.buildView(run));
+      }
+      return { ok: true, value: { action: 'hint', hint } };
+    }
+
+    if (current.result) return { ok: false, code: 'action-rejected', message: '이미 답을 제출한 문제예요.' };
+    const now = this.now();
+    // 권위 판정: 저장된 인스턴스가 아니라 같은 seed로 재생성한 인스턴스와 비교 (클라 DTO엔 정답이 없다)
+    const regenerated = this.regenerate(current.serve, drill.teacher);
+    const correct = gradeDrill(regenerated, request.answer);
+    const hintsUsed = current.hintOpened ? 1 : 0;
+    const elapsedMs = Math.max(0, Math.min(request.elapsedMs, now - current.servedAt + 60_000));
+
+    this.deps.repository.insertAttempt({
+      profileId,
+      templateId: current.serve.templateId,
+      seed: current.serve.seed,
+      category: regenerated.category,
+      context: drill.context,
+      chapterId: run.kind === 'chapter' ? run.chapter.id : null,
+      runId: run.runId,
+      correct,
+      hintsUsed,
+      elapsedMs,
+      answeredAt: now,
+    });
+    // 복습 노트(Leitner): 오답은 박스1로, 정답은 승격/졸업 — 재출제 문항(attempt>0)은 노트 갱신 대상에서 제외
+    if (current.serve.attempt === 0) {
+      if (correct) this.deps.repository.markCorrect(profileId, current.serve.templateId, current.serve.seed, now);
+      else this.deps.repository.markWrong(profileId, current.serve.templateId, current.serve.seed, now);
+    }
+
+    const outcome = drill.outcomes.get(current.serve.slotIndex) ?? { firstCorrect: false, finallyCorrect: false, hintUsed: false, attempts: 0 };
+    outcome.attempts += 1;
+    if (current.serve.attempt === 0) {
+      outcome.firstCorrect = correct;
+      outcome.hintUsed = current.hintOpened;
+    }
+    if (correct) outcome.finallyCorrect = true;
+    drill.outcomes.set(current.serve.slotIndex, outcome);
+    drill.answered += 1;
+    if (correct) {
+      drill.correct += 1;
+      drill.streak += 1;
+      drill.bestStreak = Math.max(drill.bestStreak, drill.streak);
+    } else {
+      drill.streak = 0;
+      if (current.serve.attempt < this.maxRetries) {
+        drill.queue.push({
+          slotIndex: current.serve.slotIndex,
+          templateId: current.serve.templateId,
+          seed: hashSeed(current.serve.seed, 'retry', current.serve.attempt + 1),
+          attempt: current.serve.attempt + 1,
+        });
+      }
+    }
+    const result: DrillResult = {
+      templateId: current.serve.templateId,
+      seed: current.serve.seed,
+      correct,
+      correctAnswer: regenerated.answerSpec,
+      explanation: regenerated.explanation,
+      hintsUsed,
+      streak: drill.streak,
+      elapsedMs,
+    };
+    current.result = result;
+    run.updatedAt = now;
+    this.deps.emit(profileId, this.buildView(run));
+    return { ok: true, value: { action: 'answer', result } };
+  }
+
   abandon(profileId: string, runId: string): CoordinatorResult {
     const run = this.runs.get(profileId);
     if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
     if (run.runId !== runId) return { ok: false, code: 'stale-state', message: '이미 끝난 챕터 진행이에요.' };
     this.runs.delete(profileId);
     run.phase = 'ended';
+    run.result = null;
     this.deps.emit(profileId, this.buildView(run));
     return { ok: true, value: undefined };
   }
@@ -259,7 +571,7 @@ export class StoryRunCoordinator {
   }
 
   // ---------------------------------------------------------------------------
-  // 내부
+  // 내부: 스텝 진입 / 드릴 서빙
 
   private checkRun(profileId: string, runId: string, expectedStepIndex: number): CoordinatorResult<StoryRun> {
     const run = this.runs.get(profileId);
@@ -274,6 +586,7 @@ export class StoryRunCoordinator {
   private enterStep(run: StoryRun, index: number): void {
     const steps = run.chapter.steps;
     let cursor = index;
+    run.drill = null;
     while (cursor < steps.length) {
       const step = steps[cursor];
       run.stepIndex = cursor;
@@ -281,39 +594,237 @@ export class StoryRunCoordinator {
       if (step.kind === 'scene') { run.phase = 'scene'; return; }
       if (step.kind === 'lesson') { run.phase = 'lesson'; return; }
       if (step.kind === 'result') { run.phase = 'result'; return; }
-      // drill-set / practice-table / sparring: 엔진·어댑터 미주입 → 스킵 (Phase 1.3 / 1b에서 활성)
+      if (step.kind === 'drill-set') {
+        if (this.enterDrillSet(run, step)) return;
+        cursor += 1;
+        continue;
+      }
+      // practice-table / sparring: 라이브 어댑터 미주입 → 스킵 (Phase 1b에서 활성)
       cursor += 1;
     }
     run.stepIndex = steps.length - 1;
     run.phase = 'result';
   }
 
-  private finishRun(run: StoryRun): void {
-    // Phase 1.3/1.4: gradeChapter + recordStoryChapterComplete + story_progress/flags 영속.
-    // 스켈레톤은 통과·B등급·보상 0으로 결산 뷰만 만들고 런을 닫는다.
-    const completed = new Set(
-      this.deps.repository.listProgress(run.profileId).filter(row => row.completions > 0).map(row => row.chapterId),
-    );
-    completed.add(run.chapter.id);
-    run.result = {
-      chapterId: run.chapter.id,
-      passed: true,
-      grade: 'B',
-      drill: { answered: 0, correct: 0, bestStreak: 0, hintsUsed: 0, score: 0 },
-      live: null,
-      rewards: { firstClear: false, dojoXpMilli: 0, affinity: [], badgeId: null },
-      reviewNotesAdded: 0,
-      nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
+  private enterDrillSet(run: StoryRun, step: Extract<Step, { kind: 'drill-set' }>): boolean {
+    const teacher = this.resolveTeacherRef(run, step.teacher);
+    const day = kstDay(this.now());
+    const queue: DrillServe[] = step.drills.map((slot, slotIndex) => ({
+      slotIndex,
+      templateId: slot.templateId,
+      seed: this.slotSeed(run, step.id, slot, slotIndex, day.date),
+      attempt: 0,
+    })).filter(serve => getDrillTemplate(serve.templateId) !== undefined);
+    if (queue.length === 0) return false;
+    const drill: DrillSetState = {
+      setId: step.id,
+      teacher,
+      slots: step.drills,
+      queue,
+      cursor: 0,
+      passRule: step.passRule,
+      hintPenalty: step.hintPenalty,
+      outcomes: new Map(),
+      streak: 0,
+      bestStreak: 0,
+      hintsUsed: 0,
+      answered: 0,
+      correct: 0,
+      current: null,
+      context: run.kind === 'daily' ? 'daily' : 'chapter',
     };
+    run.drill = drill;
+    run.phase = 'drill';
+    this.serveCurrent(drill);
+    return true;
+  }
+
+  private slotSeed(run: StoryRun, setId: string, slot: DrillSlot, slotIndex: number, kstDate: string): number {
+    if (slot.seedPolicy === 'fixed') return slot.fixedSeed ?? 0;
+    if (slot.seedPolicy === 'daily') return hashSeed(run.profileId, kstDate, setId, slotIndex);
+    return hashSeed(run.runId, setId, slotIndex);
+  }
+
+  private serveCurrent(drill: DrillSetState): void {
+    const serve = drill.queue[drill.cursor];
+    const instance = this.regenerate(serve, drill.teacher);
+    drill.current = { serve, instance, hintOpened: false, result: null, servedAt: this.now() };
+  }
+
+  private serveNext(run: StoryRun, drill: DrillSetState): void {
+    drill.cursor += 1;
+    if (drill.cursor < drill.queue.length) {
+      this.serveCurrent(drill);
+      return;
+    }
+    // 세트 완료 → 요약에 합산하고 다음 스텝으로
+    const outcomes = drill.slots.map((_, slotIndex) => {
+      const outcome = drill.outcomes.get(slotIndex);
+      return outcome
+        ? { firstCorrect: outcome.firstCorrect, finallyCorrect: outcome.finallyCorrect, hintUsed: outcome.hintUsed }
+        : { firstCorrect: false, finallyCorrect: false, hintUsed: false };
+    });
+    const summary = run.drillSummary;
+    summary.outcomes.push(...outcomes);
+    summary.hintsUsed += drill.hintsUsed;
+    summary.bestStreak = Math.max(summary.bestStreak, drill.bestStreak);
+    summary.answered += drill.answered;
+    summary.correct += drill.correct;
+    summary.hintPenalty = drill.hintPenalty;
+    summary.wrongSlots += outcomes.filter(outcome => !outcome.firstCorrect).length;
+    this.enterStep(run, run.stepIndex + 1);
+  }
+
+  private regenerate(serve: DrillServe, teacher: StoryTeacherId): DrillInstance {
+    try {
+      return generateDrill(serve.templateId, serve.seed, { teacher });
+    } catch (error) {
+      if (error instanceof DrillGenerationError) {
+        // 생성 실패는 seed를 바꿔 한 번 더 — 그래도 실패하면 상위로
+        return generateDrill(serve.templateId, hashSeed(serve.seed, 'fallback'), { teacher });
+      }
+      throw error;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 내부: 결산 / 데일리
+
+  private finishRun(run: StoryRun): void {
+    const now = this.now();
+    const summary = run.drillSummary;
+    const drillScore = scoreDrillSet(summary.outcomes, summary.hintPenalty);
+    const grade = gradeChapter({ drillScore, hintsUsed: summary.hintsUsed });
+    const passed = chapterPassed({ drillCompleted: true, primaryObjectivesMet: null });
+
+    if (run.kind === 'daily') {
+      const teacherId = run.daily?.teacherId ?? null;
+      let affinity: Array<{ characterId: StoryHeroineId; milli: number }> = [];
+      if (teacherId && summary.answered >= this.dailyTotal && this.deps.rewards) {
+        const outcome = this.deps.rewards.completeDaily({ profileId: run.profileId, kstDate: run.daily!.kstDate, teacherId, completedAt: now });
+        if (!outcome.duplicate) affinity = [{ characterId: teacherId, milli: 5_000 }];
+      }
+      run.result = {
+        chapterId: DAILY_CHAPTER_ID,
+        passed: true,
+        grade,
+        drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
+        live: null,
+        rewards: { firstClear: false, dojoXpMilli: 0, affinity, badgeId: null },
+        reviewNotesAdded: summary.wrongSlots,
+        nextChapterId: null,
+      };
+    } else {
+      const before = this.deps.repository.listProgress(run.profileId).find(row => row.chapterId === run.chapter.id);
+      const firstClear = passed && (before?.completions ?? 0) === 0;
+      let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
+      if (passed) {
+        this.deps.repository.recordCompletion(run.profileId, run.chapter.id, grade, now);
+        if (Object.keys(run.flagsDelta).length > 0) this.deps.repository.setFlags(run.profileId, run.flagsDelta, now);
+        grant = firstClear ? firstClearRewards(run.chapter, grade, run.partnerId) : replayRewards(run.chapter, grade);
+        if (this.deps.rewards) {
+          const outcome = this.deps.rewards.completeChapter({
+            profileId: run.profileId,
+            chapterId: run.chapter.id,
+            runId: run.runId,
+            firstClear,
+            grade,
+            dojoXpMilli: grant.dojoXpMilli,
+            affinity: grant.affinity,
+            completedAt: now,
+          });
+          if (outcome.duplicate) grant = { dojoXpMilli: 0, affinity: [], badgeId: null };
+        }
+      }
+      const completed = this.completedSet(this.deps.repository.listProgress(run.profileId));
+      run.result = {
+        chapterId: run.chapter.id,
+        passed,
+        grade,
+        drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
+        live: null,
+        rewards: { firstClear, dojoXpMilli: grant.dojoXpMilli, affinity: grant.affinity, badgeId: grant.badgeId },
+        reviewNotesAdded: summary.wrongSlots,
+        nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
+      };
+    }
     run.phase = 'ended';
-    run.updatedAt = this.now();
+    run.drill = null;
+    run.updatedAt = now;
     this.runs.delete(run.profileId);
   }
 
-  private resolveTeacher(run: StoryRun): StoryTeacherId {
-    const teacher = run.chapter.teacher;
-    if (teacher === 'partner') return run.partnerId ?? 'miyako';
-    return teacher;
+  private completedSet(rows: StoryProgressRecord[]): Set<ChapterId> {
+    return new Set(rows.filter(row => row.completions > 0).map(row => row.chapterId));
+  }
+
+  private dailyAvailable(completed: ReadonlySet<ChapterId>): boolean {
+    const first = this.chapters.find(chapter => chapter.act === 1 && chapter.order === 1);
+    return !!first && completed.has(first.id);
+  }
+
+  /** 완료 챕터의 드릴 슬롯에서 템플릿 풀을 만든다 (생성기에 있는 것만) */
+  private dailyPool(completed: ReadonlySet<ChapterId>): Array<{ templateId: string; teacher: Chapter['teacher'] }> {
+    const pool: Array<{ templateId: string; teacher: Chapter['teacher'] }> = [];
+    const seen = new Set<string>();
+    for (const chapter of this.chapters) {
+      if (!completed.has(chapter.id)) continue;
+      for (const step of chapter.steps) {
+        if (step.kind !== 'drill-set') continue;
+        for (const slot of step.drills) {
+          if (seen.has(slot.templateId) || !getDrillTemplate(slot.templateId)) continue;
+          seen.add(slot.templateId);
+          pool.push({ templateId: slot.templateId, teacher: chapter.teacher });
+        }
+      }
+    }
+    return pool;
+  }
+
+  private buildDailySlots(profileId: string, completed: ReadonlySet<ChapterId>, kstDate: string, now: number): Array<{ templateId: string; seed: number }> {
+    const slots: Array<{ templateId: string; seed: number }> = [];
+    for (const note of this.deps.repository.listDue(profileId, now, this.dailyTotal)) {
+      if (!getDrillTemplate(note.templateId)) continue;
+      slots.push({ templateId: note.templateId, seed: note.seed });
+      if (slots.length >= this.dailyTotal) return slots;
+    }
+    const pool = this.dailyPool(completed);
+    for (let index = 0; slots.length < this.dailyTotal && pool.length > 0 && index < this.dailyTotal * 4; index++) {
+      const pick = pool[hashSeed(profileId, kstDate, 'pool', index) % pool.length];
+      const seed = hashSeed(profileId, kstDate, 'seed', slots.length);
+      if (slots.some(slot => slot.templateId === pick.templateId && slot.seed === seed)) continue;
+      slots.push({ templateId: pick.templateId, seed });
+    }
+    return slots;
+  }
+
+  /** 오늘의 출제 히로인 — 풀에 등장한 히로인 담당을 날짜로 로테이션, 없으면 파트너 */
+  private dailyTeacher(profileId: string, completed: ReadonlySet<ChapterId>, kstDate: string): StoryHeroineId | null {
+    const heroines = [...new Set(this.dailyPool(completed).map(entry => entry.teacher).filter(isStoryHeroineId))];
+    if (heroines.length > 0) return heroines[hashSeed(profileId, kstDate, 'teacher') % heroines.length];
+    return this.deps.partnerOf(profileId);
+  }
+
+  private resolveTeacherRef(run: StoryRun, ref: Chapter['teacher']): StoryTeacherId {
+    if (ref === 'partner') return run.partnerId ?? 'miyako';
+    return ref;
+  }
+
+  private buildDrillView(drill: DrillSetState): StoryDrillView | null {
+    if (!drill.current) return null;
+    return {
+      setId: drill.setId,
+      index: drill.cursor,
+      total: drill.queue.length,
+      instance: toPublicDrillInstance(drill.current.instance),
+      streak: drill.streak,
+      hintsUsed: drill.hintsUsed,
+      wrongQueue: Math.max(0, drill.queue.length - drill.cursor - 1 - drill.queue.slice(drill.cursor + 1).filter(serve => serve.attempt === 0).length),
+      hint: drill.current.hintOpened ? drill.current.instance.hint : null,
+      lastResult: drill.current.result,
+      answered: drill.answered,
+      correct: drill.correct,
+    };
   }
 
   private buildView(run: StoryRun): StoryRunView {
@@ -325,8 +836,8 @@ export class StoryRunCoordinator {
       stepCount: run.chapter.steps.length,
       stepKind: step.kind,
       phase: run.phase,
-      context: { partnerId: run.partnerId, teacherId: this.resolveTeacher(run) },
-      drill: null,
+      context: { partnerId: run.partnerId, teacherId: this.resolveTeacherRef(run, run.chapter.teacher) },
+      drill: run.drill ? this.buildDrillView(run.drill) : null,
       live: null,
       result: run.result,
       startedAt: run.startedAt,
