@@ -3,7 +3,7 @@
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
 import type { Chapter, StoryHeroineId } from '@/lib/story/types';
-import type { ChapterCardState } from '@/lib/story/story-hub-rules';
+import { teacherArtId, teacherDisplayName, type ChapterCardState } from '@/lib/story/story-hub-rules';
 import type { StoryChapterProgressView } from '@/lib/story/views';
 
 interface ChapterCardProps {
@@ -26,7 +26,7 @@ const STATE_LABEL: Record<ChapterCardState, string> = {
 /** 챕터 맵 카드 — 담당 히로인·제목·등급·상태·[시작]. 잠긴 챕터는 흐리게, 진행 중은 강조. */
 export default function ChapterCard({ number, chapter, progress, state, partnerId, pending, onStart }: ChapterCardProps) {
   const teacherId = chapter?.teacher === 'partner' ? (partnerId ?? 'miyako') : (chapter?.teacher ?? 'miyako');
-  const teacher = getCharacterById(teacherId === 'miyako' ? 'dealer' : teacherId);
+  const teacherName = teacherDisplayName(teacherId, id => getCharacterById(id)?.name);
   const locked = state === 'locked';
   const grade = progress.bestGrade;
 
@@ -42,7 +42,7 @@ export default function ChapterCard({ number, chapter, progress, state, partnerI
       }`}
     >
       <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-mystic/25">
-        <CharacterImage characterId={teacherId === 'miyako' ? 'dealer' : teacherId} expression={locked ? 'neutral' : 'happy'} round={false} className="h-full w-full text-2xl" />
+        <CharacterImage characterId={teacherArtId(teacherId)} expression={locked ? 'neutral' : 'happy'} round={false} className="h-full w-full text-2xl" />
         {grade && (
           <span className="absolute bottom-0 right-0 rounded-tl-lg bg-gilded px-1.5 text-[10px] font-black text-abyss" aria-label={`최고 등급 ${grade}`}>
             {grade}
@@ -51,7 +51,7 @@ export default function ChapterCard({ number, chapter, progress, state, partnerI
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-[10px] font-bold tracking-wider text-ink-dim">
-          CH{number} · {teacher?.name ?? '미야코'} · {STATE_LABEL[state]}
+          CH{number} · {teacherName} · {STATE_LABEL[state]}
         </p>
         <h3 className="truncate text-sm font-bold text-ink">{chapter?.title ?? progress.chapterId}</h3>
         <p className="truncate text-[11px] text-ink-dim">{chapter?.subtitle ?? ''}</p>

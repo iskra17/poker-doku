@@ -73,6 +73,17 @@ export function chapterNumber(chapters: readonly Chapter[], chapterId: string): 
   return index >= 0 ? index + 1 : null;
 }
 
+/** 교사 표시 이름 — 미야코는 캐릭터 프로필 id가 'dealer'(이름 '딜러')라 스토리에선 이름을 고정한다 */
+export function teacherDisplayName(teacherId: string, characterName: (artId: string) => string | undefined): string {
+  if (teacherId === 'miyako' || teacherId === 'dealer') return '미야코';
+  return characterName(teacherId) ?? teacherId;
+}
+
+/** 캐릭터 아트 id — 미야코의 일러스트는 'dealer' 폴더 */
+export function teacherArtId(teacherId: string): string {
+  return teacherId === 'miyako' ? 'dealer' : teacherId;
+}
+
 /** 드릴 정확도 % (0 문항이면 null) */
 export function accuracyPercent(total: number, correct: number): number | null {
   if (total <= 0) return null;

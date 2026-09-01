@@ -35,6 +35,7 @@ export default function StoryStage() {
   if (!mounted || typeof document === 'undefined') return null;
   const visible = !!run && !run.live?.roomId;
   const chapter = run ? getChapter(run.chapterId) : undefined;
+  const title = run?.chapterId === 'daily' ? '오늘의 수련 문제' : (chapter?.title ?? run?.chapterId ?? '수련 스토리');
   const step = run && chapter ? chapter.steps[run.stepIndex] : undefined;
   const partnerId = run?.context.partnerId ?? null;
 
@@ -54,15 +55,15 @@ export default function StoryStage() {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[95] flex flex-col bg-abyss/95 text-ink backdrop-blur-sm"
+          className="fixed inset-0 z-[95] flex flex-col bg-abyss text-ink"
           role="dialog"
           aria-modal="true"
-          aria-label={chapter?.title ?? '수련 스토리'}
+          aria-label={title}
         >
           <header className="flex flex-none items-center justify-between border-b border-mystic/20 px-4 py-2">
             <div className="min-w-0">
               <p className="text-[10px] font-bold tracking-wider text-ink-dim">수련 스토리</p>
-              <h2 className="truncate text-sm font-bold">{chapter?.title ?? run.chapterId}</h2>
+              <h2 className="truncate text-sm font-bold">{title}</h2>
             </div>
             <div className="flex items-center gap-2 text-[10px] text-ink-dim">
               <span aria-label="진행">{Math.min(run.stepIndex + 1, run.stepCount)}/{run.stepCount}</span>
@@ -97,12 +98,14 @@ export default function StoryStage() {
             )}
 
             {run.phase === 'scene' && step?.kind === 'scene' && (
-              <ScenePlayer
-                key={step.id}
-                scene={step.scene}
-                partnerId={partnerId}
-                onFinish={({ chosen }) => void finishScene(chosen)}
-              />
+              <div className="w-full max-w-md">
+                <ScenePlayer
+                  key={step.id}
+                  scene={step.scene}
+                  partnerId={partnerId}
+                  onFinish={({ chosen }) => void finishScene(chosen)}
+                />
+              </div>
             )}
 
             {run.phase === 'lesson' && step?.kind === 'lesson' && (

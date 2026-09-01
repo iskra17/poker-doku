@@ -42,7 +42,7 @@ export function resolveSpeaker(speaker: SceneSpeaker, partnerId: StoryHeroineId 
   if (!id) return { artId: null, name: '파트너', color: null };
   const artId = id === 'miyako' ? 'dealer' : id;
   const profile = getCharacterById(artId) ?? getCharacterById(id);
-  return { artId, name: profile?.name ?? (id === 'miyako' ? '미야코' : id), color: profile?.color ?? null };
+  return { artId, name: id === 'miyako' ? '미야코' : (profile?.name ?? id), color: profile?.color ?? null };
 }
 
 /**

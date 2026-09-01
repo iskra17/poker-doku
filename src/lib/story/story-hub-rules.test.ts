@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accuracyPercent, chapterCardState, chapterNumber, partnerCtaDecision } from './story-hub-rules';
+import { accuracyPercent, chapterCardState, chapterNumber, partnerCtaDecision, teacherArtId, teacherDisplayName } from './story-hub-rules';
 import { makeChapterChain } from './test-fixtures';
 import type { StoryProgressView } from './views';
 
@@ -56,6 +56,16 @@ describe('story hub rules', () => {
     // 졸업(다음 챕터 없음) → 자유 연습
     expect(partnerCtaDecision({ hasPreservedRoom: false, progress: progress({ nextChapterId: null }), chapterOrder: order }))
       .toEqual({ kind: 'practice', label: '수련 시작' });
+  });
+
+  it('teacher display name and art id map miyako to 미야코 / dealer art', () => {
+    const names = (id: string) => ({ dealer: '딜러', sakura: '사쿠라' } as Record<string, string>)[id];
+    expect(teacherDisplayName('miyako', names)).toBe('미야코');
+    expect(teacherDisplayName('dealer', names)).toBe('미야코');
+    expect(teacherDisplayName('sakura', names)).toBe('사쿠라');
+    expect(teacherDisplayName('unknown', names)).toBe('unknown');
+    expect(teacherArtId('miyako')).toBe('dealer');
+    expect(teacherArtId('hana')).toBe('hana');
   });
 
   it('chapterNumber and accuracyPercent', () => {

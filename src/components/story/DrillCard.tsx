@@ -144,14 +144,9 @@ export default function DrillCard({ drill, teacherId, partnerId, pending, hint, 
             tone={lastResult.correct ? 'correct' : 'wrong'}
             text={lastResult.correct ? `${praise} ${lastResult.explanation.text}` : lastResult.explanation.text}
           />
-          <div className="flex items-center justify-between text-[11px] text-ink-dim">
-            <span>정답: <span className="font-bold text-ink">{describeCorrectAnswer(lastResult.correctAnswer)}</span></span>
-            {Object.keys(lastResult.explanation.facts).length > 0 && (
-              <span className="truncate">
-                {Object.entries(lastResult.explanation.facts).slice(0, 4).map(([k, v]) => `${k} ${v}`).join(' · ')}
-              </span>
-            )}
-          </div>
+          <p className="text-[11px] text-ink-dim">
+            정답: <span className="font-bold text-ink">{describeCorrectAnswer(lastResult.correctAnswer)}</span>
+          </p>
           <button
             type="button"
             onClick={onNext}

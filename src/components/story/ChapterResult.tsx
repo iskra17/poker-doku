@@ -23,16 +23,17 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry 
   const chapter = getChapter(result.chapterId);
   const next = result.nextChapterId ? getChapter(result.nextChapterId) : undefined;
   const accuracy = result.drill.answered > 0 ? Math.round((result.drill.correct / result.drill.answered) * 100) : null;
+  const daily = result.chapterId === 'daily';
 
   return (
     <div className="w-full max-w-md rounded-2xl border border-gilded/40 bg-panel/95 p-4" aria-label="결산">
       <p className="text-center text-[10px] font-bold tracking-widest text-gilded">CHAPTER RESULT</p>
-      <h2 className="mt-1 text-center text-base font-bold text-ink">{chapter?.title ?? result.chapterId}</h2>
+      <h2 className="mt-1 text-center text-base font-bold text-ink">{daily ? '오늘의 수련 문제' : (chapter?.title ?? result.chapterId)}</h2>
       <motion.p
         initial={{ scale: 2, opacity: 0, rotate: -10 }}
         animate={{ scale: 1, opacity: 1, rotate: -6 }}
         transition={{ type: 'spring', stiffness: 260, damping: 18 }}
-        className={`my-3 text-center text-6xl font-black ${GRADE_COLOR[result.grade]}`}
+        className={`mt-2 mb-4 h-20 text-center text-6xl font-black leading-none ${GRADE_COLOR[result.grade]}`}
         aria-label={`등급 ${result.grade}`}
       >
         {result.grade}
@@ -71,8 +72,8 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry 
       )}
 
       <div className="mt-3 rounded-xl border border-gilded/30 bg-gilded/5 p-2 text-[11px] text-ink">
-        <p className="font-bold text-gilded">{result.rewards.firstClear ? '첫 완주 보상' : '재도전 보상'}</p>
-        <p>도장 XP +{Math.round(result.rewards.dojoXpMilli / 1000)}</p>
+        <p className="font-bold text-gilded">{daily ? '오늘의 수련 보상' : result.rewards.firstClear ? '첫 완주 보상' : '재도전 보상'}</p>
+        {result.rewards.dojoXpMilli > 0 && <p>도장 XP +{Math.round(result.rewards.dojoXpMilli / 1000)}</p>}
         {result.rewards.affinity.map(grant => {
           const profile = getCharacterById(grant.characterId);
           return (

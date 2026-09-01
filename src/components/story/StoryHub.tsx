@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
 import { getChapter, STORY_CHAPTERS } from '@/lib/story/chapters';
-import { ACT_BELT, ACT_TITLE, BELT_LABEL, chapterCardState, chapterNumber } from '@/lib/story/story-hub-rules';
+import { ACT_BELT, ACT_TITLE, BELT_LABEL, chapterCardState, chapterNumber, teacherArtId, teacherDisplayName } from '@/lib/story/story-hub-rules';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -28,7 +28,8 @@ export default function StoryHub() {
 
   const nextChapter = progress?.nextChapterId ? getChapter(progress.nextChapterId) : undefined;
   const nextTeacherId = nextChapter?.teacher === 'partner' ? (partnerId ?? 'miyako') : (nextChapter?.teacher ?? 'miyako');
-  const nextTeacher = getCharacterById(nextTeacherId === 'miyako' ? 'dealer' : nextTeacherId);
+  const nextTeacher = getCharacterById(teacherArtId(nextTeacherId));
+  const nextTeacherName = teacherDisplayName(nextTeacherId, id => getCharacterById(id)?.name);
 
   const acts = useMemo(() => {
     if (!progress) return [];
@@ -79,11 +80,11 @@ export default function StoryHub() {
         <div className="mb-2 rounded-2xl border border-blossom/30 bg-panel/85 p-3 backdrop-blur-sm">
           <div className="flex items-center gap-3">
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl border" style={{ borderColor: `${nextTeacher?.color ?? '#fff'}55` }}>
-              <CharacterImage characterId={nextTeacherId === 'miyako' ? 'dealer' : nextTeacherId} expression="happy" round={false} className="h-full w-full text-3xl" />
+              <CharacterImage characterId={teacherArtId(nextTeacherId)} expression="happy" round={false} className="h-full w-full text-3xl" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold tracking-wider" style={{ color: nextTeacher?.color }}>
-                {activeRun?.chapterId === nextChapter.id ? '진행 중' : '다음 수업'} · CH{chapterNumber(STORY_CHAPTERS, nextChapter.id)} · {nextTeacher?.name}
+                {activeRun?.chapterId === nextChapter.id ? '진행 중' : '다음 수업'} · CH{chapterNumber(STORY_CHAPTERS, nextChapter.id)} · {nextTeacherName}
               </p>
               <h3 className="truncate text-base font-bold text-ink">{nextChapter.title}</h3>
               <p className="truncate text-[11px] text-ink-dim">{nextChapter.subtitle} · 약 {nextChapter.estimatedMinutes}분</p>
