@@ -208,12 +208,12 @@ describe('story-store', () => {
     off();
 
     // 힌트는 한 번 열면 캐시된다
-    const hintPromise = store.getState().useHint();
+    const hintPromise = store.getState().requestHint();
     expect(emitted.at(-1)).toMatchObject({ event: 'story-drill', payload: { action: 'hint' } });
     emitted.at(-1)!.ack!({ ok: true, data: { action: 'hint', hint: '콜 ÷ (팟 + 콜)' } });
     expect(await hintPromise).toBe('콜 ÷ (팟 + 콜)');
     const sent = emitted.length;
-    expect(await store.getState().useHint()).toBe('콜 ÷ (팟 + 콜)');
+    expect(await store.getState().requestHint()).toBe('콜 ÷ (팟 + 콜)');
     expect(emitted).toHaveLength(sent);
 
     // 다음 문항으로 넘어가면 힌트·결과가 초기화된다

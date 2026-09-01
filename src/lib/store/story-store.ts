@@ -37,7 +37,7 @@ export interface StoryStoreState {
   advance(target?: StoryAdvanceTarget): Promise<boolean>;
   choose(choiceId: string, optionId: string): Promise<boolean>;
   answerDrill(answer: DrillAnswer, elapsedMs: number): Promise<DrillResult | null>;
-  useHint(): Promise<string | null>;
+  requestHint(): Promise<string | null>;
   startDaily(): Promise<boolean>;
   abandon(): Promise<boolean>;
   receiveRun(view: StoryRunView): void;
@@ -217,7 +217,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         return result;
       },
 
-      useHint: async () => {
+      requestHint: async () => {
         const run = get().run;
         const drill = run?.drill;
         if (!run || !drill) return null;
