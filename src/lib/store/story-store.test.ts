@@ -248,4 +248,16 @@ describe('story-store', () => {
     expect(store.getState().run).toBeNull();
     off();
   });
+
+  it('an ended run without a result (abandon) clears immediately so the stage closes', () => {
+    const store = createStoryStore({ fetch: vi.fn().mockResolvedValue(jsonResponse(200, { progress: progressFixture() })) });
+    const { socket, fire } = makeSocket();
+    store.getState().setProfileIdentity('p1');
+    store.getState().bindSocket(socket);
+    fire('story-update', runFixture());
+    expect(store.getState().run).not.toBeNull();
+    fire('story-update', runFixture({ phase: 'ended', drill: null, result: null }));
+    expect(store.getState().run).toBeNull();
+    expect(store.getState().lastDrillResult).toBeNull();
+  });
 });

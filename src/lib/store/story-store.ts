@@ -251,10 +251,12 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         const previous = get().run;
         const drillChanged = !!previous?.drill && !!view.drill
           && (previous.drill.setId !== view.drill.setId || previous.drill.index !== view.drill.index);
-        // 끝난 런(phase 'ended')도 결산 화면을 위해 보관 — dismissRun()이 지운다
+        // 끝난 런(phase 'ended')은 결산(result)이 있을 때만 보관 — dismissRun()이 지운다.
+        // 포기(abandon)처럼 결산이 없는 종료는 즉시 비워 빈 스테이지가 남지 않게 한다.
+        const abandoned = view.phase === 'ended' && !view.result;
         set({
-          run: view,
-          ...(drillChanged ? { hint: null, lastDrillResult: null } : {}),
+          run: abandoned ? null : view,
+          ...(drillChanged || abandoned ? { hint: null, lastDrillResult: null } : {}),
         });
         if (view.phase === 'ended') {
           if (view.result) {
