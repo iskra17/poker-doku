@@ -22,6 +22,8 @@ import {
   TransientHttpRateLimiter,
 } from './http-rate-limit';
 import { openPokerDatabase } from './persistence/database';
+import { StoryRepository } from './story-repository';
+import type { Chapter } from '../lib/story/types';
 import { PROFILE_COOKIE_NAME } from './profile-http';
 import { ProfileManager, type ProfileKdf } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
@@ -103,6 +105,8 @@ export interface SocketTestHarnessOptions {
   persistentTournamentRuntimeRegistration?:
     PersistentTournamentRuntimeRegistrationPorts;
   persistentLateRegistration?: PersistentLateRegistrationPorts;
+  /** 스토리 챕터 픽스처 (기본 STORY_CHAPTERS — Phase 0에선 비어 있다) */
+  storyChapters?: readonly Chapter[];
 }
 
 const fastTestKdf: ProfileKdf = {
@@ -237,6 +241,8 @@ export async function createSocketTestHarness(
     persistentTournamentRuntimeRegistration:
       options.persistentTournamentRuntimeRegistration,
     persistentLateRegistration: options.persistentLateRegistration,
+    storyRepository: new StoryRepository(database),
+    storyChapters: options.storyChapters,
     ...(arenaService
       ? {
         arena: {

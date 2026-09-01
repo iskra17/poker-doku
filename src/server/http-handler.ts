@@ -17,6 +17,7 @@ import {
 } from './feedback-http';
 import { HandHistoryRepository, TableHandRepository } from './hand-history';
 import { createHandHistoryHttpHandler } from './hand-history-http';
+import { createStoryHttpHandler } from './story-http';
 import {
   TransientHttpRateLimiter,
   type TransientHttpConcurrencyGate,
@@ -33,6 +34,7 @@ import {
   type ProgressionHttpService,
 } from './progression-http';
 import type { ProgressionSnapshot } from '@/lib/progression/types';
+import type { StoryProgressView } from '@/lib/story/views';
 import {
   createArenaHttpHandler,
   type ArenaHttpService,
@@ -70,6 +72,8 @@ interface HttpHandlerCommonOptions {
   promotionFundRateLimiter?: TransientHttpRateLimiter;
   /** 런타임 게임 설정 (핫 컨피그) — /api/admin/config 조회·변경 대상 */
   gameConfig?: GameConfigService;
+  /** 수련 스토리 진행 요약 (GET /api/story) — 소켓 런타임에 늦게 바인딩, 준비 전엔 null */
+  storyProgress?: (profileId: string) => StoryProgressView | null;
 }
 
 interface HttpHandlerWithoutProfileOptions extends HttpHandlerCommonOptions {
@@ -174,6 +178,13 @@ export function createHttpRequestHandler(
         rateLimiter: options.profileRateLimiter!,
       })
     : undefined;
+  const storyHandler = options.profileManager && options.storyProgress
+    ? createStoryHttpHandler({
+        manager: options.profileManager,
+        rateLimiter: options.profileRateLimiter!,
+        progress: options.storyProgress,
+      })
+    : undefined;
   const adminHandler = options.database && options.opsEvents
     ? createAdminHttpHandler({
         database: options.database,
@@ -256,6 +267,9 @@ export function createHttpRequestHandler(
         handHistoryHandler
         && await handHistoryHandler(req, res, parsedUrl.pathname, parsedUrl.query)
       ) {
+        return;
+      }
+      if (storyHandler && await storyHandler(req, res, parsedUrl.pathname)) {
         return;
       }
       if (

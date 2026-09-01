@@ -33,6 +33,18 @@ import {
   parseTournamentResyncRequest,
 } from './socket-payload';
 import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
+import { StoryRunCoordinator, type CoordinatorResult } from './story-run-coordinator';
+import type { StoryRepository } from './story-repository';
+import {
+  parseAbandonStoryRequest,
+  parseStartStoryChapterRequest,
+  parseStoryAdvanceRequest,
+  parseStoryChoiceRequest,
+  parseStoryDrillRequest,
+  parseStoryQuizRequest,
+} from './story-payload';
+import type { StoryProgressView } from '../lib/story/views';
+import type { Chapter } from '../lib/story/types';
 import {
   parseOptionalPayloadArgs,
   parsePayloadlessArgs,
@@ -362,6 +374,10 @@ export interface SocketRuntimeOptions {
   persistentSettlement?: PersistentTournamentSettlementPorts;
   progressionService?: ProgressionRuntimeService;
   handHistory?: RoomHandHistoryHooks;
+  /** 수련 스토리 영속 — 주어지면 StoryRunCoordinator를 켜고 story-* 이벤트를 받는다 */
+  storyRepository?: StoryRepository;
+  /** 챕터 레지스트리 오버라이드 (테스트 픽스처용 — 기본 STORY_CHAPTERS) */
+  storyChapters?: readonly Chapter[];
   arena?: {
     service: ArenaService;
     matchIdFactory?: () => string;
@@ -381,6 +397,8 @@ export interface SocketRuntime {
   ) => boolean;
   /** 프로필 아바타 변경 전파 — 라이브 소켓의 인증 스냅샷과 앉아 있는 좌석 아바타를 함께 갱신 */
   refreshAvatar: (profileId: string, avatarId: string) => void;
+  /** 수련 스토리 진행 요약 (GET /api/story 늦은 바인딩) — 스토리 비활성이면 null */
+  storyProgress: (profileId: string) => StoryProgressView | null;
   startArena: () => void;
   close: () => Promise<ArenaMatchmakerCloseReport>;
 }
@@ -445,6 +463,7 @@ export function setupSocketHandlers(
     economy,
     progressionService,
     handHistory,
+    storyRepository,
     arena,
   } = options;
   const sessions = new SessionManager();
@@ -476,6 +495,27 @@ export function setupSocketHandlers(
         });
       },
     )
+    : undefined;
+
+  // 수련 스토리 런 코디네이터 — 방과 무관한 개인 상태 머신. story-update는 최신 소켓 하나에만 간다.
+  const storyCoordinator = storyRepository
+    ? new StoryRunCoordinator({
+      repository: storyRepository,
+      chapters: options.storyChapters,
+      emit: (profileId, view) => {
+        const session = sessions.getByPlayerId(profileId);
+        if (!session?.socketId) return;
+        io.sockets.sockets.get(session.socketId)?.emit('story-update', view);
+      },
+      partnerOf: profileId => {
+        if (!progressionService) return null;
+        try {
+          return progressionService.getRuntimeSnapshot(profileId, 'sakura').profile.selectedCharacterId;
+        } catch {
+          return null;
+        }
+      },
+    })
     : undefined;
 
   io.use((socket, next) => {
@@ -1413,10 +1453,157 @@ export function setupSocketHandlers(
       }
     };
     restoreOrEvict();
+    // 방 없는 스토리 런(드릴·VN 중 새로고침)도 복원 — 방 복원과 독립
+    storyCoordinator?.resend(session.playerId);
     socket.emit(
       'arena-queue-update',
       arenaMatchmaker?.getPublicState(session.playerId) ?? { status: 'idle' },
     );
+
+    // --- 수련 스토리 모드: 방 무관 개인 런 (소유권 → payload → 레이트리밋 → 코디네이터) ---
+    const storyUnavailable = <T>(ack?: AckCallback<T>): boolean => {
+      if (storyCoordinator) return false;
+      ack?.({ ok: false, code: 'server-error', message: '수련 스토리를 지금은 사용할 수 없어요.' });
+      return true;
+    };
+    const replyStory = <T>(ack: AckCallback<T> | undefined, result: CoordinatorResult<T>): void => {
+      if (result.ok) ack?.({ ok: true, data: result.value });
+      else ack?.({ ok: false, code: result.code, message: result.message });
+    };
+    const storyNotReady = <T>(ack?: AckCallback<T>): void => {
+      ack?.({ ok: false, code: 'action-rejected', message: '이 기능은 아직 준비 중이에요.' });
+    };
+
+    socket.on('get-story-progress', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs<StoryProgressView>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      ack?.({ ok: true, data: storyCoordinator!.getProgress(session.playerId) });
+    });
+
+    socket.on('start-story-chapter', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ runId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseStartStoryChapterRequest(payload);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
+      replyStory(ack, storyCoordinator!.start(session.playerId, parsed.value.chapterId));
+    });
+
+    socket.on('story-advance', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseStoryAdvanceRequest(payload);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      replyStory(ack, storyCoordinator!.advance(session.playerId, parsed.value));
+    });
+
+    socket.on('story-choice', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!parseStoryChoiceRequest(payload).ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      storyNotReady(ack); // Phase 1.3: 선택지 → 플래그
+    });
+
+    socket.on('story-drill', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!parseStoryDrillRequest(payload).ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      storyNotReady(ack); // Phase 1.1/1.3: 드릴 채점·힌트
+    });
+
+    socket.on('story-quiz', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (!parseStoryQuizRequest(payload).ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      storyNotReady(ack); // Phase 2: 라이브 리딩 퀴즈
+    });
+
+    socket.on('story-daily', (...rawArgs: unknown[]) => {
+      const args = parseOptionalPayloadArgs<{ runId: string }>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('storyStart', '오늘의 수련 시작 요청이 너무 빨라요.', ack)) return;
+      storyNotReady(ack); // Phase 1.3: 오늘의 수련 문제 3개
+    });
+
+    socket.on('abandon-story', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseAbandonStoryRequest(payload);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      replyStory(ack, storyCoordinator!.abandon(session.playerId, parsed.value.runId));
+    });
 
     socket.on('arena-queue-join', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs(rawArgs);
@@ -1753,6 +1940,11 @@ export function setupSocketHandlers(
           socket.emit('room-lost', {
             message: '토너먼트 좌석 배정이 종료되어 로비로 돌아왔어요.',
           });
+          ack?.({ ok: true });
+          return;
+        }
+        // 방 없는 스토리 런(드릴·VN 진행 중) — room-lost 대신 스토리 뷰를 재전송
+        if (storyCoordinator?.resend(session.playerId)) {
           ack?.({ ok: true });
           return;
         }
@@ -3518,7 +3710,9 @@ export function setupSocketHandlers(
         ?? roomManager.getRoomList(profileId).find(room => room.mySeat)?.id;
       if (roomId) roomManager.refreshPlayerAvatar(roomId, profileId, avatarId);
     },
+    storyProgress: profileId => storyCoordinator?.getProgress(profileId) ?? null,
     revokeProfile: profileId => {
+      storyCoordinator?.clearProfile(profileId);
       const revoked = sessions.revokeProfile(profileId);
       if (!revoked) return;
       startDisconnectedGrace(revoked.session);

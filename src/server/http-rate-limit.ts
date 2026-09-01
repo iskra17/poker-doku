@@ -13,6 +13,7 @@ export const PROFILE_HTTP_RATE_POLICIES = {
   rescue: { limit: 30, windowMs: 60_000 },
   feedback: { limit: 5, windowMs: 10 * 60_000 },
   handHistory: { limit: 30, windowMs: 60_000 },
+  story: { limit: 30, windowMs: 60_000 },
   promotionFundAdjust: { limit: 30, windowMs: 60_000 },
 } as const satisfies Record<string, HttpRateLimitPolicy>;
 

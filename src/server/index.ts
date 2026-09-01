@@ -40,6 +40,7 @@ import {
 } from './persistence/backup';
 import { eventLog } from './event-log';
 import { OpsEventRepository, shouldPersistOpsEvent } from './ops-log';
+import { StoryRepository } from './story-repository';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 import { PromotionFundRepository } from './promotion-fund-repository';
@@ -557,6 +558,7 @@ async function listen(): Promise<void> {
     adminSessions: adminSessionManager,
     onProfileRevoked: profileId => runtime?.revokeProfile(profileId),
     onAvatarChanged: (profileId, avatarId) => runtime?.refreshAvatar(profileId, avatarId),
+    storyProgress: profileId => runtime?.storyProgress(profileId) ?? null,
     onProgressionPublicCosmeticsChanged: (profileId, snapshot) => {
       runtime?.refreshPublicCosmetics(profileId, snapshot);
     },
@@ -667,6 +669,7 @@ async function listen(): Promise<void> {
     persistentSettlement,
     progressionService,
     handHistory: handHistoryService,
+    storyRepository: new StoryRepository(database),
     ...(arenaService
       ? {
         arena: {
