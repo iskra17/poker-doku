@@ -6,6 +6,9 @@
  * 표기를 검사한다 — chapters.test.ts가 레지스트리 전체에 대해 실행한다.
  */
 import { findDuplicateCard, tryParseCards } from '@/lib/poker/card-notation';
+import { CH01 } from './act1/ch01-dojo-gate';
+import { CH02 } from './act1/ch02-art-of-waiting';
+import { CH03 } from './act1/ch03-numbers-dont-lie';
 import type { Card } from '@/lib/poker/types';
 import {
   isStoryHeroineId,
@@ -19,8 +22,8 @@ import {
   type Step,
 } from '../types';
 
-/** 등록된 챕터 (Phase 1.5에서 1막 3챕터부터 채운다). 막·순서 정렬을 유지할 것. */
-export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([]);
+/** 등록된 챕터 — 막·순서 정렬을 유지할 것 (chapters.test.ts가 검증). */
+export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03]);
 
 const CHAPTER_BY_ID: ReadonlyMap<ChapterId, Chapter> = new Map(STORY_CHAPTERS.map(chapter => [chapter.id, chapter]));
 
