@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Noto_Sans_KR, Jua } from "next/font/google";
 import ProgressionLifecycle from '@/components/progression/ProgressionLifecycle';
 import ArenaLifecycle from '@/components/arena/ArenaLifecycle';
+import StoryLifecycle from '@/components/story/StoryLifecycle';
 import InstallPrompt from '@/components/pwa/InstallPrompt';
 import "./globals.css";
 
@@ -50,6 +51,7 @@ export default function RootLayout({
       <body className="h-dvh bg-grid overflow-hidden touch-manipulation">
         <ProgressionLifecycle />
         <ArenaLifecycle />
+        <StoryLifecycle />
         <InstallPrompt />
         {children}
       </body>
