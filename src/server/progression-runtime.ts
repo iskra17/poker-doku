@@ -6,11 +6,19 @@ import type {
   CompletedHandInput,
   ProgressionService,
   SngFinishInput,
+  StoryChapterCompleteInput,
+  StoryChapterCompleteResult,
+  StoryDailyDrillsInput,
+  StoryDailyDrillsResult,
 } from './progression-service';
 
 export type ProgressionRuntimeService = Pick<
   ProgressionService,
-  'getRuntimeSnapshot' | 'recordRuntimeCompletedHand' | 'recordRuntimeSngFinish'
+  | 'getRuntimeSnapshot'
+  | 'recordRuntimeCompletedHand'
+  | 'recordRuntimeSngFinish'
+  | 'recordRuntimeStoryChapterComplete'
+  | 'recordRuntimeStoryDailyDrills'
 >;
 
 export type ProgressionRuntimeEmitter = (
@@ -211,6 +219,29 @@ export class ProgressionRuntime {
       this.emitReward(result.profileId, current, reward);
       this.processedEvents.add(processedKey);
     }
+  }
+
+  /**
+   * 수련 스토리 챕터 결산 — 방/핸드 수명주기와 무관한 개인 경로라 별도 컨텍스트가 없다.
+   * 서비스가 멱등을 소유하므로 런타임은 emit만 가른다(중복 지급이면 카드를 다시 띄우지 않는다).
+   */
+  completeStoryChapter(
+    input: StoryChapterCompleteInput,
+  ): StoryChapterCompleteResult {
+    const result = this.service.recordRuntimeStoryChapterComplete(input);
+    if (!result.duplicate) {
+      this.emitReward(input.profileId, result.snapshot, result.summary);
+    }
+    return result;
+  }
+
+  /** 오늘의 수련 문제 3개 완료 — 하루 1회. */
+  completeStoryDaily(input: StoryDailyDrillsInput): StoryDailyDrillsResult {
+    const result = this.service.recordRuntimeStoryDailyDrills(input);
+    if (!result.duplicate) {
+      this.emitReward(input.profileId, result.snapshot, result.summary);
+    }
+    return result;
   }
 
   disposeRoom(roomId: string): void {

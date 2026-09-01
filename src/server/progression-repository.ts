@@ -702,6 +702,63 @@ export class ProgressionRepository {
     }
   }
 
+  /**
+   * 인연 행 보장 — 선택 파트너가 아닌 히로인에게도 인연을 줄 수 있어야 한다
+   * (수련 스토리 챕터 담당 히로인·Ch12 전원 지급). PK가 (profile_id, character_id)라
+   * 비파트너 행 추가는 스키마 변경 없이 가능하고, selected_character_id는 건드리지 않는다.
+   * Must be called inside a caller-owned PokerDatabase transaction.
+   */
+  ensureAffinityInTransaction(profileId: string, characterId: string): void {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    const safeCharacterId = assertPlayableCharacter(characterId);
+    try {
+      if (!this.progressionProfileExists(profileId)) {
+        throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+      }
+      this.database.db.prepare(`
+      INSERT INTO character_affinity (
+        profile_id, character_id, level, xp_milli
+      ) VALUES (?, ?, 1, 0)
+      ON CONFLICT(profile_id, character_id) DO NOTHING
+      `).run(profileId, safeCharacterId);
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /**
+   * 단일 히로인 인연 조회 — 스냅샷의 `affinities`는 선택 파트너 존재를 전제로 검증하므로,
+   * 비파트너 히로인 한 명만 필요할 때 쓴다. 행이 없으면 null.
+   * Must be called inside a caller-owned PokerDatabase transaction.
+   */
+  getAffinityInTransaction(
+    profileId: string,
+    characterId: string,
+  ): CharacterAffinity | null {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    const safeCharacterId = assertPlayableCharacter(characterId);
+    try {
+      const profileRow = this.database.db.prepare(`
+        SELECT balance_version FROM progression_profiles WHERE profile_id = ?
+      `).get(profileId) as { balance_version: number } | undefined;
+      if (!profileRow) {
+        throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+      }
+      const row = this.database.db.prepare(`
+        SELECT profile_id, character_id, level, xp_milli
+        FROM character_affinity
+        WHERE profile_id = ? AND character_id = ?
+      `).get(profileId, safeCharacterId) as CharacterAffinityRow | undefined;
+      return row
+        ? mapCharacterAffinity(row, profileRow.balance_version)
+        : null;
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
   /** Must be called inside a caller-owned PokerDatabase transaction. */
   compareAndUpdateStreakInTransaction(update: StreakStateUpdate): void {
     this.assertTransaction();
@@ -1491,6 +1548,12 @@ export class ProgressionRepository {
   private profileExists(profileId: string): boolean {
     return this.database.db.prepare(`
       SELECT 1 FROM profiles WHERE id = ?
+    `).get(profileId) !== undefined;
+  }
+
+  private progressionProfileExists(profileId: string): boolean {
+    return this.database.db.prepare(`
+      SELECT 1 FROM progression_profiles WHERE profile_id = ?
     `).get(profileId) !== undefined;
   }
 

@@ -42,6 +42,8 @@ import { getKstDateKey } from './economy-service';
 
 const EVENT_TYPE_COMPLETED_HAND = 'completed-hand';
 const EVENT_TYPE_SNG_FINISH = 'sng-finish';
+const EVENT_TYPE_STORY_CHAPTER = 'story-chapter';
+const EVENT_TYPE_STORY_DAILY_DRILLS = 'story-daily-drills';
 const MAX_EVENT_ID_COMPONENT_LENGTH = 128;
 const MAX_EVENT_ID_LENGTH = 384;
 const INTERNAL_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -82,6 +84,77 @@ export interface SngFinishInput {
   roomRunId?: string;
   place: number;
   selectedCharacterId: string;
+  completedAt: number;
+}
+
+/**
+ * 수련 스토리 보상 상한 — 보상액은 언제나 서버가 챕터 데이터에서 산출하지만,
+ * 데이터 오타 하나가 진행도 곡선을 부수지 않도록 서비스에서 한 번 더 클램프한다.
+ * (음수·비정수는 클램프가 아니라 거절 — 잘못 계산된 값은 조용히 넘기지 않는다)
+ */
+export const STORY_CHAPTER_MAX_DOJO_XP_MILLI = 5_000_000;
+/** 챕터 1회 · 히로인 1명 인연 XP 상한 (A8 기준 챕터당 담당 +100 = 100_000밀리) */
+export const STORY_CHAPTER_MAX_AFFINITY_MILLI = 500_000;
+/** 오늘의 수련 문제 3개 완료 → 출제 히로인 인연 +5/일 (A8) */
+export const STORY_DAILY_AFFINITY_MILLI = 5_000;
+const STORY_MAX_AFFINITY_TARGETS = 64;
+const STORY_GRADES = ['S', 'A', 'B'] as const;
+/**
+ * 스토리 보상이 진행도 프로필을 처음 만드는 극단 케이스의 시드.
+ * 스토리는 파트너를 고르지 않는다 — 담당 히로인 인연은 비파트너 행으로 들어가고,
+ * 이 시드는 `selected_character_id`가 비어 있을 수 없는 스키마를 채우기만 한다.
+ */
+const STORY_SEED_CHARACTER: PlayableCharacterId = 'sakura';
+
+export type StoryChapterGrade = typeof STORY_GRADES[number];
+
+/** 히로인별 인연 지급액. characterId는 `StoryHeroineId`와 같은 6인 유니온. */
+export interface StoryAffinityGrant {
+  characterId: PlayableCharacterId;
+  milli: number;
+}
+
+export interface StoryChapterCompleteInput {
+  profileId: string;
+  /** 'act1-ch01' */
+  chapterId: string;
+  runId: string;
+  /** true면 first 키(첫 완주 보상), false면 run 키(재도전 — 도장 XP replay만) */
+  firstClear: boolean;
+  grade: StoryChapterGrade;
+  /** 챕터 데이터에서 산출한 도장 XP(등급 가산 포함). 0..STORY_CHAPTER_MAX_DOJO_XP_MILLI로 클램프 */
+  dojoXpMilli: number;
+  /** 히로인별 인연. 중복 characterId는 합산 후 캐릭터당 상한으로 클램프 */
+  affinity: readonly StoryAffinityGrant[];
+  completedAt: number;
+}
+
+export interface StoryDailyDrillsInput {
+  profileId: string;
+  /** KST 날짜 'YYYY-MM-DD' — completedAt의 KST 날짜와 일치해야 한다 */
+  kstDate: string;
+  teacherId: PlayableCharacterId;
+  completedAt: number;
+}
+
+export interface StoryRewardResult {
+  duplicate: boolean;
+  snapshot: ProgressionSnapshot;
+  summary: ProgressionRewardSummary;
+}
+
+export type StoryChapterCompleteResult = StoryRewardResult;
+export type StoryDailyDrillsResult = StoryRewardResult;
+
+interface ValidStoryChapterCompleteInput {
+  profileId: string;
+  chapterId: string;
+  runId: string;
+  firstClear: boolean;
+  grade: StoryChapterGrade;
+  dojoXpMilli: number;
+  /** 최초 등장 순서로 중복 합산·클램프까지 끝난 목록 */
+  affinity: StoryAffinityGrant[];
   completedAt: number;
 }
 
@@ -504,6 +577,241 @@ export class ProgressionService {
         completedAt: safeInput.completedAt,
       });
     });
+  }
+
+  /**
+   * 수련 스토리 챕터 결산 보상. 보상액은 호출자(런 코디네이터)가 **챕터 데이터**에서
+   * 산출해 넘긴다(클라 미신뢰) — 서비스는 상한 클램프와 멱등만 책임진다.
+   *
+   * 멱등 키: 첫 완주는 `story-chapter:<len:chapterId>:first:<len:profileId>`,
+   * 재도전은 `story-chapter:<len:chapterId>:run:<len:runId>:<len:profileId>`.
+   * 재도전 키는 런마다 새 키라 도장 XP replay는 반복 적립되고, 인연은 호출자가
+   * 빈 목록을 보내 챕터당 1회로 묶는다(A8).
+   *
+   * 담당 히로인이 선택 파트너가 아니어도 인연을 준다 — `ensureAffinityInTransaction`이
+   * 비파트너 행을 만들고 `selected_character_id`는 절대 바뀌지 않는다.
+   */
+  recordStoryChapterComplete(
+    input: StoryChapterCompleteInput,
+  ): StoryChapterCompleteResult {
+    const safeInput = validateStoryChapterCompleteInput(input);
+    const eventId = buildStoryChapterEventId(
+      safeInput.profileId,
+      safeInput.chapterId,
+      safeInput.firstClear ? undefined : safeInput.runId,
+    );
+    return this.recordStoryReward({
+      eventId,
+      eventType: EVENT_TYPE_STORY_CHAPTER,
+      profileId: safeInput.profileId,
+      dojoXpMilli: safeInput.dojoXpMilli,
+      affinity: safeInput.affinity,
+      completedAt: safeInput.completedAt,
+    });
+  }
+
+  /** 게임 런타임(스토리 코디네이터) 진입점 — 선택 파트너 권위 검사가 없는 것 외엔 동일. */
+  recordRuntimeStoryChapterComplete(
+    input: StoryChapterCompleteInput,
+  ): StoryChapterCompleteResult {
+    return this.recordStoryChapterComplete(input);
+  }
+
+  /** 오늘의 수련 문제 3개 완료 — 출제 히로인 인연 +5/일, 도장 XP 없음. 하루 1회 멱등. */
+  recordStoryDailyDrills(
+    input: StoryDailyDrillsInput,
+  ): StoryDailyDrillsResult {
+    const safeInput = validateStoryDailyDrillsInput(input);
+    return this.recordStoryReward({
+      eventId: buildStoryDailyDrillsEventId(
+        safeInput.profileId,
+        safeInput.kstDate,
+      ),
+      eventType: EVENT_TYPE_STORY_DAILY_DRILLS,
+      profileId: safeInput.profileId,
+      dojoXpMilli: 0,
+      affinity: [{
+        characterId: safeInput.teacherId,
+        milli: STORY_DAILY_AFFINITY_MILLI,
+      }],
+      completedAt: safeInput.completedAt,
+    });
+  }
+
+  recordRuntimeStoryDailyDrills(
+    input: StoryDailyDrillsInput,
+  ): StoryDailyDrillsResult {
+    return this.recordStoryDailyDrills(input);
+  }
+
+  private recordStoryReward(input: {
+    eventId: string;
+    eventType: string;
+    profileId: string;
+    dojoXpMilli: number;
+    affinity: readonly StoryAffinityGrant[];
+    completedAt: number;
+  }): StoryRewardResult {
+    return this.database.transaction(() => {
+      const duplicate = this.getDuplicate(
+        input.eventId,
+        input.profileId,
+        input.eventType,
+        input.completedAt,
+      );
+      if (duplicate) {
+        return {
+          duplicate: true,
+          snapshot: this.repository.getSnapshotInTransaction(input.profileId),
+          summary: duplicate,
+        };
+      }
+
+      let snapshot = this.loadOrSeedStorySnapshot(
+        input.profileId,
+        input.completedAt,
+      );
+      snapshot = this.reconcileWeeklyRestPass(snapshot, input.completedAt);
+      const summary = this.applyStoryReward({
+        eventId: input.eventId,
+        eventType: input.eventType,
+        profile: snapshot.profile,
+        balance: getBalance(snapshot.profile.balanceVersion),
+        dojoRewardMilli: input.dojoXpMilli,
+        affinity: input.affinity,
+        completedAt: input.completedAt,
+      });
+      return {
+        duplicate: false,
+        snapshot: this.repository.getSnapshotInTransaction(input.profileId),
+        summary,
+      };
+    });
+  }
+
+  /**
+   * 스토리는 파트너를 고르는 경로가 아니므로 기존 진행도가 있으면 그대로 쓰고,
+   * 진행도 행이 아직 없을 때만 시드로 만든다(`getRuntimeSnapshot`과 같은 폴백 규약).
+   */
+  private loadOrSeedStorySnapshot(
+    profileId: string,
+    at: number,
+  ): ProgressionSnapshot {
+    try {
+      return this.repository.getSnapshotInTransaction(profileId);
+    } catch (error) {
+      if (
+        !(error instanceof ProgressionPersistenceError)
+        || error.code !== 'PROGRESSION_PROFILE_NOT_FOUND'
+      ) {
+        throw error;
+      }
+      return this.repository.getOrCreateInTransaction(
+        profileId,
+        STORY_SEED_CHARACTER,
+        at,
+      );
+    }
+  }
+
+  /**
+   * 스토리 보상 적용 — 도장 XP 1건 + 히로인 N명 인연.
+   *
+   * `applyReward`와 달리 **카탈로그 영구 아이템을 지급하지 않는다**: 영구 지급 트리거가
+   * source event를 `canonical_progression_reward_source_events` 뷰
+   * (`event_type IN ('completed-hand','sng-finish')`, 단일 characterId 요약)로 한정해
+   * 스토리 이벤트를 소스로 쓰면 INSERT가 ABORT된다. 스토리발 레벨업의 아이템 보상은
+   * 기획상 Phase 2('카탈로그 story-chapter 아이템 보상 소스')이며, 그때 뷰·트리거
+   * 마이그레이션이 함께 필요하다. 카운터도 건드리지 않는다(핸드/SnG 수가 아니다).
+   */
+  private applyStoryReward(input: {
+    eventId: string;
+    eventType: string;
+    profile: ProgressionProfile;
+    balance: ProgressionBalance;
+    dojoRewardMilli: number;
+    affinity: readonly StoryAffinityGrant[];
+    completedAt: number;
+  }): ProgressionRewardSummary {
+    const nextDojo = applyDojoXp(
+      { level: input.profile.dojoLevel, xpMilli: input.profile.dojoXpMilli },
+      input.dojoRewardMilli,
+      input.balance,
+    );
+    let primary: {
+      characterId: PlayableCharacterId;
+      milli: number;
+      levelsGained: number[];
+    } | null = null;
+
+    for (const grant of input.affinity) {
+      this.repository.ensureAffinityInTransaction(
+        input.profile.profileId,
+        grant.characterId,
+      );
+      const current = this.repository.getAffinityInTransaction(
+        input.profile.profileId,
+        grant.characterId,
+      );
+      if (!current) {
+        throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+      }
+      const next = applyAffinityXp(
+        { level: current.level, xpMilli: current.xpMilli },
+        grant.milli,
+        input.balance,
+      );
+      this.repository.compareAndUpdateAffinityInTransaction({
+        profileId: input.profile.profileId,
+        characterId: grant.characterId,
+        expected: { level: current.level, xpMilli: current.xpMilli },
+        next,
+      });
+      primary ??= {
+        characterId: grant.characterId,
+        milli: grant.milli,
+        levelsGained: levelsBetween(current.level, next.level),
+      };
+    }
+
+    // 요약은 단일 히로인 계약(`ProgressionRewardSummary`)이라 첫 대상만 싣는다.
+    // 여러 히로인 지급의 전모는 함께 반환하는 스냅샷(affinities)이 갖는다.
+    const summary: ProgressionRewardSummary = {
+      eventId: input.eventId,
+      dojoXpMilli: input.dojoRewardMilli,
+      dojoLevelsGained: levelsBetween(input.profile.dojoLevel, nextDojo.level),
+      characterId: primary?.characterId ?? input.profile.selectedCharacterId,
+      affinityMilli: primary?.milli ?? 0,
+      affinityLevelsGained: primary?.levelsGained ?? [],
+      missionCompletions: [],
+      grantedItemIds: [],
+    };
+
+    this.repository.compareAndUpdateProgressionInTransaction({
+      profileId: input.profile.profileId,
+      expected: {
+        balanceVersion: input.profile.balanceVersion,
+        dojoLevel: input.profile.dojoLevel,
+        dojoXpMilli: input.profile.dojoXpMilli,
+        selectedCharacterId: input.profile.selectedCharacterId,
+      },
+      next: {
+        balanceVersion: input.profile.balanceVersion,
+        dojoLevel: nextDojo.level,
+        dojoXpMilli: nextDojo.xpMilli,
+        selectedCharacterId: input.profile.selectedCharacterId,
+      },
+      updatedAt: Math.max(input.profile.updatedAt, input.completedAt),
+    });
+    const inserted = this.repository.insertProgressionEvent({
+      idempotencyKey: input.eventId,
+      profileId: input.profile.profileId,
+      eventType: input.eventType,
+      balanceVersion: input.profile.balanceVersion,
+      summary: { ...summary },
+      createdAt: input.completedAt,
+    });
+    return parseStoredSummary(inserted.event, input.eventId);
   }
 
   rerollMission(
@@ -960,8 +1268,149 @@ export function buildSngFinishEventId(
   return eventId;
 }
 
+/**
+ * 챕터 보상 멱등 키. `runId`를 생략하면 첫 완주(first) 키, 넘기면 재도전(run) 키.
+ * 길이 접두 규약은 기존 이벤트 키와 동일 — 구분자 주입으로 키가 겹치지 않게 한다.
+ */
+export function buildStoryChapterEventId(
+  profileId: string,
+  chapterId: string,
+  runId?: string,
+): string {
+  assertBoundedId(profileId);
+  assertBoundedId(chapterId);
+  if (runId !== undefined) assertBoundedId(runId);
+  const eventId = runId === undefined
+    ? `story-chapter:${lengthPrefixed(chapterId)}:first:` +
+      lengthPrefixed(profileId)
+    : `story-chapter:${lengthPrefixed(chapterId)}:run:` +
+      `${lengthPrefixed(runId)}:${lengthPrefixed(profileId)}`;
+  assertEventIdLength(eventId);
+  return eventId;
+}
+
+export function buildStoryDailyDrillsEventId(
+  profileId: string,
+  kstDate: string,
+): string {
+  assertBoundedId(profileId);
+  assertBoundedId(kstDate);
+  const eventId = `story-daily-drills:${lengthPrefixed(kstDate)}:` +
+    lengthPrefixed(profileId);
+  assertEventIdLength(eventId);
+  return eventId;
+}
+
 function lengthPrefixed(value: string): string {
   return `${value.length}:${value}`;
+}
+
+function validateStoryChapterCompleteInput(
+  input: StoryChapterCompleteInput,
+): ValidStoryChapterCompleteInput {
+  let copy: StoryChapterCompleteInput;
+  try {
+    copy = {
+      profileId: input.profileId,
+      chapterId: input.chapterId,
+      runId: input.runId,
+      firstClear: input.firstClear,
+      grade: input.grade,
+      dojoXpMilli: input.dojoXpMilli,
+      affinity: input.affinity,
+      completedAt: input.completedAt,
+    };
+  } catch {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  assertBoundedId(copy.profileId);
+  assertBoundedId(copy.chapterId);
+  assertBoundedId(copy.runId);
+  if (typeof copy.firstClear !== 'boolean') {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  if (!(STORY_GRADES as readonly string[]).includes(copy.grade)) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  assertTimestamp(copy.completedAt);
+  return {
+    ...copy,
+    dojoXpMilli: clampStoryReward(
+      copy.dojoXpMilli,
+      STORY_CHAPTER_MAX_DOJO_XP_MILLI,
+    ),
+    affinity: normalizeStoryAffinity(
+      copy.affinity,
+      STORY_CHAPTER_MAX_AFFINITY_MILLI,
+    ),
+  };
+}
+
+function validateStoryDailyDrillsInput(
+  input: StoryDailyDrillsInput,
+): StoryDailyDrillsInput {
+  let copy: StoryDailyDrillsInput;
+  try {
+    copy = {
+      profileId: input.profileId,
+      kstDate: input.kstDate,
+      teacherId: input.teacherId,
+      completedAt: input.completedAt,
+    };
+  } catch {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  assertBoundedId(copy.profileId);
+  assertBoundedId(copy.kstDate);
+  const teacherId = assertCharacter(copy.teacherId);
+  assertTimestamp(copy.completedAt);
+  // 날짜는 서버 시계에서 파생된 값이어야 한다 — 임의 날짜를 받으면 하루 1회 상한이 무의미해진다.
+  let derivedDate: string;
+  try {
+    derivedDate = getKstDateKey(copy.completedAt);
+  } catch {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  if (copy.kstDate !== derivedDate) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  return { ...copy, teacherId };
+}
+
+function clampStoryReward(value: number, maxMilli: number): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  return Math.min(value, maxMilli);
+}
+
+/** 중복 characterId 합산 → 캐릭터당 상한 클램프. 순서는 최초 등장 순(결정론). */
+function normalizeStoryAffinity(
+  value: readonly StoryAffinityGrant[],
+  maxPerCharacterMilli: number,
+): StoryAffinityGrant[] {
+  if (!Array.isArray(value) || value.length > STORY_MAX_AFFINITY_TARGETS) {
+    throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+  }
+  const order: PlayableCharacterId[] = [];
+  const totals = new Map<PlayableCharacterId, number>();
+  for (const grant of value) {
+    if (typeof grant !== 'object' || grant === null) {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    const characterId = assertCharacter(grant.characterId);
+    const milli = clampStoryReward(grant.milli, maxPerCharacterMilli);
+    const previous = totals.get(characterId);
+    if (previous === undefined) order.push(characterId);
+    totals.set(
+      characterId,
+      Math.min((previous ?? 0) + milli, maxPerCharacterMilli),
+    );
+  }
+  return order.map(characterId => ({
+    characterId,
+    milli: totals.get(characterId) ?? 0,
+  }));
 }
 
 function validateCompletedHandInput(

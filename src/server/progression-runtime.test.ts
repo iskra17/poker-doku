@@ -81,6 +81,16 @@ function makeService(characters: Record<string, 'sakura' | 'hana'> = {}): {
       getRuntimeSnapshot,
       recordRuntimeCompletedHand: recordCompletedHand,
       recordRuntimeSngFinish: recordSngFinish,
+      recordRuntimeStoryChapterComplete: vi.fn(input => ({
+        duplicate: false,
+        snapshot: snapshot(input.profileId, 'sakura'),
+        summary: summary(`story-chapter:${input.chapterId}`, 'sakura'),
+      })),
+      recordRuntimeStoryDailyDrills: vi.fn(input => ({
+        duplicate: false,
+        snapshot: snapshot(input.profileId, 'sakura'),
+        summary: summary(`story-daily-drills:${input.kstDate}`, 'sakura'),
+      })),
     },
     getRuntimeSnapshot,
     recordCompletedHand,
