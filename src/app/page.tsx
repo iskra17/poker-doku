@@ -21,6 +21,8 @@ import ProfileOnboarding from '@/components/onboarding/ProfileOnboarding';
 import HelpModal from '@/components/help/HelpModal';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
 import ArenaLobby from '@/components/arena/ArenaLobby';
+import StoryHub from '@/components/story/StoryHub';
+import StoryStage from '@/components/story/StoryStage';
 import { useArenaStore } from '@/lib/store/arena-store';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
@@ -42,7 +44,7 @@ export default function Home() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [lobbyView, setLobbyView] = useState<'games' | 'arena' | 'missions'>('games');
+  const [lobbyView, setLobbyView] = useState<'games' | 'story' | 'arena' | 'missions'>('games');
   const [sessionRecap, setSessionRecap] = useState<SessionRecapData | null>(null);
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('room'),
@@ -153,9 +155,10 @@ export default function Home() {
         onOpenHelp={() => setHelpOpen(true)}
       />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
-      <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-3 gap-2 px-3 md:px-4">
+      <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-2 gap-2 px-3 md:grid-cols-4 md:px-4">
         {([
           ['games', '일반 게임', '친구·봇과 자유롭게'],
+          ['story', '수련 스토리', '그녀와 배우는 기본기'],
           ['arena', '포커 아레나', '시즌 공식 경쟁'],
           ['missions', '수련 과제', '오늘의 성장 목표'],
         ] as const).map(([value, title, description]) => (
@@ -176,6 +179,9 @@ export default function Home() {
         ))}
       </nav>
       <main className="min-h-0 flex-1">
+        {lobbyView === 'story' && (
+          <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><StoryHub /></div>
+        )}
         {lobbyView === 'missions' && (
           <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><MissionPanel /></div>
         )}
@@ -184,7 +190,7 @@ export default function Home() {
         )}
         {lobbyView === 'games' && (
           <div className="flex h-full min-h-0 flex-col pt-1">
-            <div className="flex-none"><PartnerCard /></div>
+            <div className="flex-none"><PartnerCard onOpenStory={() => setLobbyView('story')} /></div>
             {(joinError || pendingRoomId || inviteNotFound || inviteRoom?.locked) && (
               <div className="flex-none">
                 {joinError && (
@@ -231,6 +237,7 @@ export default function Home() {
       <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      <StoryStage />
       {activeJoinTarget && (
         <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
       )}

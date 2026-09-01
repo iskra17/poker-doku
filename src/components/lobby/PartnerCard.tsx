@@ -14,6 +14,9 @@ import {
 import { useGameStore } from '@/lib/store/game-store';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
+import { useStoryStore } from '@/lib/store/story-store';
+import { STORY_CHAPTERS } from '@/lib/story/chapters';
+import { chapterNumber, partnerCtaDecision } from '@/lib/story/story-hub-rules';
 
 const LAST_VISIT_PREFIX = 'poker-doku-last-visit:';
 const REUNION_GAP_MS = 3 * 24 * 60 * 60 * 1000;
@@ -35,9 +38,15 @@ function readAndTouchLastVisit(profileId: string, now: number): number | null {
  * 시간대/재회 인사, 말 걸기(탭 순환), [수련 시작] 원탭 CTA(혼자 연습 방 즉시 입장).
  * 대사는 전부 수기 스크립트 (partner-dialogue) — AI 미사용.
  */
-export default function PartnerCard() {
+interface PartnerCardProps {
+  /** 스토리 CTA — 로비 '수련 스토리' 탭으로 전환 (허브가 [시작]을 그린다) */
+  onOpenStory?: () => void;
+}
+
+export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const profile = useProfileStore(state => state.profile);
   const progression = useProgressionStore(state => state.snapshot);
+  const storyProgress = useStoryStore(state => state.progress);
   const rooms = useGameStore(state => state.rooms);
   const pendingRoomId = useGameStore(state => state.pendingRoomId);
   const [talkLine, setTalkLine] = useState<string | null>(null);
@@ -64,10 +73,24 @@ export default function PartnerCard() {
   const character = getCharacterById(partnerId);
   if (!character) return null;
 
-  // CTA: 보존 좌석이 있으면 복귀 우선, 없으면 혼자 연습(bots) 방 원탭 입장
+  // CTA 우선순위: 보존 좌석 복귀 > 스토리 이어하기/계속하기 > 혼자 연습(bots) 방 원탭 입장
+  // (스토리 진행 뷰가 아직 없거나 졸업했으면 예전처럼 연습방)
   const preservedRoom = rooms.find(room => room.mySeat && (room.mode === 'sng' || room.mySeat.chips > 0));
   const practiceRoom = rooms.find(room => room.tableType === 'bots' && !room.locked);
+  const cta = partnerCtaDecision({
+    hasPreservedRoom: !!preservedRoom,
+    progress: onOpenStory ? storyProgress : null,
+    chapterOrder: chapterId => chapterNumber(STORY_CHAPTERS, chapterId),
+  });
   const firstTime = (progression?.profile.completedHands ?? 0) === 0;
+  const storyCta = cta.kind === 'story-start' || cta.kind === 'story-continue';
+
+  const joinPractice = () => {
+    if (pendingRoomId || !practiceRoom) return;
+    // 연습 경제(지갑 무관) — 기본 100BB 바이인으로 모달 없이 즉시 착석
+    const buyIn = (practiceRoom.bigBlind ?? 20) * 100;
+    useGameStore.getState().joinRoom(practiceRoom.id, buyIn, 0);
+  };
 
   const handleCta = () => {
     if (pendingRoomId) return;
@@ -75,11 +98,11 @@ export default function PartnerCard() {
       useGameStore.getState().joinRoom(preservedRoom.id, 0, 0);
       return;
     }
-    if (practiceRoom) {
-      // 연습 경제(지갑 무관) — 기본 100BB 바이인으로 모달 없이 즉시 착석
-      const buyIn = (practiceRoom.bigBlind ?? 20) * 100;
-      useGameStore.getState().joinRoom(practiceRoom.id, buyIn, 0);
+    if (storyCta) {
+      onOpenStory?.();
+      return;
     }
+    joinPractice();
   };
 
   const speech = talkLine ?? greeting;
@@ -121,20 +144,33 @@ export default function PartnerCard() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleCta}
-          disabled={!!pendingRoomId || (!preservedRoom && !practiceRoom)}
-          className="shrink-0 rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50"
-        >
-          {pendingRoomId
-            ? '입장 중…'
-            : preservedRoom
-              ? '게임 복귀'
-              : firstTime
-                ? '첫 수련 시작'
-                : '수련 시작'}
-        </button>
+        <div className="flex shrink-0 flex-col items-stretch gap-1">
+          <button
+            type="button"
+            onClick={handleCta}
+            disabled={!!pendingRoomId || (!preservedRoom && !storyCta && !practiceRoom)}
+            className="rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50"
+          >
+            {pendingRoomId
+              ? '입장 중…'
+              : storyCta || preservedRoom
+                ? cta.label
+                : firstTime
+                  ? '첫 수련 시작'
+                  : '수련 시작'}
+          </button>
+          {/* 스토리가 주 CTA일 때 자유 연습은 보조 버튼으로 남긴다 (실전 하드 게이트 금지 원칙) */}
+          {storyCta && practiceRoom && !preservedRoom && (
+            <button
+              type="button"
+              onClick={joinPractice}
+              disabled={!!pendingRoomId}
+              className="rounded-lg border border-mystic/30 px-2 py-1 text-[10px] font-bold text-ink-dim disabled:opacity-50"
+            >
+              자유 연습
+            </button>
+          )}
+        </div>
         </div>
 
         {/* 대사 — 카드 전체 폭 사용 (좁은 화면에서 1줄 말줄임되던 문제: 행 분리로 폭 2배 확보,
