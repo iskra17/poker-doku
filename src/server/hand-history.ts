@@ -2,6 +2,7 @@ import type {
   CompletedHandRecord,
   HandHistoryDetail,
   HandHistorySummary,
+  StoryHandTag,
 } from '@/lib/poker/hand-history';
 import type { Card, GameMode } from '@/lib/poker/types';
 import type { PokerDatabase } from './persistence/database';
@@ -230,6 +231,7 @@ interface SummaryRow {
   hero_cards: unknown;
   board: unknown;
   table_hand_id: unknown;
+  story_tag: unknown;
 }
 
 export class HandHistoryRepository {
@@ -253,12 +255,15 @@ export class HandHistoryRepository {
     playedAt: number;
     /** 전역 핸드 ID (table_hand 정본 링크) — 정본 저장 실패 시 null */
     tableHandId?: number | null;
+    /** 스토리 프리셋 핸드 태그 (v30) — 일반 핸드는 생략(null) */
+    storyTag?: StoryHandTag | null;
   }): void {
     this.#database.db.prepare(`
       INSERT INTO hand_history (
         profile_id, room_id, room_name, game_mode, hand_number,
-        big_blind, profit, hero_cards, board, detail, played_at, table_hand_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        big_blind, profit, hero_cards, board, detail, played_at,
+        table_hand_id, story_tag
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.profileId,
       input.roomId,
@@ -272,6 +277,7 @@ export class HandHistoryRepository {
       JSON.stringify(input.detail),
       input.playedAt,
       input.tableHandId ?? null,
+      input.storyTag ?? null,
     );
   }
 
@@ -294,13 +300,13 @@ export class HandHistoryRepository {
     const rows = (beforeId === undefined
       ? this.#database.db.prepare(`
           SELECT id, played_at, room_name, game_mode, big_blind,
-                 hand_number, profit, hero_cards, board, table_hand_id
+                 hand_number, profit, hero_cards, board, table_hand_id, story_tag
           FROM hand_history
           WHERE profile_id = ? ORDER BY id DESC LIMIT ?
         `).all(profileId, limit)
       : this.#database.db.prepare(`
           SELECT id, played_at, room_name, game_mode, big_blind,
-                 hand_number, profit, hero_cards, board, table_hand_id
+                 hand_number, profit, hero_cards, board, table_hand_id, story_tag
           FROM hand_history
           WHERE profile_id = ? AND id < ? ORDER BY id DESC LIMIT ?
         `).all(profileId, beforeId, limit)) as unknown as SummaryRow[];
@@ -315,18 +321,24 @@ export class HandHistoryRepository {
       heroCards: JSON.parse(String(row.hero_cards)) as Card[],
       board: JSON.parse(String(row.board)) as Card[],
       tableHandId: row.table_hand_id === null ? null : Number(row.table_hand_id),
+      storyTag: row.story_tag === null ? null : String(row.story_tag) as StoryHandTag,
     }));
   }
 
   /** 본인 소유 핸드만 조회 — 소유가 다르면 null (존재 여부를 구분해 노출하지 않는다) */
   getDetail(id: number, profileId: string): (HandHistoryDetail & { id: number }) | null {
     const row = this.#database.db.prepare(`
-      SELECT id, detail FROM hand_history WHERE id = ? AND profile_id = ?
-    `).get(id, profileId) as unknown as { id: unknown; detail: unknown } | undefined;
+      SELECT id, detail, story_tag FROM hand_history
+      WHERE id = ? AND profile_id = ?
+    `).get(id, profileId) as unknown as {
+      id: unknown; detail: unknown; story_tag: unknown;
+    } | undefined;
     if (!row) return null;
     return {
       ...(JSON.parse(String(row.detail)) as HandHistoryDetail),
       id: Number(row.id),
+      // 태그는 컬럼이 정본 — 구버전 detail JSON에는 없다
+      storyTag: row.story_tag === null ? null : String(row.story_tag) as StoryHandTag,
     };
   }
 
@@ -375,6 +387,11 @@ export class HandHistoryService {
     record: CompletedHandRecord;
     /** MTT 테이블이면 소속 토너먼트 — 정본 기록의 조인 키로 남는다 */
     tournamentId?: string | null;
+    /**
+     * 스토리 프리셋 핸드 태그 — 'practice'(연습) / 'sparring'(대결).
+     * gameMode는 'cash'를 유지한다(CHECK 위반 회피). 목록 라벨·XP 미집계 판정의 소스.
+     */
+    storyTag?: StoryHandTag | null;
   }): void {
     const playedAt = this.#now();
     // 정본을 먼저 기록해 전역 핸드 ID를 확보 — 개인 기록이 이 ID를 링크한다.
@@ -395,6 +412,7 @@ export class HandHistoryService {
         tableHandId = null;
       }
     }
+    const storyTag = input.storyTag ?? null;
     for (const hero of input.record.players) {
       if (hero.type !== 'human') continue;
       const detail: HandHistoryDetail = {
@@ -404,6 +422,7 @@ export class HandHistoryService {
         gameMode: input.gameMode,
         playedAt,
         tableHandId,
+        storyTag,
         players: input.record.players.map(p => ({
           ...p,
           holeCards: p.id === hero.id || p.revealed
@@ -424,6 +443,7 @@ export class HandHistoryService {
         detail,
         playedAt,
         tableHandId,
+        storyTag,
       });
       this.#repository.prune(hero.id, this.#keep);
     }

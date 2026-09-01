@@ -6423,6 +6423,95 @@ export const migrations: readonly Migration[] = [
       WHERE enabled = 1;
     `,
   },
+  {
+    version: 30,
+    name: 'story_mode',
+    sql: `
+      -- 수련 스토리 모드 영속 (기획 docs/spec-story-mode-2026-09.md B2).
+      -- 해금 상태는 저장하지 않는다 — completions>0 집합 + requires 그래프에서
+      -- src/lib/story/unlocks.ts 순수 함수로 파생(서버 검증과 클라 허브가 같은 함수).
+      CREATE TABLE story_progress (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        chapter_id TEXT NOT NULL CHECK (length(chapter_id) BETWEEN 1 AND 64),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        completions INTEGER NOT NULL DEFAULT 0 CHECK (completions >= 0),
+        best_grade TEXT CHECK (
+          best_grade IS NULL OR best_grade IN ('S','A','B')
+        ),
+        first_completed_at INTEGER CHECK (
+          first_completed_at IS NULL OR first_completed_at >= 0
+        ),
+        last_played_at INTEGER NOT NULL CHECK (last_played_at >= 0),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, chapter_id)
+      ) STRICT;
+
+      -- 선택지 플래그 — 키 'choice:<chapterId>:<choiceId>' → optionId
+      CREATE TABLE story_flags (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        flag_key TEXT NOT NULL CHECK (length(flag_key) BETWEEN 1 AND 128),
+        flag_value TEXT NOT NULL CHECK (length(flag_value) <= 128),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, flag_key)
+      ) STRICT;
+
+      -- 드릴 시도 원장. category는 고정 IN 목록을 두지 않는다 — 유형이 늘 때마다
+      -- 마이그레이션이 필요해지기 때문(progression_events.event_type 선례).
+      -- 값의 단일 소스는 src/lib/story/drills/types.ts DRILL_CATEGORIES.
+      CREATE TABLE drill_attempts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        template_id TEXT NOT NULL CHECK (length(template_id) BETWEEN 1 AND 64),
+        seed INTEGER NOT NULL CHECK (seed BETWEEN 0 AND 4294967295),
+        category TEXT NOT NULL CHECK (length(category) BETWEEN 1 AND 32),
+        context TEXT NOT NULL CHECK (
+          context IN ('chapter','review','daily','hand-review')
+        ),
+        chapter_id TEXT CHECK (
+          chapter_id IS NULL OR length(chapter_id) BETWEEN 1 AND 64
+        ),
+        run_id TEXT CHECK (
+          run_id IS NULL OR length(run_id) BETWEEN 1 AND 64
+        ),
+        correct INTEGER NOT NULL CHECK (correct IN (0, 1)),
+        hints_used INTEGER NOT NULL DEFAULT 0 CHECK (hints_used BETWEEN 0 AND 9),
+        elapsed_ms INTEGER NOT NULL CHECK (elapsed_ms >= 0),
+        answered_at INTEGER NOT NULL CHECK (
+          answered_at BETWEEN 0 AND 253402300799999
+        )
+      ) STRICT;
+
+      -- 오늘의 수련(context='daily' + KST 일 경계) 파생 조회용
+      CREATE INDEX idx_drill_attempts_profile_answered_at
+        ON drill_attempts(profile_id, answered_at DESC);
+      -- 정답률·템플릿별 약점 집계용
+      CREATE INDEX idx_drill_attempts_profile_correct_template
+        ON drill_attempts(profile_id, correct, template_id);
+
+      -- 복습 노트(Leitner 3박스) — 시도 원장에서 파생할 수 없는 상태라 별도 테이블
+      CREATE TABLE drill_review_notes (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        template_id TEXT NOT NULL CHECK (length(template_id) BETWEEN 1 AND 64),
+        seed INTEGER NOT NULL CHECK (seed BETWEEN 0 AND 4294967295),
+        box INTEGER NOT NULL CHECK (box BETWEEN 1 AND 3),
+        due_at INTEGER NOT NULL CHECK (due_at >= 0),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, template_id, seed)
+      ) STRICT;
+
+      CREATE INDEX idx_drill_review_notes_due
+        ON drill_review_notes(profile_id, due_at);
+
+      -- 스토리 프리셋 핸드 태그. game_mode는 'cash'를 유지한다 —
+      -- game_mode CHECK는 ('cash','sng','mtt')라 'story-practice'는 INSERT가 거부되고
+      -- (기록 저장 실패는 삼켜지므로) 히스토리가 조용히 사라진다. 목록 라벨 '연습'/'대결'은
+      -- 이 컬럼으로 판정한다.
+      ALTER TABLE hand_history ADD COLUMN story_tag TEXT CHECK (
+        story_tag IS NULL OR story_tag IN ('practice','sparring')
+      );
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

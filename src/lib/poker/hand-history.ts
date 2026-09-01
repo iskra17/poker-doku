@@ -71,6 +71,19 @@ export interface CompletedHandRecord {
   showdown: boolean;
 }
 
+/**
+ * 수련 스토리 모드 프리셋 핸드 태그 (v30 `hand_history.story_tag`).
+ * `game_mode`는 'cash'를 유지하고 이 태그로만 구분한다 — game_mode CHECK가
+ * ('cash','sng','mtt')라 'story-practice' 같은 값은 INSERT가 거부되고 기록이 조용히 사라진다.
+ */
+export type StoryHandTag = 'practice' | 'sparring';
+
+export const STORY_HAND_TAGS: readonly StoryHandTag[] = ['practice', 'sparring'];
+
+export function isStoryHandTag(value: unknown): value is StoryHandTag {
+  return value === 'practice' || value === 'sparring';
+}
+
 /** 저장·조회용 히어로 관점 상세 (상대 홀카드는 공개분만) */
 export interface HandHistoryDetail extends CompletedHandRecord {
   heroId: string;
@@ -79,6 +92,8 @@ export interface HandHistoryDetail extends CompletedHandRecord {
   playedAt: number;
   /** 사이트 전역 핸드 ID (table_hand 정본 기록 링크 — 정본 저장 실패/구버전 기록은 없음) */
   tableHandId?: number | null;
+  /** 스토리 프리셋 핸드면 '연습'/'대결' 라벨 판정 소스 (일반 핸드는 null) */
+  storyTag?: StoryHandTag | null;
 }
 
 /** 목록 조회용 요약 한 줄 */
@@ -94,6 +109,8 @@ export interface HandHistorySummary {
   board: Card[];
   /** 사이트 전역 핸드 ID (정본 링크 — 구버전 기록은 null) */
   tableHandId?: number | null;
+  /** 스토리 프리셋 핸드면 '연습'/'대결' 라벨 판정 소스 (일반 핸드는 null) */
+  storyTag?: StoryHandTag | null;
 }
 
 /** 딜러부터 시계방향 딜인 순서에 대한 포지션 라벨 (2~9인) */
