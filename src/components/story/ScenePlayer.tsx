@@ -1,12 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { animate, AnimatePresence, motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
+import { getSceneCg } from '@/lib/assets/story-cgs';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
+import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
+import { playEffect } from '@/lib/sound/effects';
 import { setMusicScene } from '@/lib/sound/music-manager';
 import {
   advanceScene,
@@ -57,6 +60,37 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
   const { display, done, skip } = useTypewriter(line?.text ?? '', 22);
   const speaker = line ? resolveSpeaker(line.speaker, partnerId) : null;
   const speakerOutfit = useOutfitId(speaker?.artId);
+  const reduced = usePrefersReducedMotion();
+  const stageRef = useRef<HTMLDivElement>(null);
+  const flashRef = useRef<HTMLDivElement>(null);
+  // 라인 CG — 이 라인에서만 풀스크린(bg처럼 누적하지 않음). 미배치 id는 null → 스프라이트 그대로.
+  const sceneCg = line?.cg ? getSceneCg(line.cg) : null;
+
+  // 라인 연출 — 라인 객체(정적 데이터)가 바뀔 때 1회. 흔들림/플래시/줌은 framer `animate`로 DOM에 직접(setState 없음),
+  // reduced-motion이면 효과음만. 로그/자동 토글은 라인이 안 바뀌므로 재발화하지 않는다.
+  useEffect(() => {
+    const effect = line?.effect;
+    if (!effect) return;
+    if (effect.startsWith('sfx:')) {
+      playEffect(effect.slice('sfx:'.length) as Parameters<typeof playEffect>[0]);
+      return;
+    }
+    if (reduced) return;
+    const stage = stageRef.current;
+    if (!stage) return;
+    if (effect === 'shake') {
+      const controls = animate(stage, { x: [0, -6, 6, -4, 4, 0] }, { duration: 0.4, ease: 'easeInOut' });
+      return () => controls.stop();
+    }
+    if (effect === 'zoom') {
+      const controls = animate(stage, { scale: [1, 1.05, 1] }, { duration: 1.2, ease: 'easeInOut' });
+      return () => controls.stop();
+    }
+    if (effect === 'flash' && flashRef.current) {
+      const controls = animate(flashRef.current, { opacity: [0, 0.85, 0] }, { duration: 0.35, ease: 'easeOut' });
+      return () => controls.stop();
+    }
+  }, [line, reduced]);
 
   // 씬이 바뀌면 커서 리셋 (렌더 중 보정 — effect setState 금지 규칙)
   const [trackedScene, setTrackedScene] = useState(scene.id);
@@ -103,10 +137,10 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
   const log = sceneLog(scene, cursor);
 
   return (
-    <div className={`relative isolate flex w-full flex-col overflow-hidden rounded-2xl border border-mystic/25 bg-gradient-to-b ${background.gradientClass} ${compact ? 'h-[52dvh]' : 'h-[68dvh]'} max-h-[640px]`} aria-label="장면">
+    <div ref={stageRef} className={`relative isolate flex w-full flex-col overflow-hidden rounded-2xl border border-mystic/25 bg-gradient-to-b ${background.gradientClass} ${compact ? 'h-[52dvh]' : 'h-[68dvh]'} max-h-[640px]`} aria-label="장면">
       {/* 배경 이미지 — 라인 전환에 크로스페이드, 대사창 가독성용 하단 그라디언트. 음수 z로 컨트롤·스프라이트 아래 */}
       <AnimatePresence initial={false}>
-        {background.src && (
+        {background.src && !sceneCg && (
           <motion.img
             key={background.src}
             src={background.src}
@@ -121,7 +155,30 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
           />
         )}
       </AnimatePresence>
-      {background.src && <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-t from-abyss/80 via-abyss/25 to-transparent" aria-hidden />}
+      {/* 씬 CG — 이 라인에서만, 느린 숨쉬기 줌(reduced-motion 정지). 스프라이트 컬럼은 CG 동안 비운다 */}
+      <AnimatePresence initial={false}>
+        {sceneCg && (
+          <motion.img
+            key={sceneCg.src}
+            src={sceneCg.src}
+            alt={sceneCg.title}
+            draggable={false}
+            initial={{ opacity: 0, scale: reduced ? 1 : 1.02 }}
+            animate={{ opacity: 1, scale: reduced ? 1 : [1.02, 1.06] }}
+            exit={{ opacity: 0 }}
+            transition={{ opacity: { duration: 0.5 }, scale: { duration: 8, ease: 'linear' } }}
+            className="pointer-events-none absolute inset-0 -z-10 h-full w-full select-none object-cover"
+          />
+        )}
+      </AnimatePresence>
+      {(background.src || sceneCg) && <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-t from-abyss/80 via-abyss/25 to-transparent" aria-hidden />}
+      {/* 플래시 오버레이 — effect 'flash'가 opacity를 직접 애니메이션 */}
+      <div ref={flashRef} className="pointer-events-none absolute inset-0 z-20 bg-white opacity-0" aria-hidden />
+      {sceneCg && (
+        <span className="pointer-events-none absolute left-2 top-2 rounded bg-abyss/60 px-1.5 py-0.5 text-[9px] font-bold tracking-widest text-gilded" aria-hidden>
+          CG · {sceneCg.title}
+        </span>
+      )}
       {/* 상단 컨트롤 */}
       <div className="flex items-center justify-end gap-1 p-2 text-[10px]">
         <button type="button" onClick={() => setLogOpen(open => !open)} aria-pressed={logOpen} className="rounded-lg border border-mystic/30 bg-abyss/50 px-2 py-1 text-ink-dim">로그</button>
@@ -134,7 +191,7 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
       {/* 스프라이트 */}
       <div className="relative flex min-h-0 flex-1 items-end justify-center">
         <AnimatePresence mode="popLayout">
-          {speaker?.artId && (
+          {speaker?.artId && !sceneCg && (
             <motion.div
               key={`${speaker.artId}-${line?.expression ?? 'neutral'}`}
               initial={{ opacity: 0, y: 12 }}

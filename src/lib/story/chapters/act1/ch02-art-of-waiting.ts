@@ -38,12 +38,14 @@ export const CH02: Chapter = {
             expression: 'happy',
             bg: 'dojo-table',
             music: 'story',
+            cg: 'act1-ch02-prologue',
           },
           {
             kind: 'say',
             speaker: 'sakura',
             text: '아… 네, 네. 저, 저는 사쿠라예요. 오, 오늘 수업을 제가… 마, 맡게 됐어요.',
             expression: 'surprised',
+            effect: 'shake',
           },
           {
             kind: 'say',
@@ -277,6 +279,7 @@ export const CH02: Chapter = {
             expression: 'neutral',
             bg: 'dojo-garden-night',
             music: 'story',
+            cg: 'act1-ch02-epilogue',
           },
           {
             kind: 'say',
@@ -289,6 +292,7 @@ export const CH02: Chapter = {
             speaker: 'sakura',
             text: '사실 저, 오늘 아침까지 「가르칠 수 있을까」 하고 계속 떨었어요. 그런데 지금은… 이상하게 안 떨리네요.',
             expression: 'confident',
+            effect: 'zoom',
           },
           {
             kind: 'choice',

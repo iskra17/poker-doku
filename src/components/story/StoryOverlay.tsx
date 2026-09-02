@@ -12,6 +12,8 @@ import {
   pendingInterrupt,
   practicePrompt,
 } from '@/lib/story/story-live-rules';
+import { liveMissionCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
+import StoryCutIn from './StoryCutIn';
 import DecisionReviewSheet from './live/DecisionReviewSheet';
 import InterruptScene from './live/InterruptScene';
 import LiveHoldPanel from './live/LiveHoldPanel';
@@ -58,6 +60,24 @@ export default function StoryOverlay() {
   const [sceneDoneFor, setSceneDoneFor] = useState<string | null>(null);
   const isMobile = useIsMobile();
   const hudExpanded = hudUserExpanded ?? !isMobile;
+
+  // 미션 클리어/보스 격파 컷인 — 스텝당 1회, 마지막 핸드의 승자 컷인(1.6초)과 같은 타이밍에 우측에서
+  const [missionData, setMissionData] = useState<StoryCutInData | null>(null);
+  const [missionShownFor, setMissionShownFor] = useState<string | null>(null);
+  const missionCutIn = active && run
+    ? liveMissionCutIn({ step, live, teacher: run.context.teacherId, partnerId: run.context.partnerId, stepKey })
+    : null;
+  const missionPending = !!missionCutIn && missionShownFor !== stepKey;
+  useEffect(() => {
+    if (!missionPending || !missionCutIn) return;
+    const timer = setTimeout(() => {
+      setMissionShownFor(stepKey);
+      setMissionData(missionCutIn);
+    }, 1_600);
+    return () => clearTimeout(timer);
+    // missionCutIn은 같은 스텝에서 내용이 안 바뀐다(stepKey 기준 1회) — 객체 identity로 재예약하지 않는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [missionPending, stepKey]);
 
   const holdInterrupt = pendingInterrupt(step, live);
   const firstTurn = firstMyTurnInterrupt(step);
@@ -118,6 +138,7 @@ export default function StoryOverlay() {
       </div>
 
       <DecisionReviewSheet review={live?.lastReview ?? null} />
+      <StoryCutIn data={missionData} isMobile={isMobile} onDone={() => setMissionData(null)} />
 
       {showScene && holdInterrupt && (
         <InterruptScene

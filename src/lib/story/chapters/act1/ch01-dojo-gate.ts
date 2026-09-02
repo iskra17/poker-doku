@@ -36,6 +36,7 @@ export const CH01: Chapter = {
             expression: 'happy',
             bg: 'dojo-gate',
             music: 'story',
+            cg: 'act1-ch01-prologue',
           },
           {
             kind: 'say',
@@ -260,12 +261,14 @@ export const CH01: Chapter = {
                 speaker: 'miyako',
                 text: '쇼다운이에요♪ 마지막까지 남은 사람끼리 카드를 열고, 배운 족보 순서대로 높은 쪽이 팟을 가져간답니다.',
                 expression: 'happy',
+                effect: 'flash',
               },
               {
                 kind: 'say',
                 speaker: 'partner',
                 text: '…이 순간이 제일 좋아. 카드가 전부 뒤집히는 순간.',
                 expression: 'confident',
+                effect: 'sfx:flip',
               },
             ],
           },
@@ -287,6 +290,8 @@ export const CH01: Chapter = {
             expression: 'happy',
             bg: 'dojo-garden-night',
             music: 'story',
+            // 인물 없는 정원 CG — 파트너가 6명 중 누구여도 어색하지 않다
+            cg: 'act1-ch01-epilogue',
           },
           {
             kind: 'say',
@@ -332,6 +337,7 @@ export const CH01: Chapter = {
             speaker: 'miyako',
             text: '수고하셨어요, 수련생님♪ 오늘부터 백띠예요 — 도장의 문을 지나오셨다는 뜻이랍니다.',
             expression: 'happy',
+            effect: 'sfx:level-up',
           },
           {
             kind: 'say',

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { parseCards } from '@/lib/poker/card-notation';
 import { makeChapter, makeChapterChain, makeScene, makeTable } from '../test-fixtures';
-import type { Chapter, LessonBlock, Step } from '../types';
+import type { Chapter, LessonBlock, Scene, SceneSayLine, Step } from '../types';
 import { findRequiresCycle, getChapter, STORY_CHAPTERS, validateChapters } from './index';
 
 const TEMPLATE_IDS = new Set(['rank-who-wins', 'pos-name']);
@@ -58,6 +58,32 @@ describe('validateChapters', () => {
     const chapter = makeChapter();
     chapter.rewards = { ...chapter.rewards, first: { ...chapter.rewards.first, affinity: [{ target: 'miyako' as never, milli: 10 }] } };
     expect(validateChapters([chapter]).some(e => e.includes('miyako is not an affinity target'))).toBe(true);
+  });
+
+  it('checks scene cg ids and effects on say lines, including choice replies (2026-09-03 피드백 ④)', () => {
+    const base = makeChapter();
+    const patchScene = (mutate: (scene: Scene) => Scene): Chapter =>
+      withStep(base, steps => steps.map(step => (step.kind === 'scene' ? { ...step, scene: mutate(step.scene) } : step)));
+    const withLine = (extra: Partial<SceneSayLine>): Chapter =>
+      patchScene(scene => ({ ...scene, lines: scene.lines.map(line => (line.kind === 'say' ? { ...line, ...extra } : line)) }));
+
+    expect(validateChapters([withLine({ cg: 'act1-ch01-prologue', effect: 'shake' })])).toEqual([]);
+    expect(validateChapters([withLine({ effect: 'sfx:flip' })])).toEqual([]);
+    expect(validateChapters([withLine({ cg: 'nope' })]).some(e => e.includes('unknown cg nope'))).toBe(true);
+    expect(validateChapters([withLine({ effect: 'explode' as never })]).some(e => e.includes('unknown effect explode'))).toBe(true);
+    expect(validateChapters([withLine({ effect: 'sfx:nope' as never })]).some(e => e.includes('unknown effect sfx:nope'))).toBe(true);
+
+    const badReply = patchScene(scene => ({
+      ...scene,
+      lines: [
+        ...scene.lines,
+        { kind: 'choice', choice: { id: 'c', options: [
+          { id: 'a', text: 'A', reply: [{ kind: 'say', speaker: 'miyako', text: '응', effect: 'zoom' }] },
+          { id: 'b', text: 'B', reply: [{ kind: 'say', speaker: 'miyako', text: '응', cg: 'nope' }] },
+        ] } },
+      ],
+    }));
+    expect(validateChapters([badReply]).some(e => e.includes('unknown cg nope'))).toBe(true);
   });
 
   it('checks guided situations: required, no duplicate cards across stages, pot >= call (2026-09-03 피드백 ①)', () => {

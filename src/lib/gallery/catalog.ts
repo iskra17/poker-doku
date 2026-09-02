@@ -7,6 +7,7 @@
  */
 import { getCharacterArt } from '@/lib/assets/character-art';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
+import { getSceneCg, SCENE_CG_IDS, sceneCgChapterId } from '@/lib/assets/story-cgs';
 import { getBondSceneArt, getBondScenes, isBondSceneUnlocked, type BondScene } from '@/lib/characters/bond-scenes';
 import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import { resolveTitle } from '@/lib/cosmetics/titles';
@@ -44,6 +45,8 @@ export interface GalleryEntry {
   bond?: BondScene;
   /** 뷰어 payload — 스토리 CG 컷신 */
   cutscene?: StoryRewardCutsceneView;
+  /** 씬 CG(챕터 완주 해금) — 뷰어는 CgStage 'SCENE CG' */
+  sceneCg?: boolean;
   caption?: string;
 }
 
@@ -111,6 +114,24 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS }: 
     } else if (item.kind === 'title') {
       entries.push({ id: item.id, section: 'title', name: item.name, unlocked, hint, art: null, caption: item.description });
     }
+  }
+
+  // 씬 CG(배치된 것만) — 그 챕터를 완주하면 다시 볼 수 있다
+  for (const id of SCENE_CG_IDS) {
+    const cg = getSceneCg(id);
+    if (!cg) continue;
+    const chapterId = sceneCgChapterId(id);
+    const chapter = chapters.find(entry => entry.id === chapterId);
+    entries.push({
+      id: `scene-cg:${id}`,
+      section: 'cg',
+      name: cg.title,
+      unlocked: completed.has(chapterId),
+      hint: `「${chapter?.title ?? chapterId}」 완주`,
+      art: cg.src,
+      sceneCg: true,
+      caption: chapter?.title ?? '',
+    });
   }
 
   // 도장 레벨 칭호(항상 표시) + 보유한 그 외 칭호(아레나 시즌 등)

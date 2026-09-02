@@ -1,10 +1,13 @@
 'use client';
 
-import { useEffect, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
+import { onGameEvent } from '@/lib/events/game-events';
+import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { getChapter } from '@/lib/story/chapters';
 import { setMusicScene } from '@/lib/sound/music-manager';
+import { drillPerfectCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
 import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
 import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -12,6 +15,7 @@ import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
 import LessonPage from './LessonPage';
 import ScenePlayer from './ScenePlayer';
+import StoryCutIn from './StoryCutIn';
 
 const noopSubscribe = () => () => {};
 
@@ -41,6 +45,16 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const visible = !!run && !run.live?.roomId;
   const ended = run?.phase === 'ended';
   const passed = run?.result?.passed ?? false;
+  const isMobile = useIsMobile();
+
+  // 드릴 퍼펙트 컷인 — 스토어가 발행하는 story-drill-result(perfect)에서 교사 컷인을 띄운다(외부 이벤트 콜백 setState)
+  const [cutIn, setCutIn] = useState<StoryCutInData | null>(null);
+  useEffect(() => onGameEvent(event => {
+    if (event.type !== 'story-drill-result' || !event.perfect) return;
+    const current = useStoryStore.getState().run;
+    if (!current) return;
+    setCutIn(drillPerfectCutIn(current.context.teacherId, current.context.partnerId, Date.now()));
+  }), []);
 
   // 스테이지 BGM — 열려 있는 동안 'story', 통과 결산은 승리 스팅. 닫히면 로비/테이블로 복귀 (외부 시스템 호출)
   useEffect(() => {
@@ -101,6 +115,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             </div>
           </header>
 
+          <StoryCutIn data={cutIn} isMobile={isMobile} onDone={() => setCutIn(null)} />
           <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-3 py-3 scrollbar-thin">
             {run.phase === 'ended' && run.result && (
               <ChapterResult

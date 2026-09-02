@@ -5,6 +5,7 @@
  * 노출하고, `validateChapters`가 스키마·requires 그래프·교사·스텝 id·드릴 템플릿 존재·프리셋 카드
  * 표기를 검사한다 — chapters.test.ts가 레지스트리 전체에 대해 실행한다.
  */
+import { isSceneCgId } from '@/lib/assets/story-cgs';
 import { getCharacterById } from '@/lib/characters';
 import { findDuplicateCard, tryParseCards } from '@/lib/poker/card-notation';
 import { CH01 } from './act1/ch01-dojo-gate';
@@ -13,6 +14,7 @@ import { CH03 } from './act1/ch03-numbers-dont-lie';
 import { mergeGuidedSituation } from './helpers';
 import type { Card } from '@/lib/poker/types';
 import {
+  isSceneEffect,
   isStoryHeroineId,
   isStoryTeacherRef,
   OBJECTIVE_KINDS,
@@ -21,6 +23,7 @@ import {
   type ChapterId,
   type DealScript,
   type Scene,
+  type SceneSayLine,
   type Step,
 } from '../types';
 
@@ -244,17 +247,24 @@ function validateDealScript(script: DealScript, lineupSeats: number[], heroSeat:
   if (duplicate) errors.push(`${at}: duplicate card ${duplicate} across script`);
 }
 
+function validateSayLine(line: SceneSayLine, sceneId: string, at: string, errors: string[]): void {
+  if (!line.text.trim()) errors.push(`${at}: scene ${sceneId} has an empty line`);
+  if (line.cg !== undefined && !isSceneCgId(line.cg)) errors.push(`${at}: scene ${sceneId} unknown cg ${String(line.cg)}`);
+  if (line.effect !== undefined && !isSceneEffect(line.effect)) errors.push(`${at}: scene ${sceneId} unknown effect ${String(line.effect)}`);
+}
+
 function validateScene(scene: Scene, at: string, errors: string[]): void {
   if (scene.lines.length === 0) errors.push(`${at}: scene ${scene.id} has no lines`);
   for (const line of scene.lines) {
     if (line.kind === 'say') {
-      if (!line.text.trim()) errors.push(`${at}: scene ${scene.id} has an empty line`);
+      validateSayLine(line, scene.id, at, errors);
     } else {
       if (line.choice.options.length < 2) errors.push(`${at}: choice ${line.choice.id} needs >= 2 options`);
       const optionIds = new Set<string>();
       for (const option of line.choice.options) {
         if (optionIds.has(option.id)) errors.push(`${at}: choice ${line.choice.id} duplicate option ${option.id}`);
         optionIds.add(option.id);
+        for (const reply of option.reply ?? []) validateSayLine(reply, scene.id, at, errors);
       }
     }
   }

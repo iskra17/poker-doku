@@ -7,6 +7,7 @@ import { getCharacterById } from '@/lib/characters';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
+import { stripeBg } from './cut-in-shell';
 import { useGameStore } from '@/lib/store/game-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 
@@ -91,11 +92,6 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
       {data && (isMobile ? <MobileCutIn data={data} /> : <DesktopCutIn data={data} />)}
     </AnimatePresence>
   );
-}
-
-/** 사선 스트라이프 배경 */
-function stripeBg(color: string): string {
-  return `repeating-linear-gradient(115deg, ${color}22 0 14px, ${color}0d 14px 28px), linear-gradient(115deg, rgba(21,12,38,0.97), rgba(30,18,53,0.92))`;
 }
 
 function DesktopCutIn({ data }: { data: CutInData }) {

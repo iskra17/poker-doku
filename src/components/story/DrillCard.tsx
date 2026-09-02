@@ -76,7 +76,8 @@ export default function DrillCard({
     ? pickDrillMoment({ correct: lastResult.correct, streak: drill.streak, isRetry, perfectSet })
     : null;
   const momentSpeaker = lastResult ? resolveSpeaker(lastResult.explanation.speaker, partnerId) : null;
-  const momentLine = moment && lastResult ? drillMomentLine(lastResult.explanation.speaker, moment.moment, instance.seed) : '';
+  // 퍼펙트는 StoryCutIn(StoryStage)이 교사 대사를 맡으므로 여기선 스탬프·색종이만(말풍선 중복 방지)
+  const momentLine = moment && lastResult && moment.moment !== 'drill-perfect' ? drillMomentLine(lastResult.explanation.speaker, moment.moment, instance.seed) : '';
   const progressValue = retry ? retry.index : drill.index;
   const progressMax = retry ? retry.total : drill.total;
 

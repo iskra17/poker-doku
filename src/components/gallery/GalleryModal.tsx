@@ -55,6 +55,8 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
       setBond(entry.bond);
     } else if (entry.section === 'cg' && entry.cutscene) {
       setCutscene(entry.cutscene);
+    } else if (entry.section === 'cg' && entry.sceneCg && entry.art) {
+      setScene({ id: entry.id, art: entry.art, alt: entry.name, name: '', color: '#ffd76a', kicker: 'SCENE CG', title: entry.name, caption: entry.caption ?? '', hint: '탭하면 닫혀요' });
     } else if (entry.section === 'outfit' && entry.art) {
       const character = entry.characterId ? getCharacterById(entry.characterId) : null;
       setScene({

@@ -47,6 +47,18 @@ export type ChapterGrade = 'S' | 'A' | 'B';
 
 export type StoryMusic = 'lobby' | 'table' | 'tension' | 'victory' | 'story';
 
+/** 씬 라인 `effect: 'sfx:<name>'`에 허용하는 합성 효과음 (effects.ts SoundName의 부분집합) */
+export const SCENE_SFX = ['reward', 'unlock', 'level-up', 'combo', 'all-in', 'win', 'big-win', 'flip'] as const;
+export type SceneSfx = typeof SCENE_SFX[number];
+/** 라인 연출 — 흔들림/플래시/줌은 reduced-motion에서 생략, sfx만 유지 */
+export type SceneEffect = 'shake' | 'flash' | 'zoom' | `sfx:${SceneSfx}`;
+
+export function isSceneEffect(value: unknown): value is SceneEffect {
+  if (typeof value !== 'string') return false;
+  if (value === 'shake' || value === 'flash' || value === 'zoom') return true;
+  return value.startsWith('sfx:') && (SCENE_SFX as readonly string[]).includes(value.slice('sfx:'.length));
+}
+
 export interface SceneSayLine {
   kind: 'say';
   speaker: SceneSpeaker;
@@ -55,6 +67,13 @@ export interface SceneSayLine {
   /** 배경 id (character-art 매니페스트 외 스토리 배경 — 없으면 로비 배경 폴백) */
   bg?: string;
   music?: StoryMusic;
+  /**
+   * 풀스크린 씬 CG id(`assets/story-cgs.ts`) — bg와 달리 **이 라인에서만** 보이고 다음 라인에서 스프라이트로 돌아간다.
+   * 아트 미배치 id는 무시(스프라이트 폴백) — 코드는 아트를 기다리지 않는다.
+   */
+  cg?: string;
+  /** 라인 진입 시 1회 연출 */
+  effect?: SceneEffect;
 }
 
 export interface SceneChoiceOption {
