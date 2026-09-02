@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { playEffect } from '@/lib/sound/effects';
+import { playStinger } from '@/lib/sound/stingers';
 import { STAGE_TIMING_MS, buildRewardRevealPlan, stageAutoAdvanceMs, type RevealStage } from '@/lib/story/reward-view';
 import type { ChapterResultView } from '@/lib/story/views';
 import { usePresentationStore } from '@/lib/store/presentation-store';
@@ -86,9 +87,10 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
   // 단계 진입 효과음
   useEffect(() => {
     if (reduced) return;
-    if (stage === 'stamp') playEffect('reward');
+    // 스탬프·띠 승급은 징글(Suno 숏트랙, 없으면 합성 폴백 + BGM 덕킹), 컷신은 합성 unlock
+    if (stage === 'stamp') playStinger('chapter-clear');
     else if (stage === 'cutscene') playEffect('unlock');
-    else if (stage === 'belt') playEffect('level-up');
+    else if (stage === 'belt') playStinger('belt-up');
   }, [stage, reduced]);
 
   const advance = () => setStageIndex(index => Math.min(index + 1, lastIndex));

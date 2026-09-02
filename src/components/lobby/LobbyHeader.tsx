@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import GalleryNewDot from '../gallery/GalleryNewDot';
 import NeonText from '../ui/NeonText';
+import NowPlayingButton from './NowPlayingButton';
 
 /**
  * 로비 헤더.
@@ -82,6 +83,7 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
               </>
             )}
           </IconButton>
+          <NowPlayingButton onOpenSettings={onOpenSettings} />
           {onOpenGallery && (
             <span className="relative">
               <IconButton label="기록실" onClick={onOpenGallery}>

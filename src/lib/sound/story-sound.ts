@@ -2,6 +2,7 @@
 
 import { onGameEvent } from '../events/game-events';
 import { playEffect } from './effects';
+import { playStinger } from './stingers';
 
 let installed = false;
 
@@ -20,7 +21,8 @@ export function initStorySoundBindings(): void {
       return;
     }
     if (event.perfect) {
-      playEffect('level-up');
+      // 퍼펙트 징글(Suno 숏트랙) — 파일 없으면 합성 'reward'로 폴백
+      playStinger('perfect');
       return;
     }
     if (event.streak === 3 || event.streak === 5) {

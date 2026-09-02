@@ -8,6 +8,7 @@
  * - 통과 = 드릴 세트 완료 + primary 행동 목표. 결과 조건(스택 등)은 bonus에만 둔다(A5-2 통과 규약).
  */
 import type { Expression } from '@/lib/assets/character-art';
+import type { MusicMood } from '@/lib/sound/music-library';
 import type { RoomDifficulty } from '@/lib/poker/types';
 import { PROGRESSION_CHARACTER_IDS, type ProgressionCharacterId } from '@/lib/progression/types';
 import type { DrillAnswerSpec, DrillSituation } from './drills/types';
@@ -45,7 +46,8 @@ export type ChapterGrade = 'S' | 'A' | 'B';
 // ---------------------------------------------------------------------------
 // 씬(VN)
 
-export type StoryMusic = 'lobby' | 'table' | 'tension' | 'victory' | 'story';
+/** 씬 라인 BGM — music-library의 mood. 'story'는 story-calm의 옛 이름(호환) */
+export type StoryMusic = MusicMood | 'story';
 
 /** 씬 라인 `effect: 'sfx:<name>'`에 허용하는 합성 효과음 (effects.ts SoundName의 부분집합) */
 export const SCENE_SFX = ['reward', 'unlock', 'level-up', 'combo', 'all-in', 'win', 'big-win', 'flip'] as const;

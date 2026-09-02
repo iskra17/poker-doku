@@ -12,6 +12,7 @@ import {
   pendingInterrupt,
   practicePrompt,
 } from '@/lib/story/story-live-rules';
+import { setMusicScene } from '@/lib/sound/music-manager';
 import { liveMissionCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
 import StoryCutIn from './StoryCutIn';
 import DecisionReviewSheet from './live/DecisionReviewSheet';
@@ -68,6 +69,14 @@ export default function StoryOverlay() {
     ? liveMissionCutIn({ step, live, teacher: run.context.teacherId, partnerId: run.context.partnerId, stepKey })
     : null;
   const missionPending = !!missionCutIn && missionShownFor !== stepKey;
+
+  // 보스전 BGM — 보스 라인업 스파링 동안 story-tense, 벗어나면 테이블 곡으로 (GameRoomView의 table 설정 위에 얹는다)
+  const bossFight = active && step?.kind === 'sparring' && step.table.lineup.some(seat => seat.role === 'boss');
+  useEffect(() => {
+    if (!bossFight) return;
+    setMusicScene('story-tense');
+    return () => setMusicScene('table');
+  }, [bossFight]);
   useEffect(() => {
     if (!missionPending || !missionCutIn) return;
     const timer = setTimeout(() => {

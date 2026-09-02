@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { DeckStyleId, DeckColorId } from '@/components/table/card-theme';
+import type { MusicMood, MusicTrackPref } from '@/lib/sound/music-library';
 import {
   PREFLOP_PRESET_DEFAULT,
   POSTFLOP_PRESET_DEFAULT,
@@ -23,6 +24,9 @@ interface SettingsStore {
   /** 배경음악(BGM) 음소거 — 효과음과 별개 */
   musicMuted: boolean;
   toggleMusicMuted: () => void;
+  /** 장면(mood)별 BGM 선택 — 'auto'(순환/무작위) 또는 music-library 트랙 id. 없는 mood는 auto */
+  musicTrackPrefs: Partial<Record<MusicMood, MusicTrackPref>>;
+  setMusicTrackPref: (mood: MusicMood, pref: MusicTrackPref) => void;
   /** 마스터 음소거 — 효과음+BGM 동시 토글 (로비 헤더 스피커 버튼) */
   toggleAllMuted: () => void;
   /** 카드 앞면 스타일 — 솔리드(수트색 배경+흰 글자, 기본) / 빅랭크(GG풍) */
@@ -88,6 +92,8 @@ export const useSettingsStore = create<SettingsStore>()(
       setMuted: (muted) => set({ muted }),
       musicMuted: false,
       toggleMusicMuted: () => set(s => ({ musicMuted: !s.musicMuted })),
+      musicTrackPrefs: {},
+      setMusicTrackPref: (mood, pref) => set(s => ({ musicTrackPrefs: { ...s.musicTrackPrefs, [mood]: pref } })),
       // 하나라도 켜져 있으면 전체 음소거, 둘 다 꺼져 있으면 전체 해제
       toggleAllMuted: () => set(s => {
         const mute = !(s.muted && s.musicMuted);
@@ -128,9 +134,10 @@ export const useSettingsStore = create<SettingsStore>()(
     }),
     {
       name: 'poker-doku-settings',
-      version: 3,
+      version: 4,
       // v2: 캐릭터 로스터 개편 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
       // v3: 카드 스타일 '클래식' 삭제 — 저장돼 있던 classic(및 미지 값)은 solid로
+      // v4: 장면별 BGM 선택(musicTrackPrefs) — 없으면 빈 객체(전부 auto)
       migrate: (persisted) => {
         const s = persisted as Partial<SettingsStore> | undefined;
         if (!s) return persisted as SettingsStore;
@@ -140,6 +147,9 @@ export const useSettingsStore = create<SettingsStore>()(
         }
         if (s.deckStyle && !['solid', 'big-rank'].includes(s.deckStyle)) {
           s.deckStyle = 'solid';
+        }
+        if (!s.musicTrackPrefs || typeof s.musicTrackPrefs !== 'object') {
+          s.musicTrackPrefs = {};
         }
         return s as SettingsStore;
       },

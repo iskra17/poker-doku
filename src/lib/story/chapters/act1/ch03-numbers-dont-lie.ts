@@ -38,7 +38,7 @@ export const CH03: Chapter = {
             text: '앉으세요. 오늘은 감(感) 이야기를 한 마디도 하지 않을 거예요 — 숫자만 다룹니다.',
             expression: 'neutral',
             bg: 'dojo-study',
-            music: 'story',
+            music: 'story-tense',
           },
           {
             kind: 'say',
@@ -287,7 +287,7 @@ export const CH03: Chapter = {
             text: '으으… 왜 내 오버벳이 안 통해?! 다들 그냥 폴드하거나 그냥 콜했단 말이야…!',
             expression: 'sad',
             bg: 'dojo-study',
-            music: 'story',
+            music: 'story-warm',
             effect: 'shake',
           },
           {

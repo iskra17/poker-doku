@@ -56,11 +56,19 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
     setCutIn(drillPerfectCutIn(current.context.teacherId, current.context.partnerId, Date.now()));
   }), []);
 
-  // 스테이지 BGM — 열려 있는 동안 'story', 통과 결산은 승리 스팅. 닫히면 로비/테이블로 복귀 (외부 시스템 호출)
+  // 스테이지 BGM — 스텝 종류로 mood를 정한다: 레슨·드릴 story-calm, 결산은 통과 story-triumph / 미통과 story-sad.
+  // 씬 스텝은 ScenePlayer가 라인 `music`으로 직접 정하므로 여기서 덮어쓰지 않는다(부모 effect가 나중에 돌아 덮는 문제 방지).
+  // 닫히면 로비/테이블로 복귀 (외부 시스템 호출)
+  const stepKind = run?.stepKind ?? null;
   useEffect(() => {
     if (!visible) return;
-    setMusicScene(ended && passed ? 'victory' : 'story');
-  }, [visible, ended, passed]);
+    if (ended) {
+      setMusicScene(passed ? 'story-triumph' : 'story-sad');
+      return;
+    }
+    if (stepKind === 'scene') return;
+    setMusicScene('story-calm');
+  }, [visible, ended, passed, stepKind]);
   useEffect(() => {
     if (!visible) return;
     return () => setMusicScene(useGameStore.getState().currentRoomId ? 'table' : 'lobby');

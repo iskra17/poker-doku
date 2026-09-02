@@ -35,7 +35,7 @@ export const CH01: Chapter = {
             text: '어서 오세요, 수련생님♪ 여기가 「포커 도장」이에요. 신발은 그대로 두셔도 돼요 — 대신 카드는 소중히 다뤄 주세요.',
             expression: 'happy',
             bg: 'dojo-gate',
-            music: 'story',
+            music: 'story-calm',
             cg: 'act1-ch01-prologue',
           },
           {
@@ -289,7 +289,7 @@ export const CH01: Chapter = {
             text: '끝났네. …나쁘지 않은 첫날.',
             expression: 'happy',
             bg: 'dojo-garden-night',
-            music: 'story',
+            music: 'story-warm',
             // 인물 없는 정원 CG — 파트너가 6명 중 누구여도 어색하지 않다
             cg: 'act1-ch01-epilogue',
           },

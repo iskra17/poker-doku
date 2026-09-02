@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Modal from '@/components/ui/Modal';
 import CardComponent from '@/components/table/Card';
 import ProfileHub from '@/components/profile/ProfileHub';
+import MusicTrackPicker from './MusicTrackPicker';
 import { useSettingsStore, BetStepUnit } from '@/lib/store/settings-store';
 import {
   PREFLOP_PRESET_DEFAULT, POSTFLOP_PRESET_DEFAULT,
@@ -300,11 +301,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         )}
 
         {tab === 'sound' && (
-          <section>
-            <SectionTitle>사운드</SectionTitle>
-            <Toggle checked={!muted} onToggle={toggleMuted} label="효과음" />
-            <Toggle checked={!musicMuted} onToggle={toggleMusicMuted} label="배경음악" />
-          </section>
+          <>
+            <section>
+              <SectionTitle>사운드</SectionTitle>
+              <Toggle checked={!muted} onToggle={toggleMuted} label="효과음" />
+              <Toggle checked={!musicMuted} onToggle={toggleMusicMuted} label="배경음악" />
+            </section>
+            <section>
+              <SectionTitle>배경 음악 고르기</SectionTitle>
+              <MusicTrackPicker />
+            </section>
+          </>
         )}
       </div>
     </Modal>

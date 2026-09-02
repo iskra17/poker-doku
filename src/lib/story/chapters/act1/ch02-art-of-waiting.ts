@@ -37,7 +37,7 @@ export const CH02: Chapter = {
             text: '사쿠라 씨, 오늘 수련생님을 부탁해요♪ 이 도장에서 「기다리는 법」은 이분이 제일 잘 가르치거든요.',
             expression: 'happy',
             bg: 'dojo-table',
-            music: 'story',
+            music: 'story-calm',
             cg: 'act1-ch02-prologue',
           },
           {
@@ -278,7 +278,7 @@ export const CH02: Chapter = {
             text: '…끝났네요. 당신, 약한 핸드가 올 때마다 망설임 없이 폴드했죠.',
             expression: 'neutral',
             bg: 'dojo-garden-night',
-            music: 'story',
+            music: 'story-warm',
             cg: 'act1-ch02-epilogue',
           },
           {
