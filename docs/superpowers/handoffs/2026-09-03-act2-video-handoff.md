@@ -2,7 +2,7 @@
 
 브랜치 `feat/story-video-pilot` (worktree `.worktrees/story-mode`, main 9ce2615에서 분기). 기획 `docs/spec-story-mode-2026-09.md` **Part V**,
 규약 AGENTS.md 스토리 섹션(데이터·드릴·보상 라인·v74 ④ 영상 bullet 갱신). 커밋: d3aea38(영상 파일럿 3클립 + 숫자 입력 잔존 수정) → 2막 배치 커밋.
-**main 병합·푸시·배포는 미실행** — 사용자 지시 시 `git checkout main && git merge --ff-only feat/story-video-pilot`, `fly deploy --ha=false`.
+**main ff 병합 완료(태그 `story-act2`), origin 푸시·Fly 배포는 미실행** — 사용자 지시 시 `git push origin main --tags`, `fly deploy --ha=false`(PowerShell `$env:USERPROFILE\.flyinlyctl.exe`).
 
 ## 새 세션 시작 절차
 
