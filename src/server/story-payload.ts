@@ -9,6 +9,7 @@ import type { DrillAnswer } from '../lib/story/drills/types';
 import type {
   AbandonStoryRequest,
   StartStoryChapterRequest,
+  StoryRunMode,
   StoryAdvanceRequest,
   StoryAdvanceTarget,
   StoryChoiceRequest,
@@ -58,11 +59,15 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every(key => allowed.includes(key));
 }
 
+const RUN_MODES: readonly StoryRunMode[] = ['full', 'exam'];
+
 export function parseStartStoryChapterRequest(input: unknown): ParseResult<StartStoryChapterRequest> {
-  if (!isRecord(input) || !hasOnlyKeys(input, ['chapterId'])) return fail();
+  if (!isRecord(input) || !hasOnlyKeys(input, ['chapterId', 'mode'])) return fail();
   const chapterId = idText(input.chapterId);
   if (!chapterId) return fail();
-  return { ok: true, value: { chapterId } };
+  if (input.mode === undefined) return { ok: true, value: { chapterId } };
+  if (!memberOf(input.mode, RUN_MODES)) return fail();
+  return { ok: true, value: { chapterId, mode: input.mode } };
 }
 
 export function parseStoryAdvanceRequest(input: unknown): ParseResult<StoryAdvanceRequest> {

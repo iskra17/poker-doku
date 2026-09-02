@@ -36,6 +36,7 @@ function runFixture(overrides: Partial<StoryRunView> = {}): StoryRunView {
   return {
     runId: 'run-1',
     chapterId: 'act1-ch01',
+    mode: 'full',
     stepIndex: 4,
     stepCount: 7,
     stepKind: 'sparring',

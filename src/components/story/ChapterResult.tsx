@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { getCharacterById } from '@/lib/characters';
 import { getChapter } from '@/lib/story/chapters';
+import { BELT_LABEL } from '@/lib/story/story-hub-rules';
 import type { ChapterResultView } from '@/lib/story/views';
 
 interface ChapterResultProps {
@@ -10,6 +11,8 @@ interface ChapterResultProps {
   onClose: () => void;
   onNextChapter?: (chapterId: string) => void;
   onRetry?: () => void;
+  /** 실력 확인 미통과 → 같은 챕터를 수업(full)으로 */
+  onFullCourse?: () => void;
 }
 
 const GRADE_COLOR: Record<ChapterResultView['grade'], string> = {
@@ -18,16 +21,20 @@ const GRADE_COLOR: Record<ChapterResultView['grade'], string> = {
   B: 'text-mystic',
 };
 
-/** 결산 — 등급 스탬프·드릴 정확도/최고 콤보/힌트·목표·보상·복습 노트·[다음 챕터]/[허브로] */
-export default function ChapterResult({ result, onClose, onNextChapter, onRetry }: ChapterResultProps) {
+/** 결산 — 등급 스탬프·띠 승급·드릴 정확도/최고 콤보/힌트·목표·보상·복습 노트·[다음 챕터]/[허브로]/[수업 듣기] */
+export default function ChapterResult({ result, onClose, onNextChapter, onRetry, onFullCourse }: ChapterResultProps) {
   const chapter = getChapter(result.chapterId);
   const next = result.nextChapterId ? getChapter(result.nextChapterId) : undefined;
   const accuracy = result.drill.answered > 0 ? Math.round((result.drill.correct / result.drill.answered) * 100) : null;
   const daily = result.chapterId === 'daily';
+  const exam = result.mode === 'exam';
+  const verdict = result.passed
+    ? (exam ? '실력 확인 통과 — 챕터 완료로 기록했어요' : '통과')
+    : (exam ? '실력 확인 미통과 — 수업으로 배워 볼까요?' : '미통과 — 다시 도전할 수 있어요');
 
   return (
     <div className="w-full max-w-md rounded-2xl border border-gilded/40 bg-panel/95 p-4" aria-label="결산">
-      <p className="text-center text-[10px] font-bold tracking-widest text-gilded">CHAPTER RESULT</p>
+      <p className="text-center text-[10px] font-bold tracking-widest text-gilded">{exam ? 'SKILL CHECK' : 'CHAPTER RESULT'}</p>
       <h2 className="mt-1 text-center text-base font-bold text-ink">{daily ? '오늘의 수련 문제' : (chapter?.title ?? result.chapterId)}</h2>
       <motion.p
         initial={{ scale: 2, opacity: 0, rotate: -10 }}
@@ -39,8 +46,19 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry 
         {result.grade}
       </motion.p>
       <p className={`text-center text-sm font-bold ${result.passed ? 'text-cyber' : 'text-blossom'}`}>
-        {result.passed ? '통과' : '미통과 — 다시 도전할 수 있어요'}
+        {verdict}
       </p>
+      {result.beltAwarded && (
+        <motion.p
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ delay: 0.3, type: 'spring', stiffness: 220, damping: 16 }}
+          className="mt-2 rounded-xl border border-gilded/60 bg-gilded/15 py-2 text-center text-sm font-black text-gilded"
+          aria-label={`${BELT_LABEL[result.beltAwarded]} 승급`}
+        >
+          🥋 {BELT_LABEL[result.beltAwarded]} 승급!
+        </motion.p>
+      )}
 
       <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
         <div className="rounded-xl border border-mystic/20 bg-elevated/50 p-2">
@@ -90,7 +108,12 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry 
         <button type="button" onClick={onClose} className="flex-1 rounded-xl border border-mystic/30 py-2.5 text-sm font-bold text-ink-dim">
           허브로
         </button>
-        {!result.passed && onRetry && (
+        {!result.passed && exam && onFullCourse && (
+          <button type="button" onClick={onFullCourse} className="flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white">
+            수업 듣기
+          </button>
+        )}
+        {!result.passed && !exam && onRetry && (
           <button type="button" onClick={onRetry} className="flex-1 rounded-xl bg-blossom py-2.5 text-sm font-bold text-white">
             다시 도전
           </button>

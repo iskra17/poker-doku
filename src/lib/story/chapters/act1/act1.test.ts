@@ -163,10 +163,10 @@ describe('1막 챕터 데이터', () => {
     expect(authored).toEqual({ templateId: 'act-ch02-fold-utg', seedPolicy: 'fixed', fixedSeed: 0 });
   });
 
-  it('requires 사슬과 담당·띠가 커리큘럼과 같다', () => {
+  it('1막은 비선형(requires 없음)이고 담당·띠가 커리큘럼과 같다 (2026-09-03 피드백 ②)', () => {
     expect(CH01.requires).toEqual([]);
-    expect(CH02.requires).toEqual(['act1-ch01']);
-    expect(CH03.requires).toEqual(['act1-ch02']);
+    expect(CH02.requires).toEqual([]);
+    expect(CH03.requires).toEqual([]);
     expect([CH01.teacher, CH02.teacher, CH03.teacher]).toEqual(['miyako', 'sakura', 'hana']);
     expect([CH01.belt, CH02.belt, CH03.belt]).toEqual(['white', 'white', 'yellow']);
     expect([CH01.order, CH02.order, CH03.order]).toEqual([1, 2, 3]);

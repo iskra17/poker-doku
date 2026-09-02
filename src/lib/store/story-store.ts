@@ -11,7 +11,7 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { formatCard } from '@/lib/poker/card-notation';
 import type { PokerClientSocket, RealtimeAck } from '@/lib/realtime/protocol';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
-import type { StoryAdvanceTarget, StoryDrillAck, StoryProgressView, StoryRunView } from '@/lib/story/views';
+import type { StoryAdvanceTarget, StoryDrillAck, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
 import { emitGameEvent } from '@/lib/events/game-events';
 
 interface Dependencies {
@@ -33,7 +33,8 @@ export interface StoryStoreState {
   hint: string | null;
 
   load(): Promise<StoryLoadOutcome>;
-  startChapter(chapterId: string): Promise<boolean>;
+  /** mode 'exam' = 실력 확인(드릴만) — 생략하면 챕터 전체 */
+  startChapter(chapterId: string, mode?: StoryRunMode): Promise<boolean>;
   advance(target?: StoryAdvanceTarget): Promise<boolean>;
   /** 라이브 hold 해제 — advance('resume')의 별칭 (타임아웃/인터럽트/방 유실 복귀 공용) */
   resumeLive(): Promise<boolean>;
@@ -172,9 +173,9 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         }
       },
 
-      startChapter: async chapterId => {
+      startChapter: async (chapterId, mode) => {
         const ack = await withAck<{ runId: string }>((socket, done) => {
-          socket.emit('start-story-chapter', { chapterId }, done);
+          socket.emit('start-story-chapter', mode && mode !== 'full' ? { chapterId, mode } : { chapterId }, done);
         });
         return !!ack?.ok;
       },

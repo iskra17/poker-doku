@@ -19,6 +19,8 @@ interface DrillCardProps {
   lastResult: DrillResult | null;
   onAnswer: (answer: DrillAnswer, elapsedMs: number) => void;
   onHint: () => void;
+  /** 실력 확인(exam)에선 힌트 버튼을 숨긴다 (서버도 거절) */
+  hintAllowed?: boolean;
   onNext: () => void;
 }
 
@@ -28,7 +30,7 @@ const PRAISE = ['정답이에요!', '좋아요, 그거예요.', '완벽해요.',
  * 드릴 카드 — 진행 바+콤보 → 상황 미니 테이블 → 질문 → 입력 → [힌트][제출] → 즉시 피드백 스탬프 + 히로인 해설.
  * 정답 판정은 서버(ack의 DrillResult). 다음 문항은 [다음]으로 story-advance 대신 서버가 story-update로 밀어준다.
  */
-export default function DrillCard({ drill, teacherId, partnerId, pending, hint, lastResult, onAnswer, onHint, onNext }: DrillCardProps) {
+export default function DrillCard({ drill, teacherId, partnerId, pending, hint, lastResult, onAnswer, onHint, onNext, hintAllowed = true }: DrillCardProps) {
   const [answer, setAnswer] = useState<DrillAnswer | null>(null);
   const startedAt = useRef<number>(0);
   const key = `${drill.setId}:${drill.index}:${drill.instance.seed}`;
@@ -118,14 +120,16 @@ export default function DrillCard({ drill, teacherId, partnerId, pending, hint, 
 
       {!answered ? (
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={onHint}
-            disabled={pending || !!hint || !instance.hasHint}
-            className="rounded-xl border border-gilded/40 px-3 py-2.5 text-xs font-bold text-gilded disabled:opacity-40"
-          >
-            힌트
-          </button>
+          {hintAllowed && (
+            <button
+              type="button"
+              onClick={onHint}
+              disabled={pending || !!hint || !instance.hasHint}
+              className="rounded-xl border border-gilded/40 px-3 py-2.5 text-xs font-bold text-gilded disabled:opacity-40"
+            >
+              힌트
+            </button>
+          )}
           <button
             type="button"
             onClick={() => answer && onAnswer(answer, performance.now() - startedAt.current)}

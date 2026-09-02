@@ -8,6 +8,11 @@ import type { DrillAnswer, DrillInstancePublic, DrillResult } from './drills/typ
 import type { ChapterGrade, ChapterId, ObjectiveKind, StepKind, StoryBelt, StoryHeroineId, StoryTeacherId } from './types';
 
 export type StoryRunPhase = 'scene' | 'lesson' | 'drill' | 'live-hold' | 'live-play' | 'result' | 'ended';
+/**
+ * 런 모드 — 'full'은 챕터 전체, 'exam'은 **실력 확인**: 드릴 세트만 풀고(씬·레슨·라이브 스킵, 힌트 없음)
+ * `EXAM_PASS_SCORE` 이상이면 완료로 기록한다. 아는 내용을 억지로 플레이하지 않게 하는 우회로(2026-09-03 피드백 ②).
+ */
+export type StoryRunMode = 'full' | 'exam';
 export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost';
 
 export interface StoryDrillView {
@@ -90,6 +95,7 @@ export interface StoryLiveView {
 
 export interface ChapterResultView {
   chapterId: ChapterId;
+  mode: StoryRunMode;
   passed: boolean;
   grade: ChapterGrade;
   drill: { answered: number; correct: number; bestStreak: number; hintsUsed: number; score: number };
@@ -102,11 +108,14 @@ export interface ChapterResultView {
   };
   reviewNotesAdded: number;
   nextChapterId: ChapterId | null;
+  /** 이 완주로 띠가 올랐으면 새 띠 — 결산이 승급 연출을 맡는다(에필로그는 순서를 가정하지 않는다) */
+  beltAwarded: StoryBelt | null;
 }
 
 export interface StoryRunView {
   runId: string;
   chapterId: ChapterId;
+  mode: StoryRunMode;
   stepIndex: number;
   stepCount: number;
   stepKind: StepKind;
@@ -146,7 +155,7 @@ export interface StoryProgressView {
   drillStats: { total: number; correct: number; byCategory: Record<string, { total: number; correct: number }> };
   reviewQueue: number;
   daily: StoryDailyView;
-  activeRun: { runId: string; chapterId: ChapterId; stepIndex: number } | null;
+  activeRun: { runId: string; chapterId: ChapterId; stepIndex: number; mode: StoryRunMode } | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +163,8 @@ export interface StoryProgressView {
 
 export interface StartStoryChapterRequest {
   chapterId: ChapterId;
+  /** 생략 = 'full' */
+  mode?: StoryRunMode;
 }
 
 export type StoryAdvanceTarget = 'next' | 'skip' | 'resume';

@@ -9,7 +9,7 @@ interface DailyDrillsCardProps {
   onStart: () => void;
 }
 
-/** 오늘의 수련 문제 3개 — Ch1 완료 후 개방, 완료 시 출제 히로인 인연 +5 (일 1회) */
+/** 오늘의 수련 문제 3개 — 챕터 하나를 끝내면 개방, 완료 시 출제 히로인 인연 +5 (일 1회) */
 export default function DailyDrillsCard({ daily, pending, onStart }: DailyDrillsCardProps) {
   const teacher = daily.teacherId ? getCharacterById(daily.teacherId === 'miyako' ? 'dealer' : daily.teacherId) : null;
   const done = daily.done >= daily.total;
@@ -20,7 +20,7 @@ export default function DailyDrillsCard({ daily, pending, onStart }: DailyDrills
           <h3 className="text-xs font-bold text-gilded">오늘의 수련 문제</h3>
           <p className="mt-0.5 text-[11px] text-ink-dim">
             {!daily.available
-              ? 'Ch1을 끝내면 매일 3문제가 열려요'
+              ? '챕터를 하나 끝내면 매일 3문제가 열려요'
               : done
                 ? `오늘 ${daily.total}문 완료 · 인연 +5`
                 : `${daily.done}/${daily.total} · ${teacher ? `오늘은 ${teacher.name}의 문제` : '2분이면 충분해요'}`}

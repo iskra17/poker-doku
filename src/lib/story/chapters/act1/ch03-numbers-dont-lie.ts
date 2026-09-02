@@ -20,7 +20,8 @@ export const CH03: Chapter = {
   subtitle: '아우츠 · 2/4의 법칙 · 팟오즈',
   teacher: 'hana',
   belt: 'yellow',
-  requires: ['act1-ch02'],
+  // 1막은 비선형 — 어느 수업부터 들어도 된다(2026-09-03 피드백 ②). 노란띠는 1막 3챕터를 모두 마치면 결산에서 승급.
+  requires: [],
   estimatedMinutes: 17,
   steps: [
     // ───────────────────────────────────────────── 프롤로그

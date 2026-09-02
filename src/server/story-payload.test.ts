@@ -30,6 +30,11 @@ describe('story socket payload parsing', () => {
     expect(parseStartStoryChapterRequest({ chapterId: 'x'.repeat(65) }).ok).toBe(false);
     expect(parseStartStoryChapterRequest({ chapterId: '' }).ok).toBe(false);
     expect(parseStartStoryChapterRequest({ chapterId: 12 }).ok).toBe(false);
+    // mode는 선택 — 'full' | 'exam'만, 그 밖은 거절
+    expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'exam' })).toEqual({ ok: true, value: { chapterId: 'act1-ch01', mode: 'exam' } });
+    expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'full' })).toEqual({ ok: true, value: { chapterId: 'act1-ch01', mode: 'full' } });
+    expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'cheat' }).ok).toBe(false);
+    expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 1 }).ok).toBe(false);
   });
 
   it('story-advance: target 기본값 next, 정수 stepIndex, 상한', () => {

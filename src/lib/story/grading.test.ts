@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chapterPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet } from './grading';
+import { EXAM_PASS_SCORE, chapterPassed, examPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet } from './grading';
 import { makeChapter } from './test-fixtures';
 
 describe('grading', () => {
@@ -20,6 +20,16 @@ describe('grading', () => {
     expect(gradeChapter({ drillScore: 0.6, hintsUsed: 0 })).toBe('B');
     expect(gradeChapter({ drillScore: 1, hintsUsed: 0, liveScore: 0.5 })).toBe('A');
     expect(gradeChapter({ drillScore: 1, hintsUsed: 0, liveScore: null })).toBe('S');
+  });
+
+  it('exam(실력 확인) passes at 0.85 — retry credit alone cannot carry it', () => {
+    // 6문: 첫 시도 5정답 + 재출제 1 = 5.5/6
+    const five = Array.from({ length: 5 }, () => ({ firstCorrect: true, finallyCorrect: true, hintUsed: false }));
+    const retry = { firstCorrect: false, finallyCorrect: true, hintUsed: false };
+    expect(examPassed(scoreDrillSet([...five, retry], 0.5))).toBe(true);
+    // 첫 시도 4정답 + 재출제 2 = 5/6
+    expect(examPassed(scoreDrillSet([...five.slice(0, 4), retry, retry], 0.5))).toBe(false);
+    expect(examPassed(EXAM_PASS_SCORE)).toBe(true);
   });
 
   it('passes on drill completion unless primary objectives are known to be unmet', () => {

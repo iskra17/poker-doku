@@ -39,6 +39,16 @@ export function chapterPassed(input: { drillCompleted: boolean; primaryObjective
   return input.drillCompleted && input.primaryObjectivesMet !== false;
 }
 
+/**
+ * 실력 확인(드릴만) 통과 점수 — 힌트 없이 6문 기준 첫 시도 5정답 + 재출제 1(0.917)은 통과,
+ * 4 + 2(0.833)는 미통과. "이미 안다"는 주장을 재출제 크레딧으로 채우지 못하게 하는 선이다.
+ */
+export const EXAM_PASS_SCORE = 0.85;
+
+export function examPassed(drillScore: number): boolean {
+  return drillScore >= EXAM_PASS_SCORE - 1e-9;
+}
+
 export interface RewardGrant {
   dojoXpMilli: number;
   affinity: Array<{ characterId: StoryHeroineId; milli: number }>;

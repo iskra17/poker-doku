@@ -64,7 +64,9 @@ export default function StoryStage() {
         >
           <header className="flex flex-none items-center justify-between border-b border-mystic/20 px-4 py-2">
             <div className="min-w-0">
-              <p className="text-[10px] font-bold tracking-wider text-ink-dim">수련 스토리</p>
+              <p className={`text-[10px] font-bold tracking-wider ${run.mode === 'exam' ? 'text-gilded' : 'text-ink-dim'}`}>
+                {run.mode === 'exam' ? '실력 확인 · 힌트 없음 · 85점 이상 통과' : '수련 스토리'}
+              </p>
               <h2 className="truncate text-sm font-bold">{title}</h2>
             </div>
             <div className="flex items-center gap-2 text-[10px] text-ink-dim">
@@ -96,6 +98,11 @@ export default function StoryStage() {
                   dismissRun();
                   void startChapter(chapterId);
                 }}
+                onFullCourse={() => {
+                  const chapterId = run.chapterId;
+                  dismissRun();
+                  void startChapter(chapterId, 'full');
+                }}
               />
             )}
 
@@ -125,6 +132,7 @@ export default function StoryStage() {
                 onAnswer={(answer, elapsedMs) => void answerDrill(answer, elapsedMs)}
                 onHint={() => void requestHint()}
                 onNext={() => void advance()}
+                hintAllowed={run.mode !== 'exam'}
               />
             )}
 

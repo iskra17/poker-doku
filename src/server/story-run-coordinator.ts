@@ -17,7 +17,7 @@ import { STORY_CHAPTERS } from '../lib/story/chapters';
 import { DrillGenerationError, generateDrill, getDrillTemplate, gradeDrill } from '../lib/story/drills/generator';
 import { toPublicDrillInstance } from '../lib/story/drills/public';
 import type { DrillInstance, DrillResult } from '../lib/story/drills/types';
-import { chapterPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet, type DrillSlotOutcome } from '../lib/story/grading';
+import { chapterPassed, examPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet, type DrillSlotOutcome } from '../lib/story/grading';
 import type {
   Chapter,
   ChapterGrade,
@@ -39,6 +39,7 @@ import type {
   StoryProgressView,
   StoryRunPhase,
   StoryRunView,
+  StoryRunMode,
 } from '../lib/story/views';
 import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
 
@@ -182,6 +183,8 @@ interface DrillSetState {
 export interface StoryRun {
   runId: string;
   kind: 'chapter' | 'daily';
+  /** 'exam' = 실력 확인(드릴 세트 + 결산만, 힌트 없음, EXAM_PASS_SCORE 이상 통과) */
+  mode: StoryRunMode;
   profileId: string;
   chapter: Chapter;
   stepIndex: number;
@@ -291,7 +294,7 @@ export class StoryRunCoordinator {
         available: dailyAvailable,
         teacherId: dailyTeacher,
       },
-      activeRun: run ? { runId: run.runId, chapterId: run.chapter.id, stepIndex: run.stepIndex } : null,
+      activeRun: run ? { runId: run.runId, chapterId: run.chapter.id, stepIndex: run.stepIndex, mode: run.mode } : null,
     };
   }
 
@@ -319,7 +322,11 @@ export class StoryRunCoordinator {
   // ---------------------------------------------------------------------------
   // 명령: 시작 / 진행 / 선택 / 포기
 
-  start(profileId: string, chapterId: ChapterId): CoordinatorResult<{ runId: string }> {
+  /**
+   * 챕터 시작. mode 'exam'(실력 확인)은 미완료 챕터에서만 — 드릴 세트가 있어야 하고, 씬·레슨·라이브 스텝은
+   * enterStep이 건너뛴다. 이미 완료한 챕터는 [다시](full)로만 재주행한다.
+   */
+  start(profileId: string, chapterId: ChapterId, mode: StoryRunMode = 'full'): CoordinatorResult<{ runId: string }> {
     if (this.runs.has(profileId)) {
       return { ok: false, code: 'story-busy', message: '진행 중인 챕터가 있어요. 이어서 하거나 포기한 뒤 시작할 수 있어요.' };
     }
@@ -331,11 +338,20 @@ export class StoryRunCoordinator {
     if (!isChapterUnlocked(chapter, completed)) {
       return { ok: false, code: 'story-locked', message: '아직 열리지 않은 챕터예요. 이전 챕터를 먼저 끝내 주세요.' };
     }
+    if (mode === 'exam') {
+      if (!chapter.steps.some(step => step.kind === 'drill-set')) {
+        return { ok: false, code: 'action-rejected', message: '이 챕터엔 실력 확인 문제가 없어요.' };
+      }
+      if (completed.has(chapter.id)) {
+        return { ok: false, code: 'action-rejected', message: '이미 완료한 챕터예요. [다시]로 수업을 들을 수 있어요.' };
+      }
+    }
     const now = this.now();
     this.deps.repository.recordAttemptStart(profileId, chapter.id, now);
     const run: StoryRun = {
       runId: this.runIdFactory(),
       kind: 'chapter',
+      mode,
       profileId,
       chapter,
       stepIndex: -1,
@@ -363,7 +379,7 @@ export class StoryRunCoordinator {
     return { ok: true, value: { runId: run.runId } };
   }
 
-  /** 오늘의 수련 문제 — 챕터 없는 경량 런(드릴 세트 1개 + 결산). Ch1 완료 후, 하루 1회 완료. */
+  /** 오늘의 수련 문제 — 챕터 없는 경량 런(드릴 세트 1개 + 결산). 챕터 1개 이상 완료 후(출제 풀 = 완료 챕터의 드릴), 하루 1회 완료. */
   startDaily(profileId: string): CoordinatorResult<{ runId: string }> {
     if (this.runs.has(profileId)) {
       return { ok: false, code: 'story-busy', message: '진행 중인 챕터가 있어요. 먼저 끝내거나 포기해 주세요.' };
@@ -371,7 +387,7 @@ export class StoryRunCoordinator {
     const rows = this.deps.repository.listProgress(profileId);
     const completed = this.completedSet(rows);
     if (!this.dailyAvailable(completed)) {
-      return { ok: false, code: 'story-locked', message: 'Ch1을 끝내면 오늘의 수련 문제가 열려요.' };
+      return { ok: false, code: 'story-locked', message: '챕터를 하나 끝내면 오늘의 수련 문제가 열려요.' };
     }
     const now = this.now();
     const day = kstDay(now);
@@ -411,6 +427,7 @@ export class StoryRunCoordinator {
     const run: StoryRun = {
       runId,
       kind: 'daily',
+      mode: 'full',
       profileId,
       chapter,
       stepIndex: -1,
@@ -515,6 +532,7 @@ export class StoryRunCoordinator {
     const current = drill.current;
 
     if (request.action === 'hint') {
+      if (run.mode === 'exam') return { ok: false, code: 'action-rejected', message: '실력 확인에서는 힌트를 쓸 수 없어요.' };
       if (current.result) return { ok: false, code: 'action-rejected', message: '이미 답을 제출한 문제예요.' };
       const hint = current.instance.hint;
       if (!hint) return { ok: false, code: 'action-rejected', message: '이 문제엔 힌트가 없어요.' };
@@ -659,6 +677,11 @@ export class StoryRunCoordinator {
     run.drill = null;
     while (cursor < steps.length) {
       const step = steps[cursor];
+      // 실력 확인: 드릴 세트와 결산만 — 씬·레슨·라이브 스텝은 인덱스를 유지한 채 건너뛴다(클라는 stepIndex로 데이터를 찾는다)
+      if (run.mode === 'exam' && step.kind !== 'drill-set' && step.kind !== 'result') {
+        cursor += 1;
+        continue;
+      }
       run.stepIndex = cursor;
       run.updatedAt = this.now();
       if (step.kind === 'scene') { run.phase = 'scene'; return; }
@@ -787,7 +810,10 @@ export class StoryRunCoordinator {
     const liveScores = sparring.map(entry => entry.liveScore).filter((score): score is number => score !== null);
     const liveScore = liveScores.length > 0 ? liveScores.reduce((sum, score) => sum + score, 0) / liveScores.length : null;
     const grade = gradeChapter({ drillScore, hintsUsed: summary.hintsUsed, liveScore });
-    const passed = chapterPassed({ drillCompleted: true, primaryObjectivesMet });
+    // 실력 확인은 드릴 점수만으로 판정 — 라이브 스텝이 없어 primary가 null이라 chapterPassed로는 항상 통과해 버린다
+    const passed = run.mode === 'exam'
+      ? examPassed(drillScore)
+      : chapterPassed({ drillCompleted: true, primaryObjectivesMet });
     const liveResult: ChapterResultView['live'] = sparring.length === 0
       ? null
       : {
@@ -805,6 +831,7 @@ export class StoryRunCoordinator {
       }
       run.result = {
         chapterId: DAILY_CHAPTER_ID,
+        mode: 'full',
         passed: true,
         grade,
         drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
@@ -812,9 +839,12 @@ export class StoryRunCoordinator {
         rewards: { firstClear: false, dojoXpMilli: 0, affinity, badgeId: null },
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: null,
+        beltAwarded: null,
       };
     } else {
-      const before = this.deps.repository.listProgress(run.profileId).find(row => row.chapterId === run.chapter.id);
+      const rowsBefore = this.deps.repository.listProgress(run.profileId);
+      const before = rowsBefore.find(row => row.chapterId === run.chapter.id);
+      const beltBefore = deriveBelt(this.chapters, this.completedSet(rowsBefore), this.deps.repository.getFlags(run.profileId));
       const firstClear = passed && (before?.completions ?? 0) === 0;
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
       if (passed) {
@@ -836,8 +866,11 @@ export class StoryRunCoordinator {
         }
       }
       const completed = this.completedSet(this.deps.repository.listProgress(run.profileId));
+      // 띠는 막 완주에서 파생되므로 순서와 무관하게 "이 완주로 올랐는가"만 본다 — 결산이 승급을 알린다
+      const beltAfter = deriveBelt(this.chapters, completed, this.deps.repository.getFlags(run.profileId));
       run.result = {
         chapterId: run.chapter.id,
+        mode: run.mode,
         passed,
         grade,
         drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
@@ -845,6 +878,7 @@ export class StoryRunCoordinator {
         rewards: { firstClear, dojoXpMilli: grant.dojoXpMilli, affinity: grant.affinity, badgeId: grant.badgeId },
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
+        beltAwarded: beltAfter !== beltBefore ? beltAfter : null,
       };
     }
     run.phase = 'ended';
@@ -857,9 +891,9 @@ export class StoryRunCoordinator {
     return new Set(rows.filter(row => row.completions > 0).map(row => row.chapterId));
   }
 
+  /** 비선형 허브(2026-09-03): 어느 챕터든 하나 끝내면 열린다 — 출제 풀이 완료 챕터의 드릴이라 자연스럽게 비어 있지 않다 */
   private dailyAvailable(completed: ReadonlySet<ChapterId>): boolean {
-    const first = this.chapters.find(chapter => chapter.act === 1 && chapter.order === 1);
-    return !!first && completed.has(first.id);
+    return completed.size > 0;
   }
 
   /** 완료 챕터의 드릴 슬롯에서 템플릿 풀을 만든다 (생성기에 있는 것만) */
@@ -931,6 +965,7 @@ export class StoryRunCoordinator {
     return {
       runId: run.runId,
       chapterId: run.chapter.id,
+      mode: run.mode,
       stepIndex: run.stepIndex,
       stepCount: run.chapter.steps.length,
       stepKind: step.kind,

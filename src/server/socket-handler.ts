@@ -1627,8 +1627,9 @@ export function setupSocketHandlers(
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
       if (rejectStoryStartWhileBusy(ack)) return;
-      const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId);
-      if (started.ok) eventLog.log('story-step', { playerId: session.playerId, data: { chapterId: parsed.value.chapterId, runId: started.value.runId, step: 'start' } });
+      const mode = parsed.value.mode ?? 'full';
+      const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId, mode);
+      if (started.ok) eventLog.log('story-step', { playerId: session.playerId, data: { chapterId: parsed.value.chapterId, runId: started.value.runId, step: 'start', mode } });
       replyStory(ack, started);
     });
 

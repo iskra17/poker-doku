@@ -55,6 +55,7 @@ function runFixture(overrides: Partial<StoryRunView> = {}): StoryRunView {
   return {
     runId: 'run-1',
     chapterId: 'act1-ch01',
+    mode: 'full',
     stepIndex: 2,
     stepCount: 6,
     stepKind: 'drill-set',
@@ -235,10 +236,10 @@ describe('story-store', () => {
     fire('story-update', runFixture({
       phase: 'ended', stepIndex: 5, stepKind: 'result', drill: null,
       result: {
-        chapterId: 'act1-ch01', passed: true, grade: 'A',
+        chapterId: 'act1-ch01', mode: 'full', passed: true, grade: 'A',
         drill: { answered: 6, correct: 5, bestStreak: 3, hintsUsed: 1, score: 0.8 },
         live: null, rewards: { firstClear: true, dojoXpMilli: 100_000, affinity: [], badgeId: null },
-        reviewNotesAdded: 1, nextChapterId: 'act1-ch02',
+        reviewNotesAdded: 1, nextChapterId: 'act1-ch02', beltAwarded: null,
       },
     }));
     expect(store.getState().run?.phase).toBe('ended');

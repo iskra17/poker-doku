@@ -19,7 +19,8 @@ export const CH02: Chapter = {
   subtitle: '레인지 · 포지션별 임계 · 폴드하는 용기',
   teacher: 'sakura',
   belt: 'white',
-  requires: ['act1-ch01'],
+  // 1막은 비선형 — 어느 수업부터 들어도 된다(2026-09-03 피드백 ②). 선수 과목은 허브 추천으로만 안내한다.
+  requires: [],
   estimatedMinutes: 15,
   steps: [
     // ───────────────────────────────────────────── 프롤로그

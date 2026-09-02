@@ -60,7 +60,18 @@ describe('story socket events', () => {
     expect(updates).toHaveLength(1);
     expect(updates[0]).toMatchObject({ chapterId: 'act1-ch01', stepIndex: 0, stepKind: 'scene', phase: 'scene' });
     expect(updates[0].context.partnerId).toBe(client.initialProgression.profile.selectedCharacterId);
-    expect(h.runtime.storyProgress(profile.profile.id)?.activeRun).toMatchObject({ chapterId: 'act1-ch01', stepIndex: 0 });
+    expect(h.runtime.storyProgress(profile.profile.id)?.activeRun).toMatchObject({ chapterId: 'act1-ch01', stepIndex: 0, mode: 'full' });
+  });
+
+  it('starts an exam run (mode: exam) straight at the drill set and rejects unknown modes as invalid-payload', async () => {
+    const { client } = await setup();
+    expect(await withAck(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01', mode: 'cheat' }, done)))
+      .toMatchObject({ ok: false, code: 'invalid-payload' });
+    const updates = collect<StoryRunView>(client, 'story-update');
+    const started = await withAck<{ runId: string }>(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01', mode: 'exam' }, done));
+    expect(started.ok).toBe(true);
+    await sleep(20);
+    expect(updates[0]).toMatchObject({ chapterId: 'act1-ch01', mode: 'exam', stepKind: 'drill-set', phase: 'drill' });
   });
 
   it('rejects malformed payloads before touching state and locked chapters with story-locked', async () => {

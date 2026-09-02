@@ -1,6 +1,6 @@
 'use client';
 
-import { accuracyPercent } from '@/lib/story/story-hub-rules';
+import { accuracyPercent, DRILL_CATEGORY_LABEL } from '@/lib/story/story-hub-rules';
 import type { StoryProgressView } from '@/lib/story/views';
 
 interface ReviewNotePanelProps {
@@ -8,29 +8,11 @@ interface ReviewNotePanelProps {
   drillStats: StoryProgressView['drillStats'];
 }
 
-const CATEGORY_LABEL: Record<string, string> = {
-  'pot-odds': '팟오즈',
-  outs: '아우츠',
-  equity: '에퀴티',
-  combos: '콤보',
-  'hand-ranking': '핸드 랭킹',
-  position: '포지션',
-  range: '레인지',
-  'call-decision': '콜 결정',
-  breakeven: '손익분기',
-  mdf: 'MDF',
-  'opponent-type': '상대 유형',
-  sizing: '사이징',
-  'action-judgment': '액션 판단',
-  'hand-reading': '핸드 리딩',
-  'sng-math': 'SnG 산술',
-};
-
 /** 복습 노트(Leitner 대기 수) + 유형별 정답률 요약 — 기록실 축소판 */
 export default function ReviewNotePanel({ reviewQueue, drillStats }: ReviewNotePanelProps) {
   const overall = accuracyPercent(drillStats.total, drillStats.correct);
   const categories = Object.entries(drillStats.byCategory)
-    .map(([category, stats]) => ({ category, label: CATEGORY_LABEL[category] ?? category, pct: accuracyPercent(stats.total, stats.correct), total: stats.total }))
+    .map(([category, stats]) => ({ category, label: DRILL_CATEGORY_LABEL[category] ?? category, pct: accuracyPercent(stats.total, stats.correct), total: stats.total }))
     .filter(entry => entry.pct !== null)
     .sort((a, b) => (a.pct ?? 0) - (b.pct ?? 0))
     .slice(0, 4);

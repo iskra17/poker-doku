@@ -336,6 +336,8 @@ describe('drill set flow', () => {
       rewards: { firstClear: true, affinity: [{ characterId: 'sakura', milli: 30_000 }], badgeId: 'white-belt' },
       reviewNotesAdded: 1,
       nextChapterId: 'act1-ch02',
+      // Ch1만으로는 1막이 끝나지 않는다 — 승급 없음
+      beltAwarded: null,
     });
     // 점수: 슬롯0 재출제 정답 0.5 + 슬롯1 정답 1 = 0.75 → A (힌트 1)
     expect(view.result!.grade).toBe('A');
@@ -374,8 +376,61 @@ describe('drill set flow', () => {
   });
 });
 
+describe('exam mode (실력 확인)', () => {
+  it('skips scene/lesson/live steps, rejects hints, and records completion + first-clear rewards at ≥ 0.85', () => {
+    const ctx = setup();
+    const { coordinator, rewards, latest } = ctx;
+    expect(coordinator.start(PROFILE, 'act1-ch01', 'exam')).toEqual({ ok: true, value: { runId: 'run-1' } });
+    let view = latest();
+    // 픽스처: [scene, lesson, drill-set, practice, sparring, result] → 바로 드릴 세트(2)로
+    expect(view).toMatchObject({ mode: 'exam', stepIndex: 2, stepKind: 'drill-set', phase: 'drill' });
+    expect(coordinator.getProgress(PROFILE).activeRun).toMatchObject({ chapterId: 'act1-ch01', mode: 'exam' });
+
+    const drill = view.drill!;
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: drill.setId, index: drill.index, action: 'hint' }))
+      .toMatchObject({ ok: false, code: 'action-rejected' });
+
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    view = latest();
+    // 라이브 스텝은 exam이 건너뛴다 → 결산 대기
+    expect(view).toMatchObject({ stepIndex: 5, stepKind: 'result', phase: 'result' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
+    view = latest();
+    expect(view.phase).toBe('ended');
+    expect(view.result).toMatchObject({ mode: 'exam', passed: true, grade: 'S', live: null, rewards: { firstClear: true } });
+    expect(coordinator.getProgress(PROFILE).chapters[0]).toMatchObject({ chapterId: 'act1-ch01', completions: 1, bestGrade: 'S' });
+    expect(rewards.chapters[0]).toMatchObject({ chapterId: 'act1-ch01', firstClear: true });
+
+    // 완료한 챕터의 실력 확인은 거절 — [다시](full)로만
+    expect(coordinator.start(PROFILE, 'act1-ch01', 'exam')).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(coordinator.start(PROFILE, 'act1-ch01', 'full').ok).toBe(true);
+  });
+
+  it('fails below 0.85 without recording completion or rewards, result keeps mode for the [수업 듣기] CTA', () => {
+    const ctx = setup();
+    const { coordinator, rewards, latest } = ctx;
+    expect(coordinator.start(PROFILE, 'act1-ch01', 'exam').ok).toBe(true);
+    // 슬롯0 오답(재출제 정답 0.5) + 슬롯1 정답 1 = 0.75 < 0.85
+    expect(answerCurrent(ctx, false).ok).toBe(true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
+    const view = latest();
+    expect(view.phase).toBe('ended');
+    expect(view.result).toMatchObject({ mode: 'exam', passed: false, rewards: { firstClear: false, dojoXpMilli: 0, affinity: [] } });
+    expect(coordinator.getProgress(PROFILE).chapters[0]).toMatchObject({ chapterId: 'act1-ch01', completions: 0, attempts: 1 });
+    expect(rewards.chapters).toHaveLength(0);
+  });
+});
+
 describe('daily drills', () => {
-  it('requires Ch1, serves due review notes first, records daily attempts, rewards the teacher once per day', () => {
+  it('requires one completed chapter, serves due review notes first, records daily attempts, rewards the teacher once per day', () => {
     const ctx = setup();
     const { coordinator, repository, rewards, latest, tick } = ctx;
     expect(coordinator.startDaily(PROFILE)).toMatchObject({ ok: false, code: 'story-locked' });
