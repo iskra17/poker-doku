@@ -44,7 +44,7 @@ function Front({ card }: { card: RewardCardItem }) {
   switch (item.kind) {
     case 'outfit':
       return item.characterId
-        ? <CharacterImage characterId={item.characterId} expression="happy" round={false} className="h-full w-full text-4xl" />
+        ? <CharacterImage characterId={item.characterId} expression="happy" round={false} outfitId={item.outfitId ?? null} className="h-full w-full text-4xl" />
         : <span className="text-4xl">👘</span>;
     case 'cg':
       return item.art && !broken

@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import type { Expression } from '@/lib/assets/character-art';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import type { StoryHeroineId } from '@/lib/story/types';
 import { resolveSpeaker } from './ScenePlayer';
@@ -21,6 +22,7 @@ interface CoachBubbleProps {
 /** 출제·해설 히로인 말풍선 — 아바타(표정) + 타자기 대사. 드릴 카드·결산·인터럽트 공용. */
 export default function CoachBubble({ speaker, partnerId, text, expression = 'neutral', tone = 'neutral', typewriter = true }: CoachBubbleProps) {
   const who = resolveSpeaker(speaker, partnerId);
+  const outfitId = useOutfitId(who.artId);
   const { display } = useTypewriter(typewriter ? text : '', 18);
   const shown = typewriter ? display : text;
   const border = tone === 'correct' ? 'border-cyber/60' : tone === 'wrong' ? 'border-blossom/60' : 'border-mystic/30';
@@ -42,7 +44,7 @@ export default function CoachBubble({ speaker, partnerId, text, expression = 'ne
           className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border"
           style={{ borderColor: `${who.color ?? '#fff'}55` }}
         >
-          <CharacterImage characterId={who.artId} expression={expression} round={false} className="h-full w-full text-2xl" />
+          <CharacterImage characterId={who.artId} expression={expression} round={false} outfitId={outfitId} className="h-full w-full text-2xl" />
         </motion.div>
       )}
       <div className="min-w-0 flex-1">

@@ -61,14 +61,58 @@ const EXPRESSION_FALLBACK: Record<Expression, Expression> = {
   surprised: 'happy',
 };
 
-export function getCharacterArt(characterId: string, expression: Expression = 'neutral'): string | null {
-  const folder = ART_FOLDERS[characterId];
-  if (!folder) return null;
-  const available = AVAILABLE[folder];
+/**
+ * 의상(코스튬) 축 — 폴더별 `의상 id → 보유 표정`. 파일은 `<folder>/outfits/<outfitId>/<expr>.webp`(512²).
+ * **아트가 실제로 배치된 의상만** 여기 올린다(없는 파일을 가리키면 CharacterImage가 이모지로 강등된다).
+ * 보상 카탈로그(`story/rewards/catalog.ts`)의 outfit 항목은 이 매니페스트 없이도 지급·장착되며, 아트가 오기 전엔 기본 의상으로 보인다.
+ */
+export type OutfitManifest = Record<string, Record<string, readonly Expression[]>>;
+
+const OUTFITS: OutfitManifest = {
+  // sakura: { dojo: ['neutral', 'happy', 'confident'] },  ← P3 아트 배치 후 활성화
+  // hana: { lab: ['neutral', 'happy', 'confident'] },
+};
+
+interface ArtManifest {
+  available: Record<string, readonly Expression[]>;
+  outfits: OutfitManifest;
+}
+
+/**
+ * 아트 경로 해석 — 의상+표정 → 의상+표정폴백 → 의상 neutral → 기본 의상 체인(의상 연속성 > 표정 정확성).
+ * 매니페스트 주입은 테스트용; 런타임은 `getCharacterArt`가 모듈 매니페스트로 호출한다.
+ */
+export function resolveCharacterArt(
+  manifest: ArtManifest,
+  folder: string,
+  expression: Expression,
+  outfitId: string | null,
+): string | null {
+  if (outfitId) {
+    const expressions = manifest.outfits[folder]?.[outfitId];
+    if (expressions && expressions.length > 0) {
+      const candidates: Expression[] = [expression, EXPRESSION_FALLBACK[expression], 'neutral'];
+      const hit = candidates.find(candidate => expressions.includes(candidate));
+      if (hit) return `/assets/characters/${folder}/outfits/${outfitId}/${hit}.webp`;
+    }
+  }
+  const available = manifest.available[folder];
   if (!available || available.length === 0) return null;
   const resolved = available.includes(expression) ? expression : EXPRESSION_FALLBACK[expression];
   if (!available.includes(resolved)) return null;
   return `/assets/characters/${folder}/${resolved}.webp`;
+}
+
+export function getCharacterArt(characterId: string, expression: Expression = 'neutral', outfitId: string | null = null): string | null {
+  const folder = ART_FOLDERS[characterId];
+  if (!folder) return null;
+  return resolveCharacterArt({ available: AVAILABLE, outfits: OUTFITS }, folder, expression, outfitId);
+}
+
+/** 이 캐릭터의 의상 아트가 배치되어 있는가 (없으면 기본 의상으로 보인다 — 장착 자체는 가능) */
+export function hasOutfitArt(characterId: string, outfitId: string): boolean {
+  const folder = ART_FOLDERS[characterId];
+  return !!folder && (OUTFITS[folder]?.[outfitId]?.length ?? 0) > 0;
 }
 
 // 쇼케이스(상반신 포즈, 640x960 투명 webp) 보유 캐릭터 — 프로필 클릭 연출용.

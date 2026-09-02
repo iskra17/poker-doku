@@ -13,6 +13,7 @@ import {
 } from '@/lib/characters/partner-dialogue';
 import { useGameStore } from '@/lib/store/game-store';
 import { useProfileStore } from '@/lib/store/profile-store';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
@@ -53,6 +54,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const [showcaseOpen, setShowcaseOpen] = useState(false);
 
   const partnerId = progression?.profile.selectedCharacterId ?? profile?.avatarId ?? null;
+  const partnerOutfit = useOutfitId(partnerId);
   const affinityLevel = progression?.affinities.find(a => a.characterId === partnerId)?.level ?? 1;
   const tier = getPartnerTier(affinityLevel);
 
@@ -128,6 +130,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             expression={talkLine ? 'happy' : 'neutral'}
             round={false}
             skinId={progression?.equipment.skin}
+            outfitId={partnerOutfit}
             className="h-full w-full text-3xl"
           />
         </motion.button>

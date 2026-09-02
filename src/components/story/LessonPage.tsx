@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { gradeLocally, isAnswerComplete } from '@/lib/story/drill-input';
 import type { DrillAnswer } from '@/lib/story/drills/types';
@@ -71,13 +72,14 @@ export default function LessonPage({ title, blocks, partnerId, onFinish }: Lesso
 
 function TextBlock({ speaker, text, partnerId, onNext, last }: { speaker: string; text: string; partnerId: StoryHeroineId | null; onNext: () => void; last: boolean }) {
   const who = resolveSpeaker(speaker, partnerId);
+  const outfitId = useOutfitId(who.artId);
   const { display, done, skip } = useTypewriter(text, 22);
   return (
     <div className="rounded-2xl border border-mystic/30 bg-panel/90 p-4">
       <div className="flex gap-3">
         {who.artId && (
           <div className="h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-mystic/25">
-            <CharacterImage characterId={who.artId} expression="happy" round={false} className="h-full w-full text-2xl" />
+            <CharacterImage characterId={who.artId} expression="happy" round={false} outfitId={outfitId} className="h-full w-full text-2xl" />
           </div>
         )}
         <div className="min-w-0 flex-1">
@@ -104,6 +106,7 @@ function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
   const [answer, setAnswer] = useState<DrillAnswer | null>(null);
   const [feedback, setFeedback] = useState<{ correct: boolean; text: string } | null>(null);
   const who = resolveSpeaker(teacher, partnerId);
+  const outfitId = useOutfitId(who.artId);
   const stage = stages[stageIndex];
   const finished = stageIndex >= stages.length;
   const bubble = finished ? '잘했어요. 이제 진짜 문제로 가 볼까요?' : feedback ? feedback.text : stageIndex === 0 ? `${intro} ${stage.prompt}` : stage.prompt;
@@ -126,7 +129,7 @@ function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
       <div className="mt-2 flex gap-3">
         {who.artId && (
           <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-gilded/30">
-            <CharacterImage characterId={who.artId} expression={feedback ? (feedback.correct ? 'happy' : 'thinking') : 'neutral'} round={false} className="h-full w-full text-2xl" />
+            <CharacterImage characterId={who.artId} expression={feedback ? (feedback.correct ? 'happy' : 'thinking') : 'neutral'} round={false} outfitId={outfitId} className="h-full w-full text-2xl" />
           </div>
         )}
         <div className="min-w-0 flex-1">

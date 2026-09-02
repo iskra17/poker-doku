@@ -13,6 +13,11 @@ interface CharacterImageProps {
   round?: boolean;
   className?: string;
   skinId?: string | null;
+  /**
+   * 의상(코스튬) — 명시 prop만 받는다(스토어를 내부에서 읽지 않는다). 로비·스토리 호출부가 `useOutfitId`로 넘기고
+   * 테이블 좌석·말풍선·컷인은 넘기지 않아 기본 의상으로 남는다. 아트 미배치 의상은 기본 경로로 폴백.
+   */
+  outfitId?: string | null;
 }
 
 /**
@@ -21,11 +26,11 @@ interface CharacterImageProps {
  * 표정 전환은 크로스페이드.
  */
 export default function CharacterImage({
-  characterId, expression = 'neutral', round = true, className = '', skinId = null,
+  characterId, expression = 'neutral', round = true, className = '', skinId = null, outfitId = null,
 }: CharacterImageProps) {
   const [errored, setErrored] = useState(false);
   const character = getCharacterById(characterId);
-  const src = errored ? null : getCharacterArt(characterId, expression);
+  const src = errored ? null : getCharacterArt(characterId, expression, outfitId);
   const skin = skinId ? getCollectionItemDefinition(skinId) : null;
   const renderer = skin?.kind === 'skin' && skin.characterId === characterId
     ? skin.renderer : undefined;

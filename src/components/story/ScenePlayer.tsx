@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { setMusicScene } from '@/lib/sound/music-manager';
 import {
@@ -55,6 +56,7 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
   const line = view.kind === 'say' ? view.line : null;
   const { display, done, skip } = useTypewriter(line?.text ?? '', 22);
   const speaker = line ? resolveSpeaker(line.speaker, partnerId) : null;
+  const speakerOutfit = useOutfitId(speaker?.artId);
 
   // 씬이 바뀌면 커서 리셋 (렌더 중 보정 — effect setState 금지 규칙)
   const [trackedScene, setTrackedScene] = useState(scene.id);
@@ -141,7 +143,7 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
               transition={{ y: { duration: 0.45 }, opacity: { duration: 0.25 } }}
               className={`overflow-hidden rounded-t-3xl ${compact ? 'h-40 w-40' : 'h-56 w-56'}`}
             >
-              <CharacterImage characterId={speaker.artId} expression={line?.expression ?? 'neutral'} round={false} className="h-full w-full text-6xl" />
+              <CharacterImage characterId={speaker.artId} expression={line?.expression ?? 'neutral'} round={false} outfitId={speakerOutfit} className="h-full w-full text-6xl" />
             </motion.div>
           )}
         </AnimatePresence>

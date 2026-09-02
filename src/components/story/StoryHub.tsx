@@ -18,6 +18,7 @@ import {
 } from '@/lib/story/story-hub-rules';
 import { nextStoryRewards } from '@/lib/story/rewards/catalog';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import ChapterCard from './ChapterCard';
@@ -45,6 +46,7 @@ export default function StoryHub() {
   const recommendedTeacherId = recommended?.teacher === 'partner' ? (partnerId ?? 'miyako') : (recommended?.teacher ?? 'miyako');
   const recommendedTeacher = getCharacterById(teacherArtId(recommendedTeacherId));
   const recommendedTeacherName = teacherDisplayName(recommendedTeacherId, id => getCharacterById(id)?.name);
+  const recommendedOutfit = useOutfitId(recommendedTeacherId);
 
   const acts = useMemo(() => {
     if (!progress) return [];
@@ -111,7 +113,7 @@ export default function StoryHub() {
         <div className="mb-2 rounded-2xl border border-blossom/30 bg-panel/85 p-3 backdrop-blur-sm" aria-label="추천 수련">
           <div className="flex items-center gap-3">
             <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl border" style={{ borderColor: `${recommendedTeacher?.color ?? '#fff'}55` }}>
-              <CharacterImage characterId={teacherArtId(recommendedTeacherId)} expression="happy" round={false} className="h-full w-full text-3xl" />
+              <CharacterImage characterId={teacherArtId(recommendedTeacherId)} expression="happy" round={false} outfitId={recommendedOutfit} className="h-full w-full text-3xl" />
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[10px] font-bold tracking-wider" style={{ color: recommendedTeacher?.color }}>

@@ -2,6 +2,7 @@
 
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import type { Chapter, StoryHeroineId } from '@/lib/story/types';
 import {
   WEAKNESS_MAX_PCT,
@@ -62,6 +63,7 @@ export default function ChapterCard({
 }: ChapterCardProps) {
   const teacherId = chapter?.teacher === 'partner' ? (partnerId ?? 'miyako') : (chapter?.teacher ?? 'miyako');
   const teacherName = teacherDisplayName(teacherId, id => getCharacterById(id)?.name);
+  const outfitId = useOutfitId(teacherId);
   const locked = state === 'locked';
   const grade = progress.bestGrade;
 
@@ -79,7 +81,7 @@ export default function ChapterCard({
       }`}
     >
       <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-mystic/25">
-        <CharacterImage characterId={teacherArtId(teacherId)} expression={locked ? 'neutral' : 'happy'} round={false} className="h-full w-full text-2xl" />
+        <CharacterImage characterId={teacherArtId(teacherId)} expression={locked ? 'neutral' : 'happy'} round={false} outfitId={outfitId} className="h-full w-full text-2xl" />
         {grade && (
           <span className="absolute bottom-0 right-0 rounded-tl-lg bg-gilded px-1.5 text-[10px] font-black text-abyss" aria-label={`최고 등급 ${grade}`}>
             {grade}
