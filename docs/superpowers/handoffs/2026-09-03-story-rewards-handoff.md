@@ -1,7 +1,8 @@
 # 수련 스토리 — 드릴 재출제 완화 + 보상 체계 세션 인계 (2026-09-03, 3차 세션)
 
 브랜치 `feat/story-rewards` (worktree `.worktrees/story-mode`), 커밋 체인 b2a3f9c → … → bf7af0a (12커밋),
-태그 `story-rewards`. main에 ff 병합됨(이 문서 커밋 직전 기준 — 아래 「병합·배포」 참조). **origin 미푸시·Fly 미배포**.
+태그 `story-rewards`. main ff 병합 → **origin 푸시 + Fly v74 배포 완료(2026-09-03, 사용자 지시 "커밋 배포해줘")** — 머신 48ed666a50d2e8,
+healthz 200, `/assets/story/cg/*`·`/assets/characters/sakura/outfits/dojo/*` 서빙 확인, 부팅 로그 `server-start` 정상(기동 전 ~17초 health check 실패는 평소 패턴).
 계획 원문: `C:\Users\JEONG JAE HYEON\.claude\plans\velvet-coalescing-crane.md`, 기획 반영: `docs/spec-story-mode-2026-09.md` Part T.
 
 ## 사용자 질문·결정 (이 세션의 출발점)
@@ -39,8 +40,10 @@
 
 ## 병합·배포
 
-- main ff 병합은 이 세션에서 실행(아래 커밋 로그에 `story-rewards` 태그). **푸시·`fly deploy --ha=false`는 사용자 지시 시에만.**
-- 배포 전 체크: v32 마이그레이션은 서버 기동 시 자동 적용(카탈로그 20행 시드). `economy.storyDailyChips`(기본 100)는 `/admin` 게임 설정에서 조정 가능.
+- main ff 병합 + origin 푸시 + `fly deploy --ha=false`(v74) 전부 이 세션에서 완료. `fly`는 Git Bash PATH에 없고
+  PowerShell에서 `$env:USERPROFILE\.fly\bin\flyctl.exe`로 실행해야 한다.
+- v32 마이그레이션은 기동 시 자동 적용됨(카탈로그 20행 시드). `economy.storyDailyChips`(기본 100)는 `/admin` 게임 설정에서 조정 가능.
+- 운영 관찰 포인트: `/api/debug/log?type=story-step`의 결산 `rewards.items`, `chip_ledger` reason `STORY_REWARD`/`STORY_DAILY` 1회성, 재출제 오퍼 선택 비율.
 
 ## 함정·교훈
 
