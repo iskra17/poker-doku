@@ -110,6 +110,18 @@ function moveToLine(scene: Scene, cursor: SceneCursor, lineIndex: number): Scene
   return { ...cursor, lineIndex, replyIndex: null };
 }
 
+/**
+ * 지금 보이는 배경 id — 커서 위치까지의 say 라인(reply 포함) 중 마지막 `bg`.
+ * 라인마다 `bg`를 다시 적지 않아도 배경이 유지된다(라인마다 기본 그라디언트로 되돌아가던 깜빡임 방지).
+ */
+export function effectiveBackground(scene: Scene, cursor: SceneCursor): string | null {
+  let background: string | null = null;
+  for (const line of sceneLog(scene, cursor)) {
+    if (line.bg) background = line.bg;
+  }
+  return background;
+}
+
 /** 씬의 requiresFlags가 현재 플래그와 전부 일치하는지 */
 export function sceneMatchesFlags(scene: Scene, flags: Readonly<Record<string, string>>): boolean {
   return Object.entries(scene.requiresFlags ?? {}).every(([key, value]) => flags[key] === value);

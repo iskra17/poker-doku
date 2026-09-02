@@ -1,10 +1,12 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getChapter } from '@/lib/story/chapters';
+import { setMusicScene } from '@/lib/sound/music-manager';
 import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
+import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
@@ -36,8 +38,21 @@ export default function StoryStage() {
   const dismissRun = useStoryStore(state => state.dismissRun);
   const startChapter = useStoryStore(state => state.startChapter);
 
-  if (!mounted || typeof document === 'undefined') return null;
   const visible = !!run && !run.live?.roomId;
+  const ended = run?.phase === 'ended';
+  const passed = run?.result?.passed ?? false;
+
+  // 스테이지 BGM — 열려 있는 동안 'story', 통과 결산은 승리 스팅. 닫히면 로비/테이블로 복귀 (외부 시스템 호출)
+  useEffect(() => {
+    if (!visible) return;
+    setMusicScene(ended && passed ? 'victory' : 'story');
+  }, [visible, ended, passed]);
+  useEffect(() => {
+    if (!visible) return;
+    return () => setMusicScene(useGameStore.getState().currentRoomId ? 'table' : 'lobby');
+  }, [visible]);
+
+  if (!mounted || typeof document === 'undefined') return null;
   const chapter = run ? getChapter(run.chapterId) : undefined;
   const title = run?.chapterId === 'daily' ? '오늘의 수련 문제' : (chapter?.title ?? run?.chapterId ?? '수련 스토리');
   const step = run && chapter ? chapter.steps[run.stepIndex] : undefined;

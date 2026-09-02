@@ -48,6 +48,7 @@ function Front({ card }: { card: RewardCardItem }) {
         : <span className="text-4xl">👘</span>;
     case 'cg':
       return item.art && !broken
+        // eslint-disable-next-line @next/next/no-img-element -- 정적 CG 썸네일(webp), next/image 최적화 대상 아님
         ? <img src={item.art} alt={item.name} className="h-full w-full object-cover" onError={() => setBroken(true)} draggable={false} />
         : <div className="flex h-full w-full items-center justify-center bg-gradient-to-b from-blossom/25 to-mystic/10 text-4xl" aria-hidden>🖼</div>;
     case 'card-back':
@@ -56,6 +57,7 @@ function Front({ card }: { card: RewardCardItem }) {
       return <FeltPreview id={item.id} className="h-full w-full p-2" />;
     case 'throwable':
       return item.id.startsWith('throwable-') && !broken
+        // eslint-disable-next-line @next/next/no-img-element -- 투척 스프라이트(webp) 소형 썸네일
         ? <img src={`/assets/throwables/${item.id.slice('throwable-'.length)}.webp`} alt={item.name} className="h-full w-full object-contain p-3" onError={() => setBroken(true)} draggable={false} />
         : <span className="text-4xl">💐</span>;
     default:

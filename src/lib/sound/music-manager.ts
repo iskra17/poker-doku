@@ -11,13 +11,14 @@ import { useSettingsStore } from '../store/settings-store';
  * - 자동재생 차단 대응: 첫 재생 실패 시 pointerdown/touchend에서 재시도
  */
 
-export type MusicScene = 'lobby' | 'table' | 'tension' | 'victory';
+export type MusicScene = 'lobby' | 'table' | 'tension' | 'victory' | 'story';
 
 const TRACKS: Record<MusicScene, string> = {
   lobby: '/assets/music/lobby.mp3',
   table: '/assets/music/table.mp3',
   tension: '/assets/music/tension.mp3',
   victory: '/assets/music/victory.mp3',
+  story: '/assets/music/story.mp3',
 };
 
 /** 승리 테마는 한 번만 재생 (게임 종료 화면) — 나머지는 루프 */
@@ -26,7 +27,16 @@ const LOOP: Record<MusicScene, boolean> = {
   table: true,
   tension: true,
   victory: false,
+  story: true,
 };
+
+/** 트랙 파일이 없을 때(404) 대신 틀 장면 — 'story'는 아트 배치 전까지 로비 트랙으로 */
+const FALLBACK: Partial<Record<MusicScene, MusicScene>> = {
+  story: 'lobby',
+};
+
+/** 로드에 실패한 장면 — 같은 세션에서 다시 시도하지 않는다(404 무한 재시도 방지) */
+const unavailable = new Set<MusicScene>();
 
 const MUSIC_VOLUME = 0.25;
 const FADE_MS = 900;
@@ -93,8 +103,9 @@ function installMusicUnlock() {
   window.addEventListener('touchend', unlock);
 }
 
-export function setMusicScene(scene: MusicScene): void {
+export function setMusicScene(requested: MusicScene): void {
   if (typeof window === 'undefined') return;
+  const scene = unavailable.has(requested) ? (FALLBACK[requested] ?? 'lobby') : requested;
   if (scene === currentScene) return;
   currentScene = scene;
 
@@ -104,9 +115,26 @@ export function setMusicScene(scene: MusicScene): void {
   el.muted = useSettingsStore.getState().musicMuted;
   el.preload = 'auto';
 
+  // 파일 자체가 없거나(404) 디코딩 실패면 자동재생 차단이 아니다 — 장면을 불가 처리하고 폴백으로
+  const markUnavailable = () => {
+    if (unavailable.has(scene)) return;
+    unavailable.add(scene);
+    if (currentScene === scene) {
+      currentScene = null;
+      pendingScene = null;
+      const fallback = FALLBACK[scene];
+      if (fallback && fallback !== scene) setMusicScene(fallback);
+    }
+  };
+  el.addEventListener('error', markUnavailable, { once: true });
+
   el.play().then(
     () => crossfadeTo(el),
     () => {
+      if (el.error) {
+        markUnavailable();
+        return;
+      }
       // 자동재생 차단 — 제스처 후 재시도
       pendingScene = scene;
       currentScene = null;

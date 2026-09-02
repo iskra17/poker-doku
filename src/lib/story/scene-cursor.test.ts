@@ -5,6 +5,7 @@ import {
   collectSceneFlags,
   createSceneCursor,
   cursorView,
+  effectiveBackground,
   sceneLog,
   sceneMatchesFlags,
   skipScene,
@@ -79,6 +80,28 @@ describe('scene cursor', () => {
     expect(sceneLog(scene, cursor).map(l => l.text)).toEqual(['어서 오세요, 수련생님♪', '…잘 부탁해요.', '네, 네!']);
     cursor = skipScene(scene, cursor);
     expect(sceneLog(scene, cursor).map(l => l.text)).toEqual(['어서 오세요, 수련생님♪', '…잘 부탁해요.', '네, 네!', '후후♪', '그럼 시작할까요?']);
+  });
+
+  it('effectiveBackground keeps the last bg across lines without one (replies included)', () => {
+    const scene: Scene = {
+      id: 'bg',
+      lines: [
+        { kind: 'say', speaker: 'miyako', text: 'a', bg: 'dojo-gate' },
+        { kind: 'say', speaker: 'miyako', text: 'b' },
+        { kind: 'choice', choice: { id: 'q', options: [{ id: 'x', text: 'x', reply: [{ kind: 'say', speaker: 'miyako', text: 'r', bg: 'dojo-study' }] }, { id: 'y', text: 'y' }] } },
+        { kind: 'say', speaker: 'miyako', text: 'c' },
+      ],
+    };
+    let cursor = createSceneCursor(scene);
+    expect(effectiveBackground(scene, cursor)).toBe('dojo-gate');
+    cursor = advanceScene(scene, cursor);
+    expect(effectiveBackground(scene, cursor)).toBe('dojo-gate');
+    cursor = advanceScene(scene, cursor);
+    cursor = chooseSceneOption(scene, cursor, 'x');
+    expect(effectiveBackground(scene, cursor)).toBe('dojo-study');
+    cursor = advanceScene(scene, cursor);
+    expect(effectiveBackground(scene, cursor)).toBe('dojo-study');
+    expect(effectiveBackground({ id: 'none', lines: [{ kind: 'say', speaker: 'miyako', text: 'a' }] }, createSceneCursor(scene))).toBeNull();
   });
 
   it('empty scenes are done immediately and requiresFlags gate variants', () => {

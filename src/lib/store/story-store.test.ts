@@ -207,7 +207,7 @@ describe('story-store', () => {
     emitted.at(-1)!.ack!({ ok: true, data: { action: 'answer', result } });
     expect(await promise).toEqual(result);
     expect(store.getState().lastDrillResult).toEqual(result);
-    expect(events).toEqual([{ type: 'story-drill-result', correct: true, streak: 1 }]);
+    expect(events).toEqual([{ type: 'story-drill-result', correct: true, streak: 1, retry: false, perfect: false }]);
     off();
 
     // 힌트는 한 번 열면 캐시된다

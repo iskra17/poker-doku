@@ -42,7 +42,7 @@ export type GameEvent =
     }
   | { type: 'throwable-impact'; throwId: string; itemId: string; targetPlayerId: string; targetSeatIndex: number }
   // 수련 스토리 — story-store가 서버 ack/story-update를 받아 발행 (사운드·컷인 구독용)
-  | { type: 'story-drill-result'; correct: boolean; streak: number }
+  | { type: 'story-drill-result'; correct: boolean; streak: number; retry?: boolean; perfect?: boolean }
   | { type: 'story-chapter-complete'; chapterId: string; grade: 'S' | 'A' | 'B'; passed: boolean };
 
 type Listener = (event: GameEvent) => void;

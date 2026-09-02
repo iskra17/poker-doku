@@ -4,13 +4,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getCharacterById } from '@/lib/characters';
+import { getStoryBackground } from '@/lib/assets/story-backgrounds';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
+import { setMusicScene } from '@/lib/sound/music-manager';
 import {
   advanceScene,
   chooseSceneOption,
   collectSceneFlags,
   createSceneCursor,
   cursorView,
+  effectiveBackground,
   sceneLog,
   skipScene,
   type SceneCursor,
@@ -29,11 +32,6 @@ interface ScenePlayerProps {
 }
 
 const AUTO_DELAY_MS = 1_800;
-const BACKGROUND_CLASS: Record<string, string> = {
-  'dojo-table': 'from-abyss via-panel to-mystic/30',
-  'dojo-garden-night': 'from-abyss via-mystic/30 to-blossom/20',
-  'dojo-office': 'from-abyss via-panel to-gilded/20',
-};
 
 export function resolveSpeaker(speaker: SceneSpeaker, partnerId: StoryHeroineId | null): { artId: string | null; name: string; color: string | null } {
   if (speaker === 'narrator') return { artId: null, name: '', color: null };
@@ -72,6 +70,16 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 완료 시 1회
   }, [view.kind]);
 
+  // 씬 BGM — 첫 say 라인이 지정한 트랙 (외부 시스템 호출; 트랙이 없으면 music-manager가 폴백)
+  useEffect(() => {
+    for (const entry of scene.lines) {
+      if (entry.kind === 'say' && entry.music) {
+        setMusicScene(entry.music);
+        return;
+      }
+    }
+  }, [scene]);
+
   // 자동 진행: 타이핑이 끝난 뒤 일정 시간 후 다음 라인
   useEffect(() => {
     if (!auto || view.kind !== 'say' || !done) return;
@@ -88,11 +96,30 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
     setCursor(current => advanceScene(scene, current));
   };
 
-  const bgClass = BACKGROUND_CLASS[line?.bg ?? ''] ?? 'from-abyss via-panel to-mystic/20';
+  // 배경은 "커서까지의 마지막 bg" — 라인마다 bg를 안 적어도 유지된다. 이미지는 매니페스트에 있을 때만, 없으면 그라디언트.
+  const background = getStoryBackground(effectiveBackground(scene, cursor));
   const log = sceneLog(scene, cursor);
 
   return (
-    <div className={`relative flex w-full flex-col overflow-hidden rounded-2xl border border-mystic/25 bg-gradient-to-b ${bgClass} ${compact ? 'h-[52dvh]' : 'h-[68dvh]'} max-h-[640px]`} aria-label="장면">
+    <div className={`relative isolate flex w-full flex-col overflow-hidden rounded-2xl border border-mystic/25 bg-gradient-to-b ${background.gradientClass} ${compact ? 'h-[52dvh]' : 'h-[68dvh]'} max-h-[640px]`} aria-label="장면">
+      {/* 배경 이미지 — 라인 전환에 크로스페이드, 대사창 가독성용 하단 그라디언트. 음수 z로 컨트롤·스프라이트 아래 */}
+      <AnimatePresence initial={false}>
+        {background.src && (
+          <motion.img
+            key={background.src}
+            src={background.src}
+            alt=""
+            aria-hidden
+            draggable={false}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="pointer-events-none absolute inset-0 -z-10 h-full w-full select-none object-cover"
+          />
+        )}
+      </AnimatePresence>
+      {background.src && <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-t from-abyss/80 via-abyss/25 to-transparent" aria-hidden />}
       {/* 상단 컨트롤 */}
       <div className="flex items-center justify-end gap-1 p-2 text-[10px]">
         <button type="button" onClick={() => setLogOpen(open => !open)} aria-pressed={logOpen} className="rounded-lg border border-mystic/30 bg-abyss/50 px-2 py-1 text-ink-dim">로그</button>

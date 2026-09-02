@@ -6,9 +6,12 @@ import { describeCorrectAnswer, isAnswerComplete } from '@/lib/story/drill-input
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
 import type { StoryHeroineId } from '@/lib/story/types';
 import type { StoryDrillView } from '@/lib/story/views';
+import { drillMomentLine, expressionForResult, pickDrillMoment } from '@/lib/story/drill-moments';
 import CoachBubble from './CoachBubble';
 import DrillAnswerInput from './DrillAnswerInput';
+import DrillMomentLayer from './DrillMomentLayer';
 import DrillTableView from './DrillTableView';
+import { resolveSpeaker } from './ScenePlayer';
 
 interface DrillCardProps {
   drill: StoryDrillView;
@@ -65,6 +68,15 @@ export default function DrillCard({
   const chosenIndex = answer?.kind === 'multiple-choice' ? answer.index : null;
   const praise = PRAISE[(drill.index + instance.seed) % PRAISE.length];
   const retry = drill.retry;
+  // 순간 보상 — 콤보/퍼펙트/재출제 오답 (뷰에서 파생, 문항당 1회)
+  const isRetry = retry !== null;
+  const perfectSet = answered && !!lastResult?.correct && !isRetry
+    && drill.index + 1 === drill.total && drill.correct === drill.total && drill.hintsUsed === 0;
+  const moment = answered && lastResult
+    ? pickDrillMoment({ correct: lastResult.correct, streak: drill.streak, isRetry, perfectSet })
+    : null;
+  const momentSpeaker = lastResult ? resolveSpeaker(lastResult.explanation.speaker, partnerId) : null;
+  const momentLine = moment && lastResult ? drillMomentLine(lastResult.explanation.speaker, moment.moment, instance.seed) : '';
   const progressValue = retry ? retry.index : drill.index;
   const progressMax = retry ? retry.total : drill.total;
 
@@ -110,7 +122,14 @@ export default function DrillCard({
   }
 
   return (
-    <div className="flex w-full max-w-md flex-col gap-2" aria-label="수련 문제">
+    <div className="relative flex w-full max-w-md flex-col gap-2" aria-label="수련 문제">
+      <DrillMomentLayer
+        momentKey={key}
+        pick={moment}
+        line={momentLine}
+        teacherName={momentSpeaker?.name ?? ''}
+        teacherColor={momentSpeaker?.color ?? null}
+      />
       {/* 진행 바 + 콤보 — 첫 패스 분모는 불변, 재출제는 별도 카운터 */}
       <div className="flex items-center gap-2 text-[10px] text-ink-dim">
         <span className={`font-bold tracking-wider ${retry ? 'text-blossom' : ''}`}>
@@ -199,7 +218,7 @@ export default function DrillCard({
           <CoachBubble
             speaker={lastResult.explanation.speaker}
             partnerId={partnerId}
-            expression={lastResult.correct ? 'happy' : 'thinking'}
+            expression={moment?.expression ?? expressionForResult(lastResult.correct, drill.streak, isRetry)}
             tone={lastResult.correct ? 'correct' : 'wrong'}
             text={lastResult.correct ? `${praise} ${lastResult.explanation.text}` : lastResult.explanation.text}
           />

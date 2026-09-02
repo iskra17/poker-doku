@@ -221,7 +221,12 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         if (!ack?.ok || ack.data?.action !== 'answer') return null;
         const result = ack.data.result;
         set({ lastDrillResult: result, hint: null });
-        emitGameEvent({ type: 'story-drill-result', correct: result.correct, streak: result.streak });
+        // 서버는 ack보다 story-update를 먼저 보내므로 여기서 읽는 drill은 이미 답이 반영된 뷰다
+        const after = get().run?.drill ?? null;
+        const retry = !!after?.retry;
+        const perfect = !!after && result.correct && !retry
+          && after.index + 1 === after.total && after.correct === after.total && after.hintsUsed === 0;
+        emitGameEvent({ type: 'story-drill-result', correct: result.correct, streak: result.streak, retry, perfect });
         return result;
       },
 

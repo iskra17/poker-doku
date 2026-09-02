@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useGameStore } from '@/lib/store/game-store';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useStoryStore } from '@/lib/store/story-store';
+import { initStorySoundBindings } from '@/lib/sound/story-sound';
 import { progressionProfileIdentity } from '@/components/progression/ProgressionLifecycle';
 
 /**
@@ -15,6 +16,11 @@ export default function StoryLifecycle() {
   const profileId = useProfileStore(state => state.profile?.id ?? null);
   const socket = useGameStore(state => state.socket);
   const identity = progressionProfileIdentity(phase, profileId);
+
+  // 드릴 결과 효과음 바인딩 (모듈 싱글턴, 멱등)
+  useEffect(() => {
+    initStorySoundBindings();
+  }, []);
 
   useEffect(() => {
     const story = useStoryStore.getState();
