@@ -16,6 +16,10 @@ import {
   getCollectionItemDefinition,
   type CollectionRewardSource,
 } from '@/lib/collection/catalog';
+import type {
+  ProgressionCosmeticSlot,
+  ProgressionCosmetics,
+} from '@/lib/progression/types';
 
 export type {
   DailyMission,
@@ -130,6 +134,38 @@ export interface ProgressionSnapshot {
   streak: StreakState;
   inventory: InventoryItem[];
   equipment: Record<EquipmentSlot, string | null>;
+  /** 스토리 보상 코스메틱(v32) — 행이 없으면 기본(null/미포함) */
+  cosmetics: ProgressionCosmetics;
+}
+
+export interface CosmeticUpdate {
+  profileId: string;
+  slot: ProgressionCosmeticSlot;
+  /** null = 장착 해제(행 삭제) */
+  itemId: string | null;
+  updatedAt: number;
+}
+
+export interface CharacterOutfitUpdate {
+  profileId: string;
+  characterId: PlayableCharacterId;
+  /** null = 기본 의상(행 삭제) */
+  itemId: string | null;
+  updatedAt: number;
+}
+
+interface CosmeticRow {
+  profile_id: string;
+  slot: string;
+  item_id: unknown;
+  updated_at: number;
+}
+
+interface CharacterOutfitRow {
+  profile_id: string;
+  character_id: string;
+  item_id: unknown;
+  updated_at: number;
 }
 
 export interface ProgressionEvent {
@@ -530,7 +566,45 @@ export class ProgressionRepository {
       }
       if (seenSlots.size !== EQUIPMENT_SLOTS.length) throw persistenceInvalid();
 
-      return { profile, affinities, streak, inventory, equipment };
+      // 스토리 보상 코스메틱(v32) — 행 부재 = 기본. 장착 아이템은 반드시 인벤토리에 있어야 한다(트리거와 이중 가드).
+      const cosmeticRows = this.database.db.prepare(`
+      SELECT profile_id, slot, item_id, updated_at
+      FROM profile_cosmetics WHERE profile_id = ? ORDER BY slot
+    `).all(profileId) as unknown as CosmeticRow[];
+      const cosmetics: ProgressionCosmetics = { cardBack: null, felt: null, outfits: {} };
+      for (const row of cosmeticRows) {
+        if (
+          row.profile_id !== profileId
+          || !isCosmeticSlot(row.slot)
+          || typeof row.item_id !== 'string'
+          || row.item_id.length === 0
+          || !ownedItems.has(row.item_id)
+        ) {
+          throw persistenceInvalid();
+        }
+        assertStoredTimestamp(row.updated_at);
+        if (row.slot === 'card-back') cosmetics.cardBack = row.item_id;
+        else cosmetics.felt = row.item_id;
+      }
+      const outfitRows = this.database.db.prepare(`
+      SELECT profile_id, character_id, item_id, updated_at
+      FROM profile_character_outfits WHERE profile_id = ? ORDER BY character_id
+    `).all(profileId) as unknown as CharacterOutfitRow[];
+      for (const row of outfitRows) {
+        if (
+          row.profile_id !== profileId
+          || !(PLAYABLE_CHARACTER_IDS as readonly string[]).includes(row.character_id)
+          || typeof row.item_id !== 'string'
+          || row.item_id.length === 0
+          || !ownedItems.has(row.item_id)
+        ) {
+          throw persistenceInvalid();
+        }
+        assertStoredTimestamp(row.updated_at);
+        cosmetics.outfits[row.character_id as PlayableCharacterId] = row.item_id;
+      }
+
+      return { profile, affinities, streak, inventory, equipment, cosmetics };
     } catch (error) {
       if (error instanceof ProgressionPersistenceError) throw error;
       throw persistenceInvalid();
@@ -616,6 +690,79 @@ export class ProgressionRepository {
       );
       if (result.changes !== 1) {
         throw new ProgressionPersistenceError('PROGRESSION_CONFLICT');
+      }
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /**
+   * 스토리 코스메틱(card-back/felt) 장착 — null이면 행 삭제(기본). 카탈로그 슬롯·소유 검증은
+   * 서비스가 먼저 하고 DB 트리거(`validate_profile_cosmetic_*`)가 이중 가드한다.
+   * Must be called inside a caller-owned PokerDatabase transaction.
+   */
+  setCosmeticInTransaction(update: CosmeticUpdate): void {
+    this.assertTransaction();
+    assertProfileId(update.profileId);
+    if (!isCosmeticSlot(update.slot)) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    if (update.itemId !== null && !CATALOG_ITEM_ID_PATTERN.test(update.itemId)) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertTimestamp(update.updatedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      if (update.itemId === null) {
+        this.database.db.prepare(`
+          DELETE FROM profile_cosmetics WHERE profile_id = ? AND slot = ?
+        `).run(update.profileId, update.slot);
+        return;
+      }
+      const changed = this.database.db.prepare(`
+        UPDATE profile_cosmetics SET item_id = ?, updated_at = ?
+        WHERE profile_id = ? AND slot = ?
+      `).run(update.itemId, update.updatedAt, update.profileId, update.slot);
+      if (changed.changes === 0) {
+        this.database.db.prepare(`
+          INSERT INTO profile_cosmetics (profile_id, slot, item_id, updated_at)
+          VALUES (?, ?, ?, ?)
+        `).run(update.profileId, update.slot, update.itemId, update.updatedAt);
+      }
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  /**
+   * 히로인 의상 장착 — null이면 행 삭제(기본 의상).
+   * Must be called inside a caller-owned PokerDatabase transaction.
+   */
+  setCharacterOutfitInTransaction(update: CharacterOutfitUpdate): void {
+    this.assertTransaction();
+    assertProfileId(update.profileId);
+    const characterId = assertPlayableCharacter(update.characterId);
+    if (update.itemId !== null && !CATALOG_ITEM_ID_PATTERN.test(update.itemId)) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    assertTimestamp(update.updatedAt, 'PROGRESSION_TIME_INVALID');
+    try {
+      if (update.itemId === null) {
+        this.database.db.prepare(`
+          DELETE FROM profile_character_outfits
+          WHERE profile_id = ? AND character_id = ?
+        `).run(update.profileId, characterId);
+        return;
+      }
+      const changed = this.database.db.prepare(`
+        UPDATE profile_character_outfits SET item_id = ?, updated_at = ?
+        WHERE profile_id = ? AND character_id = ?
+      `).run(update.itemId, update.updatedAt, update.profileId, characterId);
+      if (changed.changes === 0) {
+        this.database.db.prepare(`
+          INSERT INTO profile_character_outfits (
+            profile_id, character_id, item_id, updated_at
+          ) VALUES (?, ?, ?, ?)
+        `).run(update.profileId, characterId, update.itemId, update.updatedAt);
       }
     } catch (error) {
       rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
@@ -2333,6 +2480,10 @@ function emptyEquipment(): Record<EquipmentSlot, string | null> {
 
 function isEquipmentSlot(value: string): value is EquipmentSlot {
   return (EQUIPMENT_SLOTS as readonly string[]).includes(value);
+}
+
+function isCosmeticSlot(value: string): value is ProgressionCosmeticSlot {
+  return value === 'card-back' || value === 'felt';
 }
 
 type CanonicalJsonPrimitive = null | string | boolean | number;

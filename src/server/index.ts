@@ -41,6 +41,8 @@ import {
 import { eventLog } from './event-log';
 import { OpsEventRepository, shouldPersistOpsEvent } from './ops-log';
 import { StoryRepository } from './story-repository';
+import { StoryRewardRepository } from './story-reward-repository';
+import { StoryRewardService } from './story-reward-service';
 import { ProfileManager } from './profile-manager';
 import { ProfileRepository } from './profile-repository';
 import { PromotionFundRepository } from './promotion-fund-repository';
@@ -108,6 +110,8 @@ let economyRuntime: EconomyRuntime | undefined;
 let gameConfigService: GameConfigService | undefined;
 let progressionService: ProgressionService | undefined;
 let handHistoryService: HandHistoryService | undefined;
+let storyRepository: StoryRepository | undefined;
+let storyRewardService: StoryRewardService | undefined;
 let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
 let arenaService: ArenaService | undefined;
@@ -210,6 +214,15 @@ function initializePersistenceAndRecover(): void {
   economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   progressionService = new ProgressionService(database, progressionRepository);
+  // 수련 스토리 카탈로그 보상(v32) — 결산·데일리·진행도 조회에서 reconcile, 칩은 chip_ledger STORY_REWARD/STORY_DAILY
+  storyRepository = new StoryRepository(database);
+  storyRewardService = new StoryRewardService({
+    database,
+    storyRepository,
+    rewardRepository: new StoryRewardRepository(database),
+    economyRepository,
+    economyService,
+  });
   handHistoryService = new HandHistoryService(new HandHistoryRepository(database), {
     // 테이블 정본 기록(전역 핸드 ID) — 백오피스 핸드 감사(/api/admin/hands*)의 데이터 소스
     tableHands: new TableHandRepository(database),
@@ -669,7 +682,8 @@ async function listen(): Promise<void> {
     persistentSettlement,
     progressionService,
     handHistory: handHistoryService,
-    storyRepository: new StoryRepository(database),
+    storyRepository,
+    storyRewards: storyRewardService,
     ...(arenaService
       ? {
         arena: {

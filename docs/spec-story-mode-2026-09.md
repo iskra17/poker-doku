@@ -639,3 +639,54 @@ export interface StoryRoomHooks {        // room-manager.ts L205 MttRoomHooks �
 
 - halfway 인터럽트는 `ceil(minHands/2)`에서 든다. HUD는 미션형이면 'N핸드' + 「목표를 다 채우면 끝나요 (최대 M핸드)」.
 - 종전 Ch3 「오즈 위반 ⚠ 1회 이하」는 구현이 maxCount를 무시하고 100% 정확을 요구하던 불일치가 있었다 — 위 규약으로 수정.
+
+---
+
+# Part T. 2026-09-03 보상 체계 + 재출제 완화 (v73 플레이 피드백 → P0·P2)
+
+v73 피드백 "드릴을 계속 틀리면 20문쯤 간다"·"제대로 했을 때 확실한 보상"에 대한 개정. A7(학습 메커닉)·A8(관계)·B2(데이터 모델)와
+어긋나는 곳은 **이 Part가 우선**한다. 클라 연출(결산 카드 플립·컷신·순간 보상)은 P1, 아트·의상·갤러리는 P3~P4에서 따른다.
+
+## T1. 재출제 개정 요약 (P0 — 구현 완료)
+- **2패스 모델**: 첫 패스 큐(슬롯 수 고정, `total` 불변) + 재출제 큐. 오답은 큐에 밀어 넣지 않고 슬롯 결과에만 기록, 첫 패스 끝에
+  오답이 있으면 `retryOffer` → [다시 풀기 N문] / [복습 노트에 넣고 넘어가기]. 재출제는 **1회**(`maxRetries` 기본 1, 워스트 7→14문).
+  첫 오답 즉시 풀이는 유지, 재출제 정답은 `RETRY_CREDIT` 0.5점, 재출제 힌트는 S 판정(`hintsUsed`)에 불가산.
+- `passRule.minCorrect` 삭제 — 통과 규약은 "드릴 세트 완료 + primary 행동 목표" 그대로. "제대로 했을 때"는 등급 티어(S 전용 보상·칩
+  가산) + 「퍼펙트」 칭호 + 실력 확인 0.85로 표현한다.
+- 데일리는 **첫 시도만** 센다(`drill_attempts.attempt`, v31) — 재출제 행이 하루를 소모하던 버그 수정.
+- 플래그: 「퍼펙트」(세트 첫 패스 무오답·힌트 0) `badge:perfect-set`, 「빈 노트」(복습 노트 졸업으로 0개) `badge:empty-note`.
+
+## T2. 보상 원칙
+- 가챠·랜덤 없음, 실전 수치 영향 없음(`gameplayModifiers: never[]`). 트리거는 **durable 상태에서만** 파생(챕터 완료·최고 등급·막
+  완주·플래그) → 언제든 재조정(reconcile) 가능. 지급은 서버 `StoryRewardService.reconcile`(결산·데일리 종료·진행도 조회) — 결산 도중
+  크래시가 나도 다음 조회에서 자기 치유, progression XP/인연과 분리·각자 멱등.
+- 카탈로그 단일 소스 `src/lib/story/rewards/catalog.ts`, DB `story_reward_catalog`(v32)는 시드 사본(패리티 테스트). 영수증
+  `story_rewards(profile,item)`이 1회 캡. 칩 외 보상은 인벤토리 마커(`inventory_items`)로 동기화, 칩은 `chip_ledger`
+  `STORY_REWARD`(아이템별 키) / 데일리 `STORY_DAILY`(날짜별 키, `economy.storyDailyChips` 기본 100).
+- 장착: 카드백·펠트 `profile_cosmetics`, 히로인 의상 `profile_character_outfits`(파트너와 무관, 로비·스토리 화면 전용 — 테이블
+  좌석은 기본 유지), 칭호는 기존 `profile_equipment.title`. 모두 `POST /api/progression/equipment` slot
+  `'title' | 'card-back' | 'felt' | 'outfit:<heroine>'`.
+- 결산 DTO: `items`(새 아이템, 칩 제외) · `chips` · `cutscene`(새 CG 중 보스 > 띠 > 에필로그 1개) · `unlockedScenes`(이 결산의 인연
+  전이로 열린 인연 씬) · `next`(이 챕터·막의 미획득 보상 미리보기, 최대 3) · `affinity[].levelBefore/levelAfter`. 허브
+  `StoryProgressView.rewards`는 카탈로그 전체 + `granted`(갤러리 잠금 판정의 소스).
+
+## T3. 1막 보상 스케줄 (= `catalog.ts`, 후속 막은 같은 템플릿)
+
+| 트리거 | 보상 | 칩 |
+|---|---|---|
+| Ch1 도장의 문 첫 완주 | 칭호「백띠 수련생」 · CG「백띠 수여」(미야코, 띠 컷신) | 500 |
+| Ch1 S | 카드백「도장 문장」 | 300 |
+| Ch2 기다림의 미학 첫 완주 | **사쿠라 의상「도복」** · 투척「꽃다발」 | 500 |
+| Ch2 S | CG「기다림의 뜰」(사쿠라 에필로그) | 300 |
+| Ch3 숫자는 거짓말을 안 해요 첫 완주 | CG「오즈로 겜블러를 잡다」(드라코 보스, 컷신 우선) · 카드백「노란띠」 | 500 |
+| Ch3 S | **하나 의상「연구실 가운」** | 300 |
+| 1막 완주 | 펠트「노란띠 도장」 · CG「노란띠 승급」(미야코, 띠 컷신) | 1,000 |
+| `badge:perfect-set` / `badge:empty-note` | 칭호「퍼펙트」 / 「빈 노트」 | — |
+| 오늘의 수련 3문(첫 시도 기준) | (기존 인연 +5) | 100/일 |
+
+1막 합 3,400 + 데일리 — 일일 무료 1,000 대비 보수적. 후속 막 템플릿: 첫 완주 = {칭호|담당 의상|카드백} + 500, S = {CG|의상} + 300,
+보스 챕터 첫 완주에 보스 CG, 막 완주 = 띠 색 펠트 + 1,000. 실력 확인 통과는 첫 완주와 같은 트리거(등급 가산 포함).
+
+## T4. 미루기
+- 결산 연출·순간 보상·배경/BGM(P1), CG·의상·미야코 표정 아트 17장(P3 — 매니페스트 미등록이면 폴백), 옷장·갤러리 UI(P4), 영상
+  파일럿(P5). 스토리 XP로 넘긴 도장 레벨의 **컬렉션** 아이템은 여전히 미지급(v13 뷰 확장 별도).

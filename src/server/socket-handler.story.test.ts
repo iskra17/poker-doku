@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ProgressionSnapshot } from '../lib/progression/types';
 import type { RealtimeAck } from '../lib/realtime/protocol';
+import { generateDrill, gradeDrill } from '../lib/story/drills/generator';
+import type { DrillAnswer, DrillAnswerSpec } from '../lib/story/drills/types';
 import { makeChapterChain } from '../lib/story/test-fixtures';
+import type { StoryTeacherId } from '../lib/story/types';
 import type { StoryDrillAck, StoryProgressView, StoryRunView } from '../lib/story/views';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
@@ -17,7 +21,7 @@ function withAck<T>(
   });
 }
 
-function collect<T>(client: ConnectedTestClient, event: 'story-update' | 'room-lost'): T[] {
+function collect<T>(client: ConnectedTestClient, event: 'story-update' | 'room-lost' | 'progression-update'): T[] {
   const items: T[] = [];
   (client.socket as unknown as { on: (name: string, cb: (payload: T) => void) => void }).on(event, payload => {
     items.push(payload);
@@ -26,6 +30,32 @@ function collect<T>(client: ConnectedTestClient, event: 'story-update' | 'room-l
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** 서버가 재생성할 인스턴스와 같은 seed로 정답을 만든다 (story-run-coordinator.test.ts와 같은 규약) */
+function answerFor(templateId: string, seed: number, teacher: StoryTeacherId): DrillAnswer {
+  const instance = generateDrill(templateId, seed, { teacher });
+  const spec: DrillAnswerSpec = instance.answerSpec;
+  let answer: DrillAnswer;
+  switch (spec.kind) {
+    case 'multiple-choice':
+      answer = { kind: 'multiple-choice', index: spec.correctIndex };
+      break;
+    case 'numeric':
+      answer = { kind: 'numeric', value: spec.correct };
+      break;
+    case 'action-pick':
+      answer = { kind: 'action-pick', action: spec.correct[0], sizingBB: spec.sizingBB?.min };
+      break;
+    case 'card-pick':
+      answer = { kind: 'card-pick', cards: spec.correct };
+      break;
+    case 'multi-select':
+      answer = { kind: 'multi-select', indices: spec.correctIndices };
+      break;
+  }
+  expect(gradeDrill(instance, answer)).toBe(true);
+  return answer;
+}
 
 describe('story socket events', () => {
   let harness: SocketTestHarness | null = null;
@@ -177,6 +207,63 @@ describe('story socket events', () => {
     expect(await withAck(done => client.socket.emit('story-drill', {
       runId, setId: drillView.drill!.setId, index: 0, action: 'answer', answer: { kind: 'multiple-choice', index: 1 },
     }, done))).toMatchObject({ ok: false, code: 'action-rejected' });
+  });
+
+  it('finishes an exam run with the reward DTO (items, chips, cutscene, next), pushes progression, and previews rewards in progress', async () => {
+    const { harness: h, client, profile } = await setup();
+    const walletBefore = h.walletState(profile.profile.id).balance;
+    const updates = collect<StoryRunView>(client, 'story-update');
+    const progressions = collect<ProgressionSnapshot>(client, 'progression-update');
+    // 실력 확인: 드릴 세트만(라이브 스텝 스킵) — 2문 정답이면 S등급 첫 완주
+    const started = await withAck<{ runId: string }>(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01', mode: 'exam' }, done));
+    if (!started.ok) throw new Error('start failed');
+    const runId = started.data!.runId;
+    for (let slot = 0; slot < 2; slot++) {
+      await sleep(20);
+      const view = updates.at(-1)!;
+      expect(view.drill).toMatchObject({ index: slot, total: 2 });
+      const answer = answerFor(view.drill!.instance.templateId, view.drill!.instance.seed, view.context.teacherId);
+      const ack = await withAck<StoryDrillAck>(done => client.socket.emit('story-drill', {
+        runId, setId: view.drill!.setId, index: slot, action: 'answer', answer, elapsedMs: 900,
+      }, done));
+      expect(ack.ok && ack.data?.action === 'answer' && ack.data.result.correct).toBe(true);
+      expect(await withAck(done => client.socket.emit('story-advance', { runId, expectedStepIndex: view.stepIndex }, done))).toEqual({ ok: true });
+    }
+    await sleep(20);
+    const resultStep = updates.at(-1)!;
+    expect(resultStep).toMatchObject({ phase: 'result', stepKind: 'result' });
+    expect(await withAck(done => client.socket.emit('story-advance', { runId, expectedStepIndex: resultStep.stepIndex }, done))).toEqual({ ok: true });
+    await sleep(40);
+
+    const ended = updates.at(-1)!;
+    expect(ended.phase).toBe('ended');
+    const rewards = ended.result!.rewards;
+    expect(ended.result).toMatchObject({ mode: 'exam', passed: true, grade: 'S' });
+    // Ch1 첫 완주(칭호·CG·500) + S등급(카드백·300) + 무오답·힌트 0 → badge:perfect-set 「퍼펙트」 칭호
+    expect(rewards.items!.map(item => item.id)).toEqual([
+      'story-title-white-belt', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest', 'story-title-perfect',
+    ]);
+    expect(rewards.chips).toBe(800);
+    expect(rewards.badgeId).toBe('story-title-white-belt');
+    expect(rewards.cutscene).toMatchObject({ id: 'story-cg-act1-belt-white', kind: 'belt', characterId: 'miyako' });
+    expect(rewards.next!.map(item => item.id)).toEqual(['story-felt-yellow-belt', 'story-cg-act1-belt-yellow']);
+    expect(rewards.unlockedScenes).toEqual([]);
+    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
+    // 지급 뒤 인벤토리가 담긴 progression-update가 한 번 더 온다(마지막 스냅샷이 최신)
+    expect(progressions.at(-1)!.inventory.map(item => item.itemId)).toEqual(expect.arrayContaining([
+      'story-title-white-belt', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest',
+    ]));
+    expect(progressions.at(-1)!.cosmetics).toEqual({ cardBack: null, felt: null, outfits: {} });
+
+    const progress = await withAck<StoryProgressView>(done => client.socket.emit('get-story-progress', done));
+    if (!progress.ok) throw new Error('progress failed');
+    expect(progress.data?.rewards?.filter(item => item.granted).map(item => item.id)).toEqual([
+      'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
+      'story-cardback-dojo-crest', 'story-chips-act1-ch01-s', 'story-title-perfect',
+    ]);
+    expect(progress.data?.rewards).toHaveLength(20);
+    // 재조회 reconcile은 무변경 — 지갑 그대로
+    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
   });
 
   it('abandon ends the run, and a replaced socket no longer controls it', async () => {

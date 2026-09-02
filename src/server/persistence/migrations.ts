@@ -6523,6 +6523,376 @@ export const migrations: readonly Migration[] = [
         CHECK (attempt BETWEEN 0 AND 9);
     `,
   },
+  {
+    version: 32,
+    name: 'story_rewards',
+    sql: `
+      -- 수련 스토리 보상 라인 (2026-09-03 보상 체계, 기획 Part T). 아레나 시즌 보상(v14/v18)과 같은 패턴:
+      -- 정적 카탈로그 + 영수증 + 인벤토리 sync 트리거로 v13 영구 지급 뷰(completed-hand/sng-finish 한정)를 우회한다.
+      -- 카탈로그 단일 소스는 src/lib/story/rewards/catalog.ts — 아래 시드는 사본이며 database.test.ts 패리티 테스트로 고정.
+      -- 새 보상은 카탈로그 TS와 다음 마이그레이션의 INSERT에 함께 추가한다(서비스는 카탈로그 행을 만들지 않는다).
+      CREATE TABLE story_reward_catalog (
+        item_id TEXT PRIMARY KEY CHECK (
+          length(item_id) BETWEEN 1 AND 128
+          AND item_id NOT GLOB '*[^A-Za-z0-9_-]*'
+        ),
+        kind TEXT NOT NULL CHECK (kind IN (
+          'title', 'card-back', 'felt', 'outfit', 'cg', 'throwable', 'chips'
+        )),
+        equip_slot TEXT CHECK (
+          equip_slot IS NULL
+          OR equip_slot IN ('title', 'card-back', 'felt', 'outfit')
+        ),
+        character_id TEXT CHECK (character_id IS NULL OR character_id IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )),
+        chip_amount INTEGER CHECK (chip_amount IS NULL OR chip_amount > 0),
+        CHECK (
+          (kind = 'title' AND equip_slot = 'title'
+            AND character_id IS NULL AND chip_amount IS NULL)
+          OR (kind = 'card-back' AND equip_slot = 'card-back'
+            AND character_id IS NULL AND chip_amount IS NULL)
+          OR (kind = 'felt' AND equip_slot = 'felt'
+            AND character_id IS NULL AND chip_amount IS NULL)
+          OR (kind = 'outfit' AND equip_slot = 'outfit'
+            AND character_id IS NOT NULL AND chip_amount IS NULL)
+          OR (kind = 'cg' AND equip_slot IS NULL AND chip_amount IS NULL)
+          OR (kind = 'throwable' AND equip_slot IS NULL
+            AND character_id IS NULL AND chip_amount IS NULL)
+          OR (kind = 'chips' AND equip_slot IS NULL
+            AND character_id IS NULL AND chip_amount IS NOT NULL)
+        )
+      ) STRICT;
+
+      INSERT INTO story_reward_catalog (
+        item_id, kind, equip_slot, character_id, chip_amount
+      ) VALUES
+        ('story-title-white-belt', 'title', 'title', NULL, NULL),
+        ('story-chips-act1-ch01-first', 'chips', NULL, NULL, 500),
+        ('story-cg-act1-belt-white', 'cg', NULL, NULL, NULL),
+        ('story-cardback-dojo-crest', 'card-back', 'card-back', NULL, NULL),
+        ('story-chips-act1-ch01-s', 'chips', NULL, NULL, 300),
+        ('story-outfit-sakura-dojo', 'outfit', 'outfit', 'sakura', NULL),
+        ('throwable-bouquet', 'throwable', NULL, NULL, NULL),
+        ('story-chips-act1-ch02-first', 'chips', NULL, NULL, 500),
+        ('story-cg-act1-sakura-garden', 'cg', NULL, 'sakura', NULL),
+        ('story-chips-act1-ch02-s', 'chips', NULL, NULL, 300),
+        ('story-cg-act1-draco-boss', 'cg', NULL, 'hana', NULL),
+        ('story-cardback-yellow-belt', 'card-back', 'card-back', NULL, NULL),
+        ('story-chips-act1-ch03-first', 'chips', NULL, NULL, 500),
+        ('story-outfit-hana-lab', 'outfit', 'outfit', 'hana', NULL),
+        ('story-chips-act1-ch03-s', 'chips', NULL, NULL, 300),
+        ('story-felt-yellow-belt', 'felt', 'felt', NULL, NULL),
+        ('story-chips-act1-complete', 'chips', NULL, NULL, 1000),
+        ('story-cg-act1-belt-yellow', 'cg', NULL, NULL, NULL),
+        ('story-title-perfect', 'title', 'title', NULL, NULL),
+        ('story-title-empty-note', 'title', 'title', NULL, NULL);
+
+      CREATE TRIGGER freeze_story_reward_catalog_update
+      BEFORE UPDATE ON story_reward_catalog
+      BEGIN SELECT RAISE(ABORT, 'story reward catalog is immutable'); END;
+      CREATE TRIGGER freeze_story_reward_catalog_delete
+      BEFORE DELETE ON story_reward_catalog
+      BEGIN SELECT RAISE(ABORT, 'story reward catalog is immutable'); END;
+
+      -- 영수증: (profile, item) 1회 지급 캡. source_key는 자격 트리거('story-chapter:<id>:first' 등) 감사용.
+      CREATE TABLE story_rewards (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES story_reward_catalog(item_id)
+          ON DELETE RESTRICT,
+        source_key TEXT NOT NULL CHECK (length(source_key) BETWEEN 1 AND 128),
+        granted_at INTEGER NOT NULL CHECK (
+          granted_at BETWEEN 0 AND 253402300799999
+        ),
+        PRIMARY KEY (profile_id, item_id)
+      ) STRICT;
+
+      CREATE INDEX idx_story_rewards_profile_granted_at
+        ON story_rewards(profile_id, granted_at);
+
+      CREATE TRIGGER freeze_story_reward_update
+      BEFORE UPDATE ON story_rewards
+      BEGIN SELECT RAISE(ABORT, 'story reward is immutable'); END;
+      CREATE TRIGGER freeze_story_reward_delete
+      BEFORE DELETE ON story_rewards
+      WHEN EXISTS (SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT, 'story reward is immutable'); END;
+
+      -- 칩 외 보상은 인벤토리 마커로 동기화 (수량 1, 시각 = 영수증 시각). 칩은 chip_ledger가 소유.
+      CREATE TRIGGER sync_story_reward_inventory
+      AFTER INSERT ON story_rewards
+      WHEN EXISTS (
+        SELECT 1 FROM story_reward_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id AND catalog.kind != 'chips'
+      )
+      BEGIN
+        INSERT INTO inventory_items (
+          profile_id, item_id, quantity, granted_at, updated_at
+        ) VALUES (
+          NEW.profile_id, NEW.item_id, 1, NEW.granted_at, NEW.granted_at
+        )
+        ON CONFLICT(profile_id, item_id) DO NOTHING;
+        SELECT CASE WHEN NOT EXISTS (
+          SELECT 1 FROM inventory_items
+          WHERE profile_id = NEW.profile_id
+            AND item_id = NEW.item_id
+            AND quantity = 1
+            AND granted_at = NEW.granted_at
+            AND updated_at = NEW.granted_at
+        ) THEN RAISE(ABORT, 'story reward inventory mismatch') END;
+      END;
+
+      CREATE TRIGGER protect_story_reward_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM story_rewards
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable story reward inventory'); END;
+
+      CREATE TRIGGER protect_story_reward_inventory_delete
+      BEFORE DELETE ON inventory_items
+      WHEN EXISTS (
+        SELECT 1 FROM story_rewards
+        WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id
+      ) AND EXISTS (
+        SELECT 1 FROM profiles WHERE id = OLD.profile_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'immutable story reward inventory'); END;
+
+      -- v18 인벤토리 카탈로그 검증 본문 그대로 + 스토리 카탈로그(칩 제외) 분기 1건.
+      DROP TRIGGER validate_catalog_inventory_insert;
+      DROP TRIGGER validate_catalog_inventory_update;
+
+      CREATE TRIGGER validate_catalog_inventory_insert
+      BEFORE INSERT ON inventory_items
+      WHEN NOT EXISTS (
+        SELECT 1 FROM collection_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id
+          AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+            OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+      ) AND NOT EXISTS (
+        SELECT 1 FROM arena_season_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id AND NEW.quantity = 1
+      ) AND NOT EXISTS (
+        SELECT 1 FROM story_reward_catalog AS catalog
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.kind != 'chips'
+          AND NEW.quantity = 1
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      CREATE TRIGGER validate_catalog_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN NEW.item_id != 'streak-fragment'
+        AND OLD.item_id != 'streak-fragment'
+        AND NOT EXISTS (
+          SELECT 1 FROM collection_catalog AS catalog
+          WHERE catalog.item_id = NEW.item_id
+            AND ((catalog.stackable = 0 AND NEW.quantity = 1)
+              OR (catalog.stackable = 1 AND NEW.quantity >= 1))
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM arena_season_catalog AS catalog
+          WHERE catalog.item_id = NEW.item_id AND NEW.quantity = 1
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM story_reward_catalog AS catalog
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.kind != 'chips'
+            AND NEW.quantity = 1
+        )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog inventory item'); END;
+
+      -- 코스메틱 장착. profile_equipment.slot CHECK(4종 고정)를 건드리지 않고 새 테이블로 우회한다.
+      -- 검증 = 스토리 카탈로그 equip_slot 일치 + 인벤토리 소유(수량 1). 행이 없으면 기본(장착 해제).
+      CREATE TABLE profile_cosmetics (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        slot TEXT NOT NULL CHECK (slot IN ('card-back', 'felt')),
+        item_id TEXT NOT NULL CHECK (length(item_id) BETWEEN 1 AND 128),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, slot),
+        FOREIGN KEY (profile_id, item_id)
+          REFERENCES inventory_items(profile_id, item_id)
+          ON UPDATE CASCADE
+          ON DELETE NO ACTION
+          DEFERRABLE INITIALLY DEFERRED
+      ) STRICT;
+
+      CREATE TRIGGER validate_profile_cosmetic_insert
+      BEFORE INSERT ON profile_cosmetics
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM story_reward_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity = 1
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.equip_slot = NEW.slot
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid profile cosmetic'); END;
+
+      CREATE TRIGGER validate_profile_cosmetic_update
+      BEFORE UPDATE ON profile_cosmetics
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM story_reward_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity = 1
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.equip_slot = NEW.slot
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid profile cosmetic'); END;
+
+      -- 히로인별 의상 — 기획: 로비·스토리 화면만(테이블 좌석은 기본 유지). 파트너 선택과 무관하게 6명 각자 장착.
+      CREATE TABLE profile_character_outfits (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        character_id TEXT NOT NULL CHECK (character_id IN (
+          'sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'
+        )),
+        item_id TEXT NOT NULL CHECK (length(item_id) BETWEEN 1 AND 128),
+        updated_at INTEGER NOT NULL CHECK (updated_at >= 0),
+        PRIMARY KEY (profile_id, character_id),
+        FOREIGN KEY (profile_id, item_id)
+          REFERENCES inventory_items(profile_id, item_id)
+          ON UPDATE CASCADE
+          ON DELETE NO ACTION
+          DEFERRABLE INITIALLY DEFERRED
+      ) STRICT;
+
+      CREATE TRIGGER validate_profile_character_outfit_insert
+      BEFORE INSERT ON profile_character_outfits
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM story_reward_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity = 1
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.kind = 'outfit'
+          AND catalog.equip_slot = 'outfit'
+          AND catalog.character_id = NEW.character_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid character outfit'); END;
+
+      CREATE TRIGGER validate_profile_character_outfit_update
+      BEFORE UPDATE ON profile_character_outfits
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM story_reward_catalog AS catalog
+        JOIN inventory_items AS inventory
+          ON inventory.profile_id = NEW.profile_id
+          AND inventory.item_id = NEW.item_id
+          AND inventory.quantity = 1
+        WHERE catalog.item_id = NEW.item_id
+          AND catalog.kind = 'outfit'
+          AND catalog.equip_slot = 'outfit'
+          AND catalog.character_id = NEW.character_id
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid character outfit'); END;
+
+      -- 스토리 칭호(equip_slot 'title')는 기존 profile_equipment title 슬롯에 든다 — v18 장착 검증 본문 그대로 +
+      -- 스토리 카탈로그 분기(equip_slot = NEW.slot이라 card-back/felt/outfit은 이 테이블에 못 든다).
+      DROP TRIGGER validate_catalog_equipment_insert;
+      DROP TRIGGER validate_catalog_equipment_update;
+
+      CREATE TRIGGER validate_catalog_equipment_insert
+      BEFORE INSERT ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM collection_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity >= 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM arena_season_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM story_reward_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+        )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+
+      CREATE TRIGGER validate_catalog_equipment_update
+      BEFORE UPDATE ON profile_equipment
+      WHEN NOT EXISTS (
+        SELECT 1 FROM progression_profiles WHERE profile_id = NEW.profile_id
+      ) OR (NEW.item_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM collection_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity >= 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM arena_season_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          JOIN progression_profiles AS profile
+            ON profile.profile_id = NEW.profile_id
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+            AND (catalog.kind != 'skin'
+              OR catalog.character_id = profile.selected_character_id)
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM story_reward_catalog AS catalog
+          JOIN inventory_items AS inventory
+            ON inventory.profile_id = NEW.profile_id
+            AND inventory.item_id = NEW.item_id
+            AND inventory.quantity = 1
+          WHERE catalog.item_id = NEW.item_id
+            AND catalog.equip_slot = NEW.slot
+        )
+      )
+      BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

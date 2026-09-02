@@ -77,6 +77,11 @@ export function assertValidEconomyTimestamp(
   }
 }
 
+/** idempotency 키 구성요소 — progression-service의 이벤트 키와 같은 길이 접두 규약 */
+function lengthPrefixed(value: string): string {
+  return `${value.length}:${value}`;
+}
+
 function assertCanonicalClaimDate(value: string): void {
   const match = CANONICAL_DATE_PATTERN.exec(value);
   if (!match) throw new EconomyDomainError('ECONOMY_DATE_INVALID');
@@ -2130,7 +2135,48 @@ export class EconomyRepository {
     });
   }
 
-  private applyWalletDeltaInTransaction(
+  /**
+   * 오늘의 수련 완료 칩 (reason 'STORY_DAILY') — KST 날짜당 1회. 이미 지급된 날이면 0을 돌려준다
+   * (원장 키가 캡이라 별도 claim 테이블 없음). 지급액 0 이하는 원장 없이 0.
+   */
+  grantStoryDailyChips(
+    profileId: string,
+    kstDate: string,
+    amount: number,
+    at: number,
+  ): number {
+    assertCanonicalClaimDate(kstDate);
+    assertValidEconomyTimestamp(at);
+    if (!Number.isSafeInteger(amount) || amount < 0) {
+      throw new EconomyDomainError('WALLET_DELTA_INVALID');
+    }
+    if (amount === 0) return 0;
+    const idempotencyKey =
+      `story-daily:${lengthPrefixed(kstDate)}:${lengthPrefixed(profileId)}`;
+    return this.database.transaction(() => {
+      this.requirePublicProfile(profileId);
+      const existing = this.database.db.prepare(`
+        SELECT 1 FROM chip_ledger WHERE idempotency_key = ?
+      `).get(idempotencyKey);
+      if (existing) return 0;
+      this.applyWalletDeltaInTransaction(
+        profileId,
+        amount,
+        'STORY_DAILY',
+        idempotencyKey,
+        kstDate,
+        at,
+      );
+      return amount;
+    });
+  }
+
+  /**
+   * 지갑 증감 1건 — 같은 idempotency 키는 재실행해도 원장을 다시 쓰지 않는다(내용이 다르면 충돌).
+   * Must be called inside a caller-owned PokerDatabase transaction (스토리 보상처럼 영수증과
+   * 함께 커밋/롤백돼야 하는 호출자를 위해 공개).
+   */
+  applyWalletDeltaInTransaction(
     profileId: string,
     delta: number,
     reason: string,
@@ -2138,6 +2184,9 @@ export class EconomyRepository {
     refId: string | null,
     at: number,
   ): EconomyResult {
+    this.database.assertTransactionActive();
+    this.validateDelta(delta);
+    assertValidEconomyTimestamp(at);
     const current = this.requirePublicProfile(profileId);
     const existing = this.database.db.prepare(`
       SELECT profile_id, account, delta, reason, ref_id

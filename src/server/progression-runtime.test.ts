@@ -43,6 +43,7 @@ function snapshot(profileId: string, selectedCharacterId: 'sakura' | 'hana'): Pr
     },
     inventory: [],
     equipment: { title: null, frame: null, skin: null, cutin: null },
+    cosmetics: { cardBack: null, felt: null, outfits: {} },
   };
 }
 
@@ -85,11 +86,13 @@ function makeService(characters: Record<string, 'sakura' | 'hana'> = {}): {
         duplicate: false,
         snapshot: snapshot(input.profileId, 'sakura'),
         summary: summary(`story-chapter:${input.chapterId}`, 'sakura'),
+        affinityTransitions: [],
       })),
       recordRuntimeStoryDailyDrills: vi.fn(input => ({
         duplicate: false,
         snapshot: snapshot(input.profileId, 'sakura'),
         summary: summary(`story-daily-drills:${input.kstDate}`, 'sakura'),
+        affinityTransitions: [],
       })),
     },
     getRuntimeSnapshot,

@@ -21,8 +21,10 @@ import {
 import { parseProgressionRewardSummary } from '@/lib/progression/reward-summary';
 import type {
   MissionCompletion,
+  ProgressionCosmeticSlot,
   ProgressionRewardSummary,
 } from '@/lib/progression/types';
+import { getStoryRewardDefinition } from '@/lib/story/rewards/catalog';
 import type { PokerDatabase } from './persistence/database';
 import {
   PLAYABLE_CHARACTER_IDS,
@@ -137,10 +139,22 @@ export interface StoryDailyDrillsInput {
   completedAt: number;
 }
 
+/** 히로인 인연 전후 레벨 — 코디네이터가 `findNewlyUnlockedScenes`로 새 인연 씬을 산출한다 */
+export interface StoryAffinityTransition {
+  characterId: PlayableCharacterId;
+  previousLevel: number;
+  nextLevel: number;
+}
+
 export interface StoryRewardResult {
   duplicate: boolean;
   snapshot: ProgressionSnapshot;
   summary: ProgressionRewardSummary;
+  /**
+   * 반환 객체에만 실린다 — `summary_json`(`ProgressionRewardSummary`)은 v13 뷰·파서가 키를 고정하므로
+   * 여러 히로인의 전후 레벨을 거기 넣지 않는다. 중복 지급이면 빈 배열.
+   */
+  affinityTransitions: StoryAffinityTransition[];
 }
 
 export type StoryChapterCompleteResult = StoryRewardResult;
@@ -327,12 +341,26 @@ export class ProgressionService {
     });
   }
 
+  /**
+   * 장착 — 기존 4슬롯(title/frame/skin/cutin)은 collection 카탈로그·`profile_equipment`,
+   * 스토리 코스메틱은 slot 'card-back' | 'felt' | 'outfit:<heroine>'로 `setCosmetic`/`setCharacterOutfit`에
+   * 라우팅한다(`POST /api/progression/equipment`의 slot 값이 그대로 들어온다).
+   */
   setEquipment(
     profileId: string,
     slot: string,
     itemId: string | null,
     updatedAt = Date.now(),
   ): ProgressionSnapshot {
+    if (typeof slot !== 'string') {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    if (slot === 'card-back' || slot === 'felt') {
+      return this.setCosmetic(profileId, slot, itemId, updatedAt);
+    }
+    if (slot.startsWith('outfit:')) {
+      return this.setCharacterOutfit(profileId, slot.slice('outfit:'.length), itemId, updatedAt);
+    }
     assertBoundedId(profileId);
     const safeSlot = assertEquipmentSlot(slot);
     if (itemId !== null && typeof itemId !== 'string') {
@@ -343,14 +371,18 @@ export class ProgressionService {
       const snapshot = this.repository.getSnapshotInTransaction(profileId);
       if (itemId !== null) {
         const definition = getCollectionItemDefinition(itemId);
-        if (!definition || definition.equipSlot !== safeSlot) {
+        // 컬렉션에 없으면 스토리 보상 카탈로그 폴백 — 칭호(equipSlot 'title')만 이 4슬롯에 든다
+        // (card-back/felt/outfit은 슬롯이 달라 자연 거절, DB 트리거도 같은 조건).
+        const storyDefinition = definition ? undefined : getStoryRewardDefinition(itemId);
+        const equipSlot = definition?.equipSlot ?? storyDefinition?.equipSlot ?? null;
+        if (equipSlot !== safeSlot) {
           throw new ProgressionServiceError('PROGRESSION_EQUIPMENT_SLOT_INVALID');
         }
         if (!snapshot.inventory.some(item => item.itemId === itemId)) {
           throw new ProgressionServiceError('PROGRESSION_ITEM_NOT_OWNED');
         }
         if (
-          definition.kind === 'skin'
+          definition?.kind === 'skin'
           && definition.characterId !== snapshot.profile.selectedCharacterId
         ) {
           throw new ProgressionServiceError(
@@ -363,6 +395,77 @@ export class ProgressionService {
         slot: safeSlot,
         expectedItemId: snapshot.equipment[safeSlot],
         nextItemId: itemId,
+        updatedAt,
+      });
+      return this.repository.getSnapshotInTransaction(profileId);
+    });
+  }
+
+  /**
+   * 스토리 코스메틱(card-back/felt) 장착 — 아이템은 스토리 보상 카탈로그의 같은 equip_slot이어야 하고
+   * 인벤토리에 있어야 한다(영수증 sync). null = 해제. 실전 수치 영향 없음.
+   */
+  setCosmetic(
+    profileId: string,
+    slot: ProgressionCosmeticSlot,
+    itemId: string | null,
+    updatedAt = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    if (slot !== 'card-back' && slot !== 'felt') {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    if (itemId !== null && typeof itemId !== 'string') {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    assertTimestamp(updatedAt);
+    return this.database.transaction(() => {
+      const snapshot = this.repository.getSnapshotInTransaction(profileId);
+      if (itemId !== null) {
+        const definition = getStoryRewardDefinition(itemId);
+        if (!definition || definition.equipSlot !== slot) {
+          throw new ProgressionServiceError('PROGRESSION_EQUIPMENT_SLOT_INVALID');
+        }
+        if (!snapshot.inventory.some(item => item.itemId === itemId)) {
+          throw new ProgressionServiceError('PROGRESSION_ITEM_NOT_OWNED');
+        }
+      }
+      this.repository.setCosmeticInTransaction({ profileId, slot, itemId, updatedAt });
+      return this.repository.getSnapshotInTransaction(profileId);
+    });
+  }
+
+  /** 히로인 의상 장착 — kind 'outfit' + 담당 히로인 일치 + 소유. null = 기본 의상. 파트너 선택과 무관. */
+  setCharacterOutfit(
+    profileId: string,
+    characterId: string,
+    itemId: string | null,
+    updatedAt = Date.now(),
+  ): ProgressionSnapshot {
+    assertBoundedId(profileId);
+    const heroine = assertCharacter(characterId);
+    if (itemId !== null && typeof itemId !== 'string') {
+      throw new ProgressionServiceError('PROGRESSION_INPUT_INVALID');
+    }
+    assertTimestamp(updatedAt);
+    return this.database.transaction(() => {
+      const snapshot = this.repository.getSnapshotInTransaction(profileId);
+      if (itemId !== null) {
+        const definition = getStoryRewardDefinition(itemId);
+        if (!definition || definition.kind !== 'outfit' || definition.equipSlot !== 'outfit') {
+          throw new ProgressionServiceError('PROGRESSION_EQUIPMENT_SLOT_INVALID');
+        }
+        if (definition.characterId !== heroine) {
+          throw new ProgressionServiceError('PROGRESSION_SKIN_CHARACTER_MISMATCH');
+        }
+        if (!snapshot.inventory.some(item => item.itemId === itemId)) {
+          throw new ProgressionServiceError('PROGRESSION_ITEM_NOT_OWNED');
+        }
+      }
+      this.repository.setCharacterOutfitInTransaction({
+        profileId,
+        characterId: heroine,
+        itemId,
         updatedAt,
       });
       return this.repository.getSnapshotInTransaction(profileId);
@@ -664,6 +767,7 @@ export class ProgressionService {
           duplicate: true,
           snapshot: this.repository.getSnapshotInTransaction(input.profileId),
           summary: duplicate,
+          affinityTransitions: [],
         };
       }
 
@@ -672,7 +776,7 @@ export class ProgressionService {
         input.completedAt,
       );
       snapshot = this.reconcileWeeklyRestPass(snapshot, input.completedAt);
-      const summary = this.applyStoryReward({
+      const { summary, affinityTransitions } = this.applyStoryReward({
         eventId: input.eventId,
         eventType: input.eventType,
         profile: snapshot.profile,
@@ -685,6 +789,7 @@ export class ProgressionService {
         duplicate: false,
         snapshot: this.repository.getSnapshotInTransaction(input.profileId),
         summary,
+        affinityTransitions,
       };
     });
   }
@@ -732,7 +837,10 @@ export class ProgressionService {
     dojoRewardMilli: number;
     affinity: readonly StoryAffinityGrant[];
     completedAt: number;
-  }): ProgressionRewardSummary {
+  }): {
+    summary: ProgressionRewardSummary;
+    affinityTransitions: StoryAffinityTransition[];
+  } {
     const nextDojo = applyDojoXp(
       { level: input.profile.dojoLevel, xpMilli: input.profile.dojoXpMilli },
       input.dojoRewardMilli,
@@ -743,6 +851,7 @@ export class ProgressionService {
       milli: number;
       levelsGained: number[];
     } | null = null;
+    const affinityTransitions: StoryAffinityTransition[] = [];
 
     for (const grant of input.affinity) {
       this.repository.ensureAffinityInTransaction(
@@ -766,6 +875,11 @@ export class ProgressionService {
         characterId: grant.characterId,
         expected: { level: current.level, xpMilli: current.xpMilli },
         next,
+      });
+      affinityTransitions.push({
+        characterId: grant.characterId,
+        previousLevel: current.level,
+        nextLevel: next.level,
       });
       primary ??= {
         characterId: grant.characterId,
@@ -811,7 +925,10 @@ export class ProgressionService {
       summary: { ...summary },
       createdAt: input.completedAt,
     });
-    return parseStoredSummary(inserted.event, input.eventId);
+    return {
+      summary: parseStoredSummary(inserted.event, input.eventId),
+      affinityTransitions,
+    };
   }
 
   rerollMission(

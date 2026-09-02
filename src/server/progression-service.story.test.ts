@@ -453,6 +453,136 @@ describe('ProgressionService story rewards', () => {
     expect(eventCount('profile-a', 'story-daily-drills')).toBe(0);
   });
 
+  it('returns heroine level transitions on the result only — the stored summary keeps its keys', () => {
+    seedProfile('profile-a', 'sakura');
+
+    const result = service.recordStoryChapterComplete({
+      profileId: 'profile-a',
+      chapterId: 'act2-ch05',
+      runId: 'run-1',
+      firstClear: true,
+      grade: 'S',
+      dojoXpMilli: 10_000,
+      // 사쿠라 L1→L3(40_000 + 55_000), 하나 L1 유지
+      affinity: [
+        { characterId: 'sakura', milli: 100_000 },
+        { characterId: 'hana', milli: 10_000 },
+      ],
+      completedAt: AT,
+    });
+
+    expect(result.affinityTransitions).toEqual([
+      { characterId: 'sakura', previousLevel: 1, nextLevel: 3 },
+      { characterId: 'hana', previousLevel: 1, nextLevel: 1 },
+    ]);
+    // summary_json 계약(v13 뷰·파서 키 고정) 불변 — 전이는 반환 객체에만 실린다
+    expect(Object.keys(result.summary).sort()).toEqual([
+      'affinityLevelsGained', 'affinityMilli', 'characterId', 'dojoLevelsGained',
+      'dojoXpMilli', 'eventId', 'grantedItemIds', 'missionCompletions',
+    ]);
+    const stored = database.db.prepare(
+      'SELECT summary_json FROM progression_events WHERE idempotency_key = ?',
+    ).get(result.summary.eventId) as { summary_json: string };
+    expect(Object.keys(JSON.parse(stored.summary_json) as object)).not.toContain('affinityTransitions');
+
+    const replay = service.recordStoryChapterComplete({
+      profileId: 'profile-a',
+      chapterId: 'act2-ch05',
+      runId: 'run-1',
+      firstClear: true,
+      grade: 'S',
+      dojoXpMilli: 10_000,
+      affinity: [{ characterId: 'sakura', milli: 100_000 }],
+      completedAt: AT + 1,
+    });
+    expect(replay.duplicate).toBe(true);
+    expect(replay.affinityTransitions).toEqual([]);
+  });
+
+  it('equips story cosmetics and heroine outfits through the equipment slot names', () => {
+    seedProfile('profile-a', 'sakura');
+    grantStoryReward('profile-a', 'story-cardback-dojo-crest');
+    grantStoryReward('profile-a', 'story-outfit-hana-lab');
+    grantStoryReward('profile-a', 'story-title-white-belt');
+    expect(service.getSnapshot('profile-a', 'sakura', AT).cosmetics).toEqual({
+      cardBack: null, felt: null, outfits: {},
+    });
+
+    const cardBack = service.setEquipment('profile-a', 'card-back', 'story-cardback-dojo-crest', AT);
+    expect(cardBack.cosmetics).toEqual({ cardBack: 'story-cardback-dojo-crest', felt: null, outfits: {} });
+    const outfit = service.setEquipment('profile-a', 'outfit:hana', 'story-outfit-hana-lab', AT + 1);
+    expect(outfit.cosmetics.outfits).toEqual({ hana: 'story-outfit-hana-lab' });
+    // 기존 4슬롯은 그대로 비어 있다(라우팅이 profile_equipment를 건드리지 않는다)
+    expect(outfit.equipment).toEqual({ title: null, frame: null, skin: null, cutin: null });
+    // 재장착(UPDATE 경로)과 해제(행 삭제)
+    expect(service.setEquipment('profile-a', 'outfit:hana', 'story-outfit-hana-lab', AT + 2).cosmetics.outfits)
+      .toEqual({ hana: 'story-outfit-hana-lab' });
+    expect(service.setEquipment('profile-a', 'outfit:hana', null, AT + 3).cosmetics.outfits).toEqual({});
+    expect(service.setEquipment('profile-a', 'card-back', null, AT + 4).cosmetics.cardBack).toBeNull();
+    expect(rowCountOf('profile_cosmetics')).toBe(0);
+    expect(rowCountOf('profile_character_outfits')).toBe(0);
+
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'felt', 'story-cardback-dojo-crest', AT),
+      'PROGRESSION_EQUIPMENT_SLOT_INVALID',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'card-back', 'story-cardback-yellow-belt', AT),
+      'PROGRESSION_ITEM_NOT_OWNED',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'outfit:sakura', 'story-outfit-hana-lab', AT),
+      'PROGRESSION_SKIN_CHARACTER_MISMATCH',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'outfit:miyako', null, AT),
+      'PROGRESSION_INPUT_INVALID',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'card-back', 'dojo-frame-cherry-blossom', AT),
+      'PROGRESSION_EQUIPMENT_SLOT_INVALID',
+    );
+  });
+
+  it('equips story titles into the existing title slot and rejects them elsewhere', () => {
+    seedProfile('profile-a', 'sakura');
+    grantStoryReward('profile-a', 'story-title-white-belt');
+    grantStoryReward('profile-a', 'story-cardback-dojo-crest');
+
+    const equipped = service.setEquipment('profile-a', 'title', 'story-title-white-belt', AT);
+    expect(equipped.equipment).toEqual({
+      title: 'story-title-white-belt', frame: null, skin: null, cutin: null,
+    });
+    expect(database.db.prepare(
+      "SELECT item_id FROM profile_equipment WHERE profile_id = 'profile-a' AND slot = 'title'",
+    ).get()).toEqual({ item_id: 'story-title-white-belt' });
+    expect(service.setEquipment('profile-a', 'title', null, AT + 1).equipment.title).toBeNull();
+
+    // 스토리 칭호는 title 외 슬롯 거절, 스토리 카드백은 4슬롯 어디에도 못 든다, 미소유 칭호 거절
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'frame', 'story-title-white-belt', AT),
+      'PROGRESSION_EQUIPMENT_SLOT_INVALID',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'title', 'story-cardback-dojo-crest', AT),
+      'PROGRESSION_EQUIPMENT_SLOT_INVALID',
+    );
+    expectServiceCode(
+      () => service.setEquipment('profile-a', 'title', 'story-title-perfect', AT),
+      'PROGRESSION_ITEM_NOT_OWNED',
+    );
+    // DB 트리거도 같은 규칙 — 서비스를 우회한 직접 UPDATE
+    expect(() => database.db.prepare(`
+      UPDATE profile_equipment SET item_id = 'story-title-white-belt'
+      WHERE profile_id = 'profile-a' AND slot = 'frame'
+    `).run()).toThrow(/invalid catalog equipment/);
+    database.db.prepare(`
+      UPDATE profile_equipment SET item_id = 'story-title-white-belt'
+      WHERE profile_id = 'profile-a' AND slot = 'title'
+    `).run();
+    expect(service.getSnapshot('profile-a', 'sakura', AT + 2).equipment.title).toBe('story-title-white-belt');
+  });
+
   it('seeds a progression profile when the story reward is the first event', () => {
     insertProfile(database, 'profile-new');
 
@@ -477,6 +607,30 @@ describe('ProgressionService story rewards', () => {
   function seedProfile(profileId: string, characterId: string): void {
     insertProfile(database, profileId);
     service.selectCharacter(profileId, characterId, AT - 1_000);
+  }
+
+  /** 스토리 보상 영수증 — v32 sync 트리거가 인벤토리 마커를 만든다 */
+  function grantStoryReward(profileId: string, itemId: string): void {
+    database.db.prepare(`
+      INSERT INTO story_rewards (profile_id, item_id, source_key, granted_at)
+      VALUES (?, ?, 'test', ?)
+    `).run(profileId, itemId, AT - 500);
+  }
+
+  function rowCountOf(table: string): number {
+    const row = database.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number };
+    return Number(row.count);
+  }
+
+  function expectServiceCode(work: () => unknown, code: ProgressionServiceError['code']): void {
+    try {
+      work();
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProgressionServiceError);
+      expect((error as ProgressionServiceError).code).toBe(code);
+      return;
+    }
+    throw new Error(`expected ${code}`);
   }
 
   function affinityRow(profileId: string, characterId: string): unknown {

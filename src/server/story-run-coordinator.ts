@@ -29,7 +29,10 @@ import type {
 } from '../lib/story/types';
 import { LIVE_STEP_KINDS, isStoryHeroineId } from '../lib/story/types';
 import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
+import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
+import { nextStoryRewards, pickStoryCutscene } from '../lib/story/rewards/catalog';
 import type {
+  ChapterResultRewards,
   ChapterResultView,
   StoryAdvanceRequest,
   StoryChoiceRequest,
@@ -38,9 +41,12 @@ import type {
   StoryDrillView,
   StoryLiveView,
   StoryProgressView,
+  StoryRewardItemView,
+  StoryRewardPreview,
   StoryRunPhase,
   StoryRunView,
   StoryRunMode,
+  StoryUnlockedSceneView,
 } from '../lib/story/views';
 import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
 
@@ -120,7 +126,18 @@ export interface StoryRepositoryPort {
   ): number;
 }
 
-/** 보상 포트 — ProgressionRuntime이 구현 (없으면 XP 없이 진행: 테스트·비활성 환경) */
+/** 히로인 인연 전후 레벨 (progression-service `StoryAffinityTransition`) — 새 인연 씬 산출 입력 */
+export interface StoryAffinityTransitionRecord {
+  characterId: StoryHeroineId;
+  previousLevel: number;
+  nextLevel: number;
+}
+
+/**
+ * 보상 포트 — ProgressionRuntime(XP·인연) + StoryRewardService(카탈로그 아이템·칩)가 구현
+ * (없으면 XP 없이 진행: 테스트·비활성 환경). reconcile/preview/grantDailyChips는 선택 —
+ * 없으면 결산 DTO의 items/chips/cutscene/next를 채우지 않아 클라가 폴백한다.
+ */
 export interface StoryRewardPort {
   completeChapter(input: {
     profileId: string;
@@ -131,8 +148,14 @@ export interface StoryRewardPort {
     dojoXpMilli: number;
     affinity: Array<{ characterId: StoryHeroineId; milli: number }>;
     completedAt: number;
-  }): { duplicate: boolean };
+  }): { duplicate: boolean; affinityTransitions?: StoryAffinityTransitionRecord[] };
   completeDaily(input: { profileId: string; kstDate: string; teacherId: StoryHeroineId; completedAt: number }): { duplicate: boolean };
+  /** durable 상태에서 자격 − 영수증 = 누락분을 지급(칩 포함) — 결산·데일리 종료·진행도 조회에서 호출 */
+  reconcile?(profileId: string, now: number): { granted: StoryRewardItemView[]; chips: number };
+  /** 카탈로그 전체 미리보기(획득 여부 포함) — 허브 카드 칩·결산 「다음 보상」 */
+  preview?(profileId: string): StoryRewardPreview[];
+  /** 오늘의 수련 완료 칩 — 날짜당 1회, 이미 지급이면 0 */
+  grantDailyChips?(profileId: string, kstDate: string, now: number): number;
 }
 
 export interface StoryRunCoordinatorDeps {
@@ -326,7 +349,23 @@ export class StoryRunCoordinator {
         teacherId: dailyTeacher,
       },
       activeRun: run ? { runId: run.runId, chapterId: run.chapter.id, stepIndex: run.stepIndex, mode: run.mode } : null,
+      ...(this.deps.rewards?.preview ? { rewards: this.previewRewards(profileId) } : {}),
     };
+  }
+
+  /**
+   * 보상 미리보기 — 조회 전에 reconcile로 자기 치유(결산 도중 크래시로 누락된 지급을 다음 조회가 메운다).
+   * 조회는 절대 실패하지 않아야 하므로 reconcile 오류는 삼키고 미리보기만 돌려준다.
+   */
+  private previewRewards(profileId: string): StoryRewardPreview[] {
+    const rewards = this.deps.rewards;
+    if (!rewards?.preview) return [];
+    try {
+      rewards.reconcile?.(profileId, this.now());
+    } catch {
+      // 다음 결산·조회에서 재시도 — 진행도 조회가 보상 장애로 막히지 않게 한다
+    }
+    return rewards.preview(profileId);
   }
 
   getActiveRun(profileId: string): StoryRun | null {
@@ -961,11 +1000,17 @@ export class StoryRunCoordinator {
       // 데일리 런은 통과 여부가 없어 플래그를 여기서 바로 영속한다
       if (drillResult.perfect) this.deps.repository.setFlags(run.profileId, { [PERFECT_SET_FLAG]: '1' }, now);
       let affinity: Array<{ characterId: StoryHeroineId; milli: number }> = [];
+      let dailyChips = 0;
       // 완료 = 슬롯 3개를 다 풀었는가(재출제 제출은 세지 않는다)
       if (teacherId && summary.outcomes.length >= this.dailyTotal && this.deps.rewards) {
         const outcome = this.deps.rewards.completeDaily({ profileId: run.profileId, kstDate: run.daily!.kstDate, teacherId, completedAt: now });
-        if (!outcome.duplicate) affinity = [{ characterId: teacherId, milli: 5_000 }];
+        if (!outcome.duplicate) {
+          affinity = [{ characterId: teacherId, milli: 5_000 }];
+          dailyChips = this.deps.rewards.grantDailyChips?.(run.profileId, run.daily!.kstDate, now) ?? 0;
+        }
       }
+      // 「퍼펙트」·「빈 노트」 칭호는 플래그에서 파생되므로 데일리 완료 여부와 무관하게 reconcile
+      const extra = this.reconcileRewards(run.profileId, DAILY_CHAPTER_ID, [], now);
       run.result = {
         chapterId: DAILY_CHAPTER_ID,
         mode: 'full',
@@ -973,7 +1018,15 @@ export class StoryRunCoordinator {
         grade,
         drill: drillResult,
         live: null,
-        rewards: { firstClear: false, dojoXpMilli: 0, affinity, badgeId: null },
+        rewards: {
+          firstClear: false,
+          dojoXpMilli: 0,
+          affinity,
+          badgeId: extra?.items.find(item => item.kind === 'title')?.id ?? null,
+          ...(extra
+            ? { ...extra, chips: extra.chips + dailyChips, next: [] }
+            : dailyChips > 0 ? { chips: dailyChips } : {}),
+        },
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: null,
         beltAwarded: null,
@@ -984,6 +1037,8 @@ export class StoryRunCoordinator {
       const beltBefore = deriveBelt(this.chapters, this.completedSet(rowsBefore), this.deps.repository.getFlags(run.profileId));
       const firstClear = passed && (before?.completions ?? 0) === 0;
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
+      let transitions: StoryAffinityTransitionRecord[] = [];
+      let extra: ReturnType<StoryRunCoordinator['reconcileRewards']> = null;
       if (passed) {
         // 「퍼펙트」는 선택지 플래그와 함께 통과 시에만 영속된다(미통과 런의 플래그는 버려지는 기존 규약)
         if (drillResult.perfect) run.flagsDelta[PERFECT_SET_FLAG] = '1';
@@ -1002,11 +1057,15 @@ export class StoryRunCoordinator {
             completedAt: now,
           });
           if (outcome.duplicate) grant = { dojoXpMilli: 0, affinity: [], badgeId: null };
+          else transitions = outcome.affinityTransitions ?? [];
+          // 카탈로그 보상은 방금 영속된 completions/best_grade/플래그에서 reconcile — XP 트랜잭션과 분리·각자 멱등
+          extra = this.reconcileRewards(run.profileId, run.chapter.id, transitions, now);
         }
       }
       const completed = this.completedSet(this.deps.repository.listProgress(run.profileId));
       // 띠는 막 완주에서 파생되므로 순서와 무관하게 "이 완주로 올랐는가"만 본다 — 결산이 승급을 알린다
       const beltAfter = deriveBelt(this.chapters, completed, this.deps.repository.getFlags(run.profileId));
+      const levelsOf = new Map(transitions.map(entry => [entry.characterId, entry]));
       run.result = {
         chapterId: run.chapter.id,
         mode: run.mode,
@@ -1014,7 +1073,17 @@ export class StoryRunCoordinator {
         grade,
         drill: drillResult,
         live: liveResult,
-        rewards: { firstClear, dojoXpMilli: grant.dojoXpMilli, affinity: grant.affinity, badgeId: grant.badgeId },
+        rewards: {
+          firstClear,
+          dojoXpMilli: grant.dojoXpMilli,
+          affinity: grant.affinity.map(entry => {
+            const levels = levelsOf.get(entry.characterId);
+            return levels ? { ...entry, levelBefore: levels.previousLevel, levelAfter: levels.nextLevel } : entry;
+          }),
+          // 호환용 badgeId — 서버 보상 라인이 있으면 새 칭호 id, 없으면 챕터 데이터의 badgeId
+          badgeId: extra?.items.find(item => item.kind === 'title')?.id ?? grant.badgeId,
+          ...(extra ?? {}),
+        },
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
         beltAwarded: beltAfter !== beltBefore ? beltAfter : null,
@@ -1024,6 +1093,39 @@ export class StoryRunCoordinator {
     run.drill = null;
     run.updatedAt = now;
     this.runs.delete(run.profileId);
+  }
+
+  /**
+   * 결산 보상 DTO — reconcile(새 아이템·칩) + 컷신(보스 > 띠 > 에필로그 1개) + 인연 전이로 열린 인연 씬 +
+   * 이 챕터·막의 미획득 「다음 보상」. 포트에 reconcile이 없으면 null(클라 폴백 — 필드 미정의).
+   */
+  private reconcileRewards(
+    profileId: string,
+    chapterId: ChapterId,
+    transitions: readonly StoryAffinityTransitionRecord[],
+    now: number,
+  ): Required<Pick<ChapterResultRewards, 'items' | 'chips' | 'cutscene' | 'unlockedScenes' | 'next'>> | null {
+    const rewards = this.deps.rewards;
+    if (!rewards?.reconcile) return null;
+    const reconciled = rewards.reconcile(profileId, now);
+    const unlockedScenes: StoryUnlockedSceneView[] = transitions.flatMap(entry =>
+      findNewlyUnlockedScenes(entry.characterId, entry.previousLevel, entry.nextLevel).map(scene => ({
+        id: scene.id,
+        characterId: scene.characterId,
+        level: scene.level,
+        title: scene.title,
+        caption: scene.caption,
+        art: getBondSceneArt(scene),
+      })),
+    );
+    const granted = new Set((rewards.preview?.(profileId) ?? []).filter(item => item.granted).map(item => item.id));
+    return {
+      items: reconciled.granted,
+      chips: reconciled.chips,
+      cutscene: pickStoryCutscene(reconciled.granted),
+      unlockedScenes,
+      next: nextStoryRewards(this.chapters, granted, chapterId),
+    };
   }
 
   private completedSet(rows: StoryProgressRecord[]): Set<ChapterId> {

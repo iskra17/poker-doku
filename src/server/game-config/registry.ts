@@ -71,6 +71,17 @@ export const GAME_CONFIG_REGISTRY = [
     description: 'KST 자정 리셋, 하루 1회 수동 수령 — 이미 수령한 유저는 당일 구액 유지',
   },
   {
+    key: 'economy.storyDailyChips',
+    label: '오늘의 수련 완료 칩',
+    group: 'economy',
+    min: 0,
+    max: 10_000,
+    unit: 'chips',
+    defaultValue: 100,
+    applyMode: 'immediate',
+    description: '수련 스토리 「오늘의 수련」 3문 완료 시 자동 지급 — KST 날짜당 1회(chip_ledger STORY_DAILY), 0이면 미지급',
+  },
+  {
     key: 'economy.rescueThreshold',
     label: '구제 발동 기준 잔액',
     group: 'economy',

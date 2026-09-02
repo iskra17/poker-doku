@@ -3,9 +3,10 @@ import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { makeChapter, makeChapterChain } from '@/lib/story/test-fixtures';
 import type { Chapter, StoryTeacherId } from '@/lib/story/types';
-import type { StoryRunView } from '@/lib/story/views';
+import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
+import type { StoryRewardItemView, StoryRunView } from '@/lib/story/views';
 import type { LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
-import type { StoryLiveAdapterPort } from './story-run-coordinator';
+import type { StoryAffinityTransitionRecord, StoryLiveAdapterPort } from './story-run-coordinator';
 import {
   DAILY_CHAPTER_ID,
   kstDay,
@@ -108,21 +109,49 @@ class FakeRepository implements StoryRepositoryPort {
 class FakeRewards implements StoryRewardPort {
   chapters: Array<Parameters<StoryRewardPort['completeChapter']>[0]> = [];
   dailies: Array<Parameters<StoryRewardPort['completeDaily']>[0]> = [];
+  reconciles: Array<{ profileId: string; now: number }> = [];
+  dailyChips: Array<{ profileId: string; kstDate: string }> = [];
+  /** 다음 reconcile이 돌려줄 지급 결과 — 테스트가 세팅, 소비 후 비움 */
+  pending: { granted: StoryRewardItemView[]; chips: number } = { granted: [], chips: 0 };
+  /** completeChapter가 돌려줄 인연 전이 */
+  transitions: StoryAffinityTransitionRecord[] = [];
+  granted = new Set<string>();
+
+  constructor(private readonly chapterList: Chapter[]) {}
+
   completeChapter(input: Parameters<StoryRewardPort['completeChapter']>[0]) {
     const duplicate = this.chapters.some(c => c.chapterId === input.chapterId && c.firstClear && input.firstClear);
     this.chapters.push(input);
-    return { duplicate };
+    return { duplicate, affinityTransitions: duplicate ? [] : this.transitions };
   }
   completeDaily(input: Parameters<StoryRewardPort['completeDaily']>[0]) {
     const duplicate = this.dailies.some(d => d.kstDate === input.kstDate);
     this.dailies.push(input);
     return { duplicate };
   }
+  reconcile(profileId: string, now: number) {
+    this.reconciles.push({ profileId, now });
+    const result = this.pending;
+    this.pending = { granted: [], chips: 0 };
+    for (const item of result.granted) this.granted.add(item.id);
+    return result;
+  }
+  preview() {
+    return listStoryRewardPreview(this.chapterList, this.granted);
+  }
+  grantDailyChips(profileId: string, kstDate: string) {
+    this.dailyChips.push({ profileId, kstDate });
+    return 100;
+  }
+}
+
+function rewardItem(id: string): StoryRewardItemView {
+  return toStoryRewardItemView(getStoryRewardDefinition(id)!);
 }
 
 function setup(chapters: Chapter[] = makeChapterChain(), partner: 'sakura' | null = 'sakura') {
   const repository = new FakeRepository();
-  const rewards = new FakeRewards();
+  const rewards = new FakeRewards(chapters);
   const emitted: Array<{ profileId: string; view: StoryRunView }> = [];
   let counter = 0;
   let clock = NOW;
@@ -338,13 +367,25 @@ describe('drill set flow', () => {
     expect(view).toMatchObject({ stepIndex: 5, stepKind: 'result', phase: 'result', drill: null });
 
     // 결산: 첫 완주 보상(파트너 +30,000·도장 100,000+등급 보너스), 복습 노트 1, 다음 챕터
+    // 카탈로그 보상 포트: reconcile이 칭호+CG+500칩을 새로 지급하고, 인연은 사쿠라 L4→L5(씬 「벚꽃 아래서」 해금)
+    rewards.pending = { granted: [rewardItem('story-title-white-belt'), rewardItem('story-cg-act1-belt-white')], chips: 500 };
+    rewards.transitions = [{ characterId: 'sakura', previousLevel: 4, nextLevel: 5 }];
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
     view = latest();
     expect(view.phase).toBe('ended');
     expect(view.result).toMatchObject({
       chapterId: 'act1-ch01', passed: true,
       drill: { answered: 3, correct: 2, bestStreak: 2, hintsUsed: 1, slots: 2, finalCorrect: 2, perfect: false, retrySkipped: false },
-      rewards: { firstClear: true, affinity: [{ characterId: 'sakura', milli: 30_000 }], badgeId: 'white-belt' },
+      rewards: {
+        firstClear: true,
+        affinity: [{ characterId: 'sakura', milli: 30_000, levelBefore: 4, levelAfter: 5 }],
+        // 호환용 badgeId = 새로 지급된 첫 칭호 id (챕터 데이터의 'white-belt'보다 우선)
+        badgeId: 'story-title-white-belt',
+        items: [{ id: 'story-title-white-belt', kind: 'title' }, { id: 'story-cg-act1-belt-white', kind: 'cg' }],
+        chips: 500,
+        cutscene: { id: 'story-cg-act1-belt-white', kind: 'belt', characterId: 'miyako', art: '/assets/story/cg/act1-belt-white.webp' },
+        unlockedScenes: [{ id: 'sakura-lv5', characterId: 'sakura', level: 5, title: '벚꽃 아래서', art: '/assets/characters/sakura/scene-lv5.webp' }],
+      },
       reviewNotesAdded: 1,
       nextChapterId: 'act1-ch02',
       // Ch1만으로는 1막이 끝나지 않는다 — 승급 없음
@@ -356,6 +397,15 @@ describe('drill set flow', () => {
     expect(repository.completions).toEqual([{ chapterId: 'act1-ch01', grade: 'A' }]);
     expect(rewards.chapters).toHaveLength(1);
     expect(rewards.chapters[0]).toMatchObject({ profileId: PROFILE, chapterId: 'act1-ch01', runId: 'run-1', firstClear: true, grade: 'A', dojoXpMilli: 120_000 });
+    // reconcile은 completeChapter 뒤 한 번(결산) — 「다음 보상」은 이 챕터 S + 1막 완주의 미획득 아이템(칩 제외, 최대 3)
+    expect(rewards.reconciles).toEqual([{ profileId: PROFILE, now: expect.any(Number) }]);
+    expect(view.result!.rewards.next!.map(item => [item.id, item.granted])).toEqual([
+      ['story-cardback-dojo-crest', false], ['story-felt-yellow-belt', false], ['story-cg-act1-belt-yellow', false],
+    ]);
+    // 진행도 조회는 미리보기(영수증 기준 granted) + 자기 치유 reconcile
+    const progress = coordinator.getProgress(PROFILE);
+    expect(progress.rewards!.filter(item => item.granted).map(item => item.id)).toEqual(['story-title-white-belt', 'story-cg-act1-belt-white']);
+    expect(rewards.reconciles).toHaveLength(2);
     expect(coordinator.getActiveRun(PROFILE)).toBeNull();
     expect(coordinator.getProgress(PROFILE).chapters[0]).toMatchObject({ completions: 1, bestGrade: 'A' });
   });
@@ -507,6 +557,10 @@ describe('daily drills', () => {
     expect(view.phase).toBe('ended');
     expect(view.result).toMatchObject({ chapterId: DAILY_CHAPTER_ID, passed: true, rewards: { affinity: [{ characterId: 'sakura', milli: 5_000 }] } });
     expect(rewards.dailies).toEqual([{ profileId: PROFILE, kstDate: '2026-09-02', teacherId: 'sakura', completedAt: expect.any(Number) }]);
+    // 데일리 칩 100은 인연과 같은 조건(첫 완료)에서만, 결산 DTO chips에 합산 — 칭호 reconcile도 한 번 돈다
+    expect(rewards.dailyChips).toEqual([{ profileId: PROFILE, kstDate: '2026-09-02' }]);
+    expect(view.result!.rewards).toMatchObject({ chips: 100, items: [], cutscene: null, next: [] });
+    expect(rewards.reconciles).toEqual([{ profileId: PROFILE, now: expect.any(Number) }]);
     expect(repository.completions).toEqual([{ chapterId: 'act1-ch01', grade: 'B' }]); // 데일리는 챕터 완료 아님
     expect(coordinator.getProgress(PROFILE).daily).toMatchObject({ done: 3, available: true });
     expect(coordinator.startDaily(PROFILE)).toMatchObject({ ok: false, code: 'action-rejected' });

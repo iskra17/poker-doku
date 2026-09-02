@@ -44,6 +44,8 @@ export interface EconomyRules {
   readonly rescueTarget: number;
   readonly rescueDailyLimit: number;
   readonly rescueCooldownMs: number;
+  /** 오늘의 수련 완료 칩 (KST 날짜당 1회, reason 'STORY_DAILY') */
+  readonly storyDailyChips: number;
   readonly casualSngBuyIn: number;
   readonly casualSngFee: number;
 }
@@ -62,6 +64,7 @@ export const ECONOMY_RULES: EconomyRules = {
   get rescueTarget() { return cfg('economy.rescueTarget'); },
   get rescueDailyLimit() { return cfg('economy.rescueDailyLimit'); },
   get rescueCooldownMs() { return cfg('economy.rescueCooldownMs'); },
+  get storyDailyChips() { return cfg('economy.storyDailyChips'); },
   casualSngBuyIn: CASUAL_SNG_BUY_IN,
   casualSngFee: CASUAL_SNG_ENTRY_FEE,
 };
@@ -223,6 +226,19 @@ export class EconomyService {
       getKstDateKey(at),
       ECONOMY_RULES.dailyGrant,
       getNextKstMidnight(at),
+      at,
+    );
+  }
+
+  /**
+   * 오늘의 수련 완료 칩 — KST 날짜당 1회(reason 'STORY_DAILY', 키 `story-daily:<len:date>:<len:profile>`).
+   * 이미 지급된 날이면 0. kstDate는 코디네이터의 데일리 런 날짜(자정을 넘겨 끝내도 시작 날짜 기준).
+   */
+  grantStoryDailyChips(profileId: string, kstDate: string, at = this.clock()): number {
+    return this.repository.grantStoryDailyChips(
+      profileId,
+      kstDate,
+      ECONOMY_RULES.storyDailyChips,
       at,
     );
   }

@@ -17,6 +17,8 @@ import { ArenaService } from './arena-service';
 import { EconomyRepository } from './economy-repository';
 import { EconomyRuntime } from './economy-runtime';
 import { EconomyService } from './economy-service';
+import { StoryRewardRepository } from './story-reward-repository';
+import { StoryRewardService } from './story-reward-service';
 import {
   TransientHttpConcurrencyGate,
   TransientHttpRateLimiter,
@@ -130,7 +132,9 @@ export async function createSocketTestHarness(
     undefined,
     options.profileKdf ?? fastTestKdf,
   );
-  const economyService = new EconomyService(new EconomyRepository(database));
+  const economyRepository = new EconomyRepository(database);
+  const economyService = new EconomyService(economyRepository);
+  const storyRepository = new StoryRepository(database);
   const economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   const progressionService = new ProgressionService(database, progressionRepository);
@@ -241,7 +245,15 @@ export async function createSocketTestHarness(
     persistentTournamentRuntimeRegistration:
       options.persistentTournamentRuntimeRegistration,
     persistentLateRegistration: options.persistentLateRegistration,
-    storyRepository: new StoryRepository(database),
+    storyRepository,
+    storyRewards: new StoryRewardService({
+      database,
+      storyRepository,
+      rewardRepository: new StoryRewardRepository(database),
+      economyRepository,
+      economyService,
+      chapters: options.storyChapters,
+    }),
     storyChapters: options.storyChapters,
     ...(arenaService
       ? {

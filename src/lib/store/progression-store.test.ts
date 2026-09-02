@@ -22,6 +22,7 @@ function snapshot(level = 1, profileId = 'profile-1'): ProgressionSnapshot {
     },
     inventory: [],
     equipment: { title: null, frame: null, skin: null, cutin: null },
+    cosmetics: { cardBack: null, felt: null, outfits: {} },
   };
 }
 

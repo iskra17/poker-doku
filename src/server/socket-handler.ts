@@ -34,6 +34,7 @@ import {
 } from './socket-payload';
 import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
 import { StoryRunCoordinator, type CoordinatorResult } from './story-run-coordinator';
+import type { StoryRewardService } from './story-reward-service';
 import { LiveTableAdapter } from './story-live-adapter';
 import type { StoryRepository } from './story-repository';
 import {
@@ -377,6 +378,8 @@ export interface SocketRuntimeOptions {
   handHistory?: RoomHandHistoryHooks;
   /** 수련 스토리 영속 — 주어지면 StoryRunCoordinator를 켜고 story-* 이벤트를 받는다 */
   storyRepository?: StoryRepository;
+  /** 수련 스토리 카탈로그 보상(아이템·칩) — progressionService와 함께 있을 때만 코디네이터 포트에 실린다 */
+  storyRewards?: StoryRewardService;
   /** 챕터 레지스트리 오버라이드 (테스트 픽스처용 — 기본 STORY_CHAPTERS) */
   storyChapters?: readonly Chapter[];
   arena?: {
@@ -465,6 +468,7 @@ export function setupSocketHandlers(
     progressionService,
     handHistory,
     storyRepository,
+    storyRewards,
     arena,
   } = options;
   const sessions = new SessionManager();
@@ -503,11 +507,40 @@ export function setupSocketHandlers(
     ? new StoryRunCoordinator({
       repository: storyRepository,
       chapters: options.storyChapters,
-      // 보상은 progression 런타임이 있을 때만 — 없으면(테스트·비활성) XP 없이 진행
+      // 보상은 progression 런타임이 있을 때만 — 없으면(테스트·비활성) XP 없이 진행.
+      // 카탈로그 아이템·칩(storyRewards)은 XP와 별개 트랜잭션(reconcile) — 새 지급이 있으면 인벤토리·코스메틱이
+      // 바뀌었으므로 progression-update 스냅샷을 한 번 더 밀어 로비(갤러리·옷장)가 즉시 반영한다.
       rewards: progression
         ? {
-          completeChapter: input => ({ duplicate: progression.completeStoryChapter(input).duplicate }),
+          completeChapter: input => {
+            const result = progression.completeStoryChapter(input);
+            return { duplicate: result.duplicate, affinityTransitions: result.affinityTransitions };
+          },
           completeDaily: input => ({ duplicate: progression.completeStoryDaily(input).duplicate }),
+          ...(storyRewards
+            ? {
+              reconcile: (profileId: string, now: number) => {
+                const result = storyRewards.reconcile(profileId, now);
+                if (result.granted.length > 0 || result.chips > 0) {
+                  queueMicrotask(() => {
+                    const session = sessions.getByPlayerId(profileId);
+                    if (!session?.socketId || !progressionService) return;
+                    const target = io.sockets.sockets.get(session.socketId);
+                    if (!target) return;
+                    try {
+                      target.emit('progression-update', progressionService.getRuntimeSnapshot(profileId, 'sakura'));
+                    } catch {
+                      // 스냅샷 재조회 실패는 다음 /api/progression 조회가 메운다
+                    }
+                  });
+                }
+                return result;
+              },
+              preview: (profileId: string) => storyRewards.preview(profileId),
+              grantDailyChips: (profileId: string, kstDate: string, now: number) =>
+                storyRewards.grantDailyChips(profileId, kstDate, now),
+            }
+            : {}),
         }
         : undefined,
       emit: (profileId, view) => {

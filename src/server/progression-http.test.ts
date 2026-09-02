@@ -172,6 +172,47 @@ describe('progression HTTP API', () => {
     );
   });
 
+  it('routes story cosmetic slots (card-back / outfit:<heroine>) through the same equipment endpoint', async () => {
+    await request('/api/progression');
+    // 스토리 보상은 영수증(v32 story_rewards)이 인벤토리 마커를 만든다 — 컬렉션 영구 지급 경로가 아니다
+    for (const itemId of ['story-cardback-dojo-crest', 'story-outfit-sakura-dojo']) {
+      database.db.prepare(`
+        INSERT INTO story_rewards (profile_id, item_id, source_key, granted_at)
+        VALUES (?, ?, 'test', 1)
+      `).run(profile.id, itemId);
+    }
+
+    const cardBack = await post('/api/progression/equipment', {
+      slot: 'card-back', itemId: 'story-cardback-dojo-crest',
+    });
+    expect(cardBack.status).toBe(200);
+    expect(await cardBack.json()).toMatchObject({
+      progression: {
+        cosmetics: { cardBack: 'story-cardback-dojo-crest', felt: null, outfits: {} },
+        equipment: { title: null, frame: null, skin: null, cutin: null },
+      },
+    });
+    const outfit = await post('/api/progression/equipment', {
+      slot: 'outfit:sakura', itemId: 'story-outfit-sakura-dojo',
+    });
+    expect(outfit.status).toBe(200);
+    expect(await outfit.json()).toMatchObject({
+      progression: { cosmetics: { outfits: { sakura: 'story-outfit-sakura-dojo' } } },
+    });
+    // 히로인 불일치·미소유·미등록 슬롯은 409/400
+    expect((await post('/api/progression/equipment', {
+      slot: 'outfit:hana', itemId: 'story-outfit-sakura-dojo',
+    })).status).toBe(409);
+    expect((await post('/api/progression/equipment', {
+      slot: 'felt', itemId: 'story-felt-yellow-belt',
+    })).status).toBe(409);
+    expect((await post('/api/progression/equipment', {
+      slot: 'outfit:miyako', itemId: null,
+    })).status).toBe(400);
+    const cleared = await post('/api/progression/equipment', { slot: 'outfit:sakura', itemId: null });
+    expect(await cleared.json()).toMatchObject({ progression: { cosmetics: { outfits: {} } } });
+  });
+
   it('allows one deterministic mission reroll and rejects a second', async () => {
     const first = await post('/api/progression/missions/reroll', { slot: 0 });
     const second = await post('/api/progression/missions/reroll', { slot: 1 });

@@ -69,6 +69,7 @@ describe('ProgressionRepository', () => {
         skin: null,
         cutin: null,
       },
+      cosmetics: { cardBack: null, felt: null, outfits: {} },
     });
     expect(rowCount(database, 'progression_profiles')).toBe(1);
     expect(rowCount(database, 'character_affinity')).toBe(1);
