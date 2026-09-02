@@ -2,7 +2,7 @@
 
 날짜: 2026-09-03 KST (Phase 1b 인계 문서의 다음 세션)
 저장소: `C:\code\claude\poker-doku`, 작업 worktree `.worktrees/story-mode`(브랜치 `feat/story-mode`)
-main에 ff 병합, 태그 `story-p1c`. **origin 미푸시 · Fly 미배포**(v72가 프로덕션 — 사용자 지시 시 `git push origin main` + `~/.fly/bin/flyctl deploy --ha=false`).
+main에 ff 병합, 태그 `story-p1c`. **2026-09-03 사용자 지시로 origin 푸시(414d52e→5d841de, 태그 story-p1c) + Fly 배포 완료 → v73**(머신 48ed666a50d2e8, healthz ok, checks 1/1 passing. `~/.fly/bin/flyctl deploy --ha=false`).
 기획: `docs/spec-story-mode-2026-09.md` **Part S**(본문과 어긋나면 Part S 우선) · 요약: `AGENTS.md` 수련 스토리 섹션 + 컨벤션(용어).
 
 ## 사용자 피드백(원문 요지) → 반영
@@ -35,7 +35,7 @@ main에 ff 병합, 태그 `story-p1c`. **origin 미푸시 · Fly 미배포**(v72
 ## 다음에 할 일
 
 1. 포그라운드 브라우저로 ③ 시각·미션형 조기 종료 실주행 확인(위 미검증) → 필요 시 색·문구 조정.
-2. 사용자 지시 시 `git push origin main` + Fly 배포(v73). 배포 후 `/api/debug/log?type=story-step`에서 `live-finish reason:"objectives"`(조기 종료)·`start mode:"exam"` 비율 관찰.
+2. (배포 완료 v73) `/api/debug/log?type=story-step`에서 `live-finish reason:"objectives"`(조기 종료)·`start mode:"exam"` 비율 관찰.
 3. 후속 아이디어(미착수): 실력 확인 통과 챕터의 스파링만 별도로 도는 「스파링만」 버튼(스펙 A5-2 [스파링만 재도전]의 확장) · 2막 데이터부터 미션형 목표 규약으로 집필 · Ch2 `open-raise` 기회가 안 올 때 15핸드를 다 도는 체감 확인(필요하면 maxHands 12로 하향).
 4. Phase 2 후보는 이전 인계 그대로(failScene·리딩 퀴즈·봇 속마음·2막·BGM·v31).
 
