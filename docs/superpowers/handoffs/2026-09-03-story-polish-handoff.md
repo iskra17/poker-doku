@@ -2,7 +2,15 @@
 
 브랜치 `feat/story-polish` (worktree `.worktrees/story-mode`), 커밋 체인 09a935d → … (B1~B6 + 아트/음악 + 문서). 계획:
 `C:\Users\JEONG JAE HYEON\.claude\plans\velvet-coalescing-crane.md`, 기획 반영 `docs/spec-story-mode-2026-09.md` **Part U**, 규약 AGENTS.md
-(스토리 섹션 "v74 플레이 피드백 4건 반영" bullet + `src/lib/sound/` 항목). **main ff 병합은 이 문서 커밋 직후 실행(태그 `story-polish`), origin 푸시·Fly 배포는 미실행 — 사용자 지시 시.**
+(스토리 섹션 "v74 플레이 피드백 4건 반영" bullet + `src/lib/sound/` 항목). **main ff 병합(태그 `story-polish`) → origin 푸시 → Fly v75 배포 완료(2026-09-03, 머신 48ed666a50d2e8)** —
+healthz 200, 씬 CG·사무실 배경·BGM(`story-calm-dojo-morning.mp3` 2.2MB)·징글(`stinger-belt-up.mp3`) 서빙 확인. `fly`는 PowerShell `$env:USERPROFILE\.fly\bin\flyctl.exe`.
+
+## 새 세션 시작 절차
+
+1. worktree `.worktrees/story-mode`(브랜치 `feat/story-polish` = main 416a1ff 이후 문서 커밋 1개)에서 새 브랜치를 따서 시작한다(`git checkout -b feat/<topic>` — main과 같은 커밋). `npm ci`는 되어 있다.
+2. 이 문서 + AGENTS.md 스토리 섹션(보상 라인·보상 클라·v74 피드백 bullet)·`src/lib/sound/` 항목 + 기획 Part U를 읽는다.
+3. 메모리 [[project_story-mode-plan]](진행 이력)·[[reference_suno-music-gen]](audiopipe 수신, JS 폼 채우기)·[[reference_codex-image-gen]](`--sandbox workspace-write`에도 read-only면 generated_images 회수) 참고.
+4. 브라우저 QA는 `tabs_context_mcp{createIfEmpty:true}`로 만든 자동화 전용 창에서(사용자 창 탭은 백그라운드 스로틀링). dev 서버는 `npm run dev` 백그라운드 + `/healthz`, 끝나면 3000 포트 리스너 Stop-Process.
 
 ## 사용자 피드백 → 반영
 
@@ -30,8 +38,9 @@
 
 ## 다음 세션 순서
 
-1. 사용자 지시 시 `git push origin main` + PowerShell `$env:USERPROFILE\.fly\bin\flyctl.exe deploy --ha=false` → healthz·에셋 서빙 확인.
-2. 미검증 항목 실주행(위) — 특히 컷인 2종과 BGM 청취(루프 구간 `loopStart/loopEnd` 필요하면 매니페스트에 초 단위로).
+1. ~~푸시·배포~~ 완료(v75). **먼저 사용자에게 v75 플레이 피드백을 받는다** — 기록실 진입·칭호 플레이트·씬 CG·BGM 순환이 체감되는지.
+2. 미검증 항목 실주행(위) — 특히 컷인 2종(드릴 퍼펙트는 Ch1 6문 전부 첫 시도 정답·힌트 0, 미션 클리어는 스파링 primary 달성)과 BGM 청취(루프 구간
+   `loopStart/loopEnd` 필요하면 `music-library.ts`에 초 단위로), 징글 덕킹, 좌석 칭호(보관함에서 백띠 수련생 장착 → Practice Dojo 착석).
 3. 영상 파일럿 3클립: ComfyUI portable 설치 → `extra_model_paths.yaml`로 `D:\AI-Image-Video\models`(umt5 fp8 텍스트 인코더·Wan2.1 VAE·clip_vision_h 재사용) → Wan 2.2 I2V-A14B fp8 + lightx2v 4-step LoRA(폴백 TI2V-5B) → 720×1280 81f@16fps → RIFE 24fps → 4초 트림 → ffmpeg VP9 crf32 webm + H.264 crf26 mp4 ≤2.5MB → `public/assets/story/video/<cgId>.{webm,mp4}` + `story-video.ts VIDEO_AVAILABLE`. 대상 id: `story-cg-act1-belt-yellow`, `story-cg-act1-draco-boss`, `sakura-scene-lv5`.
 4. 2막 데이터(미션형 목표 + 보상 템플릿), 아라/클로이/비비안/엘레나 의상.
 
