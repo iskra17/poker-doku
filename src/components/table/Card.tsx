@@ -3,6 +3,7 @@
 import { motion } from 'framer-motion';
 import { Card as CardType } from '@/lib/poker/types';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import { useProgressionStore } from '@/lib/store/progression-store';
 import {
   DeckStyleId, DeckColorId, SUIT_SYMBOLS, getSuitColor,
 } from './card-theme';
@@ -35,8 +36,45 @@ const sizeConfig: Record<CardSize, {
   lg: { card: 'w-[4.5rem] h-[6.2rem]', bigRank: 'text-5xl', bigSuit: 'text-2xl' },
 };
 
-/** 카드 뒷면 — 핑크→퍼플 그라디언트 + 사선 격자 + 다이아 모노그램 */
+/** 장착 카드백 코스메틱(수련 스토리 보상) — 알려진 id만 무늬를 바꾸고, 그 외는 기본 뒷면 */
+const CARD_BACK_VARIANT: Readonly<Record<string, { stops: [string, string, string]; accent: string; glyph: 'crest' | 'band' }>> = Object.freeze({
+  'story-cardback-dojo-crest': { stops: ['#2a1b4d', '#1e1235', '#120a24'], accent: '#ffd76a', glyph: 'crest' },
+  'story-cardback-yellow-belt': { stops: ['#3a2c0e', '#241c0c', '#140f06'], accent: '#ffd76a', glyph: 'band' },
+});
+
+/** 카드 뒷면 — 기본: 핑크→퍼플 그라디언트 + 사선 격자 + 다이아 모노그램. 장착 카드백이 있으면 그 무늬(보는 사람 기준). */
 function CardBack() {
+  const cardBackId = useProgressionStore(state => state.snapshot?.cosmetics?.cardBack ?? null);
+  const variant = cardBackId ? CARD_BACK_VARIANT[cardBackId] : undefined;
+  if (variant) {
+    const gradientId = `card-back-grad-${variant.glyph}`;
+    return (
+      <svg viewBox="0 0 56 80" className="w-full h-full" preserveAspectRatio="none" aria-hidden>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor={variant.stops[0]} />
+            <stop offset="55%" stopColor={variant.stops[1]} />
+            <stop offset="100%" stopColor={variant.stops[2]} />
+          </linearGradient>
+        </defs>
+        <rect x="0" y="0" width="56" height="80" rx="5" fill={`url(#${gradientId})`} />
+        <rect x="2" y="2" width="52" height="76" rx="4" fill="none" stroke={variant.accent} strokeOpacity="0.55" strokeWidth="0.8" />
+        <rect x="5" y="5" width="46" height="70" rx="3" fill="none" stroke={variant.accent} strokeOpacity="0.25" strokeWidth="0.5" />
+        {variant.glyph === 'crest' ? (
+          <g transform="translate(28, 40)" fill="none" stroke={variant.accent} strokeWidth="1.2">
+            <circle r="12" strokeOpacity="0.9" />
+            <circle r="7.5" strokeOpacity="0.55" />
+            <path d="M0 -10 L5 0 L0 10 L-5 0 Z" fill={variant.accent} fillOpacity="0.8" stroke="none" />
+          </g>
+        ) : (
+          <g>
+            <path d="M2 58 L54 20 L54 30 L2 68 Z" fill={variant.accent} fillOpacity="0.85" />
+            <path d="M2 46 L54 8 L54 12 L2 50 Z" fill={variant.accent} fillOpacity="0.35" />
+          </g>
+        )}
+      </svg>
+    );
+  }
   return (
     <svg viewBox="0 0 56 80" className="w-full h-full" preserveAspectRatio="none" aria-hidden>
       <defs>

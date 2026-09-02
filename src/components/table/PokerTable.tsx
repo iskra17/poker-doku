@@ -2,6 +2,7 @@
 
 import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import { useProgressionStore } from '@/lib/store/progression-store';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useSeatActions } from '@/lib/hooks/use-seat-actions';
 import { motion } from 'framer-motion';
@@ -72,10 +73,16 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   // 수련 스토리 방은 펠트·레일을 시안 계열 「도장 테이블」로 바꿔 실전 캐시 테이블과 한눈에 구분한다
   // (2026-09-03 피드백 ③ — 연습 게임과 실전이 헷갈린다). 파이널 테이블 테마가 우선한다.
   const story = storyTheme && !finalTable;
+  // 장착 펠트 코스메틱(수련 스토리 보상) — 수련 테이블에만 적용, 실전 방은 불변
+  const feltId = useProgressionStore(state => state.snapshot?.cosmetics?.felt ?? null);
+  const yellowFelt = story && feltId === 'story-felt-yellow-belt';
+  const storyFeltHi = yellowFelt ? 'var(--color-story-felt-yellow-hi)' : 'var(--color-story-felt-hi)';
+  const storyFeltLo = yellowFelt ? 'var(--color-story-felt-yellow-lo)' : 'var(--color-story-felt-lo)';
+  const storyRail = yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
   const outerGlow = finalTable
     ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
     : story
-      ? 'radial-gradient(ellipse, transparent 60%, color-mix(in srgb, var(--color-cyber) 30%, transparent) 100%)'
+      ? `radial-gradient(ellipse, transparent 60%, color-mix(in srgb, ${storyRail} 30%, transparent) 100%)`
       : 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)';
   const railBackground = finalTable
     ? `linear-gradient(180deg,
@@ -84,9 +91,9 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
         var(--final-rail-bottom) 100%)`
     : story
       ? `linear-gradient(180deg,
-        color-mix(in srgb, var(--color-cyber) 22%, var(--color-elevated)) 0%,
-        color-mix(in srgb, var(--color-story-felt-lo) 40%, var(--color-elevated)) 30%,
-        color-mix(in srgb, black 30%, var(--color-story-felt-lo)) 100%)`
+        color-mix(in srgb, ${storyRail} 22%, var(--color-elevated)) 0%,
+        color-mix(in srgb, ${storyFeltLo} 40%, var(--color-elevated)) 30%,
+        color-mix(in srgb, black 30%, ${storyFeltLo}) 100%)`
       : `linear-gradient(180deg,
         color-mix(in srgb, var(--color-mystic) 26%, var(--color-elevated)) 0%,
         var(--color-elevated) 30%,
@@ -94,17 +101,17 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   const railShadow = finalTable
     ? 'inset 0 2px 5px color-mix(in srgb, var(--final-highlight) 42%, transparent), inset 0 -7px 14px rgba(0,0,0,0.58), 0 0 42px color-mix(in srgb, var(--final-accent) 26%, transparent)'
     : story
-      ? 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px color-mix(in srgb, var(--color-cyber) 20%, transparent)'
+      ? `inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px color-mix(in srgb, ${storyRail} 20%, transparent)`
       : 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)';
   const feltBackground = finalTable
     ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
     : story
-      ? 'radial-gradient(ellipse at 50% 68%, var(--color-story-felt-hi) 0%, var(--color-story-felt-lo) 58%, var(--color-story-abyss) 100%)'
+      ? `radial-gradient(ellipse at 50% 68%, ${storyFeltHi} 0%, ${storyFeltLo} 58%, var(--color-story-abyss) 100%)`
       : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)';
   const feltShadow = finalTable
     ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
     : story
-      ? 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px color-mix(in srgb, var(--color-cyber) 10%, transparent)'
+      ? `inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px color-mix(in srgb, ${storyRail} 10%, transparent)`
       : 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)';
 
   return (
@@ -139,7 +146,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
 
         {/* 레일(쿠션) — 실제 홀덤 테이블의 패딩 레일. 상단에 하이라이트, 골드 트림 */}
         <div
-          className={`absolute rounded-[9999px] border-2 ${story ? 'border-cyber/40' : 'border-gilded/30'}`}
+          className={`absolute rounded-[9999px] border-2 ${story ? (yellowFelt ? 'border-gilded/50' : 'border-cyber/40') : 'border-gilded/30'}`}
           style={{
             left: '4%', right: '4%', top: '11%', bottom: '5%',
             background: railBackground,
@@ -158,11 +165,11 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
           }}
         >
           {/* 베팅 라인 */}
-          <div className={`absolute inset-5 md:inset-7 rounded-[9999px] border ${story ? 'border-cyber/20' : 'border-gilded/15'}`} />
+          <div className={`absolute inset-5 md:inset-7 rounded-[9999px] border ${story ? (yellowFelt ? 'border-gilded/25' : 'border-cyber/20') : 'border-gilded/15'}`} />
           {/* 수련 테이블 워터마크 — 보드 위쪽 펠트에 옅게 (실전 방엔 없음) */}
           {story && (
             <div className="pointer-events-none absolute inset-x-0 top-[17%] flex justify-center" aria-hidden>
-              <span className="select-none text-[11px] font-black tracking-[0.45em] text-cyber/25">수련 테이블</span>
+              <span className={`select-none text-[11px] font-black tracking-[0.45em] ${yellowFelt ? 'text-gilded/30' : 'text-cyber/25'}`}>{yellowFelt ? '노란띠 도장' : '수련 테이블'}</span>
             </div>
           )}
         </div>
