@@ -29,6 +29,8 @@
   --color-story-abyss: #07181b;   /* 수련 스토리 방 배경 */
   --color-story-felt-yellow-hi: #4a3d12; /* 노란띠 도장 펠트(수련 스토리 1막 완주 보상) */
   --color-story-felt-yellow-lo: #221a06;
+  --color-story-felt-blue-hi: #153a5e; /* 파란띠 도장 펠트(2막 완주 보상) */
+  --color-story-felt-blue-lo: #0a1f36;
   --color-rarity-common: #a3a8bd; /* 칭호·코스메틱 등급 — 일반 */
   --color-rarity-rare: #58b7ff;   /* 희귀 */
   --color-rarity-epic: #c084fc;   /* 영웅 */

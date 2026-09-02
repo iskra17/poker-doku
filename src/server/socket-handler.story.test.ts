@@ -261,7 +261,7 @@ describe('story socket events', () => {
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
       'story-cardback-dojo-crest', 'story-chips-act1-ch01-s', 'story-title-perfect',
     ]);
-    expect(progress.data?.rewards).toHaveLength(20);
+    expect(progress.data?.rewards).toHaveLength(36);
     // 재조회 reconcile은 무변경 — 지갑 그대로
     expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
   });

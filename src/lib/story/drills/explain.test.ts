@@ -50,8 +50,27 @@ describe('buildExplanation — teacher voices', () => {
     expect(explanation.text).toContain('당신');
   });
 
-  it('나머지 히로인은 중립 존댓말 폴백 (Phase 2 확장 대상)', () => {
-    for (const teacher of ['ara', 'chloe', 'vivian', 'elena'] as const) {
+  it('아라: 반말 츤데레, 클로이: 스트리머체 (2막)', () => {
+    const ara = buildExplanation('outs-count', OUTS_FACTS, 'ara');
+    expect(ara.speaker).toBe('ara');
+    expect(ara.text).toContain('잘 들어');
+    expect(ara.text).toContain('흥');
+    // 공용 풀이 본문의 존댓말 어미가 반말로 바뀐다 (「~예요」가 남으면 츤데레 반말 사이에 존댓말이 샌다)
+    expect(ara.text).not.toMatch(/(이에요|예요|고요)[.?!,\s]/);
+    expect(ara.text).toContain('이야');
+    const chloe = buildExplanation('outs-count', OUTS_FACTS, 'chloe');
+    expect(chloe.speaker).toBe('chloe');
+    expect(chloe.text).toContain('오케이');
+    expect(chloe.text).toContain("Let's go");
+    expect(chloe.text).not.toMatch(/(이에요|예요|고요)[.?!,\s]/);
+    for (const templateId of ['odds-required-equity', 'call-decision'] as const) {
+      const facts = templateId === 'call-decision' ? { toCallChips: 50, potChips: 150, requiredEquity: 25, outs: 9, equity: 20, decision: '폴드' } : ODDS_FACTS;
+      expect(buildExplanation(templateId, facts, 'ara').text).not.toMatch(/(이에요|예요|고요|어요|아요|해요|돼요)[.?!,\s]/);
+    }
+  });
+
+  it('나머지 히로인은 중립 존댓말 폴백 (3막 확장 대상)', () => {
+    for (const teacher of ['vivian', 'elena'] as const) {
       const explanation = buildExplanation('outs-count', OUTS_FACTS, teacher);
       expect(explanation.speaker).toBe(teacher);
       expect(explanation.text).toContain('풀이예요');

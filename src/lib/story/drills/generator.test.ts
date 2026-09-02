@@ -34,6 +34,15 @@ const EXPECTED_IDS = [
   'odds-ratio-choice',
   'equity-estimate',
   'call-decision',
+  // 2막
+  'breakeven-fold-pct',
+  'breakeven-choice',
+  'size-cbet-texture',
+  'size-river-value',
+  'type-from-hud',
+  'type-exploit',
+  'range-3bet-decision',
+  'range-vs-3bet',
 ] as const;
 
 function correctAnswer(instance: DrillInstance): DrillAnswer {
@@ -79,7 +88,7 @@ function factNumber(instance: DrillInstance, key: string): number {
 }
 
 describe('drill template registry', () => {
-  it('exposes the 12 generated templates by their fixed ids', () => {
+  it('exposes the 20 generated templates by their fixed ids', () => {
     for (const id of EXPECTED_IDS) {
       expect(DRILL_TEMPLATE_IDS.has(id), id).toBe(true);
       expect(getDrillTemplate(id)?.id).toBe(id);
@@ -167,15 +176,21 @@ describe('generateDrill', () => {
 });
 
 describe('authored templates', () => {
-  it('registers the Act 1 authored drills (ids unique, all instantiable)', () => {
+  it('registers the Act 1·2 authored drills (ids unique, all instantiable)', () => {
     const ids = AUTHORED_DRILL_TEMPLATES.map(template => template.id);
-    expect(ids).toEqual(['act-ch02-fold-utg', 'act-ch02-open-btn']);
+    expect(ids).toEqual([
+      'act-ch02-fold-utg', 'act-ch02-open-btn',
+      'act-ch04-steal-btn', 'act-ch04-cbet-dry', 'act-ch04-iso-sb',
+      'act-ch05-river-value', 'act-ch05-river-air-check',
+      'act-ch06-3bet-aa', 'act-ch06-fold-vs-3bet', 'act-ch06-call-3bet-tt',
+    ]);
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of AUTHORED_DRILL_TEMPLATES) {
       expect(DRILL_TEMPLATE_IDS.has(template.id)).toBe(true);
       const instance = generateDrill(template.id, 0, { teacher: 'sakura' });
       expect(instance.explanation.speaker).toBe('sakura');
-      expect(gradeDrill(instance, { kind: 'action-pick', action: (instance.answerSpec as { kind: 'action-pick'; correct: readonly ('fold'|'raise'|'call'|'check'|'all-in')[] }).correct[0], sizingBB: 2.5 })).toBe(true);
+      const spec = instance.answerSpec as { kind: 'action-pick'; correct: readonly ('fold'|'raise'|'call'|'check'|'all-in')[]; sizingBB?: { min: number; max: number } };
+      expect(gradeDrill(instance, { kind: 'action-pick', action: spec.correct[0], sizingBB: spec.sizingBB?.min ?? 2.5 })).toBe(true);
     }
   });
 
@@ -392,7 +407,8 @@ describe('template-specific invariants', () => {
   });
 
   it('draws every villain from the support pool without duplicates', () => {
-    const pool = new Set(['kapi', 'choco', 'mochi', 'draco', 'luna', 'gumi']);
+    // 조연 6 + D-TYPE(실제 HUD)에만 나오는 비히로인 봇 3 — 히로인 6명은 어떤 문항에도 상대로 나오지 않는다
+    const pool = new Set(['kapi', 'choco', 'mochi', 'draco', 'luna', 'gumi', 'paeng', 'lin', 'ingrid']);
     for (const id of EXPECTED_IDS) {
       for (const seed of [0, 21, 64]) {
         const villains = generateDrill(id, seed, CTX).situation.villains;

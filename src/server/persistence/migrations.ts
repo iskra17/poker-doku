@@ -6893,6 +6893,33 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT, 'invalid catalog equipment'); END;
     `,
   },
+  {
+    version: 33,
+    name: 'story_rewards_act2',
+    sql: `
+      -- 수련 스토리 2막 보상 (2026-09-03, 기획 Part V). 카탈로그 단일 소스 src/lib/story/rewards/catalog.ts와 패리티(database.test.ts).
+      -- 카탈로그 행은 UPDATE/DELETE만 동결(v32 트리거) — INSERT로만 늘린다.
+      INSERT INTO story_reward_catalog (
+        item_id, kind, equip_slot, character_id, chip_amount
+      ) VALUES
+        ('story-title-first-steal', 'title', 'title', NULL, NULL),
+        ('story-chips-act2-ch04-first', 'chips', NULL, NULL, 500),
+        ('story-outfit-ara-jersey', 'outfit', 'outfit', 'ara', NULL),
+        ('story-chips-act2-ch04-s', 'chips', NULL, NULL, 300),
+        ('story-title-value-artisan', 'title', 'title', NULL, NULL),
+        ('story-chips-act2-ch05-first', 'chips', NULL, NULL, 500),
+        ('story-outfit-chloe-stream', 'outfit', 'outfit', 'chloe', NULL),
+        ('story-chips-act2-ch05-s', 'chips', NULL, NULL, 300),
+        ('story-cg-act2-paeng-boss', 'cg', NULL, 'ara', NULL),
+        ('story-cardback-blue-belt', 'card-back', 'card-back', NULL, NULL),
+        ('story-chips-act2-ch06-first', 'chips', NULL, NULL, 500),
+        ('story-cg-act2-ara-victory', 'cg', NULL, 'ara', NULL),
+        ('story-chips-act2-ch06-s', 'chips', NULL, NULL, 300),
+        ('story-felt-blue-belt', 'felt', 'felt', NULL, NULL),
+        ('story-chips-act2-complete', 'chips', NULL, NULL, 1000),
+        ('story-cg-act2-belt-blue', 'cg', NULL, NULL, NULL);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -1,7 +1,7 @@
 /**
  * 챕터 레지스트리 + 데이터 검증.
  *
- * 챕터는 파일당 1개(`chapters/act1/ch01-*.ts`)의 수기 TS 데이터다. 여기서 모아 `STORY_CHAPTERS`로
+ * 챕터는 파일당 1개(`chapters/act1/ch01-*.ts`·`act2/ch04-*.ts`)의 수기 TS 데이터다. 여기서 모아 `STORY_CHAPTERS`로
  * 노출하고, `validateChapters`가 스키마·requires 그래프·교사·스텝 id·드릴 템플릿 존재·프리셋 카드
  * 표기를 검사한다 — chapters.test.ts가 레지스트리 전체에 대해 실행한다.
  */
@@ -11,6 +11,9 @@ import { findDuplicateCard, tryParseCards } from '@/lib/poker/card-notation';
 import { CH01 } from './act1/ch01-dojo-gate';
 import { CH02 } from './act1/ch02-art-of-waiting';
 import { CH03 } from './act1/ch03-numbers-dont-lie';
+import { CH04 } from './act2/ch04-first-strike';
+import { CH05 } from './act2/ch05-take-what-is-yours';
+import { CH06 } from './act2/ch06-three-bet-temperature';
 import { mergeGuidedSituation } from './helpers';
 import type { Card } from '@/lib/poker/types';
 import {
@@ -28,7 +31,7 @@ import {
 } from '../types';
 
 /** 등록된 챕터 — 막·순서 정렬을 유지할 것 (chapters.test.ts가 검증). */
-export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03]);
+export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06]);
 
 const CHAPTER_BY_ID: ReadonlyMap<ChapterId, Chapter> = new Map(STORY_CHAPTERS.map(chapter => [chapter.id, chapter]));
 

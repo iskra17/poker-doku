@@ -32,6 +32,12 @@ const oddsCore: CoreBuilder = f => [
   `팟오즈로 읽으면 ${v(f, 'ratio')}이에요.`,
 ];
 
+const breakevenCore: CoreBuilder = f => [
+  `팟 ${v(f, 'potChips')}은 벳을 넣기 전 금액이에요. 여기에 ${v(f, 'betChips')}을 벳하면 중앙은 ${v(f, 'potAfterBet')}이 돼요.`,
+  `필요 폴드율 = ${v(f, 'betChips')} ÷ ${v(f, 'potAfterBet')} = ${v(f, 'breakeven')}%예요.`,
+  `상대가 그보다 자주 접으면 이 블러프는 카드와 상관없이 이득이에요.`,
+];
+
 const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
   'rank-who-wins': f => [
     `보드는 ${v(f, 'board')}이고, 각자 홀카드 두 장을 더해 가장 좋은 다섯 장을 만들어요.`,
@@ -84,6 +90,38 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
     `내 아우츠는 ${v(f, 'outs')}장, 리버 한 장으로 이길 확률은 ${v(f, 'equity')}%고요.`,
     `${v(f, 'equity')}%와 ${v(f, 'requiredEquity')}%를 견주면 여기서는 ${v(f, 'decision')} 하는 게 맞아요.`,
   ],
+  // ── 2막 (Ch4~6)
+  'breakeven-fold-pct': breakevenCore,
+  'breakeven-choice': breakevenCore,
+  'size-cbet-texture': f => [
+    `보드 ${v(f, 'board')}는 ${v(f, 'texture')} 보드예요.`,
+    `${v(f, 'reason')}.`,
+    `그래서 c벳 크기는 ${v(f, 'size')}이 알맞아요.`,
+  ],
+  'size-river-value': f => [
+    `${v(f, 'villainName')}는 ${v(f, 'villainType')}, 내 핸드는 ${v(f, 'handKind')}예요.`,
+    `${v(f, 'reason')}.`,
+    `그래서 여기서는 ${v(f, 'size')}이에요.`,
+  ],
+  'type-from-hud': f => [
+    `VPIP ${v(f, 'vpip')}는 ${v(f, 'looseLine')} 이상이면 루스, ${v(f, 'tightLine')} 이하면 타이트예요.`,
+    `PFR ${v(f, 'pfr')}은 VPIP의 ${v(f, 'pfrRatio')}%라서 ${v(f, 'aggro')} 쪽이고요.`,
+    `둘을 합치면 ${v(f, 'villainName')}는 ${v(f, 'type')}이에요.`,
+  ],
+  'type-exploit': f => [
+    `${v(f, 'villainName')}는 ${v(f, 'type')}이에요 (VPIP ${v(f, 'vpip')} · PFR ${v(f, 'pfr')}).`,
+    `이런 상대에겐 「${v(f, 'exploit')}」가 정답이에요.`,
+  ],
+  'range-3bet-decision': f => [
+    `${v(f, 'hand')}는 169가지 시작 핸드 중 상위 ${v(f, 'pct')}%예요.`,
+    `오픈을 맞았을 땐 상위 ${v(f, 'threeBet')}% 안이면 3벳, ${v(f, 'callLine')}%까지는 콜, 그 밖은 폴드예요.`,
+    `그래서 ${v(f, 'openerName')}의 오픈에는 ${v(f, 'decision')}이에요.`,
+  ],
+  'range-vs-3bet': f => [
+    `${v(f, 'hand')}는 상위 ${v(f, 'pct')}%예요.`,
+    `내 오픈이 3벳을 맞으면 상위 ${v(f, 'fourBet')}% 안이면 4벳, ${v(f, 'callLine')}%까지는 콜, 그 밖은 폴드예요.`,
+    `그래서 ${v(f, 'raiserName')}의 3벳에는 ${v(f, 'decision')}이에요.`,
+  ],
 });
 
 /** 템플릿별 필수 facts — 하나라도 없으면 숫자가 '?'로 새므로 일반 문장으로 물러선다. */
@@ -100,6 +138,14 @@ const REQUIRED_FACTS: Readonly<Record<string, readonly string[]>> = Object.freez
   'odds-ratio-choice': ['potChips', 'villainName', 'villainBet', 'toCallChips', 'potAfterCall', 'requiredEquity', 'ratio'],
   'equity-estimate': ['drawName', 'outs', 'ruleMultiplier', 'rule24', 'exact', 'gap'],
   'call-decision': ['toCallChips', 'potChips', 'requiredEquity', 'outs', 'equity', 'decision'],
+  'breakeven-fold-pct': ['potChips', 'betChips', 'potAfterBet', 'breakeven'],
+  'breakeven-choice': ['potChips', 'betChips', 'potAfterBet', 'breakeven'],
+  'size-cbet-texture': ['board', 'texture', 'reason', 'size'],
+  'size-river-value': ['villainName', 'villainType', 'handKind', 'reason', 'size'],
+  'type-from-hud': ['vpip', 'pfr', 'pfrRatio', 'looseLine', 'tightLine', 'aggro', 'villainName', 'type'],
+  'type-exploit': ['villainName', 'type', 'vpip', 'pfr', 'exploit'],
+  'range-3bet-decision': ['hand', 'pct', 'threeBet', 'callLine', 'openerName', 'decision'],
+  'range-vs-3bet': ['hand', 'pct', 'fourBet', 'callLine', 'raiserName', 'decision'],
 });
 
 function genericCore(facts: DrillFacts): string[] {
@@ -119,9 +165,33 @@ function genericCore(facts: DrillFacts): string[] {
  * - 미야코: 진행자 존댓말 + 「~답니다♪」
  * - 사쿠라: 소심한 존댓말, 말더듬, 호칭 '당신'
  * - 하나  : 분석가 존댓말, 건조한 정리 + 호칭 '당신'
+ * - 아라  : LAG 츤데레 반말, 호칭 '너' (2막 Ch4·Ch6)
+ * - 클로이: 밝은 스트리머체 반말, 영어 한 스푼, 호칭 '너' (2막 Ch5)
  */
+/**
+ * 존댓말 풀이 본문을 반말로 — 아라·클로이(2막)는 반말 캐릭터라 공용 core 문장의 어미만 바꾼다.
+ * 어미 규칙만 다루는 보수적 치환(문장 끝·쉼표 앞) — 새 core를 쓸 때 여기 없는 어미가 나오면 존댓말이 새므로
+ * explain.test의 아라/클로이 단언이 잡는다.
+ */
+const CASUAL_ENDINGS: readonly (readonly [RegExp, string | ((match: string) => string)])[] = [
+  [/이에요(?=[.?!,\s]|$)/g, '이야'],
+  [/예요(?=[.?!,\s]|$)/g, '야'],
+  [/이고요(?=[.?!,\s]|$)/g, '이고'],
+  [/고요(?=[.?!,\s]|$)/g, '고'],
+  [/네요(?=[.?!,\s]|$)/g, '네'],
+  [/(?<=[가-힣])(어요|아요|해요|돼요|워요|려요)(?=[.?!,\s]|$)/g, (match: string) => match.slice(0, -1)],
+];
+
+export function toCasual(text: string): string {
+  let out = text;
+  for (const [pattern, replacement] of CASUAL_ENDINGS) {
+    out = typeof replacement === 'string' ? out.replace(pattern, replacement) : out.replace(pattern, match => replacement(match));
+  }
+  return out;
+}
+
 function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
-  const body = sentences.join(' ');
+  const body = teacher === 'ara' || teacher === 'chloe' ? toCasual(sentences.join(' ')) : sentences.join(' ');
   switch (teacher) {
     case 'miyako':
       return `${body} 이렇게 하나씩 짚어 보면 어렵지 않답니다♪`;
@@ -129,8 +199,12 @@ function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
       return `아, 저기… ${body} 조, 조금만 천천히 보면… 당신도 금방 익숙해질 거예요…`;
     case 'hana':
       return `정리해 볼게요. ${body} …당신, 이런 계산은 이제 익숙해졌네요.`;
+    case 'ara':
+      return `잘 들어. ${body} …흥, 이 정도는 기본이야. 다음엔 더 빨리 답해.`;
+    case 'chloe':
+      return `오케이~ 정리해 볼게! ${body} 이거 완전 꿀팁이지? Let's go~!`;
     default:
-      // ara / chloe / vivian / elena — Phase 2에서 캐릭터별로 확장한다.
+      // vivian / elena — 3막에서 캐릭터별로 확장한다.
       return `${body} 여기까지가 이 문제의 풀이예요.`;
   }
 }

@@ -1,6 +1,6 @@
 /**
  * 수련 스토리 보상 카탈로그 — **단일 소스**(서버 reconcile 지급·허브 미리보기·갤러리·결산 폴백이 함께 쓴다).
- * DB `story_reward_catalog`(v31)는 이 목록의 사본이며 패리티 테스트(`catalog.test.ts`)로 고정한다 —
+ * DB `story_reward_catalog`(v32 시드 + v33 2막 INSERT)는 이 목록의 사본이며 패리티 테스트(`database.test.ts`)로 고정한다 —
  * 새 보상은 여기와 다음 마이그레이션의 INSERT에 함께 추가한다(서비스는 카탈로그 행을 만들지 않는다).
  *
  * 규약(기획 Part T · 2026-09-03 사용자 결정):
@@ -88,6 +88,38 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
     id: 'story-cg-act1-belt-yellow', kind: 'cg', equipSlot: null, name: '노란띠 승급', description: '도장 문 앞 석양, 미야코와 노란띠.',
     trigger: act(1), art: '/assets/story/cg/act1-belt-yellow.webp',
     cutscene: { kind: 'belt', characterId: 'miyako', title: '노란띠 승급', caption: '1막 세 수업을 모두 마치셨네요♪ 오늘부터 노란띠 — 숫자로 테이블을 보는 사람의 띠랍니다.' },
+  }),
+  // ── Ch4 먼저 치는 사람 (2막, 2026-09-03 — v33)
+  def({ id: 'story-title-first-steal', kind: 'title', equipSlot: 'title', name: '첫 스틸', description: '블라인드를 처음 훔친 사람의 칭호.', trigger: first('act2-ch04') }),
+  def({ id: 'story-chips-act2-ch04-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '스틸 상금', description: '먼저 치는 사람 완주 연습 칩 500.', trigger: first('act2-ch04') }),
+  def({ id: 'story-outfit-ara-jersey', kind: 'outfit', equipSlot: 'outfit', characterId: 'ara', outfitId: 'jersey', name: '아라 · 게이밍 저지', description: '프로게이머 시절의 팀 저지와 헤드셋. 로비·스토리 화면에서 입어요.', trigger: gradeS('act2-ch04') }),
+  def({ id: 'story-chips-act2-ch04-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '먼저 치는 사람 S등급 연습 칩 300.', trigger: gradeS('act2-ch04') }),
+  // ── Ch5 받을 건 받아야죠
+  def({ id: 'story-title-value-artisan', kind: 'title', equipSlot: 'title', name: '밸류 장인', description: '받을 건 받아 내는 사람의 칭호.', trigger: first('act2-ch05') }),
+  def({ id: 'story-chips-act2-ch05-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '밸류 상금', description: '받을 건 받아야죠 완주 연습 칩 500.', trigger: first('act2-ch05') }),
+  def({ id: 'story-outfit-chloe-stream', kind: 'outfit', equipSlot: 'outfit', characterId: 'chloe', outfitId: 'stream', name: '클로이 · 스트리머 후디', description: '고양이 귀 헤드폰과 후디 — 방송 켤 때 입는 옷. 로비·스토리 화면에서 입어요.', trigger: gradeS('act2-ch05') }),
+  def({ id: 'story-chips-act2-ch05-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '받을 건 받아야죠 S등급 연습 칩 300.', trigger: gradeS('act2-ch05') }),
+  // ── Ch6 3벳의 온도 (보스 팽팽)
+  def({
+    id: 'story-cg-act2-paeng-boss', kind: 'cg', equipSlot: null, characterId: 'ara', name: '얼음을 녹이다', description: '칩 더미 위에서 시무룩한 팽팽, 그 뒤의 아라.',
+    trigger: first('act2-ch06'), art: '/assets/story/cg/act2-paeng-boss.webp',
+    cutscene: { kind: 'boss-win', characterId: 'ara', title: '얼음을 녹이다', caption: '온도만 맞으면 팽팽도 별거 아니야. …봤지? 3벳은 이렇게 하는 거야.' },
+  }),
+  def({ id: 'story-cardback-blue-belt', kind: 'card-back', equipSlot: 'card-back', name: '파란띠 카드백', description: '파란띠 무늬의 카드 뒷면.', trigger: first('act2-ch06') }),
+  def({ id: 'story-chips-act2-ch06-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '보스 격파 상금', description: '팽팽을 온도로 잡은 기념 연습 칩 500.', trigger: first('act2-ch06') }),
+  def({
+    id: 'story-cg-act2-ara-victory', kind: 'cg', equipSlot: null, characterId: 'ara', name: '서울의 불꽃', description: '옥상 야경 아래, 저지를 입은 아라의 승리 포즈.',
+    trigger: gradeS('act2-ch06'), art: '/assets/story/cg/act2-ara-victory.webp',
+    cutscene: { kind: 'event-cg', characterId: 'ara', title: '서울의 불꽃', caption: '…뭐야, 왜 봐. 흥, 오늘은 네가 잘한 거야. 다음엔 내가 이겨.' },
+  }),
+  def({ id: 'story-chips-act2-ch06-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '3벳의 온도 S등급 연습 칩 300.', trigger: gradeS('act2-ch06') }),
+  // ── 2막 완주
+  def({ id: 'story-felt-blue-belt', kind: 'felt', equipSlot: 'felt', name: '파란띠 도장 펠트', description: '파란띠 색으로 물든 수련 테이블 펠트.', trigger: act(2) }),
+  def({ id: 'story-chips-act2-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '2막 수료금', description: '2막 세 수업 완주 연습 칩 1,000.', trigger: act(2) }),
+  def({
+    id: 'story-cg-act2-belt-blue', kind: 'cg', equipSlot: null, name: '파란띠 승급', description: '저녁 도장 문 앞, 미야코와 파란띠.',
+    trigger: act(2), art: '/assets/story/cg/act2-belt-blue.webp',
+    cutscene: { kind: 'belt', characterId: 'miyako', title: '파란띠 승급', caption: '2막 세 수업을 모두 마치셨네요♪ 오늘부터 파란띠 — 먼저 치는 사람의 띠랍니다.' },
   }),
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),

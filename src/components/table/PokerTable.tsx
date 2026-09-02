@@ -75,10 +75,11 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   // 수련 스토리 방은 펠트·레일을 시안 계열 「도장 테이블」로 바꿔 실전 캐시 테이블과 한눈에 구분한다
   // (2026-09-03 피드백 ③ — 연습 게임과 실전이 헷갈린다). 파이널 테이블 테마가 우선한다.
   const story = storyTheme && !finalTable;
-  // 노란띠 펠트는 수련 테이블에만 적용 — 실전 방(story=false)은 불변
+  // 띠 펠트(노란/파란)는 수련 테이블에만 적용 — 실전 방(story=false)은 불변
   const yellowFelt = story && feltId === 'story-felt-yellow-belt';
-  const storyFeltHi = yellowFelt ? 'var(--color-story-felt-yellow-hi)' : 'var(--color-story-felt-hi)';
-  const storyFeltLo = yellowFelt ? 'var(--color-story-felt-yellow-lo)' : 'var(--color-story-felt-lo)';
+  const blueFelt = story && feltId === 'story-felt-blue-belt';
+  const storyFeltHi = yellowFelt ? 'var(--color-story-felt-yellow-hi)' : blueFelt ? 'var(--color-story-felt-blue-hi)' : 'var(--color-story-felt-hi)';
+  const storyFeltLo = yellowFelt ? 'var(--color-story-felt-yellow-lo)' : blueFelt ? 'var(--color-story-felt-blue-lo)' : 'var(--color-story-felt-lo)';
   const storyRail = yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
   const outerGlow = finalTable
     ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'

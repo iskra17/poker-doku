@@ -34,6 +34,8 @@ interface SeatInput {
   id: string;
   hole?: string;
   startingChips?: number;
+  /** 기본: 0번 BTN, 나머지 BB — 2막 스틸/3벳 픽스처는 명시한다 */
+  position?: string;
 }
 
 interface RecordInput {
@@ -87,7 +89,7 @@ function makeRecord(input: RecordInput): CompletedHandRecord {
       name: seat.id,
       type: index === 0 ? 'human' : 'bot',
       seatIndex: index,
-      position: index === 0 ? 'BTN' : 'BB',
+      position: seat.position ?? (index === 0 ? 'BTN' : 'BB'),
       startingChips: seat.startingChips ?? 1000,
       holeCards: seat.hole ? cards(seat.hole) : null,
       totalContributed: total,
@@ -640,5 +642,273 @@ describe('junk 임계', () => {
   it('72o는 junk, AKs는 아니다', () => {
     expect(handPercentile(cards('7c 2d'))).toBeGreaterThan(JUNK_PERCENTILE);
     expect(handPercentile(cards('Ah Kh'))).toBeLessThan(JUNK_PERCENTILE);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// 2막 목표 (Ch4~6) — 림프·스틸·리버 에어/사이징·3벳 대면
+
+describe('2막 사실 추출', () => {
+  /** SB 히어로가 언오픈 팟에서 콜(림프) / 레이즈 / 폴드. */
+  const sbHand = (kind: 'call' | 'raise' | 'fold', hole = 'Kh Tc') => makeRecord({
+    seats: [{ id: 'hero', hole, position: 'SB' }, { id: 'villain', hole: '9s 9c', position: 'BB' }],
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ['preflop', 'hero', kind, kind === 'call' ? 25 : kind === 'raise' ? 150 : 0],
+      ...(kind === 'call' ? ([['preflop', 'villain', 'check', 0]] as ActionTuple[]) : ([['preflop', 'villain', 'fold', 0]] as ActionTuple[])),
+    ],
+    winners: [{ playerId: kind === 'fold' ? 'villain' : 'hero', amount: 50 }],
+  });
+
+  it('언오픈 팟의 콜은 림프, BB 체크·레이즈·폴드는 림프가 아니다', () => {
+    expect(deriveHeroHandFacts(sbHand('call'), 'hero').limped).toBe(true);
+    expect(deriveHeroHandFacts(sbHand('raise'), 'hero').limped).toBe(false);
+    expect(deriveHeroHandFacts(sbHand('fold'), 'hero').limped).toBe(false);
+    const bbCheck = makeRecord({
+      seats: [{ id: 'villain', hole: '9s 9c', position: 'SB' }, { id: 'hero', hole: 'Kh Tc', position: 'BB' }],
+      actions: [
+        ['preflop', 'villain', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'villain', 'call', 25],
+        ['preflop', 'hero', 'check', 0],
+      ],
+      winners: [{ playerId: 'hero', amount: 100 }],
+    });
+    expect(deriveHeroHandFacts(bbCheck, 'hero').limped).toBe(false);
+  });
+
+  it('스틸 기회는 CO/BTN 언오픈 + 임계 안 핸드에서만 열린다', () => {
+    const btn = (hole: string, kind: 'raise' | 'fold' | 'call') => makeRecord({
+      seats: [{ id: 'hero', hole, position: 'BTN' }, { id: 'sb', hole: '9s 9c', position: 'SB' }, { id: 'bb', hole: '4d 4c', position: 'BB' }],
+      actions: [
+        ['preflop', 'sb', 'post-sb', 25],
+        ['preflop', 'bb', 'post-bb', 50],
+        ['preflop', 'hero', kind, kind === 'raise' ? 125 : kind === 'call' ? 50 : 0],
+        ['preflop', 'sb', 'fold', 0],
+        ['preflop', 'bb', 'fold', 0],
+      ],
+      winners: [{ playerId: kind === 'fold' ? 'bb' : 'hero', amount: 75 }],
+    });
+    const steal = deriveHeroHandFacts(btn('Kh Tc', 'raise'), 'hero');
+    expect(steal.stealOpportunity).toBe(true);
+    expect(steal.stealOpen).toBe(true);
+    expect(steal.openRaiseOpportunity).toBe(true);
+
+    const missed = deriveHeroHandFacts(btn('Kh Tc', 'call'), 'hero');
+    expect(missed.stealOpportunity).toBe(true);
+    expect(missed.stealOpen).toBe(false);
+    expect(missed.limped).toBe(true);
+
+    // 72o는 BTN 임계(35%) 밖 — 기회 자체가 없다
+    const junk = deriveHeroHandFacts(btn('7c 2d', 'fold'), 'hero');
+    expect(junk.stealOpportunity).toBe(false);
+
+    // SB 언오픈은 오픈 기회지만 스틸 기회로는 세지 않는다
+    const sb = deriveHeroHandFacts(sbHand('raise'), 'hero');
+    expect(sb.openRaiseOpportunity).toBe(true);
+    expect(sb.stealOpportunity).toBe(false);
+  });
+
+  it('오픈을 맞은 프리미엄은 3벳 기회, 3벳하면 실행', () => {
+    const faced = (hole: string, kind: 'raise' | 'call' | 'fold') => makeRecord({
+      seats: [{ id: 'villain', hole: '9s 9c', position: 'SB' }, { id: 'hero', hole, position: 'BB' }],
+      actions: [
+        ['preflop', 'villain', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'villain', 'raise', 150],
+        ['preflop', 'hero', kind, kind === 'raise' ? 450 : kind === 'call' ? 100 : 0],
+        ...(kind === 'raise' ? ([['preflop', 'villain', 'fold', 0], ['preflop', 'hero', 'uncalled-return', 300]] as ActionTuple[]) : []),
+      ],
+      winners: [{ playerId: kind === 'fold' ? 'villain' : 'hero', amount: 300 }],
+    });
+    const threeBet = deriveHeroHandFacts(faced('As Ah', 'raise'), 'hero');
+    expect(threeBet.facedOpen).toBe(true);
+    expect(threeBet.premiumThreeBetOpportunity).toBe(true);
+    expect(threeBet.premiumThreeBet).toBe(true);
+    expect(threeBet.openRaiseOpportunity).toBe(false);
+
+    const flat = deriveHeroHandFacts(faced('As Ah', 'call'), 'hero');
+    expect(flat.premiumThreeBetOpportunity).toBe(true);
+    expect(flat.premiumThreeBet).toBe(false);
+
+    // 7-2o는 프리미엄이 아니라 기회가 없다
+    const junk = deriveHeroHandFacts(faced('7c 2d', 'fold'), 'hero');
+    expect(junk.facedOpen).toBe(true);
+    expect(junk.premiumThreeBetOpportunity).toBe(false);
+  });
+
+  it('내 오픈이 3벳을 맞으면 3구간 — 하위 폴드는 실행, 하위 4벳은 위반', () => {
+    const vsThreeBet = (hole: string, kind: 'fold' | 'call' | 'raise') => makeRecord({
+      seats: [{ id: 'hero', hole, position: 'CO' }, { id: 'villain', hole: 'Qs Qc', position: 'BTN' }, { id: 'sb', hole: '4d 4c', position: 'SB' }, { id: 'bb', hole: '5d 5c', position: 'BB' }],
+      actions: [
+        ['preflop', 'sb', 'post-sb', 25],
+        ['preflop', 'bb', 'post-bb', 50],
+        ['preflop', 'hero', 'raise', 150],
+        ['preflop', 'villain', 'raise', 450],
+        ['preflop', 'sb', 'fold', 0],
+        ['preflop', 'bb', 'fold', 0],
+        ['preflop', 'hero', kind, kind === 'raise' ? 1000 : kind === 'call' ? 300 : 0],
+        ...(kind === 'raise' ? ([['preflop', 'villain', 'fold', 0], ['preflop', 'hero', 'uncalled-return', 550]] as ActionTuple[]) : []),
+        ...(kind === 'fold' ? ([['preflop', 'villain', 'uncalled-return', 300]] as ActionTuple[]) : []),
+      ],
+      winners: [{ playerId: kind === 'fold' ? 'villain' : 'hero', amount: 375 }],
+    });
+    // A♦T♣(19.3%)는 콜 구간(8%) 밖 — 폴드가 정답
+    const fold = deriveHeroHandFacts(vsThreeBet('Ad Tc', 'fold'), 'hero');
+    expect(fold.facedThreeBet).toBe(true);
+    expect(fold.junkVsThreeBet).toBe(true);
+    expect(fold.foldedVsThreeBet).toBe(true);
+    expect(fold.junkFourBet).toBe(false);
+
+    const fourBet = deriveHeroHandFacts(vsThreeBet('Ad Tc', 'raise'), 'hero');
+    expect(fourBet.facedThreeBet).toBe(true);
+    expect(fourBet.foldedVsThreeBet).toBe(false);
+    expect(fourBet.junkFourBet).toBe(true);
+
+    // AA로 4벳은 위반이 아니고, T♠T♦(4.1%)는 콜 구간이라 하위가 아니다
+    expect(deriveHeroHandFacts(vsThreeBet('As Ah', 'raise'), 'hero').junkFourBet).toBe(false);
+    const tens = deriveHeroHandFacts(vsThreeBet('Ts Td', 'call'), 'hero');
+    expect(tens.facedThreeBet).toBe(true);
+    expect(tens.junkVsThreeBet).toBe(false);
+
+    // 3벳을 맞지 않은 오픈은 아무 3벳 사실도 없다
+    expect(deriveHeroHandFacts(openRaiseHand(1, 'raise'), 'hero').facedThreeBet).toBe(false);
+  });
+
+  it('리버 밸류벳 크기(%)와 에어 벳을 구분한다', () => {
+    const river = (hole: string, betAmount: number) => makeRecord({
+      seats: [{ id: 'hero', hole: hole }, { id: 'villain', hole: '9s 9c' }],
+      board: 'Ac 7h 2s 3d 4c',
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'check', 0],
+        ['flop', 'hero', 'check', 0],
+        ['turn', 'villain', 'check', 0],
+        ['turn', 'hero', 'check', 0],
+        ['river', 'villain', 'check', 0],
+        ['river', 'hero', 'raise', betAmount],
+        ['river', 'villain', 'fold', 0],
+        ['river', 'hero', 'uncalled-return', betAmount],
+      ],
+      winners: [{ playerId: 'hero', amount: 100 }],
+    });
+    // 팟 100에 75 벳 = 75% — 밸류벳(AA 탑페어+)
+    const big = deriveHeroHandFacts(river('Ah Ad', 75), 'hero');
+    expect(big.riverValueBet).toBe(true);
+    expect(big.riverValueBetPct).toBe(75);
+    expect(big.riverAirBet).toBe(false);
+    const small = deriveHeroHandFacts(river('Ah Ad', 25), 'hero');
+    expect(small.riverValueBetPct).toBe(25);
+    // K♥Q♥는 A-7-2-3-4에서 아무것도 없다 — 에어 벳
+    const air = deriveHeroHandFacts(river('Kh Qh', 50), 'hero');
+    expect(air.riverValueBet).toBe(false);
+    expect(air.riverAirBet).toBe(true);
+    expect(air.riverValueBetPct).toBeNull();
+  });
+});
+
+describe('2막 목표 판정', () => {
+  const riverValue = (hole: string, betAmount: number) => makeRecord({
+    seats: [{ id: 'hero', hole }, { id: 'villain', hole: '9s 9c' }],
+    board: 'Ac 7h 2s 3d 4c',
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ['preflop', 'hero', 'call', 25],
+      ['preflop', 'villain', 'check', 0],
+      ['flop', 'villain', 'check', 0],
+      ['flop', 'hero', 'check', 0],
+      ['turn', 'villain', 'check', 0],
+      ['turn', 'hero', 'check', 0],
+      ['river', 'villain', 'check', 0],
+      ['river', 'hero', 'raise', betAmount],
+      ['river', 'villain', 'fold', 0],
+      ['river', 'hero', 'uncalled-return', betAmount],
+    ],
+    winners: [{ playerId: 'hero', amount: 100 }],
+  });
+
+  it('no-limp / no-air-river-bet / no-junk-4bet은 위반 상한형', () => {
+    const limp = openRaiseHand(1, 'limp');
+    const tally = tallyOf({ record: limp }, { record: openRaiseHand(2, 'raise') });
+    expect(evaluateObjective(objective('no-limp', { maxCount: 0 }), tally, true).achieved).toBe(false);
+    expect(evaluateObjective(objective('no-limp', { maxCount: 1 }), tally, true).achieved).toBe(true);
+    expect(evaluateObjective(objective('no-limp'), emptyTally(), true).achieved).toBe(true);
+
+    const air = tallyOf({ record: riverValue('Kh Qh', 50) });
+    expect(evaluateObjective(objective('no-air-river-bet', { maxCount: 0 }), air, true).achieved).toBe(false);
+    expect(evaluateObjective(objective('no-air-river-bet', { maxCount: 1 }), air, true).achieved).toBe(true);
+  });
+
+  it('value-bet-sizing은 밸류벳 중 팟 50% 이상 비율 — 밸류벳이 없으면 판정 불가', () => {
+    const tally = tallyOf({ record: riverValue('Ah Ad', 75) }, { record: riverValue('Ah Ad', 25) });
+    const half = evaluateObjective(objective('value-bet-sizing', { minRatio: 0.5 }), tally, true);
+    expect(half.achieved).toBe(true);
+    const all = evaluateObjective(objective('value-bet-sizing', { minRatio: 1 }), tally, true);
+    expect(all.achieved).toBe(false);
+    expect(evaluateObjective(objective('value-bet-sizing', { minRatio: 0.5 }), emptyTally(), true).achieved).toBeNull();
+    // 에어 벳은 밸류벳 기회에 들어가지 않는다
+    expect(evaluateObjective(objective('value-bet-sizing', { minRatio: 1 }), tallyOf({ record: riverValue('Kh Qh', 50) }), true).achieved).toBeNull();
+  });
+
+  it('steal-open · premium-3bet · fold-vs-3bet-junk는 기회 중 실행', () => {
+    const btnSteal = (kind: 'raise' | 'fold') => makeRecord({
+      seats: [{ id: 'hero', hole: 'Kh Tc', position: 'BTN' }, { id: 'sb', hole: '9s 9c', position: 'SB' }, { id: 'bb', hole: '4d 4c', position: 'BB' }],
+      actions: [
+        ['preflop', 'sb', 'post-sb', 25],
+        ['preflop', 'bb', 'post-bb', 50],
+        ['preflop', 'hero', kind, kind === 'raise' ? 125 : 0],
+        ['preflop', 'sb', 'fold', 0],
+        ['preflop', 'bb', 'fold', 0],
+      ],
+      winners: [{ playerId: kind === 'fold' ? 'bb' : 'hero', amount: 75 }],
+    });
+    const steals = tallyOf({ record: btnSteal('raise') }, { record: btnSteal('raise') }, { record: btnSteal('fold') });
+    const twoThirds = evaluateObjective(objective('steal-open', { minRatio: 2 / 3 }), steals, true);
+    expect(twoThirds.achieved).toBe(true);
+    expect(twoThirds.progress).toBeCloseTo(2 / 3);
+    expect(evaluateObjective(objective('steal-open', { target: 3 }), steals, true).achieved).toBe(false);
+    expect(evaluateObjective(objective('steal-open', { target: 1 }), emptyTally(), true).achieved).toBeNull();
+
+    const premium = tallyOf({ record: makeRecord({
+      seats: [{ id: 'villain', hole: '9s 9c', position: 'SB' }, { id: 'hero', hole: 'As Ah', position: 'BB' }],
+      actions: [
+        ['preflop', 'villain', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'villain', 'raise', 150],
+        ['preflop', 'hero', 'raise', 450],
+        ['preflop', 'villain', 'fold', 0],
+        ['preflop', 'hero', 'uncalled-return', 300],
+      ],
+      winners: [{ playerId: 'hero', amount: 300 }],
+    }) });
+    expect(evaluateObjective(objective('premium-3bet', { target: 1 }), premium, true).achieved).toBe(true);
+
+    // 히어로(CO)가 언오픈 팟을 열고 BTN이 3벳 — 폴드 2회·콜 1회
+    const vsThreeBet = (kind: 'fold' | 'call') => makeRecord({
+      seats: [{ id: 'hero', hole: 'Ad Tc', position: 'CO' }, { id: 'villain', hole: 'Qs Qc', position: 'BTN' }, { id: 'sb', hole: '4d 4c', position: 'SB' }, { id: 'bb', hole: '5d 5c', position: 'BB' }],
+      actions: [
+        ['preflop', 'sb', 'post-sb', 25],
+        ['preflop', 'bb', 'post-bb', 50],
+        ['preflop', 'hero', 'raise', 150],
+        ['preflop', 'villain', 'raise', 450],
+        ['preflop', 'sb', 'fold', 0],
+        ['preflop', 'bb', 'fold', 0],
+        ['preflop', 'hero', kind, kind === 'call' ? 300 : 0],
+        ...(kind === 'fold' ? ([['preflop', 'villain', 'uncalled-return', 300]] as ActionTuple[]) : []),
+      ],
+      winners: [{ playerId: 'villain', amount: 375 }],
+    });
+    const folds = tallyOf({ record: vsThreeBet('fold') }, { record: vsThreeBet('fold') }, { record: vsThreeBet('call') });
+    const seventy = evaluateObjective(objective('fold-vs-3bet-junk', { minRatio: 0.7 }), folds, true);
+    expect(seventy.achieved).toBe(false);
+    expect(seventy.progress).toBeCloseTo(2 / 3);
+    expect(evaluateObjective(objective('fold-vs-3bet-junk', { minRatio: 0.6 }), folds, true).achieved).toBe(true);
+    expect(evaluateObjective(objective('no-junk-4bet'), folds, true).achieved).toBe(true);
   });
 });

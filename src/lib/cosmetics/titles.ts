@@ -34,6 +34,8 @@ const STYLE: Readonly<Record<string, TitleStyle>> = Object.freeze({
   'story-title-blue-belt': { tier: 'epic', glyph: 'belt', belt: 'blue' },
   'story-title-brown-belt': { tier: 'epic', glyph: 'belt', belt: 'brown' },
   'story-title-black-belt': { tier: 'legend', glyph: 'belt', belt: 'black' },
+  'story-title-first-steal': { tier: 'rare', glyph: 'flame' },
+  'story-title-value-artisan': { tier: 'rare', glyph: 'crest' },
   'story-title-perfect': { tier: 'epic', glyph: 'star' },
   'story-title-empty-note': { tier: 'rare', glyph: 'note' },
 });

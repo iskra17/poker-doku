@@ -17,13 +17,16 @@ import type { Card } from '@/lib/poker/types';
 import type { StoryTeacherId } from '../types';
 import { buildExplanation, fillFacts } from './explain';
 import { AUTHORED_DRILL_TEMPLATES } from './templates/authored';
+import { BREAKEVEN_TEMPLATES } from './templates/breakeven';
 import { CALL_DECISION_TEMPLATES } from './templates/call-decision';
 import { EQUITY_TEMPLATES } from './templates/equity';
 import { HAND_RANKING_TEMPLATES } from './templates/hand-ranking';
+import { OPPONENT_TYPE_TEMPLATES } from './templates/opponent-type';
 import { OUTS_TEMPLATES } from './templates/outs';
 import { POSITION_TEMPLATES } from './templates/position';
 import { POT_ODDS_TEMPLATES } from './templates/pot-odds';
 import { RANGE_TEMPLATES } from './templates/range';
+import { SIZING_TEMPLATES } from './templates/sizing';
 import type { DrillBuilder, DrillDraft, DrillFacts, GeneratedDrillDefinition } from './templates/kit';
 import type {
   DrillAnswer,
@@ -68,6 +71,10 @@ const GENERATED_DEFINITIONS: readonly GeneratedDrillDefinition[] = [
   ...POT_ODDS_TEMPLATES,
   ...EQUITY_TEMPLATES,
   ...CALL_DECISION_TEMPLATES,
+  // 2막 (Ch4~6): 손익분기·사이징·상대 유형
+  ...BREAKEVEN_TEMPLATES,
+  ...SIZING_TEMPLATES,
+  ...OPPONENT_TYPE_TEMPLATES,
 ];
 
 const TEMPLATE_BY_ID = new Map<string, DrillTemplate>();

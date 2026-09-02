@@ -26,7 +26,12 @@ import {
 } from '@/lib/poker/hand-history-replay';
 import { computePotOdds, exactDrawPct, handRankOrder, unseenCards } from '@/lib/poker/learning';
 import type { ActionType, Card, HandRank, Street } from '@/lib/poker/types';
-import { OPEN_THRESHOLDS } from './open-thresholds';
+import {
+  CALL_VS_THREE_BET_THRESHOLD,
+  FOUR_BET_THRESHOLD,
+  OPEN_THRESHOLDS,
+  THREE_BET_THRESHOLD,
+} from './open-thresholds';
 import type { Objective } from './types';
 import type { DecisionMark, ObjectiveProgressView } from './views';
 
@@ -262,6 +267,32 @@ export interface HeroHandFacts {
   openRaiseOpportunity: boolean;
   /** 그 기회에 레이즈(올인 포함)로 열었는가. */
   openRaise: boolean;
+
+  // ── 2막 (Ch4~6)
+  /** 언오픈 팟에서 첫 결정이 콜(림프)이었는가 — BB의 체크는 림프가 아니다. */
+  limped: boolean;
+  /** 스틸 기회 — CO/BTN 언오픈 팟 + 포지션 임계 안 핸드 (`open-raise`의 레이트 포지션 부분집합). */
+  stealOpportunity: boolean;
+  /** 그 기회에 오픈 레이즈했는가. */
+  stealOpen: boolean;
+  /** 리버 첫 자유 액션이 벳인데 톱페어 미만(에어)이었는가 — 스테이션 상대 블러프 금지 목표의 위반 단위. */
+  riverAirBet: boolean;
+  /** 리버 밸류벳(`riverValueBet`)의 벳 전 팟 대비 크기 % — 밸류벳이 아니면 null. */
+  riverValueBetPct: number | null;
+  /** 앞자리 오픈(레이즈 1회) 뒤 첫 결정을 맞았는가. */
+  facedOpen: boolean;
+  /** 오픈을 맞은 핸드가 3벳 구간(상위 THREE_BET_THRESHOLD%)인가 — 프리미엄 3벳 기회. */
+  premiumThreeBetOpportunity: boolean;
+  /** 그 기회에 3벳(레이즈·올인)했는가. */
+  premiumThreeBet: boolean;
+  /** 내 오픈 레이즈가 3벳을 맞고 다시 내 차례가 왔는가. */
+  facedThreeBet: boolean;
+  /** 3벳을 맞은 핸드가 콜 구간 밖(상위 CALL_VS_THREE_BET_THRESHOLD% 밖)인가 — 폴드해야 하는 기회. */
+  junkVsThreeBet: boolean;
+  /** 3벳을 맞고 폴드했는가. */
+  foldedVsThreeBet: boolean;
+  /** 4벳 구간(상위 FOUR_BET_THRESHOLD%) 밖 핸드로 4벳했는가 — 위반 단위. */
+  junkFourBet: boolean;
 }
 
 function emptyFacts(handNumber: number): HeroHandFacts {
@@ -288,8 +319,23 @@ function emptyFacts(handNumber: number): HeroHandFacts {
     folded: false,
     openRaiseOpportunity: false,
     openRaise: false,
+    limped: false,
+    stealOpportunity: false,
+    stealOpen: false,
+    riverAirBet: false,
+    riverValueBetPct: null,
+    facedOpen: false,
+    premiumThreeBetOpportunity: false,
+    premiumThreeBet: false,
+    facedThreeBet: false,
+    junkVsThreeBet: false,
+    foldedVsThreeBet: false,
+    junkFourBet: false,
   };
 }
+
+/** 스틸 포지션 — Ch4 「BTN/CO 스틸 기회」. SB 스틸은 블라인드 대 블라인드라 따로 세지 않는다. */
+const STEAL_POSITIONS: ReadonlySet<string> = new Set(['CO', 'BTN']);
 
 function isVoluntaryKind(kind: HandHistoryActionKind): kind is ActionType {
   return kind !== 'post-sb' && kind !== 'post-bb' && kind !== 'post-ante' && kind !== 'uncalled-return';
@@ -333,6 +379,14 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
   let heroFolded = false;
   let flopFirstFree: HandHistoryActionKind | null = null;
   let riverFirstFree: HandHistoryActionKind | null = null;
+  /** 리버 첫 자유 액션이 벳이었을 때의 (벳 크기, 벳 전 팟) — 사이징 목표용. 콜백 안에서 채우므로 홀더로 둔다. */
+  const riverBet: { current: { amount: number; potBefore: number } | null } = { current: null };
+  /** 프리플랍 레이즈 횟수(블라인드 제외) — 첫 결정에서 1이면 "오픈을 맞았다". */
+  let preflopRaises = 0;
+  /** 히어로가 언오픈 팟을 레이즈로 열었는가 + 그 뒤 다른 사람의 리레이즈 수. */
+  let heroOpened = false;
+  let raisesAfterHeroOpen = 0;
+  const pct = facts.heroHandPercentile === null ? null : facts.heroHandPercentile * 100;
 
   record.actions.forEach((action, actionIndex) => {
     if (action.street !== street && action.street !== 'showdown') {
@@ -345,7 +399,10 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
     const isHero = action.playerId === heroId;
     const aggressive = (action.kind === 'raise' || action.kind === 'all-in') && action.amount > maxBet;
 
-    if (aggressive && action.street === 'preflop') preflopAggressorId = action.playerId;
+    if (aggressive && action.street === 'preflop') {
+      preflopAggressorId = action.playerId;
+      if (heroOpened && !isHero) raisesAfterHeroOpen++;
+    }
 
     if (isHero && isVoluntaryKind(action.kind)) {
       facts.voluntaryActions++;
@@ -358,19 +415,47 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
         if (action.kind === 'fold') facts.preflopFolded = true;
         if (!facts.preflopDecision && action.kind !== 'check') {
           facts.preflopDecision = { action: action.kind, amount: action.amount, actionIndex };
+          const raised = action.kind === 'raise' || action.kind === 'all-in';
           // 오픈 레이즈 기회: 앞에 레이즈가 없고(테이블 벳 ≤ BB) 내 포지션 임계 안의 핸드일 때만.
           // 림프는 기회를 "놓친" 것으로 센다 — Ch2 「림프 대신 레이즈/폴드」와 같은 규약.
           const threshold = OPEN_THRESHOLDS[hero.position];
           const unopened = maxBet <= record.bigBlind;
-          if (unopened && threshold !== undefined && facts.heroHandPercentile !== null
-            && facts.heroHandPercentile * 100 < threshold) {
+          if (unopened && threshold !== undefined && pct !== null && pct < threshold) {
             facts.openRaiseOpportunity = true;
-            facts.openRaise = action.kind === 'raise' || action.kind === 'all-in';
+            facts.openRaise = raised;
+            if (STEAL_POSITIONS.has(hero.position)) {
+              facts.stealOpportunity = true;
+              facts.stealOpen = raised;
+            }
           }
+          if (unopened && action.kind === 'call') facts.limped = true;
+          if (unopened && raised) heroOpened = true;
+          // 앞자리 오픈(레이즈 정확히 1회)을 맞은 첫 결정 — 프리미엄이면 3벳 기회(Ch6).
+          if (!unopened && preflopRaises === 1) {
+            facts.facedOpen = true;
+            if (pct !== null && pct < THREE_BET_THRESHOLD) {
+              facts.premiumThreeBetOpportunity = true;
+              facts.premiumThreeBet = raised;
+            }
+          }
+        } else if (facts.preflopDecision && heroOpened && raisesAfterHeroOpen >= 1 && !facts.facedThreeBet
+          && action.kind !== 'check') {
+          // 내 오픈이 3벳을 맞고 다시 내 차례 — 3구간 판정(Ch6).
+          facts.facedThreeBet = true;
+          const raised = action.kind === 'raise' || action.kind === 'all-in';
+          if (pct !== null) {
+            facts.junkVsThreeBet = pct >= CALL_VS_THREE_BET_THRESHOLD;
+            facts.junkFourBet = raised && pct >= FOUR_BET_THRESHOLD;
+          }
+          facts.foldedVsThreeBet = action.kind === 'fold';
         }
+        if (aggressive) preflopRaises++;
       } else {
         if (street === 'flop' && flopFirstFree === null && toCall === 0) flopFirstFree = action.kind;
-        if (street === 'river' && riverFirstFree === null && toCall === 0) riverFirstFree = action.kind;
+        if (street === 'river' && riverFirstFree === null && toCall === 0) {
+          riverFirstFree = action.kind;
+          if (action.kind === 'raise' || action.kind === 'all-in') riverBet.current = { amount: action.amount, potBefore: state.pot };
+        }
 
         const streetBoard = hole ? boardForStreet(record.board, street) : null;
         // 콜 = 'call' 또는 콜 금액에 못 미치는 'all-in'(실질 콜). 벳을 넘기는 올인은 레이즈라 제외.
@@ -401,6 +486,8 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
       }
     }
 
+    // 상대의 프리플랍 레이즈도 세야 "오픈을 맞았다"가 성립한다 (히어로 분기 안에서는 히어로 레이즈만 셌다).
+    if (!isHero && aggressive && action.street === 'preflop') preflopRaises++;
     state = applyReplayContribution(state, action);
   });
 
@@ -413,6 +500,15 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
   const strongOnRiver = river !== null && hole !== null && isTopPairOrBetter(hole, river);
   facts.riverValueBetOpportunity = strongOnRiver && riverFirstFree !== null && !heroFolded;
   facts.riverValueBet = facts.riverValueBetOpportunity
+    && (riverFirstFree === 'raise' || riverFirstFree === 'all-in');
+  const bet = riverBet.current;
+  if (facts.riverValueBet && bet && bet.potBefore > 0) {
+    facts.riverValueBetPct = Math.round((bet.amount / bet.potBefore) * 100);
+  }
+  // 에어 리버 벳: 리버 첫 자유 액션이 벳인데 톱페어 미만(스트레이트+ 메이드는 밸류로 본다).
+  const madeOnRiver = river !== null && hole !== null
+    && handRankOrder(evaluateHand([...hole], [...river]).rank) >= handRankOrder('straight');
+  facts.riverAirBet = river !== null && !heroFolded && !strongOnRiver && !madeOnRiver
     && (riverFirstFree === 'raise' || riverFirstFree === 'all-in');
   facts.folded = heroFolded;
   facts.sawShowdown = record.showdown && !heroFolded;
@@ -570,6 +666,52 @@ export function evaluateObjective(
       const opportunities = hands.filter(hand => hand.openRaiseOpportunity);
       const executed = opportunities.filter(hand => hand.openRaise);
       return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
+    // ── 2막
+    case 'no-limp': {
+      const count = hands.filter(hand => hand.limped).length;
+      const maxCount = objective.maxCount ?? 0;
+      return view(objective, primary, count, maxCount, count <= maxCount);
+    }
+
+    case 'steal-open': {
+      const opportunities = hands.filter(hand => hand.stealOpportunity);
+      const executed = opportunities.filter(hand => hand.stealOpen);
+      return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
+    case 'no-air-river-bet': {
+      const count = hands.filter(hand => hand.riverAirBet).length;
+      const maxCount = objective.maxCount ?? 0;
+      return view(objective, primary, count, maxCount, count <= maxCount);
+    }
+
+    case 'value-bet-sizing': {
+      // params.minPct — 벳 전 팟 대비 최소 크기 % (기본 50). 기회 = 실제로 한 리버 밸류벳.
+      const minRaw = objective.params?.minPct;
+      const minPct = typeof minRaw === 'number' && minRaw > 0 ? minRaw : 50;
+      const opportunities = hands.filter(hand => hand.riverValueBet && hand.riverValueBetPct !== null);
+      const executed = opportunities.filter(hand => (hand.riverValueBetPct ?? 0) >= minPct);
+      return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
+    case 'premium-3bet': {
+      const opportunities = hands.filter(hand => hand.premiumThreeBetOpportunity);
+      const executed = opportunities.filter(hand => hand.premiumThreeBet);
+      return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
+    case 'fold-vs-3bet-junk': {
+      const opportunities = hands.filter(hand => hand.facedThreeBet && hand.junkVsThreeBet);
+      const executed = opportunities.filter(hand => hand.foldedVsThreeBet);
+      return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
+    case 'no-junk-4bet': {
+      const count = hands.filter(hand => hand.junkFourBet).length;
+      const maxCount = objective.maxCount ?? 0;
+      return view(objective, primary, count, maxCount, count <= maxCount);
     }
 
     case 'quiz-accuracy': {

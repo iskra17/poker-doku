@@ -55,19 +55,22 @@ describe('buildGallery', () => {
     const study = locked.find(entry => entry.id === 'bg:dojo-study');
     expect(study?.unlocked).toBe(false);
     expect(study?.hint).toContain('완주');
-    expect(locked.some(entry => entry.id === 'bg:dojo-office')).toBe(false);
+    // dojo-office는 2막 Ch5 에필로그가 쓴다 — 배치됐고 그 챕터 완주 전엔 잠김
+    const office = locked.find(entry => entry.id === 'bg:dojo-office');
+    expect(office?.unlocked).toBe(false);
+    expect(office?.hint).toContain('완주');
     const done = buildGallery({ snapshot: snapshot(), progress: progress(['act1-ch03']) });
     expect(done.find(entry => entry.id === 'bg:dojo-study')?.unlocked).toBe(true);
     expect(collectChapterBackgroundIds(STORY_CHAPTERS[0])).toEqual(expect.arrayContaining(['dojo-gate', 'dojo-table', 'dojo-garden-night']));
   });
 
-  it('칭호 섹션은 도장 4종 + 스토리 3종을 항상 보여 주고 보유 아레나 칭호를 덧붙인다', () => {
+  it('칭호 섹션은 도장 4종 + 스토리 5종을 항상 보여 주고 보유 아레나 칭호를 덧붙인다', () => {
     const entries = buildGallery({
       snapshot: snapshot({ inventory: [{ itemId: 'story-title-white-belt', quantity: 1, updatedAt: 0 }, { itemId: 'dojo-title-sprout-challenger', quantity: 1, updatedAt: 0 }] as ProgressionSnapshot['inventory'] }),
       progress: null,
     });
     const titles = entries.filter(entry => entry.section === 'title');
-    expect(titles).toHaveLength(7);
+    expect(titles).toHaveLength(9);
     expect(titles.filter(entry => entry.unlocked).map(entry => entry.id).sort()).toEqual(['dojo-title-sprout-challenger', 'story-title-white-belt']);
     expect(titles.find(entry => entry.id === 'dojo-title-steady-trainee')?.hint).toBe('도장 Lv.15');
   });
@@ -78,8 +81,8 @@ describe('buildGallery', () => {
     expect(entries.every(entry => !entry.unlocked)).toBe(true);
     const summary = summarizeGallery(entries);
     expect(summary.find(row => row.section === 'bond')).toEqual({ section: 'bond', unlocked: 0, total: 24 });
-    // 보상 CG 4 + 배치된 씬 CG 6(챕터 완주 해금)
-    expect(summary.find(row => row.section === 'cg')?.total).toBe(10);
-    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(6);
+    // 보상 CG 7(1막 4 + 2막 3) + 배치된 씬 CG 12(챕터 완주 해금)
+    expect(summary.find(row => row.section === 'cg')?.total).toBe(19);
+    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(12);
   });
 });

@@ -732,4 +732,39 @@ Part T의 보상 체계 배포(Fly v74) 뒤 플레이 피드백 4건과 "BGM이 
 
 ## U6. 남은 것
 
-- 영상 파일럿 3클립(ComfyUI + Wan 2.2 14B fp8, `D:\AI-Image-Video\models`의 umt5·Wan2.1 VAE 재사용), 아라/클로이/비비안/엘레나 의상(2막 보상과 함께), 2막 데이터(미션형 목표 + 보상 템플릿), BGM 루프 구간(`loopStart/loopEnd`) 청취 조정.
+- ~~영상 파일럿 3클립~~ (Part V-1에서 완료) · 비비안/엘레나 의상(3막 보상과 함께) · ~~2막 데이터~~ (Part V-2) · BGM 루프 구간(`loopStart/loopEnd`) 청취 조정.
+
+---
+
+# Part V — 5차 세션 (2026-09-03): 영상 파일럿 + 2막 데이터
+
+## V1. 컷신 영상 파일럿 (P5) — Wan 2.2 대신 MiniMax H3
+
+- **발견**: `C:\code\1. codex\AI-Image-Video`에 Codex가 8/26~31에 구축한 ComfyUI 포터블(v0.34, RTX 5090)이 이미 있고, Wan Animate 2(구동 영상 모션
+  전이 — CG 애니메이션엔 부적합)와 **MiniMax H3 fl2va**(첫/끝 프레임 컨디셔닝 + 네이티브 오디오, 8-step turbo LoRA)가 설치돼 있었다. 인계 문서의
+  "Wan 2.2 I2V 28GB 다운로드"는 불필요.
+- **방식**: `MiniMaxH3ImageToVideo(first_frame = last_frame = CG)` → 768×1152(CG 원본 해상도 = H3 네이티브 캔버스) · 107프레임(17k+5 그리드) · 24fps →
+  클립당 약 100초. 첫 프레임 = 끝 프레임이라 `<video loop>`에서 이음새가 없고 RIFE 보간이 필요 없다. 오디오는 버린다(VideoCutscene은 muted).
+- **산출**: `story-cg-act1-belt-yellow` · `story-cg-act1-draco-boss` · `sakura-scene-lv5` — webm(VP9 crf32)+mp4(H.264 crf26) 0.5~1.4MB, 마지막 프레임
+  1장(=첫 프레임 복제) 제거. 절차·프롬프트 규칙·러너: `scripts/art/story-video.md` + `scripts/art/story-video-h3.py`.
+- **실주행**: Ch3 실력 확인 결산에서 드라코 보스 CG 스테이지에 `<video>`가 로드(readyState 4)됐고, 1막 완주 결산에서 노란띠 승급 영상도 같은 경로로 뜬다.
+  자동화 창(문서 hidden)에선 Chrome이 무음 배경 영상을 정지시켜 재생 자체는 사용자 실기기 확인 대상.
+
+## V2. 2막 「공격의 기본」 데이터 (Ch4~6)
+
+| Ch | 담당 | 드릴 7문 | '연습' 2핸드 | 스파링(미션형) primary | 보상 |
+|---|---|---|---|---|---|
+| 4 먼저 치는 사람 | 아라 | D-BE 2(`breakeven-fold-pct`·`breakeven-choice`) · D-SIZE 2(`size-cbet-texture`) · D-ACT 3(steal-btn·cbet-dry·iso-sb) | K♥T♣ 스틸 / A♠K♦+K♣7♦2♠ c벳 vs 카피 | `steal-open` 2회 · `cbet-when-aggressor` ⅔ · `no-limp` 0 | 200·아라+100·「첫 스틸」·S=아라 저지 |
+| 5 받을 건 받아야죠 | 클로이 | D-TYPE 3(`type-from-hud`×2·`type-exploit`) · D-SIZE 2(`size-river-value`) · D-ACT 2(river-value·river-air-check) | A♥Q♦ 리버 밸류 vs 클로이 / J♥T♥ 미스 체크 | `value-bet-river` 2회 · `no-air-river-bet` ≤1 · `value-bet-sizing` ≥50% | 200·클로이+100·「밸류 장인」·S=클로이 후디 |
+| 6 3벳의 온도 | 아라 + 보스 팽팽 | D-RANGE 3(`range-3bet-decision`×2·`range-vs-3bet`) · D-BE 1 · D-ACT 3(3bet-aa·fold-vs-3bet·call-3bet-tt) | A♠A♥ 3벳 / A♦T♣ 3벳 맞고 폴드 | **보스 팽팽 HU 50BB 15핸드**: `premium-3bet` 1회 · `fold-vs-3bet-junk` 70% · `no-junk-4bet` 0 | 250·아라+100·파란띠·보스 CG·파란띠 카드백·S=아라 CG |
+
+- **해금**: 2막 3챕터 모두 `requires = 1막 3챕터`(노란띠 뒤 개방), 2막 안에서는 비선형. 2막 완주 → 파란띠 펠트 + 파란띠 승급 CG + 1,000칩(v33).
+- **새 규칙 단일 소스**: 3벳 3구간(`open-thresholds.ts` — 3벳 ≤6% / 콜 ≤12% · 4벳 ≤3.5% / 콜 ≤8%), 손익분기 = 벳 ÷ (벳+팟)(팟은 **벳 전** 금액),
+  c벳 크기 = 드라이 ⅓ / 웻 ¾, 상대 유형 = VPIP 40↑ 루스·22↓ 니트 + PFR ≥ VPIP×60% 어그레시브(`opponent-type.ts`, `personalities.ts` 실제 HUD).
+- **목표 kind 7종** 추가(`objectives.ts` 히어로 사실: limped·stealOpportunity·riverAirBet·riverValueBetPct·facedOpen/facedThreeBet·junkVsThreeBet·junkFourBet).
+- **말투**: 아라(반말 츤데레 「너」·「흥」)·클로이(스트리머체·영어 한 스푼)·팽팽(「…」·미지근한 콜). 공용 풀이 core는 존댓말이라 `explain.ts toCasual()`이
+  아라/클로이 해설의 어미를 반말로 바꾼다.
+- **아트**: gpt-image-2(codex) — 씬 CG 6 + 보상 CG 3(팽팽 보스·아라 승리·파란띠 승급) + 의상 2×3표정(아라 jersey·클로이 stream). 샌드박스가 또 read-only라
+  `generated_images` 회수 절차 재사용.
+- **실주행(자동화 창)**: 허브 2막 섹션(잠김→1막 완주 후 개방), Ch4 프롤로그 씬 CG·개념 카드·함께 풀기 2블록(상황 패널 유지)·드릴 7문 전부 서버 채점
+  정답(퍼펙트)·연습 테이블 첫 핸드 K♥T♣ 딜 확인. 스파링/보스전 라이브 스텝과 Ch5·Ch6 전체 실주행은 다음 세션.

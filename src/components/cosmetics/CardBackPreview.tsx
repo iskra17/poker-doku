@@ -8,6 +8,7 @@
 const CARD_BACK_STYLE: Readonly<Record<string, { base: string; accent: string; glyph: 'crest' | 'band' }>> = Object.freeze({
   'story-cardback-dojo-crest': { base: '#1e1235', accent: '#ffd76a', glyph: 'crest' },
   'story-cardback-yellow-belt': { base: '#241c0c', accent: '#ffd76a', glyph: 'band' },
+  'story-cardback-blue-belt': { base: '#0b1d38', accent: '#6be4ff', glyph: 'band' },
 });
 
 export function CardBackPreview({ id, className = '' }: { id: string; className?: string }) {
@@ -34,6 +35,7 @@ export function CardBackPreview({ id, className = '' }: { id: string; className?
 
 const FELT_STYLE: Readonly<Record<string, { hi: string; lo: string; rail: string }>> = Object.freeze({
   'story-felt-yellow-belt': { hi: '#4a3d12', lo: '#221a06', rail: '#ffd76a' },
+  'story-felt-blue-belt': { hi: '#153a5e', lo: '#0a1f36', rail: '#6be4ff' },
 });
 
 export function FeltPreview({ id, className = '' }: { id: string; className?: string }) {

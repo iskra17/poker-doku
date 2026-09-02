@@ -269,12 +269,16 @@ npx tsc --noEmit
   `src/server/story-run-coordinator.ts`(`StoryRunCoordinator`, 방 무관·프로필당 런 1개·인메모리)가 돌고,
   프리셋 '연습'/스파링 '대결' **라이브 스텝만** `LiveTableAdapter`(Phase 1b)가 실제 포커 방을 붙인다 —
   어댑터가 주입되지 않은 환경(테스트·`storyRepository` 없음)에선 라이브 스텝을 스킵한다.
-  - **데이터**: 챕터는 `src/lib/story/chapters/act1/*.ts` 수기 TS(`STORY_CHAPTERS` 레지스트리, `validateChapters`가
+  - **데이터**: 챕터는 `src/lib/story/chapters/act1/*.ts`·`act2/*.ts` 수기 TS(`STORY_CHAPTERS` 레지스트리 6챕터, `validateChapters`가
     id·requires 순환·교사·스텝·프리셋 카드·목표 kind를 검증). 해금은 저장하지 않고 `unlocks.ts`가 완료 집합+requires
-    그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). **1막은 비선형(requires 없음, 2026-09-03 피드백)** —
+    그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). **1막은 비선형(requires 없음, 2026-09-03 피드백)**, **2막(Ch4~6)은
+    1막 3챕터 완주(`ACT2_REQUIRES`) 뒤 열리고 2막 안에서는 비선형** —
     허브(`StoryHub`)는 순서를 강제하지 않는 수련 목록이고, 카드마다 드릴 유형 칩(내 정확도)을 달아 부족한 유형부터
     고르게 한다. 추천은 `story-hub-rules.ts` `recommendChapter`(진행 중 > 측정 약점 ≥3문·<70% > 첫 방문 > 미완료 첫
-    순서) 제안뿐. 오늘의 수련 문제는 챕터 1개 완료로 개방. **실력 확인(`mode:'exam'`)**: 드릴 세트만(씬·레슨·라이브
+    순서) 제안뿐. 오늘의 수련 문제는 챕터 1개 완료로 개방. **2막 목표 kind 7종**(`no-limp`·`steal-open`·`no-air-river-bet`·
+    `value-bet-sizing`·`premium-3bet`·`fold-vs-3bet-junk`·`no-junk-4bet`)은 `objectives.ts`의 히어로 사실(limped·stealOpportunity·
+    riverAirBet·riverValueBetPct·facedOpen/facedThreeBet·junkVsThreeBet·junkFourBet)에서 나오고, 3벳 3구간 임계(3벳 6/콜 12 · 4벳 3.5/콜 8)는
+    `open-thresholds.ts`가 드릴·목표·Ch6 해설의 단일 소스다. Ch6 보스 팽팽은 헤즈업 50BB·`failScene` 보유. **실력 확인(`mode:'exam'`)**: 드릴 세트만(씬·레슨·라이브
     스텝을 인덱스 유지한 채 스킵, 힌트는 서버가 거절) `EXAM_PASS_SCORE` 0.85 이상이면 완료 기록 + 첫 완주 보상,
     미완료 챕터 한정 — 아는 내용을 억지로 플레이하지 않게 하는 우회로. 띠는 코스메틱(막 완주 → 노란/파란/갈색, 검은띠는
     `belt:black` 플래그)이고 **승급은 결산 `beltAwarded`가 알린다** — 에필로그 대사에 순서·승급을 가정한 문장을 두지 말 것.
@@ -284,13 +288,16 @@ npx tsc --noEmit
     `maxHands`는 상한 — 'N핸드 채우기'(`hands-played`)를 primary로 두지 말고 횟수형 primary를 1개 이상 둘 것
     (`act1.test.ts` 고정). 비율 kind의 `maxCount`=위반(기회−실행) 상한, `target`=실행 횟수(기회 0이면 판정 불가 →
     상한에서 제외). 오픈 레이즈 임계(`open-raise` 기회·D-RANGE 출제·Ch2 해설)는 `open-thresholds.ts` 단일 소스.
-  - **드릴**: `src/lib/story/drills/generator.ts`의 12 템플릿(시드 결정론, 모호하면 seed+1 리롤 ≤32). 클라에는
+  - **드릴**: `src/lib/story/drills/generator.ts`의 20 템플릿(1막 12 + 2막 8 — `breakeven-*`(D-BE, 팟은 **벳 전** 금액)·`size-*`(D-SIZE,
+    드라이 ⅓/웻 ¾·스테이션 상대 ¾/에어 체크)·`type-*`(D-TYPE, `personalities.ts` 실제 HUD + VPIP 40↑/22↓·PFR≥60% 두 줄 규칙, 히로인·루나·
+    유즈키 제외)·`range-3bet-decision`/`range-vs-3bet`; 시드 결정론, 모호하면 seed+1 리롤 ≤32). 상대는 조연 6 + 비히로인 봇(팽팽·린·잉그리드)만 —
+    히로인 6명은 출제자라 어떤 문항에도 상대로 나오지 않는다(`generator.test.ts` 풀 단언). 클라에는
     `toPublicDrillInstance`(정답·해설·힌트 본문 제거)만 나가고 **채점은 서버가 같은 seed로 재생성해서** 한다.
     오답은 즉시 풀이 → 세트 끝 재출제(새 seed, 최대 2회, `RETRY_CREDIT` 0.5점) + 복습 노트(Leitner 3박스,
     `drill_review_notes`). **팟오즈 문항의 '팟'은 상대 벳 포함 중앙 총액**(`computePotOdds(toCall, potTotal)`) —
     "팟+벳" 표기로 바꾸면 정답이 20%/25%로 갈린다. 계산 코어는 `src/lib/poker/learning.ts`·`range.ts`·
-    `seeded-rng.ts`(딜링 경로 아님 — `deck.ts` CSPRNG 규칙 대상 외). 해설 말투 3종(미야코♪·사쿠라 말더듬·하나 '당신')은
-    `drills/explain.ts`, 수기 문항은 `templates/authored/`.
+    `seeded-rng.ts`(딜링 경로 아님 — `deck.ts` CSPRNG 규칙 대상 외). 해설 말투 5종(미야코♪·사쿠라 말더듬·하나 '당신'·아라 반말 츤데레·
+    클로이 스트리머체, 비비안/엘레나는 중립 폴백)은 `drills/explain.ts`, 수기 문항은 `templates/authored/act1.ts`·`act2.ts`(D-ACT 8문).
   - **영속**: 마이그레이션 v30 `story_progress`·`story_flags`·`drill_attempts`(category는 길이 제약만 — 고정 IN 금지)·
     `drill_review_notes` + `hand_history.story_tag`(`game_mode`는 'cash' 유지 — CHECK 위반 회피). 보상은
     `ProgressionService.recordStoryChapterComplete`/`recordStoryDailyDrills`(`progression_events` 키
@@ -332,9 +339,10 @@ npx tsc --noEmit
     `PokerTable storyTheme`(청록 `story-felt-*`/`story-abyss` 토큰·레일 시안·「수련 테이블」 워터마크)·GameRoomView 상시
     리본·TopBar 수련 배지(블라인드 대신, 초대 코드/링크·칩 추가 숨김) — 전부 `useStoryLive().active` 게이트라 실전 방
     렌더는 불변. 라이브 HUD는 미션형이면 'N핸드' 카운터 + 「목표를 다 채우면 끝나요 (최대 M핸드)」(`liveFinishHint`).
-  - **보상 라인 (P2 — v32, 기획 Part T)**: 카탈로그 단일 소스는 `src/lib/story/rewards/catalog.ts`(1막 20항목 — 칭호·카드백·
+  - **보상 라인 (P2 — v32, 기획 Part T)**: 카탈로그 단일 소스는 `src/lib/story/rewards/catalog.ts`(1막 20 + 2막 16항목(v33) — 칭호·카드백·
     펠트·의상·CG·투척·칩, 트리거 = 첫 완주/S등급/막 완주/`badge:*` 플래그, 가챠 없음). DB `story_reward_catalog`는 시드 사본
-    (패리티 테스트 `database.test.ts`) — **새 보상은 TS와 다음 마이그레이션 INSERT에 함께 추가**. 지급 = **reconcile**
+    (패리티 테스트 `database.test.ts`) — **새 보상은 TS와 다음 마이그레이션 INSERT에 함께 추가**(UPDATE/DELETE는 트리거로 동결, INSERT만 허용).
+    파란띠 카드백/펠트는 `Card.tsx`·`CardBackPreview.tsx`·`PokerTable.tsx`(`--color-story-felt-blue-*`)에 노란띠와 같은 패턴으로 등록. 지급 = **reconcile**
     (`src/server/story-reward-service.ts`): durable 상태(`story_progress` completions/best_grade·`story_flags`·막 완주)에서 자격 −
     `story_rewards` 영수증 = 누락분을 한 트랜잭션으로 넣는다(영수증 PK `(profile,item)`이 1회 캡, `source_key` 감사). 호출처는
     결산·데일리 종료·`getProgress`(자기 치유, 오류는 삼킴) — progression XP/인연 트랜잭션과 분리·각자 멱등. 칩 외 보상은
@@ -381,7 +389,9 @@ npx tsc --noEmit
     좌측/하단과 비충돌) + `lib/story/story-cut-ins.ts`(퍼펙트 = `story-drill-result` perfect 이벤트, 미션 클리어/보스 격파 =
     `minHands` 이후 primary 전부 achieved·boss 라인업, 스텝당 1회). 영상 계약 `assets/story-video.ts`(`VIDEO_AVAILABLE` 비면 정지 CG) +
     `VideoCutscene`(muted·playsInline·autoPlay·loop, onError/1.5초 canplay 폴백) — `CgStage scene.video` 슬롯, 보상 CG는 아이템 id,
-    인연 씬은 `<character>-scene-lv<N>` 파일명. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
+    인연 씬은 `<character>-scene-lv<N>` 파일명. **파일럿 3클립 배치(2026-09-03)** — `VIDEO_AVAILABLE`에 노란띠 승급·드라코 보스·사쿠라 Lv5,
+    생성은 로컬 ComfyUI + MiniMax H3 fl2va(first_frame=last_frame=CG → 이음새 없는 4.4초 루프, Wan 2.2 다운로드 불필요) —
+    절차·러너 `scripts/art/story-video.md`·`story-video-h3.py`. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -577,10 +587,10 @@ npx tsc --noEmit
   토너먼트 탭, wallet MTT(토너 단위 에스크로+다인 페이아웃), 레이트 레지/리엔트리, ops_event
   화이트리스트·table_hand.tournament_id, 9-max UI 좌표, 봇 AI 대사 토너 단위 상한
   (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
-- 수련 스토리 Phase 2 이후 — 2~4막 데이터, 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
-  `exposeBotThoughts`)·가면 봇 identity 분리, 실패 씬(`failScene`) 재생, 하드 모드·기록실, 스토리 XP 카탈로그
-  아이템(v13 뷰 확장 — v32는 스토리 보상 카탈로그만 우회), 파트너별 Ch1 대사 변주, 스토리 BGM 트랙(`story.mp3` 미배치 —
-  `music-manager`가 404 시 로비 트랙으로 폴백), `dojo-office` 배경 아트, 보상 컷신 영상(P5 파일럿 — `VideoCutscene` 계약 미착수).
+- 수련 스토리 Phase 3 이후 — 3~4막 데이터(2막 Ch4~6은 2026-09-03 배치 완료, 실주행 미검증), 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
+  `exposeBotThoughts`)·가면 봇 identity 분리, 실패 씬(`failScene`) 재생, 하드 모드, 스토리 XP 카탈로그
+  아이템(v13 뷰 확장 — v32는 스토리 보상 카탈로그만 우회), 파트너별 Ch1 대사 변주, 2막 라이브 스텝의 질문권(L4 힌트)·비비안/엘레나 의상·
+  나머지 CG 영상(3클립 외 — 절차는 `scripts/art/story-video.md`).
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.

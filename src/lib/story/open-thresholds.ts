@@ -11,3 +11,18 @@ export const OPEN_THRESHOLDS: Readonly<Record<string, number>> = Object.freeze({
   BTN: 35,
   SB: 25,
 });
+
+/**
+ * 오픈 레이즈를 **맞았을 때**의 3구간 (2막 Ch6 「3벳의 온도」·A7 ③ "프리미엄(6%) 3벳 / 콜드콜 상위 12%").
+ * 상위 THREE_BET_THRESHOLD% 안 = 3벳, COLD_CALL_THRESHOLD%까지 = 콜, 그 밖 = 폴드.
+ * 드릴(D-RANGE 3벳)·스파링 목표(`premium-3bet`)·Ch6 해설이 함께 쓰는 단일 소스.
+ */
+export const THREE_BET_THRESHOLD = 6;
+export const COLD_CALL_THRESHOLD = 12;
+
+/**
+ * 내 오픈이 **3벳을 맞았을 때**의 3구간 — 4벳 = 상위 FOUR_BET_THRESHOLD%(QQ+·AK·AQs 근처), 콜 = CALL_VS_THREE_BET_THRESHOLD%까지,
+ * 그 밖은 폴드. 스파링 목표 `fold-vs-3bet-junk`(하위 폴드)·`no-junk-4bet`(하위 4벳 0)가 같은 값을 본다.
+ */
+export const FOUR_BET_THRESHOLD = 3.5;
+export const CALL_VS_THREE_BET_THRESHOLD = 8;

@@ -71,6 +71,8 @@ export type OutfitManifest = Record<string, Record<string, readonly Expression[]
 const OUTFITS: OutfitManifest = {
   sakura: { dojo: ['neutral', 'happy', 'confident'] },
   hana: { lab: ['neutral', 'happy', 'confident'] },
+  ara: { jersey: ['neutral', 'happy', 'confident'] },
+  chloe: { stream: ['neutral', 'happy', 'confident'] },
 };
 
 interface ArtManifest {

@@ -187,6 +187,14 @@ export const OBJECTIVE_KINDS = [
   'reach-showdown',
   'fold-hands',
   'open-raise',
+  // 2막 (2026-09-03) — 스틸·c벳·밸류·3벳 대면. 전부 "기회 중 실행" 또는 위반 상한형(objectives.ts 참조)
+  'no-limp',
+  'steal-open',
+  'no-air-river-bet',
+  'value-bet-sizing',
+  'premium-3bet',
+  'fold-vs-3bet-junk',
+  'no-junk-4bet',
 ] as const;
 export type ObjectiveKind = typeof OBJECTIVE_KINDS[number];
 
