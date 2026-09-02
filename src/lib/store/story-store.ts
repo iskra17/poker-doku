@@ -35,6 +35,8 @@ export interface StoryStoreState {
   load(): Promise<StoryLoadOutcome>;
   startChapter(chapterId: string): Promise<boolean>;
   advance(target?: StoryAdvanceTarget): Promise<boolean>;
+  /** 라이브 hold 해제 — advance('resume')의 별칭 (타임아웃/인터럽트/방 유실 복귀 공용) */
+  resumeLive(): Promise<boolean>;
   choose(choiceId: string, optionId: string): Promise<boolean>;
   answerDrill(answer: DrillAnswer, elapsedMs: number): Promise<DrillResult | null>;
   requestHint(): Promise<string | null>;
@@ -186,6 +188,8 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         if (ack?.ok) set({ hint: null, lastDrillResult: null });
         return !!ack?.ok;
       },
+
+      resumeLive: () => get().advance('resume'),
 
       choose: async (choiceId, optionId) => {
         const run = get().run;

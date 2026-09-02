@@ -31,6 +31,10 @@ import ProgressionSummary from '@/components/table/ProgressionSummary';
 import PartnerReactions from '@/components/table/PartnerReactions';
 import Coachmarks from '@/components/table/Coachmarks';
 import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatcher';
+import StoryOverlay from '@/components/story/StoryOverlay';
+import StoryLeaveConfirm from '@/components/story/live/StoryLeaveConfirm';
+import { useStoryLive } from '@/components/story/live/use-story-live';
+import { useStoryStore } from '@/lib/store/story-store';
 import TopBar from './TopBar';
 
 interface GameRoomViewProps {
@@ -51,6 +55,10 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const isMobile = useIsMobile();
   const reducedMotion = usePrefersReducedMotion();
   const [leaveOpen, setLeaveOpen] = useState(false);
+  // 수련 스토리 라이브 스텝 — 자리비움/나가기 예약을 서버가 거절하므로 이탈은 '포기'(abandon) 한 갈래다
+  const { active: inStoryRoom } = useStoryLive();
+  const storyPending = useStoryStore(state => state.pending);
+  const [storyLeaveOpen, setStoryLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
   const tournament = gameState?.tournament;
   const isFinalTable = !!tournament?.tournamentId
@@ -76,12 +84,13 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const waitingForSeat = !!gameState && !myPlayer && !tournamentFinished;
   const busted = !!myPlayer && myPlayer.chips <= 0
     && !(gameState?.isHandInProgress && (myPlayer.status === 'active' || myPlayer.status === 'all-in'));
-  const canSitOut = !!myPlayer && !busted && !myPlayer.finishPlace && !tournamentFinished;
-  // 나가기 예약은 캐시 전용 (SnG/아레나 제외 — 서버 setLeaveReservation과 같은 조건)
+  const canSitOut = !!myPlayer && !busted && !myPlayer.finishPlace && !tournamentFinished && !inStoryRoom;
+  // 나가기 예약은 캐시 전용 (SnG/아레나/스토리 제외 — 서버 setLeaveReservation과 같은 조건)
   const canReserve = canSitOut && !gameState?.tournament && gameState?.economyMode !== 'arena';
-  const myReservation = myPlayer?.leaveReservation ?? null;
+  const myReservation = inStoryRoom ? null : (myPlayer?.leaveReservation ?? null);
   const handleLeaveClick = () => {
-    if (canSitOut) setLeaveOpen(true);
+    if (inStoryRoom) setStoryLeaveOpen(true);
+    else if (canSitOut) setLeaveOpen(true);
     else onLeave();
   };
 
@@ -145,6 +154,16 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
         onReserve={kind => { setLeaveOpen(false); reserveLeave(kind); }}
         onExit={() => { setLeaveOpen(false); onLeave(); }}
       />
+      <StoryLeaveConfirm
+        isOpen={storyLeaveOpen}
+        pending={storyPending}
+        onClose={() => setStoryLeaveOpen(false)}
+        onAbandon={() => {
+          setStoryLeaveOpen(false);
+          // 서버가 스토리 방을 정리하고 room-lost로 로비 복귀시킨다 (leave-room은 거절된다)
+          void useStoryStore.getState().abandon();
+        }}
+      />
 
       <div className="flex-1 relative overflow-hidden">
         {gameState ? (
@@ -168,6 +187,9 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
                   흩어지지 않게 (2026-07-22 유저 피드백). 승리 38% / 패배 62%로 스택 */}
               <WinnerCutIn isMobile={isMobile} />
               <LoserCutIn isMobile={isMobile} />
+              {/* 수련 스토리 라이브 스텝 오버레이 — 목표 HUD·인터럽트·hold·결정 리뷰.
+                  라이브 방이 아니면 스스로 null을 반환한다 (실전 방에는 아무것도 그리지 않음) */}
+              <StoryOverlay />
             </div>
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ProgressionSummary />

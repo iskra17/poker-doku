@@ -4,6 +4,7 @@ import { useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { getChapter } from '@/lib/story/chapters';
+import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
 import { useStoryStore } from '@/lib/store/story-store';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
@@ -25,6 +26,7 @@ export default function StoryStage() {
   const hint = useStoryStore(state => state.hint);
   const lastDrillResult = useStoryStore(state => state.lastDrillResult);
   const advance = useStoryStore(state => state.advance);
+  const resumeLive = useStoryStore(state => state.resumeLive);
   const choose = useStoryStore(state => state.choose);
   const answerDrill = useStoryStore(state => state.answerDrill);
   const requestHint = useStoryStore(state => state.requestHint);
@@ -141,22 +143,26 @@ export default function StoryStage() {
               </div>
             )}
 
-            {(run.phase === 'live-hold' || run.phase === 'live-play') && (
-              <div className="w-full max-w-md rounded-2xl border border-mystic/25 bg-panel/90 p-4 text-center">
-                <p className="text-[10px] font-bold tracking-widest text-mystic">테이블 준비 중</p>
-                <p className="mt-1 text-sm text-ink-dim">
-                  {run.live?.holdReason === 'timeout' ? '시간이 지나 잠시 멈췄어요. 준비되면 계속할게요.' : '잠시만요, 자리를 준비하고 있어요.'}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void advance('resume')}
-                  disabled={pending}
-                  className="mt-3 rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
-                >
-                  계속하기
-                </button>
-              </div>
-            )}
+            {/* 라이브 스텝인데 방이 없는 상태 — ①착석 직전(live-play, 안내만) ②방 유실/타임아웃 hold.
+                ②는 [이어하기]가 새 방을 열어 같은 스텝을 재개한다 (서버 resumeRoom). */}
+            {(run.phase === 'live-hold' || run.phase === 'live-play') && (() => {
+              const copy = holdCopy(needsResumeFromLobby(run) ? (run.live?.holdReason ?? null) : null);
+              const canResume = needsResumeFromLobby(run);
+              return (
+                <div className="w-full max-w-md rounded-2xl border border-mystic/25 bg-panel/90 p-4 text-center">
+                  <p className="text-[10px] font-bold tracking-widest text-mystic">{copy.title}</p>
+                  <p className="mt-1 text-sm text-ink-dim">{copy.body}</p>
+                  <button
+                    type="button"
+                    onClick={() => void resumeLive()}
+                    disabled={pending || !canResume}
+                    className="mt-3 rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2 text-sm font-bold text-white disabled:opacity-50"
+                  >
+                    {copy.cta}
+                  </button>
+                </div>
+              );
+            })()}
 
             {error && <p className="text-center text-xs text-blossom" role="alert">{error}</p>}
           </main>

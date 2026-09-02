@@ -9,6 +9,9 @@ import { computeBetPresets } from '@/lib/poker/bet-presets';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import { playEffect } from '@/lib/sound/effects';
+import CoachPanel from '@/components/story/live/CoachPanel';
+import { useStoryLive } from '@/components/story/live/use-story-live';
+import { liveHintLevel } from '@/lib/story/story-live-rules';
 import Button from '../ui/Button';
 import VerticalSlider from '../ui/VerticalSlider';
 import HandStrengthBadge from './HandStrengthBadge';
@@ -71,6 +74,10 @@ export default function ActionBar() {
   const [prevRoundKey, setPrevRoundKey] = useState('');
   const isMobile = useIsMobile();
   const formatChips = useChipFormatter();
+  // 수련 스토리 라이브 스텝 — 자리비움은 서버가 거절하고(이탈은 abandon 한 갈래),
+  // 스텝의 hints 레벨만큼 코치 한 줄을 독 안에 얹는다 (독 높이는 상수 유지)
+  const { active: inStoryRoom, step: storyStep } = useStoryLive();
+  const coachHints = inStoryRoom ? liveHintLevel(storyStep) : 0;
 
   if (!gameState) return null;
 
@@ -96,7 +103,8 @@ export default function ActionBar() {
     !!myPlayer,
   );
 
-  const sitOutButton = myPlayer && (
+  // 스토리 라이브 방에서는 자리비움/게임 복귀를 감춘다 — 서버 toggle-sit-out이 rejected다
+  const sitOutButton = myPlayer && !inStoryRoom && (
     <button
       onClick={toggleSitOut}
       disabled={controlsDisabled}
@@ -309,6 +317,18 @@ export default function ActionBar() {
               </div>
             )}
           </div>
+
+          {/* 코치 한 줄 (수련 스토리 라이브 스텝 전용) — 핸드 강도 뱃지 아래.
+              L1 팟오즈 / L2 +아우츠 / L3 +한 줄 조언. 계산은 learning.ts 공용 코어 */}
+          {coachHints >= 1 && (
+            <CoachPanel
+              hints={coachHints}
+              holeCards={myPlayer.holeCards}
+              communityCards={gameState.communityCards}
+              toCall={callAmount}
+              potTotal={potSize}
+            />
+          )}
 
           {/* 2행: 프리셋 버튼 + −/+ 스테퍼 */}
           {canRaise && (
