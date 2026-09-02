@@ -78,6 +78,8 @@ describe('buildGallery', () => {
     expect(entries.every(entry => !entry.unlocked)).toBe(true);
     const summary = summarizeGallery(entries);
     expect(summary.find(row => row.section === 'bond')).toEqual({ section: 'bond', unlocked: 0, total: 24 });
-    expect(summary.find(row => row.section === 'cg')?.total).toBe(4);
+    // 보상 CG 4 + 배치된 씬 CG 6(챕터 완주 해금)
+    expect(summary.find(row => row.section === 'cg')?.total).toBe(10);
+    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(6);
   });
 });

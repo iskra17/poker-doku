@@ -29,8 +29,8 @@ export const SCENE_CG_TITLE: Readonly<Record<SceneCgId, string>> = Object.freeze
   'act1-ch03-epilogue': '석양의 사범실',
 });
 
-/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 */
-const AVAILABLE: ReadonlySet<string> = new Set<string>([]);
+/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 (2026-09-03 1막 6장) */
+const AVAILABLE: ReadonlySet<string> = new Set<string>(SCENE_CG_IDS);
 
 export function isSceneCgId(value: unknown): value is SceneCgId {
   return typeof value === 'string' && (SCENE_CG_IDS as readonly string[]).includes(value);

@@ -21,10 +21,10 @@ describe('story backgrounds', () => {
   it('unknown or missing ids fall back to the default gradient with no image', () => {
     expect(getStoryBackground(undefined)).toEqual({ id: null, src: null, gradientClass: DEFAULT_STORY_GRADIENT });
     expect(getStoryBackground('nope')).toEqual({ id: 'nope', src: null, gradientClass: DEFAULT_STORY_GRADIENT });
-    // 아트 미배치 id(dojo-office)는 그라디언트만 (src null) — 배치 후 AVAILABLE에 추가하면 경로가 생긴다
-    expect(getStoryBackground('dojo-office').src).toBeNull();
+    // 1막 배경 5장은 전부 배치됨 — 미지 id만 그라디언트(src null)
+    expect(getStoryBackground('dojo-office').src).toBe('/assets/story/bg/dojo-office.webp');
     expect(getStoryBackground('dojo-study').src).toBe('/assets/story/bg/dojo-study.webp');
-    expect(listStoryBackgroundSources(['dojo-office', undefined, 'nope'])).toEqual([]);
+    expect(listStoryBackgroundSources([undefined, 'nope'])).toEqual([]);
     expect(listStoryBackgroundSources(['dojo-study', 'dojo-study', 'dojo-gate'])).toEqual([
       '/assets/story/bg/dojo-study.webp',
       '/assets/story/bg/dojo-gate.webp',
