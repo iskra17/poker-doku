@@ -28,7 +28,7 @@ export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze([
     category: 'action-judgment',
     title: 'UTG의 J♣7♦',
     difficulty: 1,
-    hints: ['뒤에 아직 다섯 명이 남아 있어요. 그 다섯 명이 전부 나보다 좋은 손일 수도 있죠.'],
+    hints: ['뒤에 아직 다섯 명이 남아 있어요. 그 다섯 명이 전부 나보다 좋은 핸드일 수도 있죠.'],
     source: {
       kind: 'authored',
       instance: {
@@ -53,12 +53,12 @@ export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze([
         },
         question: '가장 앞자리(UTG)입니다. 최선의 액션은?',
         answerSpec: { kind: 'action-pick', options: ['fold', 'raise'], correct: ['fold'] },
-        hint: '뒤에 아직 다섯 명이 남아 있어요. 그 다섯 명이 전부 나보다 좋은 손일 수도 있죠.',
+        hint: '뒤에 아직 다섯 명이 남아 있어요. 그 다섯 명이 전부 나보다 좋은 핸드일 수도 있죠.',
         explanation: {
           text:
-            'J♣7♦는 상위 70% 근처… 강한 쪽 절반에도 못 드는 손이에요. '
+            'J♣7♦는 상위 70% 근처… 강한 쪽 절반에도 못 드는 핸드예요. '
             + 'UTG 임계는 15%인데 한참 뒤에 있고, 뒤에는 다섯 명이나 남아 있어서요… '
-            + '다, 당신이 여기서 접는 건 지는 게 아니에요. 칩을 아끼는 거예요.',
+            + '다, 당신이 여기서 폴드하는 건 지는 게 아니에요. 칩을 아끼는 거예요.',
           speaker: 'sakura',
           facts: { percentile: 69.7, threshold: 15 },
         },
@@ -103,9 +103,9 @@ export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze([
         hint: '버튼은 마지막에 말하는 자리예요. 임계가 가장 넓은 자리이기도 하고요.',
         explanation: {
           text:
-            'A♦J♦는 상위 3% 근처예요. BTN 임계 35% 안쪽이니까… 여, 여는 게 맞아요. '
+            'A♦J♦는 상위 3% 근처예요. BTN 임계 35% 안쪽이니까… 오, 오픈 레이즈가 맞아요. '
             + '크기는 2~3BB. 그냥 콜(림프)로 들어가면 팟도 못 키우고 주도권도 못 가져요 — '
-            + '열 거면 레이즈, 아니면 폴드예요.',
+            + '들어갈 거면 오픈 레이즈, 아니면 폴드예요 — 림프는 없어요.',
           speaker: 'sakura',
           facts: { percentile: 2.6, threshold: 35 },
         },

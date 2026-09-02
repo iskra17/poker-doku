@@ -135,7 +135,7 @@ export const CH01: Chapter = {
               onWrong: '이 보드로는 스트레이트도 플러시도 만들 수 없어요 — 숫자가 흩어져 있고 같은 무늬는 두 장뿐이니까요. 페어가 있으니 포카드까지 가능하답니다♪',
             },
             {
-              prompt: '그럼 K♦와 3♣를 손에 든 사람의 족보는 무엇일까요?',
+              prompt: '그럼 홀카드가 K♦ 3♣인 사람의 족보는 무엇일까요?',
               answer: { kind: 'multiple-choice', options: ['트리플', '풀하우스', '투페어'], correctIndex: 0 },
               onCorrect: '맞아요♪ 보드의 K 두 장과 합쳐 K가 셋 — 트리플이에요.',
               onWrong: 'K는 셋이 모였지만 짝지어 줄 다른 페어가 없어요. 그래서 풀하우스가 아니라 트리플이랍니다♪',
@@ -188,7 +188,7 @@ export const CH01: Chapter = {
         // ② 7♦2♣ — 첫 폴드를 손에 익히는 핸드(보드는 랜덤).
         { hero: '7d 2c' },
       ],
-      perHandPrompt: '이건 연습이에요 — 정해진 상황에서 배운 걸 써 보세요♪ 첫 판은 끝까지 갈 손, 둘째 판은 접을 손이랍니다.',
+      perHandPrompt: '이건 연습이에요 — 정해진 상황에서 배운 걸 써 보세요♪ 첫 핸드는 끝까지 갈 핸드, 둘째 핸드는 폴드할 핸드랍니다.',
     },
 
     // ───────────────────────────────────────────── 스파링 10핸드
@@ -235,7 +235,7 @@ export const CH01: Chapter = {
               {
                 kind: 'say',
                 speaker: 'miyako',
-                text: '자리 위의 D는 딜러 버튼, SB와 BB는 블라인드를 미리 낸 자리예요. 오늘은 이기고 지는 것보다 열 판을 끝까지 도는 게 목표랍니다.',
+                text: '자리 위의 D는 딜러 버튼, SB와 BB는 블라인드를 미리 낸 자리예요. 오늘은 이기고 지는 것보다 쇼다운까지 한 번 가 보고, 폴드도 한 번 해 보는 게 목표랍니다.',
                 expression: 'neutral',
               },
             ],
@@ -283,7 +283,7 @@ export const CH01: Chapter = {
           {
             kind: 'say',
             speaker: 'partner',
-            text: '처음엔 다들 족보부터 헷갈려. 그런데 아까, 보드를 한 번 더 보고 나서 손을 움직였지.',
+            text: '처음엔 다들 족보부터 헷갈려. 그런데 아까, 보드를 한 번 더 보고 나서 버튼을 눌렀지.',
             expression: 'neutral',
           },
           {
@@ -306,7 +306,7 @@ export const CH01: Chapter = {
                 },
                 {
                   id: 'more',
-                  text: '「한 판 더 하고 싶어요.」',
+                  text: '「한 핸드 더 하고 싶어요.」',
                   setFlags: { 'choice:act1-ch01:after': 'more' },
                   reply: [{ kind: 'say', speaker: 'partner', text: '욕심 많네. …그런 사람이 늘긴 해.', expression: 'confident' }],
                 },
@@ -328,7 +328,7 @@ export const CH01: Chapter = {
           {
             kind: 'say',
             speaker: 'miyako',
-            text: '다음 수업은 사쿠라 씨가 맡아요. 「기다림」이 왜 무기가 되는지, 그분보다 잘 아는 사람은 없거든요.',
+            text: '다음은 사쿠라 씨 수업을 추천해요. 「기다림」이 왜 무기가 되는지, 그분보다 잘 아는 사람은 없거든요. 물론 어느 수업부터 들어도 괜찮답니다♪',
             expression: 'neutral',
           },
         ],

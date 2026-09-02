@@ -95,7 +95,7 @@ export const CH03: Chapter = {
         {
           kind: 'guided',
           teacher: 'hana',
-          intro: '같이 한 번 세어 볼까요. 당신 손은 A♥K♥, 보드는 Q♥ 7♥ 2♣예요.',
+          intro: '같이 한 번 세어 볼까요. 당신 핸드는 A♥K♥, 보드는 Q♥ 7♥ 2♣예요.',
           stages: [
             {
               prompt: '먼저 아우츠예요. 하트는 열세 장인데 지금 네 장이 보이죠 — 하트가 몇 장 남았죠?',
@@ -114,7 +114,7 @@ export const CH03: Chapter = {
         {
           kind: 'guided',
           teacher: 'hana',
-          intro: '이제 값을 매겨 봐요. 같은 손인데 드라코가 팟 60에 120을 던졌어요 — 중앙에는 180이 있고, 콜은 120이에요.',
+          intro: '이제 값을 매겨 봐요. 같은 핸드인데 드라코가 팟 60에 120을 던졌어요 — 중앙에는 180이 있고, 콜은 120이에요.',
           stages: [
             {
               prompt: '필요 승률은 몇 %일까요?',
@@ -126,7 +126,7 @@ export const CH03: Chapter = {
               prompt: '아우츠는 18%, 필요 승률은 40%. 어떻게 할까요?',
               answer: { kind: 'multiple-choice', options: ['콜', '폴드'], correctIndex: 1 },
               onCorrect: '폴드예요. 턴 한 장이면 18%, 두 장을 다 본다 쳐도 36% — 어느 쪽도 40%에 못 미쳐요.',
-              onWrong: '18%로 40%짜리 값을 살 수는 없어요. 여기는 접는 자리예요 — 다음에 하트가 떠도 판단은 그대로 옳습니다.',
+              onWrong: '18%로 40%짜리 값을 살 수는 없어요. 여기는 폴드하는 자리예요 — 다음에 하트가 떠도 판단은 그대로 옳습니다.',
             },
           ],
         },
@@ -173,12 +173,12 @@ export const CH03: Chapter = {
       },
       scripts: [
         // ① 넛 플러시 드로우(남은 하트 9장) vs 드라코의 셋 — 오버벳이 오면 필요 승률이 뜰 확률을 넘는다.
-        //    실측(countOutsVsHand): 2♥는 드라코에게 풀하우스를 주므로 실질 8아우츠 → 접는 결론은 더 분명해진다.
+        //    실측(countOutsVsHand): 2♥는 드라코에게 풀하우스를 주므로 실질 8아우츠 → 폴드 결론은 더 분명해진다.
         { hero: 'Ah Kh', board: 'Qh 7h 2c', villains: { 1: 'Qs Qd' } },
         // ② 오픈엔디드(Q·7 8장) + 오버카드(J·T 6장) vs 초코의 톱페어 = 실측 14아우츠 — 작은 벳이면 값이 맞는다.
         { hero: 'Jc Tc', board: '9d 8s 2h', villains: { 2: 'Ad 9c' } },
       ],
-      perHandPrompt: '연습이에요 — 손과 보드는 고정되어 있어요. 벳이 오면 아우츠부터 세고, 필요 승률과 비교하세요. 결과는 채점하지 않아요.',
+      perHandPrompt: '연습이에요 — 핸드와 보드는 고정되어 있어요. 벳이 오면 아우츠부터 세고, 필요 승률과 비교하세요. 결과는 채점하지 않아요.',
     },
 
     // ───────────────────────────────────────────── 보스전 12핸드
@@ -248,7 +248,7 @@ export const CH03: Chapter = {
               {
                 kind: 'say',
                 speaker: 'hana',
-                text: '값이 맞지 않으면 접으세요. 접어서 잃은 팟은 통계에 남지만, 값을 무시하고 낸 칩은 돌아오지 않아요.',
+                text: '값이 맞지 않으면 폴드하세요. 폴드해서 놓친 팟은 통계에 남지만, 값을 무시하고 낸 칩은 돌아오지 않아요.',
                 expression: 'confident',
               },
             ],
@@ -267,7 +267,7 @@ export const CH03: Chapter = {
           {
             kind: 'say',
             speaker: 'draco',
-            text: '으으… 왜 내 오버벳이 안 통해?! 다들 그냥 접거나 그냥 받았단 말이야…!',
+            text: '으으… 왜 내 오버벳이 안 통해?! 다들 그냥 폴드하거나 그냥 콜했단 말이야…!',
             expression: 'sad',
             bg: 'dojo-study',
             music: 'story',
@@ -329,7 +329,7 @@ export const CH03: Chapter = {
           {
             kind: 'say',
             speaker: 'miyako',
-            text: '축하드려요, 수련생님♪ 1막을 마치셨으니 오늘부터 노란띠예요 — 숫자로 판을 볼 수 있게 되셨다는 뜻이랍니다.',
+            text: '수고하셨어요, 수련생님♪ 이제 숫자로 테이블을 볼 수 있게 되셨네요. 1막의 세 수업을 모두 마치면 노란띠를 드린답니다.',
             expression: 'happy',
           },
         ],

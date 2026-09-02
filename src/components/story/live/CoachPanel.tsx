@@ -71,9 +71,9 @@ function computeCoachLines({ hints, holeCards, communityCards, toCall, potTotal 
   let advice: string | null = null;
   if (hints >= 3) {
     if (required !== null && equity !== null) {
-      advice = equity >= required ? '가격이 맞아요 — 콜해도 좋은 스팟' : '가격이 안 맞아요 — 접는 쪽';
+      advice = equity >= required ? '가격이 맞아요 — 콜해도 좋은 스팟' : '가격이 안 맞아요 — 폴드 쪽';
     } else if (required !== null) {
-      advice = '가격이 맞으면 콜, 아니면 접기';
+      advice = '가격이 맞으면 콜, 아니면 폴드';
     } else {
       advice = '벳이 없을 땐 공짜 카드 — 서두르지 않아도 돼요';
     }

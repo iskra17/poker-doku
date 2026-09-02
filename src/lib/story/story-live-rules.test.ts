@@ -180,7 +180,7 @@ describe('objectiveHudLines', () => {
         objective({ id: 'bonus-a', primary: false, label: '팟 하나 가져오기' }),
         objective({ id: 'primary-a', primary: true }),
         objective({ id: 'bonus-b', primary: false, label: '파산 없이 끝내기', target: null, achieved: null }),
-        objective({ id: 'primary-b', primary: true, label: '정크 핸드 접기' }),
+        objective({ id: 'primary-b', primary: true, label: '정크 핸드 폴드' }),
       ],
     });
     expect(objectiveHudLines(live).map(line => line.id)).toEqual([

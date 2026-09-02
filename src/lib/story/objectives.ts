@@ -33,7 +33,7 @@ import type { DecisionMark, ObjectiveProgressView } from './views';
 // 상수 (수치를 바꾸면 목표 판정과 리뷰 마크가 함께 움직인다)
 
 /**
- * '약한 손(junk)' 임계 — Chen 백분위(0=최강 ~ 1=최약)가 이 값보다 크면 하위 절반이다.
+ * '약한 핸드(junk)' 임계 — Chen 백분위(0=최강 ~ 1=최약)가 이 값보다 크면 하위 절반이다.
  * 6-max 기준으로 어떤 포지션에서도 오픈 레인지에 들어가지 않는 구간의 보수적 하한.
  */
 export const JUNK_PERCENTILE = 0.5;
@@ -179,7 +179,7 @@ export function estimateHeroEquity(
 
 /**
  * 가격 결정(콜/폴드) 마크. 콜은 에퀴티가 필요 승률 이상이면 👍, 5%p 이내로 모자라면 🤔, 그 밖은 ⚠.
- * 폴드는 정확히 반대 — 에퀴티가 필요 승률을 5%p 넘게 웃도는데 접었으면 ⚠.
+ * 폴드는 정확히 반대 — 에퀴티가 필요 승률을 5%p 넘게 웃도는데 폴드했으면 ⚠.
  * `correct`(목표 집계)는 "⚠가 아님"과 같은 뜻이라 목표와 리뷰가 절대 어긋나지 않는다.
  */
 export function classifyPricedDecision(
@@ -241,7 +241,7 @@ export interface HeroHandFacts {
   voluntaryActions: number;
   /** Chen 백분위 0~1 (낮을수록 강함). 홀카드를 모르면 null. */
   heroHandPercentile: number | null;
-  /** 백분위가 JUNK_PERCENTILE보다 약한 손. */
+  /** 백분위가 JUNK_PERCENTILE보다 약한 핸드. */
   junk: boolean;
   potOddsCalls: PricedDecisionFact[];
   potOddsFolds: PricedDecisionFact[];

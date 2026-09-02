@@ -68,7 +68,7 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
     `${v(f, 'hand')}는 그 눈금에서 상위 ${v(f, 'pct')}% 자리고요.`,
   ],
   'outs-count': f => [
-    `내 손은 ${v(f, 'drawName')}, ${v(f, 'villainName')}는 ${v(f, 'villainHand')}예요.`,
+    `내 핸드는 ${v(f, 'drawName')}, ${v(f, 'villainName')}는 ${v(f, 'villainHand')}예요.`,
     `못 본 카드가 ${v(f, 'unseen')}장인데, 그중 나를 앞서게 하는 카드는 ${v(f, 'outs')}장이에요.`,
     `${v(f, 'outs')} ÷ ${v(f, 'unseen')} ≈ ${v(f, 'pct')}%가 다음 한 장으로 이길 확률이고요.`,
   ],

@@ -38,9 +38,9 @@ function pricedReason(fact: PricedDecisionFact, kind: 'call' | 'fold'): string {
     if (fact.mark === 'hmm') return `${price}${outs}. 가격이 아슬아슬한 콜이에요.`;
     return `${price}${outs}. 오즈가 맞지 않는 콜이에요.`;
   }
-  if (fact.mark === 'good') return `${price}${outs}. 가격이 맞지 않으니 접는 게 정답이에요.`;
+  if (fact.mark === 'good') return `${price}${outs}. 가격이 맞지 않으니 폴드가 정답이에요.`;
   if (fact.mark === 'hmm') return `${price}${outs}. 가격이 살짝 맞는 자리라 콜도 가능했어요.`;
-  return `${price}${outs}. 오즈가 충분한 자리를 접었어요.`;
+  return `${price}${outs}. 오즈가 충분한 자리에서 폴드했어요.`;
 }
 
 interface Entry {
@@ -60,7 +60,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
     if (facts.junk) {
       return {
         order: decision.actionIndex,
-        verdict: { ...base, amount: 0, mark: 'good', reason: '하위 레인지 손은 접는 게 정답이에요. 다음 기회를 기다려요.' },
+        verdict: { ...base, amount: 0, mark: 'good', reason: '하위 레인지 핸드는 폴드가 정답이에요. 다음 기회를 기다려요.' },
       };
     }
     if (premium) {
@@ -70,7 +70,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
           ...base,
           amount: 0,
           mark: 'warn',
-          reason: `상위 ${pct(PREMIUM_PERCENTILE)}%에 드는 손이었어요. 압박이 없다면 접기엔 아까운 자리예요.`,
+          reason: `상위 ${pct(PREMIUM_PERCENTILE)}%에 드는 핸드였어요. 압박이 없다면 폴드하기엔 아까운 자리예요.`,
         },
       };
     }
@@ -96,7 +96,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
         ...base,
         amount: decision.amount,
         mark: 'good',
-        reason: `상위 ${pct(PREMIUM_PERCENTILE)}% 손으로 주도권을 잡았어요.`,
+        reason: `상위 ${pct(PREMIUM_PERCENTILE)}% 핸드로 주도권을 잡았어요.`,
       },
     };
   }
@@ -106,7 +106,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
       ...base,
       amount: decision.amount,
       mark: 'hmm',
-      reason: '경계 구간 손이에요. 포지션이 나쁘면 접어도 좋아요.',
+      reason: '경계 구간 핸드예요. 포지션이 나쁘면 폴드해도 좋아요.',
     },
   };
 }

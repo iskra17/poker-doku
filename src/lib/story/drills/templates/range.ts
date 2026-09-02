@@ -86,7 +86,7 @@ const openDecision: GeneratedDrillDefinition = {
         villains: seatVillains(layout, heroSeat, ids, stackChips),
         note: '앞에서 아무도 들어오지 않았어요 (언오픈 팟).',
       },
-      question: `${position}이에요. 앞이 전부 폴드했어요. 이 핸드로 참여할까요?`,
+      question: `${position}이에요. 앞이 전부 폴드했어요. 이 핸드로 오픈 레이즈할까요?`,
       answerSpec: { kind: 'multiple-choice', options: ['오픈 레이즈', '폴드'], correctIndex: open ? 0 : 1 },
       facts: {
         hand: handKey(hero),

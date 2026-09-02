@@ -191,7 +191,7 @@ describe('reviewHand — 프리플랍 4구간', () => {
     const review = reviewHand(preflopOnlyHand('7c 2d', 'fold'), 'hero');
     expect(review?.verdicts).toHaveLength(1);
     expect(review?.verdicts[0]).toMatchObject({ street: 'preflop', action: 'fold', mark: 'good' });
-    expect(review?.verdicts[0].reason).toContain('접는 게 정답');
+    expect(review?.verdicts[0].reason).toContain('폴드가 정답');
     expect(review?.verdicts[0].facts).toEqual({});
   });
 
@@ -212,7 +212,7 @@ describe('reviewHand — 프리플랍 4구간', () => {
     expect(review?.verdicts[0]).toMatchObject({ street: 'preflop', action: 'fold', mark: 'warn' });
   });
 
-  it('약한 손으로 들어가면 ⚠', () => {
+  it('약한 핸드로 들어가면 ⚠', () => {
     const review = reviewHand(preflopOnlyHand('7c 2d', 'call'), 'hero');
     expect(review?.verdicts).toHaveLength(1);
     expect(review?.verdicts[0]).toMatchObject({ street: 'preflop', action: 'call', mark: 'warn' });
@@ -267,7 +267,7 @@ describe('reviewHand — 벳 대면 가격 결정', () => {
     expect(review?.verdicts[1].reason).toContain('오즈가 맞지 않는 콜');
   });
 
-  it('가격이 안 맞는 자리를 접으면 👍', () => {
+  it('가격이 안 맞는 자리에서 폴드하면 👍', () => {
     const record = makeRecord({
       seats: [{ id: 'hero', hole: '7c 2d' }, { id: 'villain', hole: '9s 9h' }],
       board: 'Ah Ks Qd',
@@ -285,10 +285,10 @@ describe('reviewHand — 벳 대면 가격 결정', () => {
     const review = reviewHand(record, 'hero');
     const fold = review?.verdicts.find(verdict => verdict.street === 'flop');
     expect(fold).toMatchObject({ action: 'fold', amount: 0, mark: 'good' });
-    expect(fold?.reason).toContain('접는 게 정답');
+    expect(fold?.reason).toContain('폴드가 정답');
   });
 
-  it('오즈가 충분한 드로우를 접으면 ⚠', () => {
+  it('오즈가 충분한 드로우를 폴드하면 ⚠', () => {
     const review = reviewHand(flushDrawHand(25, 'fold'), 'hero');
     const fold = review?.verdicts.find(verdict => verdict.street === 'flop');
     expect(fold).toMatchObject({ action: 'fold', mark: 'warn' });

@@ -16,7 +16,7 @@ export const CH02: Chapter = {
   act: 1,
   order: 2,
   title: '기다림의 미학',
-  subtitle: '레인지 · 포지션별 임계 · 접는 용기',
+  subtitle: '레인지 · 포지션별 임계 · 폴드하는 용기',
   teacher: 'sakura',
   belt: 'white',
   requires: ['act1-ch01'],
@@ -52,7 +52,7 @@ export const CH02: Chapter = {
           {
             kind: 'say',
             speaker: 'sakura',
-            text: '포커에서 제일 많이 하는 일은 사실 「접는 일」이에요. 당신이 오늘 배울 건, 어떤 손을 접고 어떤 손을 여는지… 그 선을 긋는 법이에요.',
+            text: '포커에서 제일 많이 하는 일은 사실 「폴드」예요. 당신이 오늘 배울 건, 어떤 핸드를 폴드하고 어떤 핸드로 오픈 레이즈하는지… 그 선을 긋는 법이에요.',
             expression: 'confident',
           },
         ],
@@ -73,12 +73,12 @@ export const CH02: Chapter = {
         {
           kind: 'concept-card',
           title: '상위 %로 보는 손',
-          body: '169가지 스타팅 핸드를 강한 순서로 줄 세우면, 내 손이 상위 몇 %인지가 나와요. A♠A♥는 1%도 안 되는 맨 앞, J♣7♦는 70% 근처랍니다.',
+          body: '169가지 스타팅 핸드를 강한 순서로 줄 세우면, 내 핸드가 상위 몇 %인지가 나와요. A♠A♥는 1%도 안 되는 맨 앞, J♣7♦는 70% 근처랍니다.',
         },
         {
           title: '자리마다 다른 임계',
           kind: 'concept-card',
-          body: '앞자리일수록 뒤에 남은 사람이 많아서 더 좁게 열어야 해요. 기준은 UTG 15% · HJ 18% · CO 25% · BTN 35%예요.',
+          body: '앞자리일수록 뒤에 남은 사람이 많아서 오픈 레이즈 레인지를 더 좁게 잡아야 해요. 기준은 UTG 15% · HJ 18% · CO 25% · BTN 35%예요.',
         },
         {
           kind: 'concept-card',
@@ -87,19 +87,19 @@ export const CH02: Chapter = {
         },
         {
           kind: 'concept-card',
-          title: '접는 용기',
-          body: '접는 건 지는 게 아니라, 다음 좋은 자리를 위해 칩을 남기는 일이에요. 한 바퀴에 한두 번만 들어가도 충분해요.',
+          title: '폴드하는 용기',
+          body: '폴드는 지는 게 아니라, 다음 좋은 자리를 위해 칩을 남기는 일이에요. 한 바퀴에 한두 번만 들어가도 충분해요.',
         },
         {
           kind: 'guided',
           teacher: 'sakura',
-          intro: '머, 먼저 당신 손이 어느 정도인지부터 볼게요. J♣7♦, 자리는 UTG예요.',
+          intro: '머, 먼저 당신 핸드가 어느 정도인지부터 볼게요. J♣7♦, 자리는 UTG예요.',
           stages: [
             {
-              prompt: '이 손은 상위 몇 % 근처일까요? 어림으로 괜찮아요.',
+              prompt: '이 핸드는 상위 몇 % 근처일까요? 어림으로 괜찮아요.',
               answer: { kind: 'numeric', correct: 70, tolerance: 10, unit: '%', min: 0, max: 100 },
-              onCorrect: '마, 맞아요… 70% 근처예요. 강한 쪽 절반에도 못 드는 손이에요.',
-              onWrong: '아… J랑 7은 사이가 너무 멀어서요. 이 손은 상위 70% 근처, 한참 뒤쪽 손이에요.',
+              onCorrect: '마, 맞아요… 70% 근처예요. 강한 쪽 절반에도 못 드는 핸드예요.',
+              onWrong: '아… J랑 7은 사이가 너무 멀어서요. 이 핸드는 상위 70% 근처, 한참 뒤쪽 핸드예요.',
             },
             {
               prompt: 'UTG의 임계는 15%였죠. 그럼 여기서는 어떻게 할까요?',
@@ -117,8 +117,8 @@ export const CH02: Chapter = {
             {
               prompt: 'A♦J♦는 상위 3% 근처예요. BTN 임계 35%와 비교하면 어느 쪽일까요?',
               answer: { kind: 'multiple-choice', options: ['임계 안 — 참여', '임계 밖 — 폴드'], correctIndex: 0 },
-              onCorrect: '마, 맞아요! 3%는 35% 안쪽이니까… 이건 여는 손이에요.',
-              onWrong: '3%는 35%보다 훨씬 앞이에요… 이건 접으면 아까운 손이에요.',
+              onCorrect: '마, 맞아요! 3%는 35% 안쪽이니까… 이건 오픈 레이즈하는 핸드예요.',
+              onWrong: '3%는 35%보다 훨씬 앞이에요… 이건 폴드하면 아까운 핸드예요.',
             },
             {
               prompt: '그럼 어떻게 열까요?',
@@ -173,12 +173,12 @@ export const CH02: Chapter = {
         hints: 1,
       },
       scripts: [
-        // ① J♣7♦(상위 69.7%) — 6-max 어느 자리에서도 임계(최대 BTN 35%) 밖이라 버튼 위치와 무관하게 열지 않는 손.
+        // ① J♣7♦(상위 69.7%) — 6-max 어느 자리에서도 임계(최대 BTN 35%) 밖이라 버튼 위치와 무관하게 오픈 레이즈하지 않는 핸드.
         { hero: 'Jc 7d' },
-        // ② A♦J♦(상위 2.6%) — 반대로 어느 자리에서도 임계 안이라 레이즈로 여는 손.
+        // ② A♦J♦(상위 2.6%) — 반대로 어느 자리에서도 임계 안이라 오픈 레이즈하는 핸드.
         { hero: 'Ad Jd' },
       ],
-      perHandPrompt: '이건 연습이에요… 손은 정해져 있어요. 첫 판은 J♣7♦, 둘째 판은 A♦J♦. 당신 자리 이름을 먼저 확인하고, 임계와 비교해 보세요.',
+      perHandPrompt: '이건 연습이에요… 핸드는 정해져 있어요. 첫 핸드는 J♣7♦, 둘째 핸드는 A♦J♦. 당신 포지션 이름을 먼저 확인하고, 임계와 비교해 보세요.',
     },
 
     // ───────────────────────────────────────────── 스파링 10핸드
@@ -226,13 +226,13 @@ export const CH02: Chapter = {
               {
                 kind: 'say',
                 speaker: 'sakura',
-                text: '다, 당신 차례예요. 손을 보기 전에 자리 이름부터 확인해요 — 그다음에 임계와 비교하는 순서예요.',
+                text: '다, 당신 차례예요. 홀카드를 보기 전에 포지션 이름부터 확인해요 — 그다음에 임계와 비교하는 순서예요.',
                 expression: 'thinking',
               },
               {
                 kind: 'say',
                 speaker: 'sakura',
-                text: '홀카드 테두리 색이 도와줄 거예요. 초록은 넉넉하고, 빨강이면… 저, 접어요.',
+                text: '홀카드 테두리 색이 도와줄 거예요. 초록은 넉넉하고, 빨강이면… 저, 폴드해요.',
                 expression: 'neutral',
               },
             ],
@@ -247,7 +247,7 @@ export const CH02: Chapter = {
               {
                 kind: 'say',
                 speaker: 'sakura',
-                text: '반이 지났어요. 계속 접고 있어도… 괘, 괜찮아요. 저도 한 바퀴에 한두 번밖에 안 들어가요.',
+                text: '반이 지났어요. 계속 폴드하고 있어도… 괘, 괜찮아요. 저도 한 바퀴에 한두 번밖에 안 들어가요.',
                 expression: 'happy',
               },
             ],
@@ -266,7 +266,7 @@ export const CH02: Chapter = {
           {
             kind: 'say',
             speaker: 'sakura',
-            text: '…끝났네요. 당신, 아까 다섯 판 연속으로 접었죠.',
+            text: '…끝났네요. 당신, 약한 핸드가 올 때마다 망설임 없이 폴드했죠.',
             expression: 'neutral',
             bg: 'dojo-garden-night',
             music: 'story',
@@ -274,7 +274,7 @@ export const CH02: Chapter = {
           {
             kind: 'say',
             speaker: 'sakura',
-            text: '지루했을 텐데 손이 한 번도 흔들리지 않았어요. 그게… 제일 어려운 부분이거든요.',
+            text: '지루했을 텐데 한 번도 흔들리지 않았어요. 그게… 제일 어려운 부분이거든요.',
             expression: 'happy',
           },
           {
@@ -302,12 +302,12 @@ export const CH02: Chapter = {
                 },
                 {
                   id: 'boring',
-                  text: '「접는 게 이렇게 힘든 줄 몰랐어요.」',
+                  text: '「폴드가 이렇게 힘든 줄 몰랐어요.」',
                   setFlags: { 'choice:act1-ch02:reply': 'boring' },
                   reply: [{
                     kind: 'say',
                     speaker: 'sakura',
-                    text: '그렇죠…? 저도 그래요. 그래서 접을 때마다 「지금 칩을 벌고 있다」고 생각하기로 했어요.',
+                    text: '그렇죠…? 저도 그래요. 그래서 폴드할 때마다 「지금 칩을 벌고 있다」고 생각하기로 했어요.',
                     expression: 'happy',
                   }],
                 },
@@ -328,7 +328,7 @@ export const CH02: Chapter = {
           {
             kind: 'say',
             speaker: 'sakura',
-            text: '다음은 하나 씨 수업이에요. 그분은… 숫자로 이야기해요. 저랑은 정반대지만, 당신에게는 둘 다 필요할 거예요.',
+            text: '다음엔 하나 씨 수업도 들어 보세요. 그분은… 숫자로 이야기해요. 저랑은 정반대지만, 당신에게는 둘 다 필요할 거예요.',
             expression: 'neutral',
           },
         ],

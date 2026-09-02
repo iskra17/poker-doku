@@ -24,7 +24,7 @@ const OPTIONS = [
   '콜 — 뜰 확률이 필요 승률보다 높아요',
   '콜 — 팟이 크니까요',
   '폴드 — 뜰 확률이 필요 승률보다 낮아요',
-  '폴드 — 드로우는 접는 거예요',
+  '폴드 — 드로우는 원래 폴드예요',
 ];
 
 const callDecision: GeneratedDrillDefinition = {
