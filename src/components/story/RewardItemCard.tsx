@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { CardBackPreview, FeltPreview } from '@/components/cosmetics/CardBackPreview';
+import TitlePlate from '@/components/cosmetics/TitlePlate';
+import { resolveTitle } from '@/lib/cosmetics/titles';
 import { REWARD_KIND_LABEL } from '@/lib/story/reward-view';
 import type { StoryRewardItemView, StoryRewardKind } from '@/lib/story/views';
 
@@ -55,6 +57,14 @@ function Front({ card }: { card: RewardCardItem }) {
       return <CardBackPreview id={item.id} className="h-full w-full p-2" />;
     case 'felt':
       return <FeltPreview id={item.id} className="h-full w-full p-2" />;
+    case 'title': {
+      const title = resolveTitle(item.id);
+      return (
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-b from-mystic/25 to-abyss/10 p-2">
+          {title ? <TitlePlate title={title} size="lg" /> : <span className="text-4xl" aria-hidden>🎗</span>}
+        </div>
+      );
+    }
     case 'throwable':
       return item.id.startsWith('throwable-') && !broken
         // eslint-disable-next-line @next/next/no-img-element -- 투척 스프라이트(webp) 소형 썸네일

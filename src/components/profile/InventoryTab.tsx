@@ -4,7 +4,15 @@ import { getCollectionItemDefinition } from '@/lib/collection/catalog';
 import type { ProgressionEquipmentSlot } from '@/lib/progression/types';
 import { getStoryRewardDefinition, type StoryRewardDefinition } from '@/lib/story/rewards/catalog';
 import { getCharacterById } from '@/lib/characters';
+import { resolveTitle } from '@/lib/cosmetics/titles';
+import TitlePlate from '@/components/cosmetics/TitlePlate';
 import { useProgressionStore } from '@/lib/store/progression-store';
+
+/** 칭호 아이템은 이름 앞에 플레이트를 같이 보여 준다(장착 전 미리보기) */
+function TitleInline({ id }: { id: string }) {
+  const title = resolveTitle(id);
+  return title ? <TitlePlate title={title} size="sm" className="mr-1 align-middle" /> : null;
+}
 
 const STORY_KIND_LABEL: Record<StoryRewardDefinition['kind'], string> = {
   title: '칭호',
@@ -39,7 +47,10 @@ export default function InventoryTab() {
           return (
             <article key={item.id} className="flex items-center justify-between gap-3 rounded-xl border border-mystic/20 bg-elevated/50 p-3">
               <div className="min-w-0">
-                <h3 className="truncate text-xs font-bold text-ink">{item.name}{owned.quantity > 1 ? ` ×${owned.quantity}` : ''}</h3>
+                <h3 className="truncate text-xs font-bold text-ink">
+                  {item.kind === 'title' && <TitleInline id={item.id} />}
+                  {item.name}{owned.quantity > 1 ? ` ×${owned.quantity}` : ''}
+                </h3>
                 <p className="text-[10px] text-ink-dim">{item.description}</p>
               </div>
               {slot && (
@@ -98,6 +109,7 @@ export default function InventoryTab() {
             <div className="min-w-0">
               <h3 className="truncate text-xs font-bold text-ink">
                 <span className="mr-1 rounded bg-gilded/15 px-1 py-0.5 text-[9px] text-gilded">수련 · {STORY_KIND_LABEL[story.kind]}</span>
+                {story.kind === 'title' && <TitleInline id={story.id} />}
                 {story.name}
               </h3>
               <p className="text-[10px] text-ink-dim">{story.description}</p>

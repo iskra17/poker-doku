@@ -229,7 +229,7 @@ export default function PlayerSeat({
             <EquippedCosmetics
               slot="title"
               itemId={player.publicCosmetics?.titleId ?? null}
-              className="block max-w-[88px] truncate text-[9px] font-bold text-gilded"
+              className="mt-0.5"
             />
             {/* 칩 — 터치/클릭으로 칩↔BB 표기 전환 (소수 첫째 자리 반올림) */}
             <button

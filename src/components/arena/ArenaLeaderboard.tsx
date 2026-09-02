@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import TitlePlate from '@/components/cosmetics/TitlePlate';
 import type { ArenaTier } from '@/lib/arena/types';
+import { resolveTitle } from '@/lib/cosmetics/titles';
 
 type BoardKind = 'group' | 'global';
 
@@ -98,14 +100,20 @@ export default function ArenaLeaderboard({ kind }: { kind: BoardKind }) {
             }`}
           >
             <span className="text-sm font-bold text-gilded">{row.place}위</span>
-            <span className="min-w-0 truncate text-sm text-ink">
-              {row.alias}
-              {row.isSelf && <span className="ml-1 text-xs text-blossom">내 순위</span>}
-              {kind === 'global' && row.tier && (
-                <span className="ml-1 text-[10px] text-mystic">
-                  {TIER_LABELS[row.tier]}
-                </span>
-              )}
+            <span className="min-w-0 text-sm text-ink">
+              <span className="block truncate">
+                {row.alias}
+                {row.isSelf && <span className="ml-1 text-xs text-blossom">내 순위</span>}
+                {kind === 'global' && row.tier && (
+                  <span className="ml-1 text-[10px] text-mystic">
+                    {TIER_LABELS[row.tier]}
+                  </span>
+                )}
+              </span>
+              {(() => {
+                const title = resolveTitle(row.cosmetics.titleId);
+                return title ? <TitlePlate title={title} size="xs" className="mt-0.5" /> : null;
+              })()}
             </span>
             <span className="text-right text-xs text-ink-dim">
               <strong className="text-ink">{row.score}점</strong>

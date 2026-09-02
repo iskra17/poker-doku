@@ -29,6 +29,10 @@
   --color-story-abyss: #07181b;   /* 수련 스토리 방 배경 */
   --color-story-felt-yellow-hi: #4a3d12; /* 노란띠 도장 펠트(수련 스토리 1막 완주 보상) */
   --color-story-felt-yellow-lo: #221a06;
+  --color-rarity-common: #a3a8bd; /* 칭호·코스메틱 등급 — 일반 */
+  --color-rarity-rare: #58b7ff;   /* 희귀 */
+  --color-rarity-epic: #c084fc;   /* 영웅 */
+  --color-rarity-legend: #ffb347; /* 전설 */
   --color-ink: #f4edff;        /* 본문 텍스트 */
   --color-ink-dim: #b9a8d9;    /* 보조 텍스트 */
   --color-suit-red: #ff4f6e;   /* 카드 수트 — ♥ (2컬러에선 ♦도) */
@@ -104,6 +108,12 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* Neon pulse animation */
+/* 전설 등급 칭호 플레이트 반짝임 — `motion-safe:`로만 적용 */
+@keyframes title-shimmer {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.28) saturate(1.1); }
+}
+
 @keyframes neon-pulse {
   0%, 100% {
     opacity: 1;
