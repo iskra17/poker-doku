@@ -5,7 +5,7 @@
  */
 import type { ActionType, Street } from '@/lib/poker/types';
 import type { DrillAnswer, DrillInstancePublic, DrillResult } from './drills/types';
-import type { ChapterGrade, ChapterId, ObjectiveKind, StepKind, StoryBelt, StoryHeroineId, StoryTeacherId } from './types';
+import type { ChapterGrade, ChapterId, ObjectiveKind, StepKind, StoryAct, StoryBelt, StoryHeroineId, StoryTeacherId } from './types';
 
 export type StoryRunPhase = 'scene' | 'lesson' | 'drill' | 'live-hold' | 'live-play' | 'result' | 'ended';
 /**
@@ -100,6 +100,75 @@ export interface StoryLiveView {
   pendingQuiz: HandReadQuizView | null;
 }
 
+// ---------------------------------------------------------------------------
+// 보상 (2026-09-03 보상 체계 — 정의·자격 판정은 `src/lib/story/rewards/catalog.ts` 단일 소스)
+
+export type StoryRewardKind = 'title' | 'card-back' | 'felt' | 'outfit' | 'cg' | 'throwable' | 'chips';
+
+export type StoryRewardTrigger =
+  | { kind: 'chapter-first-clear'; chapterId: ChapterId }
+  | { kind: 'chapter-grade'; chapterId: ChapterId; grade: 'S' }
+  | { kind: 'act-complete'; act: StoryAct }
+  | { kind: 'flag'; key: string; label: string };
+
+export interface StoryRewardItemView {
+  id: string;
+  kind: StoryRewardKind;
+  name: string;
+  description: string;
+  characterId?: StoryHeroineId;
+  /** CG·썸네일 경로 — 없으면 클라가 kind별 SVG 아이콘/의상 아트로 그린다 */
+  art?: string;
+  /** kind 'outfit'의 의상 id (character-art 매니페스트 키) */
+  outfitId?: string;
+  chipAmount?: number;
+}
+
+/** 허브·결산 「다음 보상」 미리보기 — 조건 문구 + 획득 여부 */
+export interface StoryRewardPreview extends StoryRewardItemView {
+  trigger: StoryRewardTrigger;
+  /** '기다림의 미학 S등급' 같은 조건 문구 */
+  requirement: string;
+  granted: boolean;
+}
+
+export interface StoryRewardCutsceneView {
+  /** 보상 아이템 id (CG) */
+  id: string;
+  kind: 'event-cg' | 'belt' | 'boss-win';
+  characterId: StoryHeroineId | 'miyako';
+  title: string;
+  caption: string;
+  art: string;
+}
+
+/** 이 결산의 인연 지급으로 새로 열린 인연 씬 (bond-scenes 매니페스트) */
+export interface StoryUnlockedSceneView {
+  id: string;
+  characterId: string;
+  level: number;
+  title: string;
+  caption: string;
+  art: string;
+}
+
+export interface ChapterResultRewards {
+  firstClear: boolean;
+  dojoXpMilli: number;
+  affinity: Array<{ characterId: StoryHeroineId; milli: number; levelBefore?: number; levelAfter?: number }>;
+  /** @deprecated 호환용 — items 중 첫 title id (서버 보상 라인 전엔 챕터 데이터의 badgeId) */
+  badgeId: string | null;
+  /** 이 결산에서 새로 지급된 아이템(칩 제외) — 서버 보상 라인(v31) 전엔 미정의 → 클라 폴백 */
+  items?: StoryRewardItemView[];
+  /** 이 결산 칩 합계 */
+  chips?: number;
+  /** 새 CG 중 우선 1개(보스 > 띠 > 에필로그) — 결산 풀스크린 컷신 */
+  cutscene?: StoryRewardCutsceneView | null;
+  unlockedScenes?: StoryUnlockedSceneView[];
+  /** 이 챕터·현재 막의 미획득 보상 미리보기 ("다음 S에 하나 의상") */
+  next?: StoryRewardPreview[];
+}
+
 export interface ChapterResultView {
   chapterId: ChapterId;
   mode: StoryRunMode;
@@ -115,12 +184,7 @@ export interface ChapterResultView {
     retrySkipped: boolean;
   };
   live: { objectives: ObjectiveProgressView[]; handsPlayed: number; netBB: number } | null;
-  rewards: {
-    firstClear: boolean;
-    dojoXpMilli: number;
-    affinity: Array<{ characterId: StoryHeroineId; milli: number }>;
-    badgeId: string | null;
-  };
+  rewards: ChapterResultRewards;
   reviewNotesAdded: number;
   nextChapterId: ChapterId | null;
   /** 이 완주로 띠가 올랐으면 새 띠 — 결산이 승급 연출을 맡는다(에필로그는 순서를 가정하지 않는다) */
@@ -171,6 +235,8 @@ export interface StoryProgressView {
   reviewQueue: number;
   daily: StoryDailyView;
   activeRun: { runId: string; chapterId: ChapterId; stepIndex: number; mode: StoryRunMode } | null;
+  /** 스토리 보상 카탈로그 전체의 획득 여부 (허브 카드 칩·갤러리) — 서버 보상 라인 전엔 미정의 */
+  rewards?: StoryRewardPreview[];
 }
 
 // ---------------------------------------------------------------------------
