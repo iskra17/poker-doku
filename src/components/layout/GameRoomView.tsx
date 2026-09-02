@@ -34,6 +34,7 @@ import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatch
 import StoryOverlay from '@/components/story/StoryOverlay';
 import StoryLeaveConfirm from '@/components/story/live/StoryLeaveConfirm';
 import { useStoryLive } from '@/components/story/live/use-story-live';
+import { getChapter } from '@/lib/story/chapters';
 import { useStoryStore } from '@/lib/store/story-store';
 import TopBar from './TopBar';
 
@@ -56,7 +57,8 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const reducedMotion = usePrefersReducedMotion();
   const [leaveOpen, setLeaveOpen] = useState(false);
   // 수련 스토리 라이브 스텝 — 자리비움/나가기 예약을 서버가 거절하므로 이탈은 '포기'(abandon) 한 갈래다
-  const { active: inStoryRoom } = useStoryLive();
+  const { active: inStoryRoom, run: storyRun, live: storyLive } = useStoryLive();
+  const storyChapterTitle = storyRun ? (getChapter(storyRun.chapterId)?.title ?? '') : '';
   const storyPending = useStoryStore(state => state.pending);
   const [storyLeaveOpen, setStoryLeaveOpen] = useState(false);
   const tournamentFinished = gameState?.tournament?.finished ?? false;
@@ -107,7 +109,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
 
   return (
     <div
-      className={`h-dvh flex flex-col overflow-hidden ${isFinalTable ? 'bg-[var(--final-stage)]' : 'bg-abyss'}`}
+      className={`h-dvh flex flex-col overflow-hidden ${isFinalTable ? 'bg-[var(--final-stage)]' : inStoryRoom ? 'bg-story-abyss' : 'bg-abyss'}`}
       style={isFinalTable ? finalTableThemeStyle(finalTheme) : undefined}
     >
       <TopBar onLeave={handleLeaveClick} />
@@ -120,6 +122,12 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
         reasons={tournament?.holdReasons}
         stageEndsAt={tournament?.stageEndsAt}
       />
+      {/* 수련 테이블 리본 — 실전 캐시 테이블과 헷갈리지 않게 상시 노출 (2026-09-03 피드백 ③) */}
+      {inStoryRoom && (
+        <div className="flex-none border-b border-cyber/40 bg-cyber/10 px-3 py-1 text-center text-[11px] font-bold text-cyber">
+          🥋 수련 테이블 · {storyChapterTitle} · {storyLive?.tag === '연습' ? '정해진 상황 연습' : '스파링'} · 연습 칩(지갑 무관) · ← 는 수련 그만두기
+        </div>
+      )}
       {/* 착석 대기 배너 — 봇이 자리를 비워줄 때까지 관전 (나가기 ←로 대기 취소) */}
       {waitingForSeat && (
         <div className="flex-none border-b border-cyber/30 bg-elevated/95 px-3 py-1.5 text-center text-xs text-cyber">
@@ -175,7 +183,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
               {isFinalTable && (
                 <FinalTableAtmosphere theme={finalTheme} reducedMotion={reducedMotion} />
               )}
-              <PokerTable finalTable={isFinalTable} />
+              <PokerTable finalTable={isFinalTable} storyTheme={inStoryRoom} />
               <ItmCelebration
                 milestone={tournament?.milestone}
                 reducedMotion={reducedMotion}

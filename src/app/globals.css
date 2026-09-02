@@ -24,6 +24,9 @@
   --color-gilded: #ffd76a;     /* 골드 — 칩/팟/승리 */
   --color-felt-hi: #24204a;    /* 펠트 그라디언트 밝은 쪽 */
   --color-felt-lo: #141031;    /* 펠트 그라디언트 어두운 쪽 */
+  --color-story-felt-hi: #1d3f3c; /* 수련 스토리 테이블 펠트 — 실전 캐시 테이블과 한눈에 구분되는 청록 */
+  --color-story-felt-lo: #0f2628;
+  --color-story-abyss: #07181b;   /* 수련 스토리 방 배경 */
   --color-ink: #f4edff;        /* 본문 텍스트 */
   --color-ink-dim: #b9a8d9;    /* 보조 텍스트 */
   --color-suit-red: #ff4f6e;   /* 카드 수트 — ♥ (2컬러에선 ♦도) */

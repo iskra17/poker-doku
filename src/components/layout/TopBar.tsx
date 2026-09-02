@@ -18,6 +18,9 @@ import HandHistoryModal from '../history/HandHistoryModal';
 import TournamentDetailModal from '../lobby/TournamentDetailModal';
 import TournamentStatusBanner from '../table/TournamentStatusBanner';
 import TopUpModal from '../table/TopUpModal';
+import { useStoryLive } from '../story/live/use-story-live';
+import { getChapter, STORY_CHAPTERS } from '@/lib/story/chapters';
+import { chapterNumber } from '@/lib/story/story-hub-rules';
 
 const STREET_LABELS: Record<string, string> = {
   preflop: '프리플랍',
@@ -48,6 +51,9 @@ export default function TopBar({ onLeave }: TopBarProps) {
   // MTT 게임 중 토너 상세(내 순위/순위표/구조) — 배지 탭으로 진입 (2026-07-24 모바일 QA)
   const [tournamentOpen, setTournamentOpen] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  // 수련 스토리 방 — 블라인드 대신 수련 배지, 초대·탑업 진입점 숨김(서버도 거절) (2026-09-03 피드백 ③)
+  const { active: inStoryRoom, run: storyRun, live: storyLive } = useStoryLive();
+  const storyChapter = storyRun ? getChapter(storyRun.chapterId) : undefined;
   const mttTournamentId = gameState?.tournament?.tournamentId;
   const tournaments = useGameStore(state => state.tournaments);
   const serverClockOffsetMs = useGameStore(state => state.serverClockOffsetMs);
@@ -58,6 +64,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const topUpSeat = gameState?.players.find(player => player.id === myPlayerId);
   const canTopUp = !!gameState
     && !gameState.tournament
+    && !inStoryRoom
     && !!topUpSeat
     && topUpSeat.chips > 0
     && topUpSeat.chips < gameState.bigBlind * 200;
@@ -140,9 +147,18 @@ export default function TopBar({ onLeave }: TopBarProps) {
           </div>
         ) : (
           gameState && (
-            <span className="text-ink-dim text-xs hidden md:inline">
-              블라인드 <span className="text-gilded">{gameState.smallBlind}/{gameState.bigBlind}</span>
-            </span>
+            inStoryRoom ? (
+              <span
+                className="order-3 flex min-w-0 basis-full items-center justify-center gap-1 truncate rounded-md border border-cyber/40 bg-cyber/10 px-2 py-0.5 text-[10px] font-bold text-cyber md:order-none md:basis-auto"
+                title="수련 스토리 테이블 — 연습 칩(지갑 무관)"
+              >
+                🥋 수련 · CH{storyRun ? chapterNumber(STORY_CHAPTERS, storyRun.chapterId) ?? '' : ''} {storyChapter?.title ?? ''} · {storyLive?.tag ?? '대결'}
+              </span>
+            ) : (
+              <span className="text-ink-dim text-xs hidden md:inline">
+                블라인드 <span className="text-gilded">{gameState.smallBlind}/{gameState.bigBlind}</span>
+              </span>
+            )
           )
         )}
         {gameState && (
@@ -161,7 +177,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           </button>
         )}
         {/* 코드를 눈에 보이게 둔다 — 음성으로 불러주려면 호스트가 읽을 수 있어야 한다 */}
-        {inviteCode && (
+        {inviteCode && !inStoryRoom && (
           <span
             className="hidden shrink-0 font-mono text-[10px] tracking-wider text-ink-dim md:inline"
             title="초대 코드"
@@ -169,16 +185,18 @@ export default function TopBar({ onLeave }: TopBarProps) {
             {formatInviteCode(inviteCode)}
           </span>
         )}
-        <button
-          onClick={copy}
-          aria-label="초대 링크 복사"
-          title={inviteCode
-            ? `초대 링크 + 코드 ${formatInviteCode(inviteCode)} 복사`
-            : '초대 링크 복사'}
-          className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
-        >
-          {copied ? <span className="text-green-400 text-xs font-bold">✓</span> : <LinkIcon />}
-        </button>
+        {!inStoryRoom && (
+          <button
+            onClick={copy}
+            aria-label="초대 링크 복사"
+            title={inviteCode
+              ? `초대 링크 + 코드 ${formatInviteCode(inviteCode)} 복사`
+              : '초대 링크 복사'}
+            className="flex h-7 w-7 shrink-0 items-center justify-center p-1 text-ink-dim hover:text-ink transition-colors"
+          >
+            {copied ? <span className="text-green-400 text-xs font-bold">✓</span> : <LinkIcon />}
+          </button>
+        )}
         <button
           onClick={toggleAllMuted}
           aria-label={allMuted ? '사운드 켜기' : '사운드 끄기'}

@@ -17,7 +17,7 @@ import SeatSpeechBubbles from '../characters/SeatSpeechBubble';
 import DealerCorner from '../characters/DealerCorner';
 import { getLayout, toDisplayIndex } from './table-layout';
 
-export default function PokerTable({ finalTable = false }: { finalTable?: boolean }) {
+export default function PokerTable({ finalTable = false, storyTheme = false }: { finalTable?: boolean; storyTheme?: boolean }) {
   const { gameState, myPlayerId } = useGameStore();
   const showBlindButtons = useSettingsStore(s => s.showBlindButtons);
   const isMobile = useIsMobile();
@@ -69,6 +69,44 @@ export default function PokerTable({ finalTable = false }: { finalTable?: boolea
     },
   ];
 
+  // 수련 스토리 방은 펠트·레일을 시안 계열 「도장 테이블」로 바꿔 실전 캐시 테이블과 한눈에 구분한다
+  // (2026-09-03 피드백 ③ — 연습 게임과 실전이 헷갈린다). 파이널 테이블 테마가 우선한다.
+  const story = storyTheme && !finalTable;
+  const outerGlow = finalTable
+    ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
+    : story
+      ? 'radial-gradient(ellipse, transparent 60%, color-mix(in srgb, var(--color-cyber) 30%, transparent) 100%)'
+      : 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)';
+  const railBackground = finalTable
+    ? `linear-gradient(180deg,
+        color-mix(in srgb, var(--final-highlight) 20%, var(--final-rail-top)) 0%,
+        var(--final-rail-top) 27%,
+        var(--final-rail-bottom) 100%)`
+    : story
+      ? `linear-gradient(180deg,
+        color-mix(in srgb, var(--color-cyber) 22%, var(--color-elevated)) 0%,
+        color-mix(in srgb, var(--color-story-felt-lo) 40%, var(--color-elevated)) 30%,
+        color-mix(in srgb, black 30%, var(--color-story-felt-lo)) 100%)`
+      : `linear-gradient(180deg,
+        color-mix(in srgb, var(--color-mystic) 26%, var(--color-elevated)) 0%,
+        var(--color-elevated) 30%,
+        color-mix(in srgb, black 28%, var(--color-elevated)) 100%)`;
+  const railShadow = finalTable
+    ? 'inset 0 2px 5px color-mix(in srgb, var(--final-highlight) 42%, transparent), inset 0 -7px 14px rgba(0,0,0,0.58), 0 0 42px color-mix(in srgb, var(--final-accent) 26%, transparent)'
+    : story
+      ? 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px color-mix(in srgb, var(--color-cyber) 20%, transparent)'
+      : 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)';
+  const feltBackground = finalTable
+    ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
+    : story
+      ? 'radial-gradient(ellipse at 50% 68%, var(--color-story-felt-hi) 0%, var(--color-story-felt-lo) 58%, var(--color-story-abyss) 100%)'
+      : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)';
+  const feltShadow = finalTable
+    ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
+    : story
+      ? 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px color-mix(in srgb, var(--color-cyber) 10%, transparent)'
+      : 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)';
+
   return (
     <div className="relative z-10 w-full h-full">
       {/* 세로 좌표 컨테이너 — 모든 % 좌표의 기준. 데스크탑에서도 중앙 세로 컬럼 하나 */}
@@ -81,9 +119,7 @@ export default function PokerTable({ finalTable = false }: { finalTable?: boolea
           className="absolute rounded-[9999px] opacity-30"
           style={{
             left: '4%', right: '4%', top: '11%', bottom: '5%',
-            background: finalTable
-              ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
-              : 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)',
+            background: outerGlow,
           }}
         />
 
@@ -103,21 +139,11 @@ export default function PokerTable({ finalTable = false }: { finalTable?: boolea
 
         {/* 레일(쿠션) — 실제 홀덤 테이블의 패딩 레일. 상단에 하이라이트, 골드 트림 */}
         <div
-          className="absolute rounded-[9999px] border-2 border-gilded/30"
+          className={`absolute rounded-[9999px] border-2 ${story ? 'border-cyber/40' : 'border-gilded/30'}`}
           style={{
             left: '4%', right: '4%', top: '11%', bottom: '5%',
-            background: finalTable
-              ? `linear-gradient(180deg,
-                  color-mix(in srgb, var(--final-highlight) 20%, var(--final-rail-top)) 0%,
-                  var(--final-rail-top) 27%,
-                  var(--final-rail-bottom) 100%)`
-              : `linear-gradient(180deg,
-                  color-mix(in srgb, var(--color-mystic) 26%, var(--color-elevated)) 0%,
-                  var(--color-elevated) 30%,
-                  color-mix(in srgb, black 28%, var(--color-elevated)) 100%)`,
-            boxShadow: finalTable
-              ? 'inset 0 2px 5px color-mix(in srgb, var(--final-highlight) 42%, transparent), inset 0 -7px 14px rgba(0,0,0,0.58), 0 0 42px color-mix(in srgb, var(--final-accent) 26%, transparent)'
-              : 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)',
+            background: railBackground,
+            boxShadow: railShadow,
           }}
         />
 
@@ -127,16 +153,18 @@ export default function PokerTable({ finalTable = false }: { finalTable?: boolea
           style={{
             left: 'calc(4% + 12px)', right: 'calc(4% + 12px)',
             top: 'calc(11% + 12px)', bottom: 'calc(5% + 12px)',
-            background: finalTable
-              ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
-              : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)',
-            boxShadow: finalTable
-              ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
-              : 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)',
+            background: feltBackground,
+            boxShadow: feltShadow,
           }}
         >
           {/* 베팅 라인 */}
-          <div className="absolute inset-5 md:inset-7 rounded-[9999px] border border-gilded/15" />
+          <div className={`absolute inset-5 md:inset-7 rounded-[9999px] border ${story ? 'border-cyber/20' : 'border-gilded/15'}`} />
+          {/* 수련 테이블 워터마크 — 보드 위쪽 펠트에 옅게 (실전 방엔 없음) */}
+          {story && (
+            <div className="pointer-events-none absolute inset-x-0 top-[17%] flex justify-center" aria-hidden>
+              <span className="select-none text-[11px] font-black tracking-[0.45em] text-cyber/25">수련 테이블</span>
+            </div>
+          )}
         </div>
 
         {/* 딜러 미야코 코너 (아바타 + 진행 말풍선) */}
