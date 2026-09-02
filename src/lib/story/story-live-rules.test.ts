@@ -24,6 +24,7 @@ function liveFixture(overrides: Partial<StoryLiveView> = {}): StoryLiveView {
     objectives: [],
     handsPlayed: 0,
     maxHands: 10,
+    minHands: null,
     lastReview: null,
     botThoughts: [],
     pendingQuiz: null,

@@ -153,6 +153,9 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
         if (step.tag !== '대결') errors.push(`${stepAt}: sparring must carry the '대결' tag`);
         validateTable(step, stepAt, errors);
         if (!Number.isInteger(step.maxHands) || step.maxHands < 1) errors.push(`${stepAt}: maxHands must be >= 1`);
+        if (step.minHands !== undefined && (!Number.isInteger(step.minHands) || step.minHands < 1 || step.minHands > step.maxHands)) {
+          errors.push(`${stepAt}: minHands must be an integer within 1..maxHands`);
+        }
         for (const objective of [...step.objectives.primary, ...step.objectives.bonus]) {
           if (!OBJECTIVE_KIND_SET.has(objective.kind)) errors.push(`${stepAt}: unknown objective kind ${String(objective.kind)}`);
           if (objective.minRatio !== undefined && !(objective.minRatio > 0 && objective.minRatio <= 1)) {

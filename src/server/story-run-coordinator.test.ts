@@ -476,6 +476,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
           objectives: [],
           handsPlayed: 0,
           maxHands: 3,
+          minHands: null,
           lastReview: null,
           botThoughts: [],
           pendingQuiz: null,

@@ -7,6 +7,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import {
   firstMyTurnInterrupt,
+  liveFinishHint,
   objectiveHudLines,
   pendingInterrupt,
   practicePrompt,
@@ -106,6 +107,8 @@ export default function StoryOverlay() {
               tag={live?.tag ?? '대결'}
               handsPlayed={live?.handsPlayed ?? 0}
               maxHands={live?.maxHands ?? 0}
+              minHands={live?.minHands ?? null}
+              finishHint={liveFinishHint(live)}
               lines={hudLines}
               expanded={hudExpanded}
               onToggle={() => setHudUserExpanded(!hudExpanded)}

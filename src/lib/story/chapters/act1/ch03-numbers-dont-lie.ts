@@ -181,7 +181,7 @@ export const CH03: Chapter = {
       perHandPrompt: '연습이에요 — 핸드와 보드는 고정되어 있어요. 벳이 오면 아우츠부터 세고, 필요 승률과 비교하세요. 결과는 채점하지 않아요.',
     },
 
-    // ───────────────────────────────────────────── 보스전 12핸드
+    // ───────────────────────────────────────────── 보스전 (미션형 · 최대 15핸드)
     {
       kind: 'sparring',
       id: 'act1-ch03:sparring',
@@ -199,12 +199,15 @@ export const CH03: Chapter = {
         botThinkScale: 0.6,
         hints: 3,
       },
-      maxHands: 12,
+      maxHands: 15,
+      // 미션형: 값에 맞는 콜/폴드 2회를 채우고 ⚠가 1회 이하면 6핸드부터 끝난다(2026-09-03 피드백 ③).
+      minHands: 6,
       objectives: {
         // 통과는 「내 결정」만 본다 — 칩 결과는 bonus(등급·뱃지)로만(A5-2 통과 규약).
+        // 같은 kind 두 개: target은 실행 횟수, maxCount는 위반(⚠) 상한 — objectives.ratioView 규약.
         primary: [
+          { id: 'act1-ch03:priced', kind: 'correct-pot-odds-call', label: '값에 맞는 콜/폴드 2번', target: 2 },
           { id: 'act1-ch03:odds', kind: 'correct-pot-odds-call', label: '오즈 위반 ⚠ 1회 이하', maxCount: 1 },
-          { id: 'act1-ch03:played', kind: 'hands-played', label: '12핸드 완주하기', target: 12 },
         ],
         bonus: [
           { id: 'act1-ch03:chips', kind: 'net-chips', label: '드라코보다 많은 칩으로 끝내기', params: { minBB: 0 } },

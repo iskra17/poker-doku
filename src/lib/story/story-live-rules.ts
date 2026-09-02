@@ -100,6 +100,16 @@ export function objectiveHudLines(view: StoryLiveView | null): ObjectiveHudLine[
   ];
 }
 
+/**
+ * HUD 진행 안내 — 미션형(minHands, 목표를 채우면 조기 종료)인지 핸드 수 상한형인지.
+ * '연습' 프리셋은 스크립트 수가 곧 핸드 수라 안내가 없다.
+ */
+export function liveFinishHint(view: StoryLiveView | null): string | null {
+  if (!view || view.tag !== '대결') return null;
+  if (view.minHands !== null) return `목표를 다 채우면 끝나요 (최대 ${view.maxHands}핸드)`;
+  return `${view.maxHands}핸드까지 진행해요`;
+}
+
 /** 결정 리뷰 판정 아이콘 (기획 A7 ③) */
 export function reviewMarkGlyph(mark: DecisionMark): '👍' | '🤔' | '⚠' {
   switch (mark) {

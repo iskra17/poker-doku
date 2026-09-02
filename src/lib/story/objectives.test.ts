@@ -17,6 +17,7 @@ import {
   evaluateObjectives,
   isTopPairOrBetter,
   liveScore,
+  primaryObjectivesAllAchieved,
   primaryObjectivesMet,
   type ObjectiveTally,
 } from './objectives';
@@ -188,6 +189,51 @@ function goodCallButLostHand(handNumber = 3): CompletedHandRecord {
   });
 }
 
+/**
+ * 언오픈 팟(테이블 벳 = BB)에서 BTN(makeRecord 좌석 0)의 AKo — 오픈 레이즈 기회.
+ * mode 'raise'는 실행, 'limp'는 기회를 놓친 림프, 'faced'는 앞에 레이즈가 있어 기회 자체가 아니다.
+ */
+function openRaiseHand(handNumber: number, mode: 'raise' | 'limp' | 'faced'): CompletedHandRecord {
+  if (mode === 'faced') {
+    return makeRecord({
+      handNumber,
+      seats: [{ id: 'hero', hole: 'Ad Kc' }, { id: 'villain', hole: '9s 9c' }],
+      actions: [
+        ['preflop', 'villain', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'villain', 'raise', 150],
+        ['preflop', 'hero', 'fold', 0],
+        ['preflop', 'villain', 'uncalled-return', 100],
+      ],
+      winners: [{ playerId: 'villain', amount: 100 }],
+    });
+  }
+  const open: ActionTuple[] = mode === 'raise'
+    ? [
+        ['preflop', 'hero', 'raise', 150],
+        ['preflop', 'villain', 'fold', 0],
+        ['preflop', 'hero', 'uncalled-return', 100],
+      ]
+    : [
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'check', 0],
+        ['flop', 'hero', 'check', 0],
+      ];
+  return makeRecord({
+    handNumber,
+    seats: [{ id: 'hero', hole: 'Ad Kc' }, { id: 'villain', hole: '9s 9c' }],
+    board: mode === 'raise' ? undefined : 'Qh 7h 2s',
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ...open,
+    ],
+    winners: [{ playerId: mode === 'raise' ? 'hero' : 'villain', amount: 100 }],
+    showdown: mode === 'limp',
+  });
+}
+
 /** 히어로가 프리플랍 어그레서로 플랍 c벳까지 하고 이긴다. */
 function cbetHand(handNumber = 4, flopKind: HandHistoryActionKind = 'raise'): CompletedHandRecord {
   const flop: ActionTuple[] = flopKind === 'raise'
@@ -273,6 +319,46 @@ describe('deriveHeroHandFacts', () => {
     expect(call.outs).toBe(0); // AKQ 보드에서 7·2를 페어시켜도 톱페어가 아니다
     expect(call.mark).toBe('warn');
     expect(call.correct).toBe(false);
+  });
+
+  it('쇼다운 도달·폴드 사실을 읽는다 (Ch1 미션형 목표의 집계 단위)', () => {
+    const folded = deriveHeroHandFacts(junkFoldHand(), 'hero');
+    expect(folded.folded).toBe(true);
+    expect(folded.sawShowdown).toBe(false);
+
+    const showdown = deriveHeroHandFacts(goodCallButLostHand(), 'hero');
+    expect(showdown.folded).toBe(false);
+    expect(showdown.sawShowdown).toBe(true);
+
+    // 플랍에서 폴드한 핸드는 쇼다운 플래그가 있어도 "쇼다운까지 간" 핸드가 아니다
+    const foldedOnFlop = makeRecord({
+      seats: [{ id: 'hero', hole: 'Ah Kh' }, { id: 'villain', hole: '9s 9c' }, { id: 'third', hole: 'Qd Qc' }],
+      board: 'Qh 7h 2s 3d 4c',
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'third', 'call', 50],
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'raise', 100],
+        ['flop', 'third', 'call', 100],
+        ['flop', 'hero', 'fold', 0],
+      ],
+      winners: [{ playerId: 'third', amount: 350 }],
+      showdown: true,
+    });
+    const facts = deriveHeroHandFacts(foldedOnFlop, 'hero');
+    expect(facts.folded).toBe(true);
+    expect(facts.sawShowdown).toBe(false);
+  });
+
+  it('오픈 레이즈 기회 — 언오픈 팟 + 포지션 임계 안 핸드일 때만, 림프는 놓친 기회', () => {
+    expect(deriveHeroHandFacts(openRaiseHand(1, 'raise'), 'hero')).toMatchObject({ openRaiseOpportunity: true, openRaise: true });
+    expect(deriveHeroHandFacts(openRaiseHand(2, 'limp'), 'hero')).toMatchObject({ openRaiseOpportunity: true, openRaise: false });
+    // 앞에 레이즈가 있으면 기회가 아니다
+    expect(deriveHeroHandFacts(openRaiseHand(3, 'faced'), 'hero')).toMatchObject({ openRaiseOpportunity: false, openRaise: false });
+    // 임계 밖(72o)은 언오픈 팟이어도 기회가 아니다
+    expect(deriveHeroHandFacts(junkCallHand(4), 'hero')).toMatchObject({ openRaiseOpportunity: false, openRaise: false });
   });
 
   it('c벳 기회와 실행을 구분한다', () => {
@@ -435,6 +521,31 @@ describe('objectives', () => {
     ).toBe(false);
   });
 
+  it('reach-showdown · fold-hands — 미션형 횟수 목표', () => {
+    const tally = tallyOf({ record: junkFoldHand(1) }, { record: goodCallButLostHand(2) }, { record: junkFoldHand(3) });
+    expect(evaluateObjective(objective('reach-showdown', { target: 1 }), tally, true)).toMatchObject({ progress: 1, target: 1, achieved: true });
+    expect(evaluateObjective(objective('fold-hands', { target: 2 }), tally, true)).toMatchObject({ progress: 2, target: 2, achieved: true });
+    expect(evaluateObjective(objective('fold-hands', { target: 3 }), tally, true).achieved).toBe(false);
+  });
+
+  it('open-raise — 기회 중 실행, target은 실행 횟수이고 기회 0이면 판정 불가', () => {
+    const tally = tallyOf({ record: openRaiseHand(1, 'raise') }, { record: openRaiseHand(2, 'limp') }, { record: openRaiseHand(3, 'faced') });
+    expect(evaluateObjective(objective('open-raise', { minRatio: 0.5 }), tally, true)).toMatchObject({ progress: 0.5, achieved: true });
+    expect(evaluateObjective(objective('open-raise', { target: 1 }), tally, true)).toMatchObject({ progress: 1, target: 1, achieved: true });
+    expect(evaluateObjective(objective('open-raise', { target: 2 }), tally, true).achieved).toBe(false);
+    // 기회가 한 번도 없었으면 실패가 아니라 판정 불가 — maxHands 상한에서 제외된다
+    const noChance = tallyOf({ record: junkFoldHand(1) }, { record: openRaiseHand(2, 'faced') });
+    expect(evaluateObjective(objective('open-raise', { target: 1 }), noChance, true)).toMatchObject({ progress: 0, target: 1, achieved: null });
+  });
+
+  it('비율형 kind의 maxCount는 위반(기회 − 실행) 상한이다 — Ch3 「오즈 위반 ⚠ 1회 이하」', () => {
+    const tally = tallyOf({ record: goodCallButLostHand(1) }, { record: junkCallHand(2) });
+    expect(evaluateObjective(objective('correct-pot-odds-call', { maxCount: 1 }), tally, true)).toMatchObject({ progress: 1, target: 1, achieved: true });
+    expect(evaluateObjective(objective('correct-pot-odds-call', { maxCount: 0 }), tally, true)).toMatchObject({ progress: 1, target: 0, achieved: false });
+    // 기회 0이면 위반 0 — 상한형은 항상 판정 가능
+    expect(evaluateObjective(objective('correct-pot-odds-call', { maxCount: 1 }), emptyTally(), true)).toMatchObject({ progress: 0, achieved: true });
+  });
+
   it('survive — 파산이 하나라도 있으면 실패, 핸드가 없으면 판정 불가', () => {
     const alive = tallyOf({ record: goodCallButLostHand(1) });
     expect(evaluateObjective(objective('survive'), alive, true)).toMatchObject({ progress: 1, achieved: true });
@@ -496,6 +607,14 @@ describe('primaryObjectivesMet · liveScore', () => {
     expect(primaryObjectivesMet([view({ achieved: null }), view({ achieved: null })])).toBeNull();
     expect(primaryObjectivesMet([view({ primary: false, achieved: false })])).toBeNull();
     expect(primaryObjectivesMet([])).toBeNull();
+  });
+
+  it('primaryObjectivesAllAchieved — 조기 종료는 primary 전부 달성일 때만, 판정 불가는 막는다', () => {
+    expect(primaryObjectivesAllAchieved([view({ achieved: true }), view({ id: 'y', achieved: true })])).toBe(true);
+    expect(primaryObjectivesAllAchieved([view({ achieved: true }), view({ id: 'y', achieved: null })])).toBe(false);
+    expect(primaryObjectivesAllAchieved([view({ achieved: true }), view({ id: 'y', achieved: false })])).toBe(false);
+    // bonus만 있으면(primary 없음) 끝내지 않는다
+    expect(primaryObjectivesAllAchieved([view({ primary: false, achieved: true })])).toBe(false);
   });
 
   it('liveScore는 primary 0.7 / bonus 0.3, 빈 버킷은 재정규화한다', () => {

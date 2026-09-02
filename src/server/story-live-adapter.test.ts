@@ -339,6 +339,45 @@ describe('LiveTableAdapter', () => {
     expect(adapter.hasSession(PROFILE)).toBe(false);
   });
 
+  it('sparring: 미션형(minHands) — primary 목표를 전부 채우면 maxHands 전에 조기 종료한다', async () => {
+    const step = sparringStep(10);
+    step.minHands = 1;
+    step.objectives = {
+      primary: [{ id: 'fold', kind: 'fold-hands', label: '폴드해 보기', target: 1 }],
+      bonus: [{ id: 'survive', kind: 'survive', label: '생존' }],
+    };
+    step.interrupts = [];
+    const roomId = enter(step);
+    expect(adapter.view(PROFILE)!.minHands).toBe(1);
+    expect(adapter.view(PROFILE)!.maxHands).toBe(10);
+
+    const finished = await pumpUntil(() => onStepFinished.mock.calls.length > 0, { roomId: () => roomId });
+    expect(finished).toBe(true);
+    const summary = onStepFinished.mock.calls[0][2];
+    expect(summary.outcome).toBe('done');
+    expect(summary.handsPlayed).toBeLessThan(10);
+    expect(summary.objectives.find(o => o.id === 'fold')).toMatchObject({ achieved: true, primary: true });
+    expect(summary.primaryObjectivesMet).toBe(true);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+  });
+
+  it('sparring: 미션형이라도 판정 불가(기회 없음) primary가 남아 있으면 조기 종료하지 않고 maxHands에서 끝난다', async () => {
+    const step = sparringStep(2);
+    step.minHands = 1;
+    // quiz-accuracy는 라이브 퀴즈 집계가 없으면 항상 판정 불가(null) — "기회가 안 온 목표"의 대역
+    step.objectives = { primary: [{ id: 'quiz', kind: 'quiz-accuracy', label: '리딩 퀴즈', minRatio: 0.5 }], bonus: [] };
+    step.interrupts = [];
+    const roomId = enter(step);
+
+    const finished = await pumpUntil(() => onStepFinished.mock.calls.length > 0, { roomId: () => roomId });
+    expect(finished).toBe(true);
+    const summary = onStepFinished.mock.calls[0][2];
+    expect(summary.handsPlayed).toBe(2);
+    expect(summary.objectives.find(o => o.id === 'quiz')).toMatchObject({ achieved: null });
+    // 기회 0 목표는 판정에서 빠지므로 통과를 막지 않는다(A13)
+    expect(summary.primaryObjectivesMet).toBeNull();
+  });
+
   it('sparring: first-showdown 인터럽트는 히어로가 딜인된 첫 경합 쇼다운 뒤 hold(scene)로 잡힌다', async () => {
     const step = sparringStep(10);
     step.interrupts = [

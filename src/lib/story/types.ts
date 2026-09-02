@@ -150,6 +150,10 @@ export const OBJECTIVE_KINDS = [
   'value-bet-river',
   'survive',
   'quiz-accuracy',
+  // 2026-09-03 미션형 목표 — "N핸드 채우기" 대신 행동 한 번을 채우면 끝나는 종류
+  'reach-showdown',
+  'fold-hands',
+  'open-raise',
 ] as const;
 export type ObjectiveKind = typeof OBJECTIVE_KINDS[number];
 
@@ -161,9 +165,9 @@ export interface Objective {
   id: string;
   kind: ObjectiveKind;
   label: string;
-  /** 횟수 목표 (≥ target) */
+  /** 횟수 목표 (≥ target). 비율형 kind에선 실행 횟수 — 기회가 0이면 판정 불가(null)로 빠진다 */
   target?: number;
-  /** 허용 상한 (≤ maxCount) — ⚠ 횟수 등 */
+  /** 허용 상한 (≤ maxCount) — 상한형 kind는 횟수, 비율형 kind에선 위반(기회 − 실행) 횟수 */
   maxCount?: number;
   /** 기회 중 실행 비율 (0~1) */
   minRatio?: number;
@@ -212,6 +216,11 @@ export type Step =
       tag: '대결';
       table: LiveTableSpec;
       maxHands: number;
+      /**
+       * 미션형 조기 종료 — primary 목표가 **전부** 달성(판정 불가 없음)되면 이 핸드 수부터 스텝을 끝낸다.
+       * 없으면 maxHands까지 돈다. 기본은 "목표를 채우면 끝"이지 "N핸드 채우기"가 아니다(2026-09-03 피드백 ③).
+       */
+      minHands?: number;
       objectives: { primary: Objective[]; bonus: Objective[] };
       interrupts: Interrupt[];
     }

@@ -191,7 +191,7 @@ export const CH01: Chapter = {
       perHandPrompt: '이건 연습이에요 — 정해진 상황에서 배운 걸 써 보세요♪ 첫 핸드는 끝까지 갈 핸드, 둘째 핸드는 폴드할 핸드랍니다.',
     },
 
-    // ───────────────────────────────────────────── 스파링 10핸드
+    // ───────────────────────────────────────────── 스파링 (미션형 · 최대 12핸드)
     {
       kind: 'sparring',
       id: 'act1-ch01:sparring',
@@ -210,10 +210,15 @@ export const CH01: Chapter = {
         botThinkScale: 0.6,
         hints: 1,
       },
-      maxHands: 10,
+      maxHands: 12,
+      // 미션형: 쇼다운 1회 + 폴드 1회를 채우면 4핸드부터 끝난다 — "10핸드 채우기"는 숙제가 된다(2026-09-03 피드백 ③).
+      minHands: 4,
       objectives: {
         // 통과 조건은 행동만 — 결과(칩·승패)는 bonus로만 둔다(A5-2 통과 규약).
-        primary: [{ id: 'act1-ch01:played', kind: 'hands-played', label: '10핸드 완주하기', target: 10 }],
+        primary: [
+          { id: 'act1-ch01:showdown', kind: 'reach-showdown', label: '쇼다운까지 가 보기', target: 1 },
+          { id: 'act1-ch01:fold', kind: 'fold-hands', label: '폴드해 보기', target: 1 },
+        ],
         bonus: [
           { id: 'act1-ch01:win', kind: 'win-hands', label: '팟 하나 이상 가져오기', target: 1 },
           { id: 'act1-ch01:survive', kind: 'survive', label: '파산 없이 끝내기' },

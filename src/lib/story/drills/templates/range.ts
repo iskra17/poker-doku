@@ -21,14 +21,7 @@ import {
   seatOfPosition,
 } from './kit';
 
-/** 언오픈 팟 오픈 레이즈 임계 (상위 %) — 기획 A7 ③. */
-export const OPEN_THRESHOLDS: Readonly<Record<string, number>> = Object.freeze({
-  UTG: 15,
-  HJ: 18,
-  CO: 25,
-  BTN: 35,
-  SB: 25,
-});
+import { OPEN_THRESHOLDS } from '../../open-thresholds';
 
 /** 임계에서 이 폭 안쪽이면 "경계 문항"이라 출제하지 않는다 (A4 D-RANGE 규약). */
 const BORDER_MARGIN = 3;

@@ -181,7 +181,7 @@ export const CH02: Chapter = {
       perHandPrompt: '이건 연습이에요… 핸드는 정해져 있어요. 첫 핸드는 J♣7♦, 둘째 핸드는 A♦J♦. 당신 포지션 이름을 먼저 확인하고, 임계와 비교해 보세요.',
     },
 
-    // ───────────────────────────────────────────── 스파링 10핸드
+    // ───────────────────────────────────────────── 스파링 (미션형 · 최대 15핸드)
     {
       kind: 'sparring',
       id: 'act1-ch02:sparring',
@@ -201,18 +201,22 @@ export const CH02: Chapter = {
         botThinkScale: 0.6,
         hints: 1,
       },
-      maxHands: 10,
+      maxHands: 15,
+      // 미션형: 약한 핸드 폴드 3회 + 오픈 레이즈 기회 실행 1회를 채우면 6핸드부터 끝난다(2026-09-03 피드백 ③).
+      minHands: 6,
       objectives: {
         // 카드 분포에 좌우되는 절대 비율(VPIP 등)은 통과 조건으로 쓰지 않는다(A5-2 목표 규약).
+        // open-raise는 "기회 중 실행" — 임계 안 핸드가 한 번도 안 오면 판정 불가로 빠진다.
         primary: [
+          { id: 'act1-ch02:fold-junk', kind: 'fold-preflop-junk', label: '약한 핸드 폴드 3번', target: 3 },
           {
             id: 'act1-ch02:no-junk',
             kind: 'no-junk-entry',
-            label: '하위 60% 핸드로 참여하지 않기',
+            label: '약한 핸드로 들어가지 않기',
             maxCount: 0,
             params: { belowPercentile: 40 },
           },
-          { id: 'act1-ch02:played', kind: 'hands-played', label: '10핸드 완주하기', target: 10 },
+          { id: 'act1-ch02:open', kind: 'open-raise', label: '임계 안 핸드가 오면 오픈 레이즈', target: 1 },
         ],
         bonus: [{ id: 'act1-ch02:survive', kind: 'survive', label: '파산 없이 끝내기' }],
       },

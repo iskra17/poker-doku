@@ -28,6 +28,7 @@ import {
   emptyTally,
   evaluateObjectives,
   liveScore,
+  primaryObjectivesAllAchieved,
   primaryObjectivesMet,
   type ObjectiveTally,
 } from '../lib/story/objectives';
@@ -38,6 +39,9 @@ import { eventLog } from './event-log';
 import type { RoomDisposeReason, RoomManager, StoryRoomHooks } from './room-manager';
 
 export type LiveStep = Extract<Step, { kind: 'practice-table' | 'sparring' }>;
+
+/** 라이브 스텝 종료 사유(이벤트 로그 전용) — 'objectives'는 미션형 조기 종료 */
+export type LiveFinishReason = 'objectives' | 'max-hands' | 'table-short' | 'bust' | 'scripts';
 
 export interface LiveStepSummary {
   outcome: 'done' | 'failed' | 'abandoned';
@@ -244,6 +248,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       objectives: this.objectiveViews(session),
       handsPlayed: session.handsPlayed,
       maxHands: this.maxHands(session),
+      minHands: session.step.kind === 'sparring' ? (session.step.minHands ?? null) : null,
       lastReview: session.lastReview,
       botThoughts: this.exposeBotThoughts ? [...session.botThoughts] : [],
       pendingQuiz: null,
@@ -303,7 +308,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
     if (session.step.kind === 'practice-table') {
       if (session.scriptCursor >= session.step.scripts.length) {
-        this.finish(session, 'done');
+        this.finish(session, 'done', 'scripts');
         return 'hold';
       }
       // 프리셋 핸드는 매번 같은 스택에서 — 히어로·봇 전원 스펙 스택으로 보정 (핸드 사이만, 엔진 무수정)
@@ -315,12 +320,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
     // 스파링: 히어로 파산은 실패, 상대 전멸은 완주
     if (hero.chips <= 0) {
-      this.finish(session, 'failed');
+      this.finish(session, 'failed', 'bust');
       return 'hold';
     }
     const funded = state.players.filter(p => !p.pendingRemoval && p.chips > 0);
     if (funded.length < 2) {
-      this.finish(session, 'done');
+      this.finish(session, 'done', 'table-short');
       return 'hold';
     }
     return 'deal';
@@ -359,21 +364,28 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
     // 종료 판정
     if (session.step.kind === 'sparring' && hero.chips <= 0) {
-      this.finish(session, 'failed');
+      this.finish(session, 'failed', 'bust');
       return 'hold';
     }
     if (session.step.kind === 'practice-table' && session.scriptCursor >= session.step.scripts.length) {
-      this.finish(session, 'done');
+      this.finish(session, 'done', 'scripts');
       return 'hold';
     }
     if (session.step.kind === 'sparring') {
       if (session.handsPlayed >= session.step.maxHands) {
-        this.finish(session, 'done');
+        this.finish(session, 'done', 'max-hands');
+        return 'hold';
+      }
+      // 미션형 조기 종료 — primary 목표를 전부 채웠으면 minHands부터 끝낸다 ("N핸드 채우기"가 아니라 "목표를 채우면 끝")
+      if (session.step.minHands !== undefined
+        && session.handsPlayed >= session.step.minHands
+        && primaryObjectivesAllAchieved(this.objectiveViews(session))) {
+        this.finish(session, 'done', 'objectives');
         return 'hold';
       }
       const funded = state.players.filter(p => !p.pendingRemoval && p.chips > 0);
       if (funded.length < 2) {
-        this.finish(session, 'done');
+        this.finish(session, 'done', 'table-short');
         return 'hold';
       }
       // 인터럽트 — 핸드 종료 시점 트리거만 서버가 hold한다 (first-my-turn은 클라 연출, 턴 타이머 안에서)
@@ -647,9 +659,10 @@ export class LiveTableAdapter implements StoryRoomHooks {
       case 'first-showdown':
         return heroDealt && !!record?.showdown;
       case 'halfway':
+        // 미션형(minHands)이면 조기 종료 전에 들리도록 minHands 기준으로 반환점을 잡는다
         return session.step.kind === 'sparring'
           && heroDealt
-          && session.handsPlayed === Math.ceil(session.step.maxHands / 2);
+          && session.handsPlayed === Math.ceil((session.step.minHands ?? session.step.maxHands) / 2);
       case 'first-my-turn':
         return false; // 클라이언트 연출 (턴 타이머 안에서) — 서버 hold 없음
       default:
@@ -682,7 +695,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
   }
 
   /** 스텝 종료 예약 — 승리 연출이 끝난 뒤 방을 해체하고 코디네이터에 결과를 넘긴다 */
-  private finish(session: LiveSession, outcome: 'done' | 'failed'): void {
+  private finish(session: LiveSession, outcome: 'done' | 'failed', reason: LiveFinishReason): void {
     if (session.finishTimer) return;
     const summary = this.summarize(session, outcome);
     const complete = (): void => {
@@ -695,7 +708,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       this.sessions.delete(session.profileId);
       eventLog.log('story-step', {
         playerId: session.profileId,
-        data: { runId: session.runId, event: 'live-finish', outcome, handsPlayed: summary.handsPlayed, netBB: summary.netBB },
+        data: { runId: session.runId, event: 'live-finish', outcome, reason, handsPlayed: summary.handsPlayed, netBB: summary.netBB },
       });
       this.events?.onStepFinished(session.profileId, session.runId, summary);
     };

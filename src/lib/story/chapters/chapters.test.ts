@@ -138,6 +138,21 @@ describe('validateChapters', () => {
     expect(errors.some(e => e.includes('unknown objective kind vpip-range'))).toBe(true);
     expect(errors.some(e => e.includes('minRatio must be within (0, 1]'))).toBe(true);
 
+    const badMinHands = withStep(base, steps => {
+      const step = steps[sparIndex];
+      if (step.kind !== 'sparring') throw new Error('fixture');
+      steps[sparIndex] = { ...step, minHands: step.maxHands + 1 };
+      return steps;
+    });
+    expect(validateChapters([badMinHands]).some(e => e.includes('minHands must be an integer within 1..maxHands'))).toBe(true);
+    const okMinHands = withStep(base, steps => {
+      const step = steps[sparIndex];
+      if (step.kind !== 'sparring') throw new Error('fixture');
+      steps[sparIndex] = { ...step, minHands: 1 };
+      return steps;
+    });
+    expect(validateChapters([okMinHands])).toEqual([]);
+
     const emptyScene = withStep(base, steps => [{ kind: 'scene', id: 'empty', scene: { id: 'empty', lines: [] } }, ...steps]);
     expect(validateChapters([emptyScene]).some(e => e.includes('has no lines'))).toBe(true);
 

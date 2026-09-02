@@ -26,6 +26,7 @@ import {
 } from '@/lib/poker/hand-history-replay';
 import { computePotOdds, exactDrawPct, handRankOrder, unseenCards } from '@/lib/poker/learning';
 import type { ActionType, Card, HandRank, Street } from '@/lib/poker/types';
+import { OPEN_THRESHOLDS } from './open-thresholds';
 import type { Objective } from './types';
 import type { DecisionMark, ObjectiveProgressView } from './views';
 
@@ -253,6 +254,14 @@ export interface HeroHandFacts {
   riverValueBet: boolean;
   /** 핸드 종료 시 스택 0 (시작 스택 + 순이익). */
   bustedThisHand: boolean;
+  /** 히어로가 폴드하지 않고 경합 쇼다운까지 갔는가. */
+  sawShowdown: boolean;
+  /** 어느 스트리트든 히어로가 폴드했는가. */
+  folded: boolean;
+  /** 언오픈 팟에서 포지션 임계(OPEN_THRESHOLDS) 안 핸드로 첫 프리플랍 결정을 맞았는가 — 오픈 레이즈 기회. */
+  openRaiseOpportunity: boolean;
+  /** 그 기회에 레이즈(올인 포함)로 열었는가. */
+  openRaise: boolean;
 }
 
 function emptyFacts(handNumber: number): HeroHandFacts {
@@ -275,6 +284,10 @@ function emptyFacts(handNumber: number): HeroHandFacts {
     riverValueBetOpportunity: false,
     riverValueBet: false,
     bustedThisHand: false,
+    sawShowdown: false,
+    folded: false,
+    openRaiseOpportunity: false,
+    openRaise: false,
   };
 }
 
@@ -345,6 +358,15 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
         if (action.kind === 'fold') facts.preflopFolded = true;
         if (!facts.preflopDecision && action.kind !== 'check') {
           facts.preflopDecision = { action: action.kind, amount: action.amount, actionIndex };
+          // 오픈 레이즈 기회: 앞에 레이즈가 없고(테이블 벳 ≤ BB) 내 포지션 임계 안의 핸드일 때만.
+          // 림프는 기회를 "놓친" 것으로 센다 — Ch2 「림프 대신 레이즈/폴드」와 같은 규약.
+          const threshold = OPEN_THRESHOLDS[hero.position];
+          const unopened = maxBet <= record.bigBlind;
+          if (unopened && threshold !== undefined && facts.heroHandPercentile !== null
+            && facts.heroHandPercentile * 100 < threshold) {
+            facts.openRaiseOpportunity = true;
+            facts.openRaise = action.kind === 'raise' || action.kind === 'all-in';
+          }
         }
       } else {
         if (street === 'flop' && flopFirstFree === null && toCall === 0) flopFirstFree = action.kind;
@@ -392,6 +414,8 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
   facts.riverValueBetOpportunity = strongOnRiver && riverFirstFree !== null && !heroFolded;
   facts.riverValueBet = facts.riverValueBetOpportunity
     && (riverFirstFree === 'raise' || riverFirstFree === 'all-in');
+  facts.folded = heroFolded;
+  facts.sawShowdown = record.showdown && !heroFolded;
 
   return facts;
 }
@@ -432,14 +456,24 @@ function view(
   return { id: objective.id, kind: objective.kind, label: objective.label, primary, progress, target, achieved };
 }
 
-/** 비율(기회 중 실행) 목표. `target`이 있으면 횟수 목표로 해석한다. */
+/**
+ * 비율(기회 중 실행) 목표.
+ * - `maxCount`가 있으면 위반(기회 − 실행) 상한 — 기회 0이면 위반 0이라 항상 판정 가능하다.
+ * - `target`이 있으면 실행 횟수 목표 — 기회 0이면 판정 불가(null): "기회가 안 왔다"를 실패로 세지 않는다.
+ * - 둘 다 없으면 minRatio(기본 1) 비율.
+ */
 function ratioView(
   objective: Objective,
   primary: boolean,
   opportunities: number,
   executed: number,
 ): ObjectiveProgressView {
+  if (objective.maxCount !== undefined) {
+    const misses = Math.max(0, opportunities - executed);
+    return view(objective, primary, misses, objective.maxCount, misses <= objective.maxCount);
+  }
   if (objective.target !== undefined) {
+    if (opportunities === 0) return view(objective, primary, 0, objective.target, null);
     return view(objective, primary, executed, objective.target, executed >= objective.target);
   }
   if (opportunities === 0) return view(objective, primary, 0, null, null);
@@ -526,6 +560,18 @@ export function evaluateObjective(
       return view(objective, primary, survived ? 1 : 0, 1, survived);
     }
 
+    case 'reach-showdown':
+      return countView(objective, primary, hands.filter(hand => hand.sawShowdown).length);
+
+    case 'fold-hands':
+      return countView(objective, primary, hands.filter(hand => hand.folded).length);
+
+    case 'open-raise': {
+      const opportunities = hands.filter(hand => hand.openRaiseOpportunity);
+      const executed = opportunities.filter(hand => hand.openRaise);
+      return ratioView(objective, primary, opportunities.length, executed.length);
+    }
+
     case 'quiz-accuracy': {
       const quiz = extras?.quiz;
       if (!quiz || quiz.answered <= 0) return view(objective, primary, 0, null, null);
@@ -563,6 +609,16 @@ export function primaryObjectivesMet(views: readonly ObjectiveProgressView[]): b
   const determinable = primaries.filter(item => item.achieved !== null);
   if (determinable.length === 0) return null;
   return true;
+}
+
+/**
+ * 미션형 조기 종료 판정 — primary 목표가 하나 이상 있고 **전부** 달성(achieved === true)일 때만 true.
+ * 판정 불가(null)는 "아직 기회가 오지 않았다"이므로 끝내지 않는다(maxHands 상한에서만 제외된다).
+ * 상한형(maxCount) 목표는 위반 전엔 항상 달성이라, 미션형 스텝은 횟수형 primary를 하나 이상 둬야 한다.
+ */
+export function primaryObjectivesAllAchieved(views: readonly ObjectiveProgressView[]): boolean {
+  const primaries = views.filter(item => item.primary);
+  return primaries.length > 0 && primaries.every(item => item.achieved === true);
 }
 
 /**

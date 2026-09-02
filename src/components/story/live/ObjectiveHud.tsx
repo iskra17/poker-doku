@@ -7,6 +7,10 @@ interface ObjectiveHudProps {
   tag: '연습' | '대결';
   handsPlayed: number;
   maxHands: number;
+  /** 미션형이면 최소 핸드 수(조기 종료 가능), 아니면 null */
+  minHands: number | null;
+  /** 펼쳤을 때 목표 위에 놓는 진행 안내 (liveFinishHint) */
+  finishHint: string | null;
   lines: ObjectiveHudLine[];
   /** 접힌 상태에서 펼쳤는가 (모바일 기본 접힘, 넓은 화면은 펼침) */
   expanded: boolean;
@@ -52,8 +56,11 @@ function ObjectiveRow({ line }: { line: ObjectiveHudLine }) {
  * 라이브 스텝 HUD — '연습'/'대결' 배지 + 진행 핸드 수 + 행동 목표(primary 먼저).
  * 좁은 화면에선 배지+카운터만 남기고 탭으로 펼친다 (좌석/보드를 가리지 않게).
  */
-export default function ObjectiveHud({ tag, handsPlayed, maxHands, lines, expanded, onToggle }: ObjectiveHudProps) {
-  const counter = maxHands > 0 ? `${Math.min(handsPlayed, maxHands)}/${maxHands}핸드` : `${handsPlayed}핸드`;
+export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, finishHint, lines, expanded, onToggle }: ObjectiveHudProps) {
+  // 미션형은 "N/최대" 카운터가 숙제처럼 읽히므로 진행 핸드 수만 보여 준다 — 상한은 안내 문구로
+  const counter = minHands !== null || maxHands <= 0
+    ? `${handsPlayed}핸드`
+    : `${Math.min(handsPlayed, maxHands)}/${maxHands}핸드`;
   const canExpand = lines.length > 0;
   return (
     <motion.div
@@ -77,9 +84,12 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, lines, expand
         )}
       </button>
       {canExpand && expanded && (
-        <ul className="mt-1.5 space-y-1 border-t border-mystic/20 pt-1.5">
-          {lines.map(line => <ObjectiveRow key={line.id} line={line} />)}
-        </ul>
+        <div className="mt-1.5 border-t border-mystic/20 pt-1.5">
+          {finishHint && <p className="mb-1 text-[9px] text-ink-dim">{finishHint}</p>}
+          <ul className="space-y-1">
+            {lines.map(line => <ObjectiveRow key={line.id} line={line} />)}
+          </ul>
+        </div>
       )}
     </motion.div>
   );

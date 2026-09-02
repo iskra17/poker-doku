@@ -209,8 +209,21 @@ describe('1막 챕터 데이터', () => {
     }
     const ch03Spar = CH03.steps.find(step => step.kind === 'sparring');
     if (ch03Spar?.kind !== 'sparring') throw new Error('fixture');
-    expect(ch03Spar.maxHands).toBe(12);
+    expect(ch03Spar.maxHands).toBe(15);
+    expect(ch03Spar.minHands).toBe(6);
     expect(ch03Spar.table.lineup.map(seat => seat.characterId)).toEqual(['draco', 'choco']);
+  });
+
+  it('스파링은 미션형 — minHands 조기 종료 + 횟수형 primary, "N핸드 채우기" 목표 없음 (2026-09-03 피드백 ③)', () => {
+    for (const chapter of ACT1) {
+      const spar = chapter.steps.find(step => step.kind === 'sparring');
+      if (spar?.kind !== 'sparring') throw new Error('fixture');
+      expect(spar.minHands).toBeDefined();
+      expect(spar.minHands!).toBeLessThanOrEqual(spar.maxHands);
+      expect(spar.objectives.primary.some(objective => objective.kind === 'hands-played')).toBe(false);
+      // 상한형만 있으면 첫 핸드에 바로 끝나 버린다 — 채워야 하는 횟수형 primary가 하나 이상
+      expect(spar.objectives.primary.some(objective => objective.target !== undefined)).toBe(true);
+    }
   });
 
   it('Ch3은 미통과 단축판(failScene)을 가진다', () => {

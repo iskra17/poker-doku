@@ -81,6 +81,8 @@ export interface StoryLiveView {
   objectives: ObjectiveProgressView[];
   handsPlayed: number;
   maxHands: number;
+  /** 미션형 조기 종료가 열리는 최소 핸드 수 — null이면 maxHands까지 돈다 */
+  minHands: number | null;
   lastReview: DecisionReview | null;
   botThoughts: BotThought[];
   pendingQuiz: HandReadQuizView | null;
