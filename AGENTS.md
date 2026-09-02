@@ -271,9 +271,19 @@ npx tsc --noEmit
   어댑터가 주입되지 않은 환경(테스트·`storyRepository` 없음)에선 라이브 스텝을 스킵한다.
   - **데이터**: 챕터는 `src/lib/story/chapters/act1/*.ts` 수기 TS(`STORY_CHAPTERS` 레지스트리, `validateChapters`가
     id·requires 순환·교사·스텝·프리셋 카드·목표 kind를 검증). 해금은 저장하지 않고 `unlocks.ts`가 완료 집합+requires
-    그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). 띠는 코스메틱(막 완주 → 노란/파란/갈색, 검은띠는
-    `belt:black` 플래그). 통과 = 드릴 세트 완료 + primary 행동 목표 — **스택 같은 결과 조건은 통과 조건이 아니라
+    그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). **1막은 비선형(requires 없음, 2026-09-03 피드백)** —
+    허브(`StoryHub`)는 순서를 강제하지 않는 수련 목록이고, 카드마다 드릴 유형 칩(내 정확도)을 달아 부족한 유형부터
+    고르게 한다. 추천은 `story-hub-rules.ts` `recommendChapter`(진행 중 > 측정 약점 ≥3문·<70% > 첫 방문 > 미완료 첫
+    순서) 제안뿐. 오늘의 수련 문제는 챕터 1개 완료로 개방. **실력 확인(`mode:'exam'`)**: 드릴 세트만(씬·레슨·라이브
+    스텝을 인덱스 유지한 채 스킵, 힌트는 서버가 거절) `EXAM_PASS_SCORE` 0.85 이상이면 완료 기록 + 첫 완주 보상,
+    미완료 챕터 한정 — 아는 내용을 억지로 플레이하지 않게 하는 우회로. 띠는 코스메틱(막 완주 → 노란/파란/갈색, 검은띠는
+    `belt:black` 플래그)이고 **승급은 결산 `beltAwarded`가 알린다** — 에필로그 대사에 순서·승급을 가정한 문장을 두지 말 것.
+    통과 = 드릴 세트 완료 + primary 행동 목표 — **스택 같은 결과 조건은 통과 조건이 아니라
     등급·뱃지 전용**(2026-09-02 검토 개정). 비율형 목표는 "기회 중 실행"만, VPIP 같은 절대 비율 목표 금지.
+    **스파링은 미션형**(2026-09-03): `minHands` 이후 primary 전부 달성(판정 불가 없음)이면 어댑터가 조기 종료,
+    `maxHands`는 상한 — 'N핸드 채우기'(`hands-played`)를 primary로 두지 말고 횟수형 primary를 1개 이상 둘 것
+    (`act1.test.ts` 고정). 비율 kind의 `maxCount`=위반(기회−실행) 상한, `target`=실행 횟수(기회 0이면 판정 불가 →
+    상한에서 제외). 오픈 레이즈 임계(`open-raise` 기회·D-RANGE 출제·Ch2 해설)는 `open-thresholds.ts` 단일 소스.
   - **드릴**: `src/lib/story/drills/generator.ts`의 12 템플릿(시드 결정론, 모호하면 seed+1 리롤 ≤32). 클라에는
     `toPublicDrillInstance`(정답·해설·힌트 본문 제거)만 나가고 **채점은 서버가 같은 seed로 재생성해서** 한다.
     오답은 즉시 풀이 → 세트 끝 재출제(새 seed, 최대 2회, `RETRY_CREDIT` 0.5점) + 복습 노트(Leitner 3박스,
@@ -318,7 +328,10 @@ npx tsc --noEmit
     포트(Player 구성→joinRoom→room-joined, hold 선세팅이라 tryStartGame이 시작하지 않음), 방 해체 시 `room-lost
     {reason:'story-end'}` 뒤 `story-update`. 결산은 스파링 primary 목표 AND(+`liveScore` 평균)로 통과·등급 판정.
     회귀: `story-live-adapter.test.ts`(RoomManager 실물+fake timers)·`scenario-deck.test.ts`·`objectives.test.ts`·
-    `review.test.ts`·`bot-explain.test.ts`.
+    `review.test.ts`·`bot-explain.test.ts`. **수련 테이블 시각 차별화**(2026-09-03 피드백 — 실전과 헷갈림):
+    `PokerTable storyTheme`(청록 `story-felt-*`/`story-abyss` 토큰·레일 시안·「수련 테이블」 워터마크)·GameRoomView 상시
+    리본·TopBar 수련 배지(블라인드 대신, 초대 코드/링크·칩 추가 숨김) — 전부 `useStoryLive().active` 게이트라 실전 방
+    렌더는 불변. 라이브 HUD는 미션형이면 'N핸드' 카운터 + 「목표를 다 채우면 끝나요 (최대 M핸드)」(`liveFinishHint`).
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -487,6 +500,9 @@ npx tsc --noEmit
 ## 컨벤션
 
 - UI 텍스트·시스템 채팅·캐릭터 대사는 한국어. 캐릭터별 말투 유지 (류카=츤데레 반말, 하나=분석 존댓말 등).
+- **포커 용어는 원어 표기**(2026-09-03 플레이 피드백): 핸드·폴드·콜·체크·레이즈·오픈 레이즈·림프·3벳·팟·쇼다운·
+  포지션. 핸드를 '손'·'판', 폴드를 '접다', 오픈 레이즈를 '열다'로 번역하지 말 것 — 스토리 대사·개념 카드·드릴 해설·
+  결정 리뷰·코치 문구·도움말 전부 해당(2026-09-03에 일괄 교체, 회귀는 `review.test.ts` 문구 단언).
 - 디자인 토큰은 `globals.css @theme` (blossom/cyber/mystic/gilded/panel 등) — 새 색상 하드코딩 금지.
 - framer-motion 요소에서 Tailwind `-translate-*` 클래스와 transform 애니메이션을 섞지 말 것
   (framer가 transform을 덮어씀) — `style={{ x: '-50%', y: '-50%' }}` 사용.
