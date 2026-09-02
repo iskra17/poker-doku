@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Player, RoomConfig } from '../lib/poker/types';
 import type { Step } from '../lib/story/types';
+import { CH01 } from '../lib/story/chapters/act1/ch01-dojo-gate';
 import { RoomManager } from './room-manager';
 import { LiveTableAdapter, type LiveEnterInput, type LiveStepSummary } from './story-live-adapter';
 
@@ -336,6 +337,49 @@ describe('LiveTableAdapter', () => {
     expect(typeof summary.netBB).toBe('number');
     expect(manager.getRoom(roomId)).toBeUndefined();
     expect(adapter.hasSession(PROFILE)).toBe(false);
+  });
+
+  it('sparring: first-showdown 인터럽트는 히어로가 딜인된 첫 경합 쇼다운 뒤 hold(scene)로 잡힌다', async () => {
+    const step = sparringStep(10);
+    step.interrupts = [
+      { id: 'int-turn', trigger: { kind: 'first-my-turn' }, scene: { id: 'int-turn', lines: [] } },
+      { id: 'int-showdown', trigger: { kind: 'first-showdown' }, scene: { id: 'int-showdown', lines: [] } },
+    ];
+    const roomId = enter(step);
+    // 봇 랜덤성과 무관하게 첫 핸드를 경합 쇼다운으로 본다 (엔진 레코드는 불변 — 어댑터 입력만 감싼다)
+    const engine = manager.getRoom(roomId)!.engine;
+    const original = engine.getCompletedHandRecord.bind(engine);
+    engine.getCompletedHandRecord = () => {
+      const record = original();
+      return record ? { ...record, showdown: true } : record;
+    };
+    const held = await pumpUntil(() => adapter.view(PROFILE)?.hold === true, { roomId: () => roomId, maxMs: 60_000 });
+    expect(held).toBe(true);
+    expect(adapter.view(PROFILE)).toMatchObject({ holdReason: 'scene', interruptId: 'int-showdown', handsPlayed: 1 });
+    expect(stateOf(roomId)!.isHandInProgress).toBe(false);
+    await tick(15_000);
+    expect(stateOf(roomId)!.handNumber).toBe(1);
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    await tick(2_100);
+    expect(stateOf(roomId)!.handNumber).toBe(2);
+    // 한 번 쓴 인터럽트는 다시 잡지 않는다
+    const second = await pumpUntil(() => (adapter.view(PROFILE)?.handsPlayed ?? 0) >= 2 && !stateOf(roomId)!.isHandInProgress, { roomId: () => roomId, maxMs: 60_000 });
+    expect(second).toBe(true);
+    expect(adapter.view(PROFILE)!.hold).toBe(false);
+  });
+
+  it('sparring: 실제 Ch1 스파링 스텝의 first-showdown 인터럽트도 같은 경로로 잡힌다', async () => {
+    const step = CH01.steps.find((candidate): candidate is Extract<Step, { kind: 'sparring' }> => candidate.kind === 'sparring')!;
+    const roomId = enter(step);
+    const engine = manager.getRoom(roomId)!.engine;
+    const original = engine.getCompletedHandRecord.bind(engine);
+    engine.getCompletedHandRecord = () => {
+      const record = original();
+      return record ? { ...record, showdown: true } : record;
+    };
+    const held = await pumpUntil(() => adapter.view(PROFILE)?.hold === true, { roomId: () => roomId, maxMs: 60_000 });
+    expect(held).toBe(true);
+    expect(adapter.view(PROFILE)).toMatchObject({ holdReason: 'scene', interruptId: 'act1-ch01:int-first-showdown' });
   });
 
   it('sparring: 히어로 파산은 회수가 아니라 failed 분기로 끝난다', async () => {
