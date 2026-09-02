@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { InviteRegistry } from './invite-registry';
 import { ARENA_CONFIG_V1 } from '../lib/arena/config';
 import { PokerEngine, type EngineRuntimeHooks } from '../lib/poker/engine';
+import type { Deck } from '../lib/poker/deck';
 import { cfg } from './game-config/live';
 import { HAND_RANK_KO } from '../lib/poker/evaluator';
 import {
@@ -13,8 +14,9 @@ import {
   type GameState,
   type PlayerPublicCosmetics,
 } from '../lib/poker/types';
-import type { CompletedHandRecord } from '../lib/poker/hand-history';
+import type { CompletedHandRecord, StoryHandTag } from '../lib/poker/hand-history';
 import { createBotWithCharacter, fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
+import type { BotDecision } from '../lib/bot/bot-ai';
 import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
@@ -86,6 +88,8 @@ export interface RoomHandHistoryHooks {
     record: CompletedHandRecord;
     /** MTT 테이블이면 소속 토너먼트 — 정본 기록(table_hand.tournament_id)의 조인 키 */
     tournamentId?: string | null;
+    /** 스토리 라이브 스텝 핸드면 '연습'/'대결' 태그 (v30 hand_history.story_tag) */
+    storyTag?: StoryHandTag | null;
   }): void;
 }
 
@@ -179,6 +183,7 @@ export type RoomDisposeReason =
   | 'mtt-cancel'
   | 'late-reg-rollback'
   | 'mtt-start-rollback'
+  | 'story-end'
   | 'shutdown';
 
 export type NextHandGateResult =
@@ -222,6 +227,46 @@ export interface MttRoomHooks {
   onPlayerLeave(roomId: string, playerId: string): void;
   /** processLeave 성공 뒤 호출 — 좌석 제거가 필요한 테이블 편성을 안전하게 마무리 */
   onPlayerLeft(roomId: string, playerId: string): void;
+}
+
+/**
+ * 수련 스토리 라이브 스텝 훅 — LiveTableAdapter(story-live-adapter.ts)가 setStoryHooks로 주입한다.
+ * MttRoomHooks와 같은 패턴의 병렬 도입(일반화하지 않는다 — MTT 경로는 참조가 많아 회귀 리스크).
+ * 모든 호출은 `isStoryRoom(room)`(= config.storyChapterId 존재) 가드 뒤에서만 일어나므로
+ * 비스토리 방(캐시/SnG/MTT/아레나)의 실행 경로는 훅 주입 여부와 무관하게 불변이다.
+ *
+ * 히어로 이탈·타임아웃 계약(기획 B3(d)): 스토리 방은 히어로 좌석을 서버 타이머로 회수하지 않는다
+ * (미납 BB·방치 5분·파산 30초 전부 제외). 대신 히어로가 딜인 불가면(타임아웃 마킹·끊김)
+ * `beforeHand`가 'hold'를 돌려 방을 보류하고, 재개는 어댑터가 `resumeRoom`으로 한다.
+ * 이탈은 `abandon-story` 단일 경로 — toggleSitOut/나가기 예약/leave-room은 거절된다.
+ */
+export interface StoryRoomHooks {
+  /** 인터럽트 씬·타임아웃 [계속하기] 대기 등으로 다음 핸드 시작을 보류 중인지 */
+  isHeld(roomId: string): boolean;
+  /**
+   * 핸드 시작 직전(봇 정비 자리, `engine.startHand()` 앞) — 프리셋 덱 arm·라인업 스택 보정·
+   * 히어로 sitOutNext 해제를 여기서 한다. 히어로가 딜인 불가면 'hold' → 이번 시작을 취소한다.
+   * 이 시점엔 아직 `sitOutAuto`가 소거되지 않았으므로 타임아웃 마킹을 구분할 수 있다.
+   */
+  beforeHand(roomId: string, engine: PokerEngine): 'deal' | 'hold';
+  /** '연습' 프리셋 스텝 = true → 핸드 XP·일일 미션(progression captureHandStart/completeHand) 미적립 */
+  skipHandProgression(roomId: string): boolean;
+  /**
+   * 핸드 종료 훅 — 목표 평가·결정 리뷰·퀴즈 채점 후 진행 지시를 반환.
+   * 'continue'=다음 핸드 예약, 'hold'=보류(어댑터가 나중에 resumeRoom), 'gone'=방이 해체됨.
+   */
+  onHandComplete(roomId: string): 'continue' | 'hold' | 'gone';
+  /** 봇 액션 직후(엔진 반영 후) — 봇 속마음 수집. explanation은 processBotTurn `{explain}` 옵션 산출물 */
+  onBotActed(
+    roomId: string,
+    playerId: string,
+    decision: BotDecision,
+    explanation?: { code: string; text: string },
+  ): void;
+  /** 좌석 제거 직전(processLeave 앞) — grace 만료 회수·서버 주도 퇴장을 어댑터가 인지한다 */
+  onPlayerLeave(roomId: string, playerId: string): void;
+  /** 방 해체 후(dispose 완료) — 어댑터가 run을 live-hold(room-lost)로 보존하거나 정리한다 */
+  onRoomDisposed?(roomId: string, reason: RoomDisposeReason): void;
 }
 
 export interface RoomManagerRuntimeStats {
@@ -300,6 +345,7 @@ export class RoomManager {
   /** AI 상황 대사 (키 없으면 비활성 — 스크립트 대사만) */
   private dialogue = new DialogueManager(new AIDialogue());
   private mttHooks?: MttRoomHooks;
+  private storyHooks?: StoryRoomHooks;
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
   /** 좌석 구성이 서버 내부에서 바뀔 때(자동 정리 등) 로비 목록 재브로드캐스트 훅 */
@@ -336,6 +382,23 @@ export class RoomManager {
     return room.config.gameMode === 'sng' || room.config.gameMode === 'mtt';
   }
 
+  /** 스토리 훅 주입 — LiveTableAdapter가 생성 후 연결한다 (MTT와 동일 패턴) */
+  setStoryHooks(hooks: StoryRoomHooks): void {
+    this.storyHooks = hooks;
+  }
+
+  /** 수련 스토리 라이브 스텝 방 — 수명주기·hold·목표 판정이 LiveTableAdapter 소유인 방 */
+  private isStoryRoom(room: { config: RoomConfig }): boolean {
+    return !!room.config.storyChapterId;
+  }
+
+  /** 외부 오케스트레이터(MTT 매니저 ∨ 스토리 어댑터)가 다음 핸드 시작을 보류 중인지 */
+  private orchestratorHeld(roomId: string, room: { config: RoomConfig }): boolean {
+    if (this.isMttRoom(room)) return !!this.mttHooks?.isHeld(roomId);
+    if (this.isStoryRoom(room)) return !!this.storyHooks?.isHeld(roomId);
+    return false;
+  }
+
   /** TournamentManager 등 외부 오케스트레이터의 시스템 채팅 공지용 공개 래퍼 */
   postSystemChat(roomId: string, message: string): void {
     this.sendSystemChat(roomId, message);
@@ -351,7 +414,30 @@ export class RoomManager {
     config: RoomConfig,
     persistent = false,
     requestedRoomId?: string,
+    /**
+     * 프리셋 덱 주입 — 수련 스토리 '연습' 스텝(storyChapterId + economyMode 'practice') 전용.
+     * 그 외 방에 덱을 넣으면 throw: 실전(wallet/SnG/MTT/아레나) 딜링은 항상 엔진 기본 CSPRNG 덱이다.
+     */
+    deck?: Deck,
   ): string {
+    if (deck && !(config.storyChapterId && config.economyMode === 'practice')) {
+      throw new Error('Custom deck is only allowed for story practice rooms');
+    }
+    if (config.storyChapterId) {
+      // 스토리 방은 훅 없이는 열지 않는다(fail-closed) — 훅이 없으면 일반 캐시 방처럼 굴러
+      // 덱 arm·타임아웃 hold·목표 판정이 전부 빠진 채 진행된다
+      if (!this.storyHooks) throw new Error('Story room requires story hooks');
+      if (config.economyMode !== 'practice') throw new Error('Story room must be practice economy');
+      if (
+        config.botThinkScale !== undefined
+        && !(Number.isFinite(config.botThinkScale) && config.botThinkScale > 0)
+      ) {
+        throw new Error('Story room botThinkScale must be a positive number');
+      }
+    } else if (config.storyRunId || config.storyHandTag || config.botThinkScale !== undefined) {
+      // 스토리 전용 필드는 storyChapterId 없이는 무효 — 비스토리 방 실행 경로 불변 보장
+      throw new Error('Story-only room config fields require storyChapterId');
+    }
     const normalizedConfig: RoomConfig = config.competitionMode
       ? {
           ...config,
@@ -388,7 +474,7 @@ export class RoomManager {
     const engine = new PokerEngine(
       normalizedConfig,
       id,
-      undefined,
+      deck,
       ENGINE_RUNTIME_HOOKS,
     );
     this.rooms.set(id, {
@@ -399,7 +485,8 @@ export class RoomManager {
       persistent,
     });
     this.chatHistory.set(id, []);
-    this.invites.issue('room', id);
+    // 스토리 방은 초대 코드를 발급하지 않는다 — 히어로 전용이라 코드로 방 id가 드러나면 안 된다
+    if (!normalizedConfig.storyChapterId) this.invites.issue('room', id);
     return id;
   }
 
@@ -611,6 +698,10 @@ export class RoomManager {
       );
       this.onRoomsChanged?.();
     }
+    // 스토리 방 해체 통지 — notify 여부와 무관 (어댑터의 run 상태는 소켓 통지와 별개 계약)
+    if (this.isStoryRoom(room)) {
+      this.storyHooks?.onRoomDisposed?.(roomId, reason);
+    }
     return true;
   }
 
@@ -662,6 +753,8 @@ export class RoomManager {
       if (room.config.competitionMode) return;
       // MTT 테이블은 로비 방 목록에 노출하지 않는다 — 토너먼트 엔티티(별도 목록)로만 보인다
       if (room.config.tournamentId) return;
+      // 스토리 라이브 스텝 방은 히어로 전용 — 목록·초대·직접 입장 대상이 아니다
+      if (room.config.storyChapterId) return;
       const tournament = room.engine.state.tournament;
       const seat = forPlayerId
         ? room.engine.state.players.find(p => p.id === forPlayerId && !p.pendingRemoval)
@@ -991,6 +1084,10 @@ export class RoomManager {
     // MTT: 명시적 퇴장 = 현재 순위로 탈락 확정 (전역 순위는 매니저 소유 — 엔진 로컬 판정은 비활성)
     if (mttRoom) {
       this.mttHooks?.onPlayerLeave(roomId, playerId);
+    }
+    // 스토리: 히어로 좌석 제거(grace 만료 회수·abandon)를 어댑터가 인지 — 뒤이어 빈 방 즉시 dispose
+    if (this.isStoryRoom(room)) {
+      this.storyHooks?.onPlayerLeave(roomId, playerId);
     }
 
     const wasInProgress = room.engine.state.isHandInProgress;
@@ -1450,8 +1547,10 @@ export class RoomManager {
       // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
       this.resetRoomToIdle(roomId);
       if (roomsChanged) this.onRoomsChanged?.();
-    } else if (room.config.gameMode === 'sng') {
-      // SnG는 모든 휴먼이 떠나면 즉시 정리 (결과 보존 계약은 finishedRoomTimers가 별도 담당)
+    } else if (room.config.gameMode === 'sng' || this.isStoryRoom(room)) {
+      // SnG는 모든 휴먼이 떠나면 즉시 정리 (결과 보존 계약은 finishedRoomTimers가 별도 담당).
+      // 스토리 방도 즉시 정리 — 히어로 없는 스토리 방은 의미가 없고, 10분 보존·대기 리셋은
+      // 어댑터의 run 상태(live-hold room-lost)와 어긋난다.
       this.disposeRoom(roomId, 'empty');
     } else {
       // 캐시 유저 방은 즉시 삭제하지 않고 영속 방처럼 대기 리셋 후 보존 — 초대 링크/재입장
@@ -1611,6 +1710,7 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament) return; // SnG 탈락 봇 좌석은 순위 표시용으로 보존
+    if (this.isStoryRoom(room)) return; // 스토리 라인업은 고정 — 파산 봇 리필/교체는 어댑터 beforeHand 소관
 
     const bustedBots = room.engine.state.players.filter(
       p => p.type === 'bot' && p.chips <= 0 && !p.pendingRemoval,
@@ -1698,8 +1798,9 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament?.finished) return; // 토너먼트 종료 — 재시작 없음
-    // MTT 보류(브레이크/H4H 배리어/종료 처리) 중엔 다음 핸드를 잡지 않는다 — 매니저가 resumeRoom으로 해제
-    if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) {
+    // MTT 보류(브레이크/H4H 배리어/종료 처리)·스토리 보류(인터럽트 씬/타임아웃 대기) 중엔
+    // 다음 핸드를 잡지 않는다 — 오케스트레이터가 resumeRoom으로 해제
+    if (this.orchestratorHeld(roomId, room)) {
       if (publishBeforeSchedule) this.onUpdate(roomId, room.engine);
       return;
     }
@@ -1747,11 +1848,20 @@ export class RoomManager {
       }
       this.clearMttGateRetry(roomId);
     }
-    // MTT 보류 재확인 — 예약 타이머가 걸린 뒤 브레이크/배리어가 시작됐을 수 있다
-    if (this.isMttRoom(room) && this.mttHooks?.isHeld(roomId)) return;
+    // MTT/스토리 보류 재확인 — 예약 타이머가 걸린 뒤 브레이크/배리어/인터럽트가 시작됐을 수 있다
+    if (this.orchestratorHeld(roomId, room)) return;
 
     // 파산한 봇 좌석 회수 + 재충원 — 누적되면 칩 보유 2인 미만으로 방이 정지한다
     this.refreshCashBots(roomId);
+
+    // 스토리: 프리셋 덱 arm·라인업 스택 보정·히어로 딜인 가능 여부 판정을 startHand 앞에서 —
+    // 히어로가 딜인 불가(타임아웃 마킹·끊김)면 'hold'로 이번 시작을 취소한다 (봇끼리 진행 → 미납 BB
+    // 회수 → 빈 방 dispose로 런이 조용히 죽는 경로 차단). 재개는 어댑터가 resumeRoom으로.
+    const storyRoom = this.isStoryRoom(room);
+    if (storyRoom && this.storyHooks?.beforeHand(roomId, room.engine) === 'hold') {
+      this.onUpdate(roomId, room.engine);
+      return;
+    }
 
     const walletCash = this.isWalletCash(room);
     // 2초 예약 뒤 최종 인원을 다시 본다. 아래 checkpoint→startHand 구간에는 await가 없어
@@ -1765,7 +1875,10 @@ export class RoomManager {
 
     const prevHandNumber = room.engine.state.handNumber;
     const nextHandNumber = prevHandNumber + 1;
-    const tracksProgression = room.config.competitionMode === undefined;
+    // '연습' 프리셋 스텝 핸드는 핸드 XP·일일 미션에 적립하지 않는다 — captureHandStart와
+    // completeHand를 함께 건너뛴다 (한쪽만 건너뛰면 런타임 hand context가 고아로 남는다)
+    const storySkipsProgression = storyRoom && !!this.storyHooks?.skipHandProgression(roomId);
+    const tracksProgression = room.config.competitionMode === undefined && !storySkipsProgression;
     const captureProgressionHand = (): void => {
       if (!tracksProgression) return;
       this.options.progression?.captureHandStart({
@@ -2015,7 +2128,8 @@ export class RoomManager {
     this.onUpdate(roomId, room.engine);
 
     // 캐시: 자리비움 좌석이 대략 2오르빗(미납 BB 2회)을 넘기면 자동 정리
-    if (!isSng) this.trackMissedBlinds(roomId);
+    // (스토리 방 제외 — 히어로 좌석은 타이머로 회수하지 않는다: 회수 → 빈 방 dispose → 런 사망)
+    if (!isSng && !storyRoom) this.trackMissedBlinds(roomId);
   }
 
   /** 캐시 자리비움 좌석의 경과 핸드를 오르빗으로 환산해, 한도 초과 시 자리를 정리한다 */
@@ -2160,6 +2274,8 @@ export class RoomManager {
   private scheduleBustReclaims(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || this.isTournamentRoom(room)) return;
+    if (this.isStoryRoom(room)) return; // 스토리 히어로 파산은 회수가 아니라 어댑터의 실패 분기
+
     let armed = false;
     for (const p of room.engine.state.players) {
       if (p.type !== 'human' || p.pendingRemoval || p.chips > 0) continue;
@@ -2192,6 +2308,8 @@ export class RoomManager {
   toggleSitOut(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    // 스토리 방은 자리비움 개념이 없다 — 이탈은 abandon-story, 부재는 beforeHand hold 계약
+    if (this.isStoryRoom(room)) return false;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return false;
 
@@ -2249,6 +2367,7 @@ export class RoomManager {
   sitOutAndLeave(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
+    if (this.isStoryRoom(room)) return; // 스토리 방 이탈은 abandon-story 단일 경로 (소켓 계층도 거절)
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return;
 
@@ -2299,7 +2418,9 @@ export class RoomManager {
       }
       return 'cleared';
     }
-    if (this.isTournamentRoom(room) || room.config.competitionMode) return 'rejected';
+    if (this.isTournamentRoom(room) || room.config.competitionMode || this.isStoryRoom(room)) {
+      return 'rejected';
+    }
 
     const st = room.engine.state;
     const inCurrentHand = st.isHandInProgress
@@ -2344,6 +2465,8 @@ export class RoomManager {
     if (room.config.gameMode === 'sng' || room.config.gameMode === 'mtt') {
       return { status: 'not-cash' };
     }
+    // 스토리 방 스택은 어댑터 소유(프리셋 스택 보정·스파링 netBB) — 탑업 불가
+    if (this.isStoryRoom(room)) return { status: 'not-cash' };
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.type !== 'human' || player.pendingRemoval) {
       return { status: 'no-seat' };
@@ -2373,7 +2496,8 @@ export class RoomManager {
   /** 예약 취소 (모달에서 무르기) */
   cancelCashTopUp(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
-    const player = room?.engine.state.players.find(p => p.id === playerId);
+    if (!room || this.isStoryRoom(room)) return false;
+    const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingTopUpTarget === undefined) return false;
     player.pendingTopUpTarget = undefined;
     this.onUpdate(roomId, room!.engine);
@@ -2474,7 +2598,9 @@ export class RoomManager {
     const inHandAlive = room.engine.state.isHandInProgress
       && (player.status === 'active' || player.status === 'all-in');
     const busted = player.chips <= 0 && !inHandAlive;
-    const keep = isSng || (sittingOut && !busted);
+    // 스토리 방: grace 만료 = 좌석 회수 → 빈 방 즉시 dispose → 어댑터가 run을 live-hold(room-lost)로
+    // 보존해 허브 「이어하기」가 새 방으로 재개한다 (자리비움 보존·5분 방치 유예는 스토리에 없다)
+    const keep = isSng || (sittingOut && !busted && !this.isStoryRoom(room));
     if (!keep) {
       return !this.leaveRoom(roomId, playerId);
     }
@@ -2733,14 +2859,19 @@ export class RoomManager {
         return;
       }
 
-      const { acted, action } = await processBotTurn(room.engine, isStale, aggressorId => {
+      const storyRoom = this.isStoryRoom(room);
+      const { acted, action, explanation } = await processBotTurn(room.engine, isStale, aggressorId => {
         // 상습 쇼버/레이저 대응은 휴먼 상대에게만 — 봇끼리는 기본 전략 유지
         const aggressor = room.engine.state.players.find(p => p.id === aggressorId);
         if (aggressor?.type !== 'human') return undefined;
         return this.aggroTrackers.get(roomId)?.stats(aggressorId, room.engine.state.handNumber);
-      }, cfg('bot.thinkDelayPct') / 100);
+      }, (cfg('bot.thinkDelayPct') / 100) * (storyRoom ? room.config.botThinkScale ?? 1 : 1), { explain: storyRoom });
       if (isStale()) return; // 사고 지연 중 루프가 교체됨 — 새 루프가 진행을 소유
       if (acted && action) {
+        // 스토리: 봇 속마음 수집 — 개인 story-update로만 나간다 (game-update 브로드캐스트 금지)
+        if (storyRoom) {
+          this.storyHooks?.onBotActed(roomId, activePlayer.id, action, explanation);
+        }
         // Bot chat based on action — 올인은 극적인 순간이라 AI 대사 시도, 나머지는 스크립트
         const character = getCharacterById(activePlayer.personalityId || '');
         if (character && action.action === 'all-in') {
@@ -3224,7 +3355,11 @@ export class RoomManager {
       settlementOk = false;
     }
 
-    if (settlementOk && !state.tournament) {
+    // '연습' 프리셋 스텝은 핸드 XP·일일 미션 미적립 — 이 호출은 아래 MTT/스토리 분기보다 앞이라
+    // 뒤쪽 분기만으로는 막지 못한다 (startNewHand의 captureHandStart 생략과 짝)
+    const storySkipsProgression = this.isStoryRoom(room)
+      && !!this.storyHooks?.skipHandProgression(roomId);
+    if (settlementOk && !state.tournament && !storySkipsProgression) {
       try {
         this.options.progression?.completeHand({
           roomId,
@@ -3267,6 +3402,16 @@ export class RoomManager {
     // 캐시/SnG 전용 경로(나가기 예약·빈 방 정리·파산 유예·착석 핸드오프)는 타지 않는다.
     if (this.isMttRoom(room)) {
       const verdict = this.mttHooks?.onHandComplete(roomId) ?? 'continue';
+      if (verdict === 'continue' && this.rooms.has(roomId)) {
+        this.scheduleNextHand(roomId);
+      }
+      return;
+    }
+    // 스토리 라이브 스텝: 목표 평가·결정 리뷰·인터럽트 판단은 어댑터가 하고 진행 여부를 지시한다.
+    // 나가기 예약·파산 30초 회수·착석 핸드오프 경로는 타지 않는다 — 히어로 파산은 회수(room-lost)가
+    // 아니라 어댑터의 실패 분기다. 히어로가 나가 빈 방이면 leaveRoom 경로가 이미 dispose했다.
+    if (this.isStoryRoom(room)) {
+      const verdict = this.storyHooks?.onHandComplete(roomId) ?? 'continue';
       if (verdict === 'continue' && this.rooms.has(roomId)) {
         this.scheduleNextHand(roomId);
       }
@@ -3318,6 +3463,8 @@ export class RoomManager {
         gameMode: (room.config.gameMode ?? 'cash') as GameMode,
         record,
         tournamentId: room.config.tournamentId ?? null,
+        // 스토리 핸드는 game_mode 'cash' 그대로 + story_tag로만 구분 (CHECK 제약 회피)
+        storyTag: this.isStoryRoom(room) ? room.config.storyHandTag ?? null : null,
       });
     } catch {
       // 히스토리 저장 실패는 게임에 치명적이지 않다 — 다음 핸드 진행을 우선한다

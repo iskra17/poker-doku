@@ -272,6 +272,18 @@ export interface RoomConfig {
   arenaBotVersion?: string;
   /** 서버 전용 Arena 입장 allowlist — GameState/RoomList/로그에 투영하지 말 것 */
   arenaParticipantIds?: readonly string[];
+  /**
+   * 수련 스토리 라이브 스텝 방 표식 (Phase 1b) — 세팅되면 RoomManager가 스토리 훅(StoryRoomHooks)
+   * 경로를 탄다: 로비 목록 숨김·봇 자동 충원 없음·자리비움/나가기 예약 거절·빈 방 즉시 dispose.
+   * 서버 전용 (getPublicState는 config를 노출하지 않는다). 방 1개 = 라이브 스텝 1개.
+   */
+  storyChapterId?: string;
+  /** 이 방을 연 스토리 런 id (어댑터 조인 키, 서버 전용) */
+  storyRunId?: string;
+  /** 핸드 히스토리 `story_tag` — '연습' 프리셋(practice) / '대결' 스파링(sparring). 서버 전용 */
+  storyHandTag?: 'practice' | 'sparring';
+  /** 봇 사고 지연 배율 (1 = 기본, 0.5 = 두 배 빠름) — 스토리 방 연출용, 서버 전용 */
+  botThinkScale?: number;
 }
 
 export interface Room {
