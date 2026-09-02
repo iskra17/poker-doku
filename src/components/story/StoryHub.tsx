@@ -21,6 +21,7 @@ import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
+import GalleryCard from '@/components/gallery/GalleryCard';
 import ChapterCard from './ChapterCard';
 import DailyDrillsCard from './DailyDrillsCard';
 import ReviewNotePanel from './ReviewNotePanel';
@@ -31,7 +32,7 @@ import ReviewNotePanel from './ReviewNotePanel';
  * 카드마다 다루는 유형과 내 정확도를 칩으로 보여 "부족한 부분"부터 고르게 한다) → 오늘의 수련/복습 노트.
  * 데이터는 서버 진행 뷰(StoryProgressView)와 정적 챕터 레지스트리를 합쳐 그린다.
  */
-export default function StoryHub() {
+export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void } = {}) {
   const progress = useStoryStore(state => state.progress);
   const status = useStoryStore(state => state.progressStatus);
   const error = useStoryStore(state => state.error);
@@ -183,9 +184,10 @@ export default function StoryHub() {
         ))}
       </div>
 
-      <div className="grid gap-2 md:grid-cols-2">
+      <div className={`grid gap-2 ${onOpenGallery ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}>
         <DailyDrillsCard daily={progress.daily} pending={pending || !!activeRun} onStart={() => void startDaily()} />
         <ReviewNotePanel reviewQueue={progress.reviewQueue} drillStats={progress.drillStats} />
+        {onOpenGallery && <GalleryCard onOpen={onOpenGallery} />}
       </div>
     </section>
   );

@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import GalleryNewDot from '../gallery/GalleryNewDot';
 import NeonText from '../ui/NeonText';
 
 /**
@@ -12,12 +13,14 @@ import NeonText from '../ui/NeonText';
  * - compact: 로비 본화면용 — 화면을 아끼는 한 줄 바. 좌측 작은 로고 + 우측 아이콘 열.
  *   로비는 고정 헤더 + 테이블 목록만 스크롤 구조라 헤더가 얇아야 목록이 넓어진다.
  */
-export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, onOpenHistory, onOpenHelp }: {
+export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, onOpenHistory, onOpenHelp, onOpenGallery }: {
   compact?: boolean;
   onOpenSettings?: () => void;
   onOpenFeedback?: () => void;
   onOpenHistory?: () => void;
   onOpenHelp?: () => void;
+  /** 기록실(인연 씬·이벤트 CG·의상·칭호 갤러리) — 새 항목이 있으면 NEW 점 */
+  onOpenGallery?: () => void;
 }) {
   const [logoError, setLogoError] = useState(false);
   const { muted, musicMuted, toggleAllMuted } = useSettingsStore();
@@ -79,6 +82,16 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
               </>
             )}
           </IconButton>
+          {onOpenGallery && (
+            <span className="relative">
+              <IconButton label="기록실" onClick={onOpenGallery}>
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <circle cx="9" cy="10" r="1.6" />
+                <path d="M21 16l-5-5-6 6-2-2-5 5" />
+              </IconButton>
+              <GalleryNewDot />
+            </span>
+          )}
           {onOpenHelp && (
             <IconButton label="도움말" onClick={onOpenHelp}>
               <circle cx="12" cy="12" r="10" />

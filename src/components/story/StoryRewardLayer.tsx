@@ -1,6 +1,7 @@
 'use client';
 
 import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatcher';
+import GallerySeenBaseline from '@/components/gallery/GallerySeenBaseline';
 import ProgressionSummary from '@/components/table/ProgressionSummary';
 
 /**
@@ -14,6 +15,8 @@ export default function StoryRewardLayer() {
     <>
       <ProgressionSummary variant="lobby" />
       <BondSceneUnlockWatcher />
+      {/* 기록실 NEW 기준선 — 프로필 첫 스냅샷 시점에 한 번 */}
+      <GallerySeenBaseline />
     </>
   );
 }

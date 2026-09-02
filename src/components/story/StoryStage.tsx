@@ -20,7 +20,7 @@ const noopSubscribe = () => () => {};
  * 라이브 스텝(프리셋/스파링)은 방 안 오버레이가 맡으므로 live.roomId가 있으면 그리지 않는다.
  * 서버 뷰(run)의 stepIndex로 챕터 정적 데이터를 찾아 렌더하고, 진행은 스토어 명령(advance/choose/answerDrill)으로만 한다.
  */
-export default function StoryStage() {
+export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => void } = {}) {
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   const run = useStoryStore(state => state.run);
   const pending = useStoryStore(state => state.pending);
@@ -106,6 +106,7 @@ export default function StoryStage() {
               <ChapterResult
                 result={run.result}
                 onClose={dismissRun}
+                onOpenGallery={onOpenGallery ? () => { dismissRun(); onOpenGallery(); } : undefined}
                 onNextChapter={chapterId => {
                   dismissRun();
                   void startChapter(chapterId);

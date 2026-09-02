@@ -24,6 +24,7 @@ import ArenaLobby from '@/components/arena/ArenaLobby';
 import StoryHub from '@/components/story/StoryHub';
 import StoryRewardLayer from '@/components/story/StoryRewardLayer';
 import StoryStage from '@/components/story/StoryStage';
+import GalleryModal from '@/components/gallery/GalleryModal';
 import { useArenaStore } from '@/lib/store/arena-store';
 import { useStoryStore } from '@/lib/store/story-store';
 
@@ -46,6 +47,7 @@ export default function Home() {
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [galleryOpen, setGalleryOpen] = useState(false);
   const [lobbyView, setLobbyView] = useState<'games' | 'story' | 'arena' | 'missions'>('games');
   const [sessionRecap, setSessionRecap] = useState<SessionRecapData | null>(null);
   const [inviteRoomId, setInviteRoomId] = useState<string | null>(() =>
@@ -157,6 +159,7 @@ export default function Home() {
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
         onOpenHelp={() => setHelpOpen(true)}
+        onOpenGallery={() => setGalleryOpen(true)}
       />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
       <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-2 gap-2 px-3 md:grid-cols-4 md:px-4">
@@ -184,7 +187,7 @@ export default function Home() {
       </nav>
       <main className="min-h-0 flex-1">
         {lobbyView === 'story' && (
-          <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><StoryHub /></div>
+          <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><StoryHub onOpenGallery={() => setGalleryOpen(true)} /></div>
         )}
         {lobbyView === 'missions' && (
           <div className="h-full overflow-y-auto pb-4 scrollbar-thin"><MissionPanel /></div>
@@ -241,7 +244,8 @@ export default function Home() {
       <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
-      <StoryStage />
+      <GalleryModal isOpen={galleryOpen} onClose={() => setGalleryOpen(false)} />
+      <StoryStage onOpenGallery={() => setGalleryOpen(true)} />
       {/* 로비 보상 레이어 — 스토리 스테이지 위(포털 순서): 도장 레벨업 필·인연 씬 해금 (방 밖 갭 수정) */}
       <StoryRewardLayer />
       {activeJoinTarget && (

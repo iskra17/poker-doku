@@ -34,6 +34,11 @@ interface CgStageProps {
   /** null이면 닫힘 */
   scene: CgStageScene | null;
   onClose: () => void;
+  /**
+   * z 레이어 — 'stage'(기본, z-96: StoryStage 95 위·로비 보상 필 97 아래) / 'modal'(z-120: `Modal`(100/110) 위).
+   * 프로필·기록실 모달 안에서 연 뷰어가 모달 뒤에 깔리던 문제의 해결(2026-09-03).
+   */
+  layer?: 'stage' | 'modal';
 }
 
 const noopSubscribe = () => () => {};
@@ -45,7 +50,7 @@ const noopSubscribe = () => () => {};
  * reduced-motion이면 틸트·줌 없이 정지 CG. z-[96] — StoryStage(95) 위, 로비 보상 필(97) 아래.
  * 영상 슬롯(P2 VideoCutscene)은 `art` 자리에 <video>를 끼우는 형태로 확장한다.
  */
-export default function CgStage({ scene, onClose }: CgStageProps) {
+export default function CgStage({ scene, onClose, layer = 'stage' }: CgStageProps) {
   const mounted = useSyncExternalStore(noopSubscribe, () => true, () => false);
   const reduced = usePrefersReducedMotion();
 
@@ -68,7 +73,7 @@ export default function CgStage({ scene, onClose }: CgStageProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[96] flex items-center justify-center bg-abyss/90 backdrop-blur-sm"
+          className={`fixed inset-0 ${layer === 'modal' ? 'z-[120]' : 'z-[96]'} flex items-center justify-center bg-abyss/90 backdrop-blur-sm`}
           onClick={onClose}
           onPointerMove={event => {
             if (reduced) return;

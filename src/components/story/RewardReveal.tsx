@@ -233,6 +233,9 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
       {plan.unlockedScenes.length > 0 && reached('next') && (
         <p className="mt-2 text-center text-[11px] text-blossom">✦ 인연 씬 해금 — {plan.unlockedScenes.map(scene => scene.title).join(' · ')}</p>
       )}
+      {reached('next') && (plan.cutscene || plan.unlockedScenes.length > 0 || plan.items.some(item => item.kind === 'cg' || item.kind === 'outfit' || item.kind === 'title')) && (
+        <p className="mt-1 text-center text-[10px] text-ink-dim">받은 CG·씬·의상·칭호는 로비 🖼 기록실에서 언제든 다시 볼 수 있어요</p>
+      )}
 
       {stage !== 'done' && !reduced && (
         <p className="mt-2 text-center text-[10px] text-ink-dim/80">탭하면 바로 넘어가요</p>

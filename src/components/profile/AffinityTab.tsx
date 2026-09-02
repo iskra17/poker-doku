@@ -210,8 +210,9 @@ export default function AffinityTab() {
         );
       })}
 
-      <BondSceneModal scene={viewingScene} onClose={() => setViewingScene(null)} />
-      <RewardCutscene cutscene={viewingCg} justUnlocked={false} onClose={() => setViewingCg(null)} />
+      {/* 프로필 모달(z-100/110) 안이므로 뷰어는 modal 레이어(z-120) — 아니면 모달 뒤에 깔린다 */}
+      <BondSceneModal scene={viewingScene} layer="modal" onClose={() => setViewingScene(null)} />
+      <RewardCutscene cutscene={viewingCg} justUnlocked={false} layer="modal" onClose={() => setViewingCg(null)} />
     </div>
   );
 }
