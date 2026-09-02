@@ -332,6 +332,38 @@ npx tsc --noEmit
     `PokerTable storyTheme`(청록 `story-felt-*`/`story-abyss` 토큰·레일 시안·「수련 테이블」 워터마크)·GameRoomView 상시
     리본·TopBar 수련 배지(블라인드 대신, 초대 코드/링크·칩 추가 숨김) — 전부 `useStoryLive().active` 게이트라 실전 방
     렌더는 불변. 라이브 HUD는 미션형이면 'N핸드' 카운터 + 「목표를 다 채우면 끝나요 (최대 M핸드)」(`liveFinishHint`).
+  - **보상 라인 (P2 — v32, 기획 Part T)**: 카탈로그 단일 소스는 `src/lib/story/rewards/catalog.ts`(1막 20항목 — 칭호·카드백·
+    펠트·의상·CG·투척·칩, 트리거 = 첫 완주/S등급/막 완주/`badge:*` 플래그, 가챠 없음). DB `story_reward_catalog`는 시드 사본
+    (패리티 테스트 `database.test.ts`) — **새 보상은 TS와 다음 마이그레이션 INSERT에 함께 추가**. 지급 = **reconcile**
+    (`src/server/story-reward-service.ts`): durable 상태(`story_progress` completions/best_grade·`story_flags`·막 완주)에서 자격 −
+    `story_rewards` 영수증 = 누락분을 한 트랜잭션으로 넣는다(영수증 PK `(profile,item)`이 1회 캡, `source_key` 감사). 호출처는
+    결산·데일리 종료·`getProgress`(자기 치유, 오류는 삼킴) — progression XP/인연 트랜잭션과 분리·각자 멱등. 칩 외 보상은
+    `sync_story_reward_inventory` 트리거가 `inventory_items` 마커를 만들고(`protect_story_reward_inventory_*` 동결, v18
+    `validate_catalog_inventory_*`에 story 분기 추가) v13 영구 지급 뷰를 우회한다(아레나 v14/v18 선례). 칩은 `chip_ledger`
+    reason `STORY_REWARD`(키 `story-reward:<len:profile>:<len:item>`, `EconomyRepository.applyWalletDeltaInTransaction` public —
+    caller-owned tx) / 데일리 100칩 `STORY_DAILY`(`EconomyService.grantStoryDailyChips`, `economy.storyDailyChips` 설정, 날짜당 1회).
+    코스메틱 장착은 `profile_cosmetics(slot card-back|felt)`·`profile_character_outfits(히로인별)` — `profile_equipment.slot` CHECK를
+    건드리지 않고 우회, 스냅샷 `cosmetics{cardBack,felt,outfits}`. `POST /api/progression/equipment`의 slot이
+    `'card-back'|'felt'|'outfit:<heroine>'`이면 `setCosmetic`/`setCharacterOutfit`로 라우팅, 스토리 **칭호**는 기존 `title` 슬롯에
+    든다(v32가 `validate_catalog_equipment_*`에 story 분기 추가, 서비스는 컬렉션 → 스토리 카탈로그 폴백). 결산 DTO
+    `ChapterResultRewards.items/chips/cutscene(보스>띠>에필로그 1개)/unlockedScenes(인연 전이 → bond-scenes)/next`, 허브
+    `StoryProgressView.rewards` 미리보기, 새 지급 뒤 `progression-update` 재전송(인벤토리·코스메틱 즉시 반영). 회귀:
+    `story-reward-repository.test.ts`·`story-reward-service.test.ts`·`progression-service.story.test.ts`(전이·코스메틱·칭호)·
+    `socket-handler.story.test.ts`(exam 완주 DTO).
+  - **보상 클라 (P1·P4)**: 결산은 `RewardReveal`(스탬프→통계→아이템 카드 플립→CG 컷신→띠 배너→다음 보상→버튼, 탭 스킵·
+    reduced-motion 즉시 렌더, `reward-view.ts` 순수 플랜 — 서버 DTO 없으면 폴백) → 그 뒤 `StoryRewardLayer`(`page.tsx`의
+    `<StoryStage/>` 다음 마운트: 로비 `ProgressionSummary` + 인연 씬 워처)가 `presentation-store` hold/release 게이트로
+    본드씬·레벨업 필을 순서대로 띄운다. 드릴 순간 보상은 `drill-moments.ts`(콤보 3/5·퍼펙트·재출제 오답, 교사 7명 대사)
+    + `DrillMomentLayer`, SFX 4종 `effects.ts`(reward/level-up/unlock/combo). **옷장·갤러리는 프로필 인연 탭(`AffinityTab`)**
+    — 도장 기록 CG 행(미야코) + 히로인별 인연 씬·이벤트 CG·옷장 칩(기본/보유/🔒 조건), 보관함(`InventoryTab`)은 카드백·펠트·
+    칭호 장착 + 의상·CG는 인연 탭 안내. 장착은 `progression-store.setCosmetic(slot, itemId)`(같은 `/api/progression/equipment`,
+    stale 소켓 스냅샷 보호 `protectedCosmetics`). **의상은 `CharacterImage outfitId` 명시 prop만** 타서 로비·스토리 화면
+    (PartnerCard·StoryHub·ScenePlayer·CoachBubble·LessonPage·RewardItemCard·AffinityTab)에만 적용 — 좌석·말풍선·컷인·딜러
+    코너는 코드 불변(기본 의상). `useOutfitId(characterId)`가 스냅샷 `cosmetics.outfits` item id → 카탈로그 `outfitId`.
+    카드백은 `Card.tsx CardBack`(cosmetics.cardBack), 노란띠 펠트는 `PokerTable`이 **수련 테이블에서만** 토큰 교체.
+    아트 규격·후처리는 `scripts/art/convert.mjs`(bg 1280 / cg 768×1152 / bust 크로마키 512²) — 배경 `public/assets/story/bg`,
+    CG `public/assets/story/cg`, 의상 `public/assets/characters/<id>/outfits/<outfitId>/<expr>.webp`(매니페스트
+    `story-backgrounds.ts AVAILABLE`·`character-art.ts OUTFITS`에 등록해야 노출, 미등록은 그라디언트/기본 의상 폴백).
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -521,7 +553,8 @@ npx tsc --noEmit
   (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
 - 수련 스토리 Phase 2 이후 — 2~4막 데이터, 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
   `exposeBotThoughts`)·가면 봇 identity 분리, 실패 씬(`failScene`) 재생, 하드 모드·기록실, 스토리 XP 카탈로그
-  아이템(v31), 파트너별 Ch1 대사 변주, 스토리 배경·미야코 표정 아트(폴백 중), 스토리 BGM 트랙.
+  아이템(v13 뷰 확장 — v32는 스토리 보상 카탈로그만 우회), 파트너별 Ch1 대사 변주, 스토리 BGM 트랙(`story.mp3` 미배치 —
+  `music-manager`가 404 시 로비 트랙으로 폴백), `dojo-office` 배경 아트, 보상 컷신 영상(P5 파일럿 — `VideoCutscene` 계약 미착수).
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.

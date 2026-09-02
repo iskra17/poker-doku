@@ -23,6 +23,8 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   const showBlindButtons = useSettingsStore(s => s.showBlindButtons);
   const isMobile = useIsMobile();
   const seatActions = useSeatActions();
+  // 장착 펠트 코스메틱(수련 스토리 보상) — 훅은 early return 앞에서 무조건 호출, 적용은 수련 테이블에만(아래 yellowFelt)
+  const feltId = useProgressionStore(state => state.snapshot?.cosmetics?.felt ?? null);
 
   if (!gameState) return null;
 
@@ -73,8 +75,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   // 수련 스토리 방은 펠트·레일을 시안 계열 「도장 테이블」로 바꿔 실전 캐시 테이블과 한눈에 구분한다
   // (2026-09-03 피드백 ③ — 연습 게임과 실전이 헷갈린다). 파이널 테이블 테마가 우선한다.
   const story = storyTheme && !finalTable;
-  // 장착 펠트 코스메틱(수련 스토리 보상) — 수련 테이블에만 적용, 실전 방은 불변
-  const feltId = useProgressionStore(state => state.snapshot?.cosmetics?.felt ?? null);
+  // 노란띠 펠트는 수련 테이블에만 적용 — 실전 방(story=false)은 불변
   const yellowFelt = story && feltId === 'story-felt-yellow-belt';
   const storyFeltHi = yellowFelt ? 'var(--color-story-felt-yellow-hi)' : 'var(--color-story-felt-hi)';
   const storyFeltLo = yellowFelt ? 'var(--color-story-felt-yellow-lo)' : 'var(--color-story-felt-lo)';

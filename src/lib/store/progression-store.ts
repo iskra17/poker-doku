@@ -6,6 +6,8 @@ import type { DailyMissionDaySnapshot } from '@/lib/progression/missions';
 import { findNewlyUnlockedScenes, type BondScene } from '@/lib/characters/bond-scenes';
 import type {
   ProgressionCharacterId,
+  ProgressionCosmetics,
+  ProgressionCosmeticSlot,
   ProgressionEquipmentSlot,
   ProgressionRewardSummary,
   ProgressionSnapshot,
@@ -40,6 +42,11 @@ export interface ProgressionStoreState {
   rerollMission(slot: number): Promise<LoadOutcome>;
   selectCharacter(characterId: ProgressionCharacterId): Promise<LoadOutcome>;
   setEquipment(slot: ProgressionEquipmentSlot, itemId: string | null): Promise<LoadOutcome>;
+  /**
+   * 스토리 보상 코스메틱 장착 — 카드백/펠트/히로인 의상. 같은 `/api/progression/equipment` 엔드포인트에
+   * slot 문자열('card-back' | 'felt' | 'outfit:<heroine>')로 보내면 서버가 `setCosmetic`/`setCharacterOutfit`로 라우팅한다.
+   */
+  setCosmetic(slot: ProgressionCosmeticSlotKey, itemId: string | null): Promise<LoadOutcome>;
   receiveSnapshot(snapshot: ProgressionSnapshot): void;
   enqueueReward(summary: ProgressionRewardSummary): void;
   consumeReward(eventId: string): void;
@@ -49,6 +56,9 @@ export interface ProgressionStoreState {
   reset(): void;
   clearError(): void;
 }
+
+/** `setCosmetic` slot 키 — 카드백·펠트 + 히로인별 의상 */
+export type ProgressionCosmeticSlotKey = ProgressionCosmeticSlot | `outfit:${ProgressionCharacterId}`;
 
 export type ProgressionStore = UseBoundStore<StoreApi<ProgressionStoreState>>;
 
@@ -71,6 +81,16 @@ export function bondScenesBetween(previous: ProgressionSnapshot | null, next: Pr
     if (affinity.level > prevLevel) unlocked.push(...findNewlyUnlockedScenes(affinity.characterId, prevLevel, affinity.level));
   }
   return unlocked;
+}
+
+/** 코스메틱 장착 상태 동일성 — 카드백·펠트·히로인별 의상 전부 일치해야 같다 */
+function sameCosmetics(a: ProgressionCosmetics, b: ProgressionCosmetics): boolean {
+  if (a.cardBack !== b.cardBack || a.felt !== b.felt) return false;
+  const keys = new Set([...Object.keys(a.outfits), ...Object.keys(b.outfits)]) as Set<ProgressionCharacterId>;
+  for (const key of keys) {
+    if ((a.outfits[key] ?? null) !== (b.outfits[key] ?? null)) return false;
+  }
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -154,6 +174,8 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
     value: ProgressionCharacterId;
   } | null = null;
   const protectedEquipment = new Map<ProgressionEquipmentSlot, string | null>();
+  /** 장착 응답 뒤 도착하는 stale 소켓 스냅샷이 코스메틱을 되돌리지 않게 잡아 두는 커밋값(일치하면 해제) */
+  let protectedCosmetics: { profileId: string; value: ProgressionCosmetics } | null = null;
   let missionRefreshScheduled = false;
   let missionRefreshRequested = false;
   let missionRefreshPromise: Promise<void> | null = null;
@@ -170,6 +192,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       currentMutationCount = 0;
       protectedCharacter = null;
       protectedEquipment.clear();
+      protectedCosmetics = null;
       missionRefreshScheduled = false;
       missionRefreshRequested = false;
       missionRefreshPromise = null;
@@ -279,10 +302,16 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
         if (equipment[slot] === value) protectedEquipment.delete(slot);
         else equipment[slot] = value;
       }
+      let cosmetics = incoming.cosmetics;
+      if (protectedCosmetics?.profileId === incoming.profile.profileId) {
+        if (sameCosmetics(cosmetics, protectedCosmetics.value)) protectedCosmetics = null;
+        else cosmetics = protectedCosmetics.value;
+      }
       return {
         ...incoming,
         profile: { ...incoming.profile, selectedCharacterId },
         equipment,
+        cosmetics,
       };
     };
 
@@ -469,6 +498,29 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
                 ...state.snapshot,
                 equipment: { ...state.snapshot.equipment, [slot]: committed },
               }
+            : responseSnapshot,
+          status: 'ready',
+        }));
+        return 'ready';
+      }),
+
+      setCosmetic: (slot, itemId) => serializeMutation(async () => {
+        const result = await requestJson(
+          '/api/progression/equipment',
+          jsonPost({ slot, itemId }),
+          'equipment',
+        );
+        if (result.outcome !== 'ready') return result.outcome;
+        const responseSnapshot = parseProgression(result.payload, result.profileId);
+        if (!responseSnapshot || !isRecord(responseSnapshot.cosmetics)) {
+          set({ error: DEFAULT_ERROR });
+          return 'error';
+        }
+        const committed = responseSnapshot.cosmetics;
+        protectedCosmetics = { profileId: responseSnapshot.profile.profileId, value: committed };
+        set(state => ({
+          snapshot: state.snapshot
+            ? { ...state.snapshot, cosmetics: committed }
             : responseSnapshot,
           status: 'ready',
         }));
