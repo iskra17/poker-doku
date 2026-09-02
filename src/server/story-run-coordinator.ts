@@ -17,7 +17,7 @@ import { STORY_CHAPTERS } from '../lib/story/chapters';
 import { DrillGenerationError, generateDrill, getDrillTemplate, gradeDrill } from '../lib/story/drills/generator';
 import { toPublicDrillInstance } from '../lib/story/drills/public';
 import type { DrillInstance, DrillResult } from '../lib/story/drills/types';
-import { chapterPassed, examPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet, type DrillSlotOutcome } from '../lib/story/grading';
+import { chapterPassed, examPassed, firstClearRewards, gradeChapter, isPerfectSet, replayRewards, scoreDrillSet, type DrillSlotOutcome } from '../lib/story/grading';
 import type {
   Chapter,
   ChapterGrade,
@@ -28,11 +28,12 @@ import type {
   StoryTeacherId,
 } from '../lib/story/types';
 import { LIVE_STEP_KINDS, isStoryHeroineId } from '../lib/story/types';
-import { BLACK_BELT_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
+import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import type {
   ChapterResultView,
   StoryAdvanceRequest,
   StoryChoiceRequest,
+  StoryDrillAck,
   StoryDrillRequest,
   StoryDrillView,
   StoryLiveView,
@@ -84,6 +85,8 @@ export interface StoryAttemptInput {
   runId?: string | null;
   correct: boolean;
   hintsUsed?: number;
+  /** 0 = 첫 시도, n = n번째 재출제 (코디네이터는 항상 넘긴다; 리포지토리 기본 0) */
+  attempt?: number;
   elapsedMs: number;
   answeredAt: number;
 }
@@ -108,7 +111,13 @@ export interface StoryRepositoryPort {
   markCorrect(profileId: string, templateId: string, seed: number, now: number): unknown;
   listDue(profileId: string, now: number, limit: number): StoryReviewNoteRecord[];
   countNotes(profileId: string): number;
-  countAttemptsBetween(profileId: string, fromMs: number, toMsExclusive: number, context?: StoryAttemptContext): number;
+  countAttemptsBetween(
+    profileId: string,
+    fromMs: number,
+    toMsExclusive: number,
+    context?: StoryAttemptContext,
+    options?: { firstAttemptOnly?: boolean },
+  ): number;
 }
 
 /** 보상 포트 — ProgressionRuntime이 구현 (없으면 XP 없이 진행: 테스트·비활성 환경) */
@@ -137,8 +146,10 @@ export interface StoryRunCoordinatorDeps {
   runIdFactory?: () => string;
   /** 오늘의 수련 문제 수 (기본 3) */
   dailyTotal?: number;
-  /** 오답 재출제 상한 (기본 2) */
+  /** 세트 끝 재출제 라운드 상한 (기본 1 — 워스트 슬롯×2, 2026-09-03 완화) */
   maxRetries?: number;
+  /** 재출제 전에 [다시 풀기]/[넘어가기] 오퍼를 낼지 (기본 true, false면 자동 재출제 — 롤백 스위치) */
+  retryOffer?: boolean;
 }
 
 export type CoordinatorResult<T = undefined> =
@@ -155,13 +166,26 @@ interface DrillServe {
   attempt: number;
 }
 
+/**
+ * 드릴 세트 상태 — 2패스 모델(2026-09-03).
+ * 첫 패스 `queue`는 슬롯 수만큼 고정(오답으로 늘지 않는다). 첫 패스가 끝나고 오답 슬롯이 남으면
+ * `stage:'retry-offer'`로 멈춰 클라가 [다시 풀기]/[넘어가기]를 고르고, 재출제는 `retryQueue`(새 seed)로 돈다.
+ */
 interface DrillSetState {
   setId: string;
   teacher: StoryTeacherId;
   slots: DrillSlot[];
+  /** 첫 패스 — 고정 */
   queue: DrillServe[];
   cursor: number;
-  passRule: { minCorrect: number };
+  /** 현재 재출제 라운드 큐 */
+  retryQueue: DrillServe[];
+  retryCursor: number;
+  /** 시작한 재출제 라운드 수 (0..maxRetries) */
+  round: number;
+  stage: 'first' | 'retry-offer' | 'retry';
+  /** [복습 노트에 넣고 넘어가기]로 재출제를 건너뛰었는가 */
+  retrySkipped: boolean;
   hintPenalty: number;
   /** 슬롯별 결과(첫 시도·최종) */
   outcomes: Map<number, DrillSlotOutcome & { attempts: number }>;
@@ -194,7 +218,12 @@ export interface StoryRun {
   flagsDelta: Record<string, string>;
   drill: DrillSetState | null;
   /** 챕터 전체 드릴 요약(세트가 여러 개일 수 있음) */
-  drillSummary: { outcomes: DrillSlotOutcome[]; hintsUsed: number; bestStreak: number; answered: number; correct: number; hintPenalty: number; wrongSlots: number };
+  drillSummary: {
+    outcomes: DrillSlotOutcome[]; hintsUsed: number; bestStreak: number; answered: number; correct: number;
+    hintPenalty: number; wrongSlots: number;
+    /** 세트 수 / 「퍼펙트」 세트 수 / 재출제 건너뜀 여부(하나라도) */
+    sets: number; perfectSets: number; retrySkipped: boolean;
+  };
   result: ChapterResultView | null;
   /** 끝난 라이브 스텝 요약(순서대로) — 스파링('대결')만 통과·등급에 반영된다 */
   liveResults: LiveStepSummary[];
@@ -226,7 +255,7 @@ function defaultRunId(): string {
 }
 
 function emptySummary(hintPenalty = 0.5): StoryRun['drillSummary'] {
-  return { outcomes: [], hintsUsed: 0, bestStreak: 0, answered: 0, correct: 0, hintPenalty, wrongSlots: 0 };
+  return { outcomes: [], hintsUsed: 0, bestStreak: 0, answered: 0, correct: 0, hintPenalty, wrongSlots: 0, sets: 0, perfectSets: 0, retrySkipped: false };
 }
 
 export class StoryRunCoordinator {
@@ -236,6 +265,7 @@ export class StoryRunCoordinator {
   private readonly runIdFactory: () => string;
   private readonly dailyTotal: number;
   private readonly maxRetries: number;
+  private readonly retryOffer: boolean;
   private liveAdapter: StoryLiveAdapterPort | null = null;
 
   constructor(private readonly deps: StoryRunCoordinatorDeps) {
@@ -243,7 +273,8 @@ export class StoryRunCoordinator {
     this.now = deps.now ?? (() => Date.now());
     this.runIdFactory = deps.runIdFactory ?? defaultRunId;
     this.dailyTotal = deps.dailyTotal ?? 3;
-    this.maxRetries = deps.maxRetries ?? 2;
+    this.maxRetries = deps.maxRetries ?? 1;
+    this.retryOffer = deps.retryOffer ?? true;
   }
 
   /** 라이브 어댑터 연결 (생성 후 바인딩 — 어댑터는 RoomManager를, 코디네이터는 어댑터를 알지만 그 역은 이벤트로만) */
@@ -288,7 +319,7 @@ export class StoryRunCoordinator {
       daily: {
         date: day.date,
         done: dailyAvailable
-          ? Math.min(this.dailyTotal, this.deps.repository.countAttemptsBetween(profileId, day.fromMs, day.toMsExclusive, 'daily'))
+          ? Math.min(this.dailyTotal, this.deps.repository.countAttemptsBetween(profileId, day.fromMs, day.toMsExclusive, 'daily', { firstAttemptOnly: true }))
           : 0,
         total: this.dailyTotal,
         available: dailyAvailable,
@@ -391,7 +422,8 @@ export class StoryRunCoordinator {
     }
     const now = this.now();
     const day = kstDay(now);
-    if (this.deps.repository.countAttemptsBetween(profileId, day.fromMs, day.toMsExclusive, 'daily') >= this.dailyTotal) {
+    // 첫 시도만 센다 — 재출제 행이 하루를 소모하지 않게(2026-09-03 버그 수정)
+    if (this.deps.repository.countAttemptsBetween(profileId, day.fromMs, day.toMsExclusive, 'daily', { firstAttemptOnly: true }) >= this.dailyTotal) {
       return { ok: false, code: 'action-rejected', message: '오늘의 문제는 모두 풀었어요. 내일 다시 만나요.' };
     }
     const slots = this.buildDailySlots(profileId, completed, day.date, now);
@@ -416,7 +448,6 @@ export class StoryRunCoordinator {
           title: '오늘의 수련 문제',
           teacher: teacherId ?? 'miyako',
           drills: slots.map(slot => ({ templateId: slot.templateId, seedPolicy: 'fixed', fixedSeed: slot.seed })),
-          passRule: { minCorrect: 0 },
           hintPenalty: 0.5,
         },
         { kind: 'result', id: `daily:${day.date}:result` },
@@ -469,6 +500,9 @@ export class StoryRunCoordinator {
         if (!drill || !drill.current) {
           return { ok: false, code: 'action-rejected', message: '문제를 준비하는 중이에요.' };
         }
+        if (drill.stage === 'retry-offer') {
+          return { ok: false, code: 'action-rejected', message: '틀린 문제를 다시 풀지, 복습 노트로 보내고 넘어갈지 골라 주세요.' };
+        }
         if (!drill.current.result) {
           return { ok: false, code: 'action-rejected', message: '답을 제출해야 다음 문제로 넘어갈 수 있어요.' };
         }
@@ -519,17 +553,36 @@ export class StoryRunCoordinator {
   }
 
   /** 드릴 답 제출 / 힌트 — 서버가 같은 seed로 재생성해 채점한다. */
-  drill(profileId: string, request: StoryDrillRequest): CoordinatorResult<{ action: 'answer'; result: DrillResult } | { action: 'hint'; hint: string }> {
+  drill(profileId: string, request: StoryDrillRequest): CoordinatorResult<StoryDrillAck> {
     const run = this.runs.get(profileId);
     if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
     const drill = run.drill;
     if (run.runId !== request.runId || !drill || run.phase !== 'drill' || !drill.current) {
       return { ok: false, code: 'stale-state', message: '지금은 문제를 푸는 단계가 아니에요.' };
     }
-    if (drill.setId !== request.setId || drill.cursor !== request.index) {
+    if (drill.setId !== request.setId || this.drillIndex(drill) !== request.index) {
       return { ok: false, code: 'stale-state', message: '화면이 최신 문제가 아니에요. 다시 불러올게요.' };
     }
     const current = drill.current;
+
+    // 재출제 오퍼 응답 — 오퍼 중에만 유효. 'retry'는 오답 슬롯만 새 seed로 재출제 패스, 'skip-retry'는 세트 종료.
+    if (request.action === 'retry' || request.action === 'skip-retry') {
+      if (drill.stage !== 'retry-offer') {
+        return { ok: false, code: 'action-rejected', message: '지금은 재출제를 고르는 단계가 아니에요.' };
+      }
+      const wrong = this.wrongSlots(drill);
+      if (request.action === 'skip-retry') {
+        drill.retrySkipped = true;
+        this.finalizeSet(run, drill);
+        run.updatedAt = this.now();
+        if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
+        return { ok: true, value: { action: 'skip-retry', skipped: wrong.length } };
+      }
+      this.startRetryRound(drill, wrong);
+      run.updatedAt = this.now();
+      this.deps.emit(profileId, this.buildView(run));
+      return { ok: true, value: { action: 'retry', count: wrong.length } };
+    }
 
     if (request.action === 'hint') {
       if (run.mode === 'exam') return { ok: false, code: 'action-rejected', message: '실력 확인에서는 힌트를 쓸 수 없어요.' };
@@ -538,7 +591,8 @@ export class StoryRunCoordinator {
       if (!hint) return { ok: false, code: 'action-rejected', message: '이 문제엔 힌트가 없어요.' };
       if (!current.hintOpened) {
         current.hintOpened = true;
-        drill.hintsUsed += 1;
+        // 재출제 패스의 힌트는 S 판정(hintsUsed)에 세지 않는다 — 재출제는 이미 0.5점이라 이중 페널티
+        if (current.serve.attempt === 0) drill.hintsUsed += 1;
         run.updatedAt = this.now();
         this.deps.emit(profileId, this.buildView(run));
       }
@@ -563,13 +617,21 @@ export class StoryRunCoordinator {
       runId: run.runId,
       correct,
       hintsUsed,
+      attempt: current.serve.attempt,
       elapsedMs,
       answeredAt: now,
     });
     // 복습 노트(Leitner): 오답은 박스1로, 정답은 승격/졸업 — 재출제 문항(attempt>0)은 노트 갱신 대상에서 제외
     if (current.serve.attempt === 0) {
-      if (correct) this.deps.repository.markCorrect(profileId, current.serve.templateId, current.serve.seed, now);
-      else this.deps.repository.markWrong(profileId, current.serve.templateId, current.serve.seed, now);
+      if (correct) {
+        const outcome = this.deps.repository.markCorrect(profileId, current.serve.templateId, current.serve.seed, now);
+        // 「빈 노트」: 노트가 졸업으로 비워지는 순간 플래그 영속 (보상 카탈로그 트리거)
+        if (outcome === 'graduated' && this.deps.repository.countNotes(profileId) === 0) {
+          this.deps.repository.setFlags(profileId, { [EMPTY_NOTE_FLAG]: '1' }, now);
+        }
+      } else {
+        this.deps.repository.markWrong(profileId, current.serve.templateId, current.serve.seed, now);
+      }
     }
 
     const outcome = drill.outcomes.get(current.serve.slotIndex) ?? { firstCorrect: false, finallyCorrect: false, hintUsed: false, attempts: 0 };
@@ -586,15 +648,8 @@ export class StoryRunCoordinator {
       drill.streak += 1;
       drill.bestStreak = Math.max(drill.bestStreak, drill.streak);
     } else {
+      // 오답은 큐에 push하지 않는다 — 첫 패스가 끝난 뒤 오퍼/재출제 라운드가 오답 슬롯을 모아 다시 낸다
       drill.streak = 0;
-      if (current.serve.attempt < this.maxRetries) {
-        drill.queue.push({
-          slotIndex: current.serve.slotIndex,
-          templateId: current.serve.templateId,
-          seed: hashSeed(current.serve.seed, 'retry', current.serve.attempt + 1),
-          attempt: current.serve.attempt + 1,
-        });
-      }
     }
     const result: DrillResult = {
       templateId: current.serve.templateId,
@@ -730,7 +785,11 @@ export class StoryRunCoordinator {
       slots: step.drills,
       queue,
       cursor: 0,
-      passRule: step.passRule,
+      retryQueue: [],
+      retryCursor: 0,
+      round: 0,
+      stage: 'first',
+      retrySkipped: false,
       hintPenalty: step.hintPenalty,
       outcomes: new Map(),
       streak: 0,
@@ -743,7 +802,7 @@ export class StoryRunCoordinator {
     };
     run.drill = drill;
     run.phase = 'drill';
-    this.serveCurrent(drill);
+    this.serveCurrent(drill, queue[0]);
     return true;
   }
 
@@ -753,19 +812,80 @@ export class StoryRunCoordinator {
     return hashSeed(run.runId, setId, slotIndex);
   }
 
-  private serveCurrent(drill: DrillSetState): void {
-    const serve = drill.queue[drill.cursor];
+  private serveCurrent(drill: DrillSetState, serve: DrillServe): void {
     const instance = this.regenerate(serve, drill.teacher);
     drill.current = { serve, instance, hintOpened: false, result: null, servedAt: this.now() };
   }
 
+  /**
+   * 세트 내 명령 커서(단조 증가, stale 검사 키) — 첫 패스 0..total-1, 오퍼 = total,
+   * 재출제 패스 = total + 1 + retryCursor. 오퍼와 재출제 첫 문항이 같은 값을 갖지 않게 1을 띄운다.
+   */
+  private drillIndex(drill: DrillSetState): number {
+    if (drill.stage === 'retry') return drill.queue.length + 1 + drill.retryCursor;
+    return drill.cursor;
+  }
+
+  /** 답했지만 아직 최종 정답이 아닌 슬롯 (미출제 슬롯은 세지 않는다) */
+  private wrongSlots(drill: DrillSetState): number[] {
+    return drill.queue
+      .map(serve => serve.slotIndex)
+      .filter(slotIndex => {
+        const outcome = drill.outcomes.get(slotIndex);
+        return outcome !== undefined && !outcome.finallyCorrect;
+      });
+  }
+
   private serveNext(run: StoryRun, drill: DrillSetState): void {
-    drill.cursor += 1;
-    if (drill.cursor < drill.queue.length) {
-      this.serveCurrent(drill);
+    if (drill.stage === 'retry') {
+      drill.retryCursor += 1;
+      if (drill.retryCursor < drill.retryQueue.length) {
+        this.serveCurrent(drill, drill.retryQueue[drill.retryCursor]);
+        return;
+      }
+    } else {
+      drill.cursor += 1;
+      if (drill.cursor < drill.queue.length) {
+        this.serveCurrent(drill, drill.queue[drill.cursor]);
+        return;
+      }
+    }
+    this.offerOrFinalize(run, drill);
+  }
+
+  /** 패스가 끝났다 — 오답이 남고 라운드가 남으면 오퍼(또는 자동 재출제), 아니면 세트 종료 */
+  private offerOrFinalize(run: StoryRun, drill: DrillSetState): void {
+    const wrong = this.wrongSlots(drill);
+    if (wrong.length > 0 && drill.round < this.maxRetries) {
+      if (this.retryOffer) {
+        drill.stage = 'retry-offer';
+        return;
+      }
+      this.startRetryRound(drill, wrong);
       return;
     }
-    // 세트 완료 → 요약에 합산하고 다음 스텝으로
+    this.finalizeSet(run, drill);
+  }
+
+  /** 오답 슬롯만 새 seed(같은 템플릿)로 재출제 패스를 연다 */
+  private startRetryRound(drill: DrillSetState, wrong: readonly number[]): void {
+    drill.round += 1;
+    drill.retryQueue = wrong.map(slotIndex => {
+      const base = drill.queue.find(serve => serve.slotIndex === slotIndex)!;
+      return {
+        slotIndex,
+        templateId: base.templateId,
+        seed: hashSeed(base.seed, 'retry', drill.round),
+        attempt: drill.round,
+      };
+    });
+    drill.retryCursor = 0;
+    drill.stage = 'retry';
+    this.serveCurrent(drill, drill.retryQueue[0]);
+  }
+
+  /** 세트 완료 → 요약에 합산하고 다음 스텝으로 */
+  private finalizeSet(run: StoryRun, drill: DrillSetState): void {
     const outcomes = drill.slots.map((_, slotIndex) => {
       const outcome = drill.outcomes.get(slotIndex);
       return outcome
@@ -780,6 +900,9 @@ export class StoryRunCoordinator {
     summary.correct += drill.correct;
     summary.hintPenalty = drill.hintPenalty;
     summary.wrongSlots += outcomes.filter(outcome => !outcome.firstCorrect).length;
+    summary.sets += 1;
+    if (isPerfectSet(outcomes)) summary.perfectSets += 1;
+    summary.retrySkipped ||= drill.retrySkipped;
     this.enterStep(run, run.stepIndex + 1);
   }
 
@@ -802,6 +925,17 @@ export class StoryRunCoordinator {
     const now = this.now();
     const summary = run.drillSummary;
     const drillScore = scoreDrillSet(summary.outcomes, summary.hintPenalty);
+    const drillResult: ChapterResultView['drill'] = {
+      answered: summary.answered,
+      correct: summary.correct,
+      bestStreak: summary.bestStreak,
+      hintsUsed: summary.hintsUsed,
+      score: drillScore,
+      slots: summary.outcomes.length,
+      finalCorrect: summary.outcomes.filter(outcome => outcome.finallyCorrect).length,
+      perfect: summary.sets > 0 && summary.perfectSets === summary.sets,
+      retrySkipped: summary.retrySkipped,
+    };
     // 통과 = 드릴 세트 완료 + 스파링 primary 행동 목표 (결과 조건은 등급·뱃지 전용). '연습'은 판정 무관.
     const sparring = run.liveResults.filter(entry => entry.tag === '대결');
     const primaryObjectivesMet = sparring.length === 0
@@ -824,8 +958,11 @@ export class StoryRunCoordinator {
 
     if (run.kind === 'daily') {
       const teacherId = run.daily?.teacherId ?? null;
+      // 데일리 런은 통과 여부가 없어 플래그를 여기서 바로 영속한다
+      if (drillResult.perfect) this.deps.repository.setFlags(run.profileId, { [PERFECT_SET_FLAG]: '1' }, now);
       let affinity: Array<{ characterId: StoryHeroineId; milli: number }> = [];
-      if (teacherId && summary.answered >= this.dailyTotal && this.deps.rewards) {
+      // 완료 = 슬롯 3개를 다 풀었는가(재출제 제출은 세지 않는다)
+      if (teacherId && summary.outcomes.length >= this.dailyTotal && this.deps.rewards) {
         const outcome = this.deps.rewards.completeDaily({ profileId: run.profileId, kstDate: run.daily!.kstDate, teacherId, completedAt: now });
         if (!outcome.duplicate) affinity = [{ characterId: teacherId, milli: 5_000 }];
       }
@@ -834,7 +971,7 @@ export class StoryRunCoordinator {
         mode: 'full',
         passed: true,
         grade,
-        drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
+        drill: drillResult,
         live: null,
         rewards: { firstClear: false, dojoXpMilli: 0, affinity, badgeId: null },
         reviewNotesAdded: summary.wrongSlots,
@@ -848,6 +985,8 @@ export class StoryRunCoordinator {
       const firstClear = passed && (before?.completions ?? 0) === 0;
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
       if (passed) {
+        // 「퍼펙트」는 선택지 플래그와 함께 통과 시에만 영속된다(미통과 런의 플래그는 버려지는 기존 규약)
+        if (drillResult.perfect) run.flagsDelta[PERFECT_SET_FLAG] = '1';
         this.deps.repository.recordCompletion(run.profileId, run.chapter.id, grade, now);
         if (Object.keys(run.flagsDelta).length > 0) this.deps.repository.setFlags(run.profileId, run.flagsDelta, now);
         grant = firstClear ? firstClearRewards(run.chapter, grade, run.partnerId) : replayRewards(run.chapter, grade);
@@ -873,7 +1012,7 @@ export class StoryRunCoordinator {
         mode: run.mode,
         passed,
         grade,
-        drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
+        drill: drillResult,
         live: liveResult,
         rewards: { firstClear, dojoXpMilli: grant.dojoXpMilli, affinity: grant.affinity, badgeId: grant.badgeId },
         reviewNotesAdded: summary.wrongSlots,
@@ -945,14 +1084,19 @@ export class StoryRunCoordinator {
 
   private buildDrillView(drill: DrillSetState): StoryDrillView | null {
     if (!drill.current) return null;
+    const wrongQueue = drill.stage === 'retry'
+      ? Math.max(0, drill.retryQueue.length - drill.retryCursor - 1)
+      : this.wrongSlots(drill).length;
     return {
       setId: drill.setId,
-      index: drill.cursor,
+      index: this.drillIndex(drill),
       total: drill.queue.length,
+      retry: drill.stage === 'retry' ? { index: drill.retryCursor, total: drill.retryQueue.length } : null,
+      retryOffer: drill.stage === 'retry-offer' ? { count: this.wrongSlots(drill).length } : null,
       instance: toPublicDrillInstance(drill.current.instance),
       streak: drill.streak,
       hintsUsed: drill.hintsUsed,
-      wrongQueue: Math.max(0, drill.queue.length - drill.cursor - 1 - drill.queue.slice(drill.cursor + 1).filter(serve => serve.attempt === 0).length),
+      wrongQueue,
       hint: drill.current.hintOpened ? drill.current.instance.hint : null,
       lastResult: drill.current.result,
       answered: drill.answered,

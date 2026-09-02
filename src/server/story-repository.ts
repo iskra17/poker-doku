@@ -90,6 +90,8 @@ export interface DrillAttemptInput {
   runId?: string | null;
   correct: boolean;
   hintsUsed?: number;
+  /** 0 = 첫 시도, n = n번째 재출제 (기본 0) — 데일리 완료·정확도는 첫 시도만 센다 */
+  attempt?: number;
   elapsedMs: number;
   answeredAt: number;
 }
@@ -105,8 +107,14 @@ export interface DrillAttemptRow {
   runId: string | null;
   correct: boolean;
   hintsUsed: number;
+  attempt: number;
   elapsedMs: number;
   answeredAt: number;
+}
+
+export interface DrillAttemptQueryOptions {
+  /** 첫 시도(attempt = 0)만 — 재출제 행 제외 */
+  firstAttemptOnly?: boolean;
 }
 
 export interface DrillStats {
@@ -147,6 +155,7 @@ interface DrillAttemptDbRow {
   run_id: unknown;
   correct: unknown;
   hints_used: unknown;
+  attempt: unknown;
   elapsed_ms: unknown;
   answered_at: unknown;
 }
@@ -318,6 +327,10 @@ export class StoryRepository {
     if (!Number.isSafeInteger(input.elapsedMs) || input.elapsedMs < 0) {
       throw new StoryPersistenceError('STORY_VALUE_INVALID');
     }
+    const attempt = input.attempt ?? 0;
+    if (!Number.isSafeInteger(attempt) || attempt < 0 || attempt > 9) {
+      throw new StoryPersistenceError('STORY_VALUE_INVALID');
+    }
     assertTimestamp(input.answeredAt);
     this.#assertProfileExists(input.profileId);
 
@@ -325,8 +338,8 @@ export class StoryRepository {
       const result = this.#database.db.prepare(`
         INSERT INTO drill_attempts (
           profile_id, template_id, seed, category, context, chapter_id,
-          run_id, correct, hints_used, elapsed_ms, answered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          run_id, correct, hints_used, attempt, elapsed_ms, answered_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.profileId,
         input.templateId,
@@ -337,6 +350,7 @@ export class StoryRepository {
         input.runId ?? null,
         input.correct ? 1 : 0,
         hintsUsed,
+        attempt,
         input.elapsedMs,
         input.answeredAt,
       );
@@ -380,18 +394,21 @@ export class StoryRepository {
     fromMs: number,
     toMsExclusive: number,
     context?: DrillAttemptContext,
+    options: DrillAttemptQueryOptions = {},
   ): DrillAttemptRow[] {
     assertProfileId(profileId);
     assertRange(fromMs, toMsExclusive);
     const filter = assertOptionalContext(context);
+    const firstOnly = options.firstAttemptOnly ? 1 : 0;
     const rows = this.#database.db.prepare(`
       SELECT id, profile_id, template_id, seed, category, context, chapter_id,
-             run_id, correct, hints_used, elapsed_ms, answered_at
+             run_id, correct, hints_used, attempt, elapsed_ms, answered_at
       FROM drill_attempts
       WHERE profile_id = ?
         AND answered_at >= ?
         AND answered_at < ?
         AND (? IS NULL OR context = ?)
+        AND (? = 0 OR attempt = 0)
       ORDER BY answered_at ASC, id ASC
     `).all(
       profileId,
@@ -399,19 +416,23 @@ export class StoryRepository {
       toMsExclusive,
       filter,
       filter,
+      firstOnly,
     ) as unknown as DrillAttemptDbRow[];
     return rows.map(toAttemptRow);
   }
 
+  /** 구간 시도 수 — `firstAttemptOnly`면 재출제(attempt>0)를 빼고 센다(데일리 완료 판정·진행도) */
   countAttemptsBetween(
     profileId: string,
     fromMs: number,
     toMsExclusive: number,
     context?: DrillAttemptContext,
+    options: DrillAttemptQueryOptions = {},
   ): number {
     assertProfileId(profileId);
     assertRange(fromMs, toMsExclusive);
     const filter = assertOptionalContext(context);
+    const firstOnly = options.firstAttemptOnly ? 1 : 0;
     const row = this.#database.db.prepare(`
       SELECT COUNT(*) AS count
       FROM drill_attempts
@@ -419,7 +440,8 @@ export class StoryRepository {
         AND answered_at >= ?
         AND answered_at < ?
         AND (? IS NULL OR context = ?)
-    `).get(profileId, fromMs, toMsExclusive, filter, filter) as unknown as {
+        AND (? = 0 OR attempt = 0)
+    `).get(profileId, fromMs, toMsExclusive, filter, filter, firstOnly) as unknown as {
       count: number;
     };
     return Number(row.count);
@@ -746,6 +768,7 @@ function toAttemptRow(row: DrillAttemptDbRow): DrillAttemptRow {
     runId: row.run_id === null ? null : String(row.run_id),
     correct: Number(row.correct) === 1,
     hintsUsed: Number(row.hints_used),
+    attempt: Number(row.attempt),
     elapsedMs: Number(row.elapsed_ms),
     answeredAt: Number(row.answered_at),
   };

@@ -150,7 +150,6 @@ export const CH03: Chapter = {
         { templateId: 'call-decision', seedPolicy: 'per-run' },
         { templateId: 'call-decision', seedPolicy: 'per-run' },
       ],
-      passRule: { minCorrect: 6 },
       hintPenalty: 0.5,
     },
 

@@ -6512,6 +6512,17 @@ export const migrations: readonly Migration[] = [
       );
     `,
   },
+  {
+    version: 31,
+    name: 'drill_attempt_pass',
+    sql: `
+      -- 드릴 시도 패스 인덱스 (2026-09-03 재출제 완화): 0 = 첫 시도, n = n번째 재출제.
+      -- 데일리 완료·진행도와 허브 정확도는 첫 시도만 센다 — 재출제 행이 하루를 소모하던 버그의 근본 수정.
+      -- 과거 행은 전부 0(첫 시도)으로 간주한다(1회성 통계 오차 허용).
+      ALTER TABLE drill_attempts ADD COLUMN attempt INTEGER NOT NULL DEFAULT 0
+        CHECK (attempt BETWEEN 0 AND 9);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

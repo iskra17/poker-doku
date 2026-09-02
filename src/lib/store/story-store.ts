@@ -41,6 +41,9 @@ export interface StoryStoreState {
   choose(choiceId: string, optionId: string): Promise<boolean>;
   answerDrill(answer: DrillAnswer, elapsedMs: number): Promise<DrillResult | null>;
   requestHint(): Promise<string | null>;
+  /** 재출제 오퍼 응답 — 오답만 새 수치로 다시 풀기 / 복습 노트로 보내고 넘어가기 */
+  retryDrills(): Promise<boolean>;
+  skipRetry(): Promise<boolean>;
   startDaily(): Promise<boolean>;
   abandon(): Promise<boolean>;
   receiveRun(view: StoryRunView): void;
@@ -233,6 +236,28 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         if (!ack?.ok || ack.data?.action !== 'hint') return null;
         set({ hint: ack.data.hint });
         return ack.data.hint;
+      },
+
+      retryDrills: async () => {
+        const run = get().run;
+        const drill = run?.drill;
+        if (!run || !drill?.retryOffer) return false;
+        const ack = await withAck<StoryDrillAck>((socket, done) => {
+          socket.emit('story-drill', { runId: run.runId, setId: drill.setId, index: drill.index, action: 'retry' }, done);
+        });
+        if (ack?.ok) set({ hint: null, lastDrillResult: null });
+        return !!ack?.ok;
+      },
+
+      skipRetry: async () => {
+        const run = get().run;
+        const drill = run?.drill;
+        if (!run || !drill?.retryOffer) return false;
+        const ack = await withAck<StoryDrillAck>((socket, done) => {
+          socket.emit('story-drill', { runId: run.runId, setId: drill.setId, index: drill.index, action: 'skip-retry' }, done);
+        });
+        if (ack?.ok) set({ hint: null, lastDrillResult: null });
+        return !!ack?.ok;
       },
 
       startDaily: async () => {

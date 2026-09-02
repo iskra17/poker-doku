@@ -97,6 +97,11 @@ describe('story socket payload parsing', () => {
   });
 
   it('story-drill: answer/hint 두 형태만, elapsedMs 기본 0', () => {
+    // 재출제 오퍼 응답 2종 — 4키만 허용
+    expect(parseStoryDrillRequest({ runId: 'r', setId: 's', index: 3, action: 'retry' })).toEqual({ ok: true, value: { runId: 'r', setId: 's', index: 3, action: 'retry' } });
+    expect(parseStoryDrillRequest({ runId: 'r', setId: 's', index: 3, action: 'skip-retry' })).toEqual({ ok: true, value: { runId: 'r', setId: 's', index: 3, action: 'skip-retry' } });
+    expect(parseStoryDrillRequest({ runId: 'r', setId: 's', index: 3, action: 'retry', answer: { kind: 'numeric', value: 1 } }).ok).toBe(false);
+    expect(parseStoryDrillRequest({ runId: 'r', setId: 's', index: 3, action: 'again' }).ok).toBe(false);
     expect(parseStoryDrillRequest({ runId: 'r', setId: 'act1-ch01:drills', index: 0, action: 'hint' })).toEqual({
       ok: true,
       value: { runId: 'r', setId: 'act1-ch01:drills', index: 0, action: 'hint' },

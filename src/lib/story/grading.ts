@@ -27,6 +27,11 @@ export function scoreDrillSet(outcomes: readonly DrillSlotOutcome[], hintPenalty
   return Math.max(0, Math.min(1, total / outcomes.length));
 }
 
+/** 「퍼펙트」 — 세트의 모든 슬롯이 첫 시도 정답이고 힌트를 쓰지 않았다 (빈 세트는 아님) */
+export function isPerfectSet(outcomes: readonly DrillSlotOutcome[]): boolean {
+  return outcomes.length > 0 && outcomes.every(outcome => outcome.firstCorrect && !outcome.hintUsed);
+}
+
 export function gradeChapter(input: { drillScore: number; hintsUsed: number; liveScore?: number | null }): ChapterGrade {
   const live = input.liveScore ?? null;
   const score = live === null ? input.drillScore : (input.drillScore + live) / 2;

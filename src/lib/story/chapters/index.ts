@@ -130,9 +130,6 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
       case 'drill-set':
         if (!isStoryTeacherRef(step.teacher)) errors.push(`${stepAt}: unknown teacher ${String(step.teacher)}`);
         if (step.drills.length === 0) errors.push(`${stepAt}: drill set is empty`);
-        if (step.passRule.minCorrect < 0 || step.passRule.minCorrect > step.drills.length) {
-          errors.push(`${stepAt}: passRule.minCorrect out of range`);
-        }
         if (!(step.hintPenalty >= 0 && step.hintPenalty <= 1)) errors.push(`${stepAt}: hintPenalty must be within 0..1`);
         for (const slot of step.drills) {
           if (options.templateIds && !options.templateIds.has(slot.templateId)) {

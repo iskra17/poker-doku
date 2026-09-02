@@ -212,6 +212,7 @@ describe('StoryRepository', () => {
         runId: 'run-1',
         correct: true,
         hintsUsed: 1,
+        attempt: 0,
         elapsedMs: 8_400,
         answeredAt: T0,
       }]);
@@ -244,6 +245,15 @@ describe('StoryRepository', () => {
         repository.listAttemptsBetween(HERO, dayStart, dayEnd, 'daily')
           .map(row => row.answeredAt),
       ).toEqual([dayStart, dayEnd - 1]);
+
+      // 재출제(attempt>0) 행은 firstAttemptOnly에서 빠진다 — 재출제가 하루를 소모하지 않는다
+      repository.insertAttempt(attempt({ context: 'daily', answeredAt: dayStart + 5, correct: true, attempt: 1 }));
+      repository.insertAttempt(attempt({ context: 'daily', answeredAt: dayStart + 6, correct: false, attempt: 1 }));
+      expect(repository.countAttemptsBetween(HERO, dayStart, dayEnd, 'daily')).toBe(4);
+      expect(repository.countAttemptsBetween(HERO, dayStart, dayEnd, 'daily', { firstAttemptOnly: true })).toBe(2);
+      expect(repository.listAttemptsBetween(HERO, dayStart, dayEnd, 'daily', { firstAttemptOnly: true })).toHaveLength(2);
+      expect(repository.listAttemptsBetween(HERO, dayStart, dayEnd, 'daily').map(row => row.attempt)).toEqual([0, 1, 1, 0]);
+      expect(() => repository.insertAttempt(attempt({ attempt: 10 }))).toThrow();
     });
 
     it('rejects unknown categories, contexts and out-of-range values', () => {

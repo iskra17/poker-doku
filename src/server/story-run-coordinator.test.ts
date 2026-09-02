@@ -100,8 +100,8 @@ class FakeRepository implements StoryRepositoryPort {
     return this.notes.size;
   }
 
-  countAttemptsBetween(profileId: string, fromMs: number, toMsExclusive: number, context?: string): number {
-    return this.attempts.filter(a => a.profileId === profileId && a.answeredAt >= fromMs && a.answeredAt < toMsExclusive && (!context || a.context === context)).length;
+  countAttemptsBetween(profileId: string, fromMs: number, toMsExclusive: number, context?: string, options?: { firstAttemptOnly?: boolean }): number {
+    return this.attempts.filter(a => a.profileId === profileId && a.answeredAt >= fromMs && a.answeredAt < toMsExclusive && (!context || a.context === context) && (!options?.firstAttemptOnly || a.attempt === 0)).length;
   }
 }
 
@@ -293,33 +293,44 @@ describe('drill set flow', () => {
     coordinator.drill(PROFILE, { runId: 'run-1', setId: 'act1-ch01:drills', index: 0, action: 'hint' });
     expect(latest().drill!.hintsUsed).toBe(1);
 
-    // 첫 문항 오답 → 재출제 큐 +1, 복습 노트 +1, 시도 기록
+    // 첫 문항 오답 → 큐는 불변(total 2), 오답 슬롯만 기록, 복습 노트 +1, 시도 기록(attempt 0)
     const wrong = answerCurrent(ctx, false);
     expect(wrong.ok && wrong.value.action === 'answer' && wrong.value.result.correct).toBe(false);
     view = latest();
-    expect(view.drill).toMatchObject({ index: 0, total: 3, wrongQueue: 1, streak: 0, answered: 1, correct: 0 });
+    expect(view.drill).toMatchObject({ index: 0, total: 2, retry: null, retryOffer: null, wrongQueue: 1, streak: 0, answered: 1, correct: 0 });
     expect(view.drill!.lastResult).toMatchObject({ correct: false, hintsUsed: 1 });
     expect(view.drill!.lastResult!.explanation.speaker).toBe('miyako');
     expect(repository.attempts).toHaveLength(1);
-    expect(repository.attempts[0]).toMatchObject({ templateId: 'rank-who-wins', context: 'chapter', chapterId: 'act1-ch01', runId: 'run-1', correct: false, hintsUsed: 1 });
+    expect(repository.attempts[0]).toMatchObject({ templateId: 'rank-who-wins', context: 'chapter', chapterId: 'act1-ch01', runId: 'run-1', correct: false, hintsUsed: 1, attempt: 0 });
     expect(repository.notes.size).toBe(1);
     // 이미 답한 문항 재제출 거절
     expect(answerCurrent(ctx, true)).toMatchObject({ ok: false, code: 'action-rejected' });
 
     // 다음 문항(pos-name, fixed seed 7) 정답 → streak 1
     expect(coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' }).ok).toBe(true);
-    expect(latest().drill).toMatchObject({ index: 1, instance: { templateId: 'pos-name', seed: 7 }, hint: null, lastResult: null });
+    expect(latest().drill).toMatchObject({ index: 1, total: 2, instance: { templateId: 'pos-name', seed: 7 }, hint: null, lastResult: null });
     expect(answerCurrent(ctx, true).ok).toBe(true);
     expect(latest().drill).toMatchObject({ streak: 1, correct: 1, answered: 2 });
 
-    // 재출제된 첫 슬롯(새 seed) 정답 → 노트는 갱신 대상 아님(attempt>0)
+    // 첫 패스 끝 → 재출제 오퍼(오답 1문). 오퍼 중 advance는 거절, retry로 새 seed 재출제 패스
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
     view = latest();
-    expect(view.drill).toMatchObject({ index: 2, total: 3, wrongQueue: 0 });
+    // 오퍼 커서 = total(2), 재출제 첫 문항 커서 = total+1(3) — 단조 증가·서로 다른 값
+    expect(view.drill).toMatchObject({ index: 2, total: 2, retryOffer: { count: 1 }, retry: null, wrongQueue: 1 });
+    expect(coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' })).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'act1-ch01:drills', index: 1, action: 'retry' })).toMatchObject({ ok: false, code: 'stale-state' });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'act1-ch01:drills', index: 2, action: 'retry' })).toEqual({ ok: true, value: { action: 'retry', count: 1 } });
+    view = latest();
+    expect(view.drill).toMatchObject({ index: 3, total: 2, retry: { index: 0, total: 1 }, retryOffer: null, wrongQueue: 0 });
     expect(view.drill!.instance.templateId).toBe('rank-who-wins');
     expect(view.drill!.instance.seed).not.toBe(repository.attempts[0].seed);
+    // 재출제 힌트는 S 판정(hintsUsed)에 안 센다
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'act1-ch01:drills', index: 3, action: 'hint' }).ok).toBe(true);
+    expect(latest().drill!.hintsUsed).toBe(1);
+    // 재출제 정답 → 노트는 갱신 대상 아님(attempt>0), 0.5점
     expect(answerCurrent(ctx, true).ok).toBe(true);
     expect(repository.notes.size).toBe(1);
+    expect(repository.attempts[2]).toMatchObject({ attempt: 1, correct: true });
 
     // 세트 완료 → 라이브 스텝 스킵 → result 대기
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
@@ -332,7 +343,7 @@ describe('drill set flow', () => {
     expect(view.phase).toBe('ended');
     expect(view.result).toMatchObject({
       chapterId: 'act1-ch01', passed: true,
-      drill: { answered: 3, correct: 2, bestStreak: 2, hintsUsed: 1 },
+      drill: { answered: 3, correct: 2, bestStreak: 2, hintsUsed: 1, slots: 2, finalCorrect: 2, perfect: false, retrySkipped: false },
       rewards: { firstClear: true, affinity: [{ characterId: 'sakura', milli: 30_000 }], badgeId: 'white-belt' },
       reviewNotesAdded: 1,
       nextChapterId: 'act1-ch02',
@@ -349,9 +360,9 @@ describe('drill set flow', () => {
     expect(coordinator.getProgress(PROFILE).chapters[0]).toMatchObject({ completions: 1, bestGrade: 'A' });
   });
 
-  it('replays grant replay XP only, and a slot missed twice is retired without a third serve', () => {
+  it('replays grant replay XP only, and a slot missed again in the retry pass is retired (one retry round by default)', () => {
     const ctx = setup([makeChapter({ steps: [
-      { kind: 'drill-set', id: 'd', title: 't', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 3 }], passRule: { minCorrect: 0 }, hintPenalty: 0.5 },
+      { kind: 'drill-set', id: 'd', title: 't', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 3 }], hintPenalty: 0.5 },
       { kind: 'result', id: 'r' },
     ] })]);
     const { coordinator, repository, rewards, latest } = ctx;
@@ -359,20 +370,58 @@ describe('drill set flow', () => {
     coordinator.start(PROFILE, 'act1-ch01');
     expect(latest().phase).toBe('drill');
     answerCurrent(ctx, false);
-    expect(latest().drill).toMatchObject({ total: 2 });
+    expect(latest().drill).toMatchObject({ total: 1, index: 0, wrongQueue: 1 });
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    expect(latest().drill).toMatchObject({ total: 1, index: 1, retryOffer: { count: 1 } });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'd', index: 1, action: 'retry' }).ok).toBe(true);
+    expect(latest().drill).toMatchObject({ total: 1, index: 2, retry: { index: 0, total: 1 }, wrongQueue: 0 });
     answerCurrent(ctx, false);
-    expect(latest().drill).toMatchObject({ total: 3 });
-    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
-    answerCurrent(ctx, false);
-    // 3번째 오답: 재출제 상한(2) 도달 → 큐 증가 없음
-    expect(latest().drill).toMatchObject({ total: 3, index: 2 });
+    // 재출제에서도 오답: 라운드 상한(1) 도달 → 두 번째 오퍼 없이 세트 종료 (워스트 슬롯×2)
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
     expect(latest().phase).toBe('result');
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
     const result = latest().result!;
-    expect(result).toMatchObject({ passed: true, grade: 'B', rewards: { firstClear: false, affinity: [], badgeId: null, dojoXpMilli: 20_000 } });
+    expect(result).toMatchObject({ passed: true, grade: 'B', drill: { slots: 1, finalCorrect: 0, answered: 2, retrySkipped: false }, rewards: { firstClear: false, affinity: [], badgeId: null, dojoXpMilli: 20_000 } });
+    expect(repository.attempts.map(a => a.attempt)).toEqual([0, 1]);
     expect(rewards.chapters[0]).toMatchObject({ firstClear: false, dojoXpMilli: 20_000 });
+  });
+
+  it('skip-retry ends the set at once, keeps first-pass notes, marks retrySkipped; retry commands outside the offer are rejected', () => {
+    const ctx = setup([makeChapter({ steps: [
+      { kind: 'drill-set', id: 'd', title: 't', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 3 }, { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 4 }], hintPenalty: 0.5 },
+      { kind: 'result', id: 'r' },
+    ] })]);
+    const { coordinator, repository, latest } = ctx;
+    coordinator.start(PROFILE, 'act1-ch01');
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'd', index: 0, action: 'skip-retry' })).toMatchObject({ ok: false, code: 'action-rejected' });
+    answerCurrent(ctx, false);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    answerCurrent(ctx, true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    expect(latest().drill).toMatchObject({ index: 2, total: 2, retryOffer: { count: 1 } });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'd', index: 2, action: 'skip-retry' })).toEqual({ ok: true, value: { action: 'skip-retry', skipped: 1 } });
+    expect(latest().phase).toBe('result');
+    expect(repository.notes.size).toBe(1);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
+    expect(latest().result).toMatchObject({ passed: true, drill: { slots: 2, finalCorrect: 1, answered: 2, retrySkipped: true, perfect: false }, reviewNotesAdded: 1 });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'd', index: 2, action: 'retry' })).toMatchObject({ ok: false, code: 'story-no-run' });
+  });
+
+  it('a perfect first pass (no misses, no hints) persists badge:perfect-set with the chapter flags', () => {
+    const ctx = setup();
+    const { coordinator, repository, latest } = ctx;
+    coordinator.start(PROFILE, 'act1-ch01');
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
+    expect(latest().phase).toBe('drill');
+    answerCurrent(ctx, true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    answerCurrent(ctx, true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(latest()).toMatchObject({ phase: 'result', stepIndex: 5 });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
+    expect(latest().result).toMatchObject({ passed: true, grade: 'S', drill: { perfect: true, slots: 2, finalCorrect: 2 } });
+    expect(repository.getFlags(PROFILE)).toMatchObject({ 'badge:perfect-set': '1' });
   });
 });
 
@@ -413,11 +462,13 @@ describe('exam mode (실력 확인)', () => {
     const ctx = setup();
     const { coordinator, rewards, latest } = ctx;
     expect(coordinator.start(PROFILE, 'act1-ch01', 'exam').ok).toBe(true);
-    // 슬롯0 오답(재출제 정답 0.5) + 슬롯1 정답 1 = 0.75 < 0.85
+    // 슬롯0 오답(재출제 정답 0.5) + 슬롯1 정답 1 = 0.75 < 0.85 — 실력 확인에도 재출제 오퍼 1회는 열린다
     expect(answerCurrent(ctx, false).ok).toBe(true);
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
     expect(answerCurrent(ctx, true).ok).toBe(true);
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(latest().drill).toMatchObject({ index: 2, retryOffer: { count: 1 } });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: 'act1-ch01:drills', index: 2, action: 'retry' }).ok).toBe(true);
     expect(answerCurrent(ctx, true).ok).toBe(true);
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
@@ -459,6 +510,35 @@ describe('daily drills', () => {
     expect(repository.completions).toEqual([{ chapterId: 'act1-ch01', grade: 'B' }]); // 데일리는 챕터 완료 아님
     expect(coordinator.getProgress(PROFILE).daily).toMatchObject({ done: 3, available: true });
     expect(coordinator.startDaily(PROFILE)).toMatchObject({ ok: false, code: 'action-rejected' });
+  });
+
+  it('counts only first attempts toward the daily total — retries never consume the day', () => {
+    const ctx = setup();
+    const { coordinator, repository, rewards, latest } = ctx;
+    repository.complete(PROFILE, 'act1-ch01');
+    expect(coordinator.startDaily(PROFILE).ok).toBe(true);
+    for (let index = 0; index < 3; index++) {
+      expect(answerCurrent(ctx, false).ok).toBe(true);
+      coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    }
+    let view = latest();
+    expect(view.drill).toMatchObject({ total: 3, retryOffer: { count: 3 } });
+    expect(coordinator.getProgress(PROFILE).daily).toMatchObject({ done: 3 });
+    expect(coordinator.drill(PROFILE, { runId: 'run-1', setId: view.drill!.setId, index: view.drill!.index, action: 'retry' }).ok).toBe(true);
+    for (let index = 0; index < 3; index++) {
+      expect(latest().drill).toMatchObject({ total: 3, retry: { index, total: 3 } });
+      expect(answerCurrent(ctx, true).ok).toBe(true);
+      coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    }
+    view = latest();
+    expect(view.phase).toBe('result');
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
+    expect(latest().result).toMatchObject({ chapterId: DAILY_CHAPTER_ID, passed: true, drill: { slots: 3, answered: 6, finalCorrect: 3, perfect: false } });
+    expect(repository.attempts).toHaveLength(6);
+    expect(repository.attempts.map(a => a.attempt)).toEqual([0, 0, 0, 1, 1, 1]);
+    // 재출제 3제출은 '오늘의 3문'에 안 센다 — 인연은 슬롯 3개를 다 푼 뒤 1회
+    expect(coordinator.getProgress(PROFILE).daily).toMatchObject({ done: 3 });
+    expect(rewards.dailies).toHaveLength(1);
   });
 });
 

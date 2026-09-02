@@ -198,7 +198,8 @@ export type Step =
       title: string;
       teacher: StoryTeacherRef;
       drills: DrillSlot[];
-      passRule: { minCorrect: number };
+      // (2026-09-03) `passRule.minCorrect`는 삭제 — 어디서도 통과·지급에 쓰이지 않던 죽은 데이터였다.
+      // 드릴 품질은 등급(S/A/B)·「퍼펙트」 플래그·실력 확인 0.85 게이트로만 표현한다.
       /** 힌트 사용 문항의 점수 배율 (기본 0.5) */
       hintPenalty: number;
     }

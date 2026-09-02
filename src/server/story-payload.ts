@@ -141,9 +141,9 @@ export function parseStoryDrillRequest(input: unknown): ParseResult<StoryDrillRe
   const index = boundedInt(input.index, 0, MAX_INDEX);
   if (!runId || !setId || index === null) return fail();
 
-  if (input.action === 'hint') {
+  if (input.action === 'hint' || input.action === 'retry' || input.action === 'skip-retry') {
     if (!hasOnlyKeys(input, ['runId', 'setId', 'index', 'action'])) return fail();
-    return { ok: true, value: { runId, setId, index, action: 'hint' } };
+    return { ok: true, value: { runId, setId, index, action: input.action } };
   }
   if (input.action !== 'answer') return fail();
   if (!hasOnlyKeys(input, ['runId', 'setId', 'index', 'action', 'answer', 'elapsedMs'])) return fail();

@@ -119,7 +119,6 @@ const DRILL_STEP: Step = {
   title: '수련 문제',
   teacher: 'miyako',
   drills: [{ templateId: 'pot-odds', seedPolicy: 'per-run' }],
-  passRule: { minCorrect: 1 },
   hintPenalty: 0.5,
 };
 

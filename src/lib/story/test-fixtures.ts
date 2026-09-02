@@ -57,7 +57,6 @@ export function makeSteps(chapterId: string): Step[] {
         { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
         { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 },
       ],
-      passRule: { minCorrect: 2 },
       hintPenalty: 0.5,
     },
     {

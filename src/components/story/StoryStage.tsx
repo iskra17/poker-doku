@@ -30,6 +30,8 @@ export default function StoryStage() {
   const choose = useStoryStore(state => state.choose);
   const answerDrill = useStoryStore(state => state.answerDrill);
   const requestHint = useStoryStore(state => state.requestHint);
+  const retryDrills = useStoryStore(state => state.retryDrills);
+  const skipRetry = useStoryStore(state => state.skipRetry);
   const abandon = useStoryStore(state => state.abandon);
   const dismissRun = useStoryStore(state => state.dismissRun);
   const startChapter = useStoryStore(state => state.startChapter);
@@ -132,6 +134,8 @@ export default function StoryStage() {
                 onAnswer={(answer, elapsedMs) => void answerDrill(answer, elapsedMs)}
                 onHint={() => void requestHint()}
                 onNext={() => void advance()}
+                onRetry={() => void retryDrills()}
+                onSkipRetry={() => void skipRetry()}
                 hintAllowed={run.mode !== 'exam'}
               />
             )}

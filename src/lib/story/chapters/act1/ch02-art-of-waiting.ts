@@ -149,7 +149,6 @@ export const CH02: Chapter = {
         // 짝 문항 'act-ch02-open-btn'은 복습 노트·오늘의 수련 출제용으로 남겨 둔다.
         { templateId: 'act-ch02-fold-utg', seedPolicy: 'fixed', fixedSeed: 0 },
       ],
-      passRule: { minCorrect: 5 },
       hintPenalty: 0.5,
     },
 

@@ -159,7 +159,6 @@ export const CH01: Chapter = {
         { templateId: 'rank-best-hand', seedPolicy: 'per-run' },
         { templateId: 'pos-name', seedPolicy: 'per-run' },
       ],
-      passRule: { minCorrect: 4 },
       hintPenalty: 0.5,
     },
 

@@ -8,6 +8,10 @@ import { STORY_BELTS } from './types';
 
 /** 검은띠 수여 플래그 키 — Ch12 졸업 SnG ITM 시 코디네이터가 세팅 */
 export const BLACK_BELT_FLAG = 'belt:black';
+/** 「퍼펙트」 — 드릴 세트 첫 패스 무오답·힌트 0 (보상 카탈로그 트리거, 2026-09-03) */
+export const PERFECT_SET_FLAG = 'badge:perfect-set';
+/** 「빈 노트」 — 복습 노트가 졸업으로 0개가 된 순간 */
+export const EMPTY_NOTE_FLAG = 'badge:empty-note';
 
 export function sortChapters(chapters: readonly Chapter[]): Chapter[] {
   return [...chapters].sort((a, b) => a.act - b.act || a.order - b.order);

@@ -65,6 +65,8 @@ function runFixture(overrides: Partial<StoryRunView> = {}): StoryRunView {
       setId: 'act1-ch01:drills',
       index: 0,
       total: 6,
+      retry: null,
+      retryOffer: null,
       instance: {
         templateId: 'odds-required-equity',
         seed: 7,
@@ -237,7 +239,7 @@ describe('story-store', () => {
       phase: 'ended', stepIndex: 5, stepKind: 'result', drill: null,
       result: {
         chapterId: 'act1-ch01', mode: 'full', passed: true, grade: 'A',
-        drill: { answered: 6, correct: 5, bestStreak: 3, hintsUsed: 1, score: 0.8 },
+        drill: { answered: 6, correct: 5, bestStreak: 3, hintsUsed: 1, score: 0.8, slots: 6, finalCorrect: 5, perfect: false, retrySkipped: false },
         live: null, rewards: { firstClear: true, dojoXpMilli: 100_000, affinity: [], badgeId: null },
         reviewNotesAdded: 1, nextChapterId: 'act1-ch02', beltAwarded: null,
       },

@@ -17,12 +17,19 @@ export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost';
 
 export interface StoryDrillView {
   setId: string;
+  /** 명령 커서 — 세트 안에서 단조 증가(재출제 패스는 total + retry.index). stale 검사 키 */
   index: number;
+  /** 첫 패스 슬롯 수 — 세트 동안 불변 (오답으로 늘어나지 않는다, 2026-09-03) */
   total: number;
+  /** 재출제 패스 중이면 패스 내 위치, 아니면 null */
+  retry: { index: number; total: number } | null;
+  /** 첫 패스가 끝나고 오답이 남았을 때의 오퍼 — [다시 풀기 count문] / [복습 노트에 넣고 넘어가기] */
+  retryOffer: { count: number } | null;
   instance: DrillInstancePublic;
   streak: number;
+  /** 첫 패스 힌트만(S 판정 기준) — 재출제 힌트는 세지 않는다 */
   hintsUsed: number;
-  /** 세트 끝 재출제 대기 중인 문항 수 */
+  /** 재출제 대기 문항 수 (첫 패스: 지금까지 오답 슬롯 / 재출제 패스: 현재 문항 뒤에 남은 문항) */
   wrongQueue: number;
   /** 이 문항에서 힌트를 열었으면 본문, 아니면 null */
   hint: string | null;
@@ -98,7 +105,15 @@ export interface ChapterResultView {
   mode: StoryRunMode;
   passed: boolean;
   grade: ChapterGrade;
-  drill: { answered: number; correct: number; bestStreak: number; hintsUsed: number; score: number };
+  drill: {
+    answered: number; correct: number; bestStreak: number; hintsUsed: number; score: number;
+    /** 출제 슬롯 수 / 최종 정답 슬롯 수 */
+    slots: number; finalCorrect: number;
+    /** 모든 세트가 첫 패스 무오답·힌트 0 (「퍼펙트」) */
+    perfect: boolean;
+    /** 재출제를 건너뛰고 복습 노트로 보냈는가 */
+    retrySkipped: boolean;
+  };
   live: { objectives: ObjectiveProgressView[]; handsPlayed: number; netBB: number } | null;
   rewards: {
     firstClear: boolean;
@@ -184,11 +199,16 @@ export interface StoryChoiceRequest {
 
 export type StoryDrillRequest =
   | { runId: string; setId: string; index: number; action: 'answer'; answer: DrillAnswer; elapsedMs: number }
-  | { runId: string; setId: string; index: number; action: 'hint' };
+  | { runId: string; setId: string; index: number; action: 'hint' }
+  /** 재출제 오퍼 응답 — 오퍼 중(`retryOffer`)에만 유효 */
+  | { runId: string; setId: string; index: number; action: 'retry' }
+  | { runId: string; setId: string; index: number; action: 'skip-retry' };
 
 export type StoryDrillAck =
   | { action: 'answer'; result: DrillResult }
-  | { action: 'hint'; hint: string };
+  | { action: 'hint'; hint: string }
+  | { action: 'retry'; count: number }
+  | { action: 'skip-retry'; skipped: number };
 
 export interface StoryQuizRequest {
   runId: string;

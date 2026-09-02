@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EXAM_PASS_SCORE, chapterPassed, examPassed, firstClearRewards, gradeChapter, replayRewards, scoreDrillSet } from './grading';
+import { EXAM_PASS_SCORE, chapterPassed, examPassed, firstClearRewards, gradeChapter, isPerfectSet, replayRewards, scoreDrillSet } from './grading';
 import { makeChapter } from './test-fixtures';
 
 describe('grading', () => {
@@ -30,6 +30,14 @@ describe('grading', () => {
     // 첫 시도 4정답 + 재출제 2 = 5/6
     expect(examPassed(scoreDrillSet([...five.slice(0, 4), retry, retry], 0.5))).toBe(false);
     expect(examPassed(EXAM_PASS_SCORE)).toBe(true);
+  });
+
+  it('isPerfectSet — first-try correct on every slot with no hints; empty set is not perfect', () => {
+    const ok = { firstCorrect: true, finallyCorrect: true, hintUsed: false };
+    expect(isPerfectSet([ok, ok])).toBe(true);
+    expect(isPerfectSet([ok, { ...ok, hintUsed: true }])).toBe(false);
+    expect(isPerfectSet([ok, { firstCorrect: false, finallyCorrect: true, hintUsed: false }])).toBe(false);
+    expect(isPerfectSet([])).toBe(false);
   });
 
   it('passes on drill completion unless primary objectives are known to be unmet', () => {
