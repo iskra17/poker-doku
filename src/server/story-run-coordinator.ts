@@ -5,7 +5,8 @@
  *   "중단된 챕터 다시 도전"을 보여준다 — attempts·drill_attempts·복습 노트는 즉시 영속이라 유실 없음.
  * - 스텝 진입: scene/lesson은 클라 렌더(데이터는 클라도 가진 STORY_CHAPTERS), drill-set은 드릴 생성기가
  *   같은 seed로 인스턴스를 만들고 **채점도 서버가 재생성해서** 한다(클라 DTO엔 정답 없음).
- *   practice-table/sparring은 라이브 어댑터(Phase 1b)가 없으면 스킵된다.
+ *   practice-table/sparring은 라이브 어댑터(`setLiveAdapter`, Phase 1b)가 없으면 스킵된다. 어댑터가 있으면
+ *   `enter()`로 방을 열고, 스텝 종료는 어댑터가 `onStepFinished`로 알린다(방 해체 후) — 코디네이터는 방을 모른다.
  * - 모든 명령은 (runId, expectedStepIndex) 또는 (setId, index) stale 검사를 통과해야 한다
  *   (`player-action`의 expectedHandNumber 계약과 동형 → 'stale-state').
  * - 성공한 명령마다 `emit(profileId, view)`로 story-update를 보낸다.
@@ -26,7 +27,7 @@ import type {
   StoryHeroineId,
   StoryTeacherId,
 } from '../lib/story/types';
-import { isStoryHeroineId } from '../lib/story/types';
+import { LIVE_STEP_KINDS, isStoryHeroineId } from '../lib/story/types';
 import { BLACK_BELT_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import type {
   ChapterResultView,
@@ -34,10 +35,22 @@ import type {
   StoryChoiceRequest,
   StoryDrillRequest,
   StoryDrillView,
+  StoryLiveView,
   StoryProgressView,
   StoryRunPhase,
   StoryRunView,
 } from '../lib/story/views';
+import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
+
+/** 라이브 스텝 어댑터 포트 — LiveTableAdapter가 구현 (테스트는 fake) */
+export interface StoryLiveAdapterPort {
+  enter(input: LiveEnterInput): 'entered' | 'unavailable';
+  resume(profileId: string, runId: string): LiveCommandResult;
+  abandon(profileId: string): void;
+  phase(profileId: string): 'live-hold' | 'live-play' | null;
+  view(profileId: string): StoryLiveView | null;
+  bindEvents(events: StoryLiveEvents): void;
+}
 
 // ---------------------------------------------------------------------------
 // 포트
@@ -179,6 +192,8 @@ export interface StoryRun {
   /** 챕터 전체 드릴 요약(세트가 여러 개일 수 있음) */
   drillSummary: { outcomes: DrillSlotOutcome[]; hintsUsed: number; bestStreak: number; answered: number; correct: number; hintPenalty: number; wrongSlots: number };
   result: ChapterResultView | null;
+  /** 끝난 라이브 스텝 요약(순서대로) — 스파링('대결')만 통과·등급에 반영된다 */
+  liveResults: LiveStepSummary[];
   /** 데일리 전용 — 출제 히로인·날짜 */
   daily: { kstDate: string; teacherId: StoryHeroineId | null } | null;
   startedAt: number;
@@ -217,6 +232,7 @@ export class StoryRunCoordinator {
   private readonly runIdFactory: () => string;
   private readonly dailyTotal: number;
   private readonly maxRetries: number;
+  private liveAdapter: StoryLiveAdapterPort | null = null;
 
   constructor(private readonly deps: StoryRunCoordinatorDeps) {
     this.chapters = deps.chapters ?? STORY_CHAPTERS;
@@ -224,6 +240,15 @@ export class StoryRunCoordinator {
     this.runIdFactory = deps.runIdFactory ?? defaultRunId;
     this.dailyTotal = deps.dailyTotal ?? 3;
     this.maxRetries = deps.maxRetries ?? 2;
+  }
+
+  /** 라이브 어댑터 연결 (생성 후 바인딩 — 어댑터는 RoomManager를, 코디네이터는 어댑터를 알지만 그 역은 이벤트로만) */
+  setLiveAdapter(adapter: StoryLiveAdapterPort): void {
+    this.liveAdapter = adapter;
+    adapter.bindEvents({
+      onStepFinished: (profileId, runId, summary) => this.completeLiveStep(profileId, runId, summary),
+      onLiveChanged: profileId => this.refreshLive(profileId),
+    });
   }
 
   // ---------------------------------------------------------------------------
@@ -320,6 +345,7 @@ export class StoryRunCoordinator {
       drill: null,
       drillSummary: emptySummary(),
       result: null,
+      liveResults: [],
       daily: null,
       startedAt: now,
       updatedAt: now,
@@ -329,6 +355,7 @@ export class StoryRunCoordinator {
       this.enterStep(run, 0);
     } catch (error) {
       this.runs.delete(profileId);
+      this.liveAdapter?.abandon(profileId);
       return { ok: false, code: 'server-error', message: error instanceof Error ? error.message : '챕터를 시작하지 못했어요.' };
     }
     this.deps.emit(profileId, this.buildView(run));
@@ -393,6 +420,7 @@ export class StoryRunCoordinator {
       drill: null,
       drillSummary: emptySummary(),
       result: null,
+      liveResults: [],
       daily: { kstDate: day.date, teacherId },
       startedAt: now,
       updatedAt: now,
@@ -430,9 +458,20 @@ export class StoryRunCoordinator {
         break;
       }
       case 'practice-table':
-      case 'sparring':
-        // Phase 1b: 라이브 어댑터 resume. 스켈레톤에선 진입 자체가 스킵된다.
-        return { ok: false, code: 'action-rejected', message: '테이블 스텝은 아직 준비 중이에요.' };
+      case 'sparring': {
+        // 라이브 스텝은 [계속하기]/「이어하기」(resume)만 — 진행·종료는 어댑터가 핸드 경계에서 결정한다
+        if (!this.liveAdapter) {
+          return { ok: false, code: 'action-rejected', message: '테이블 스텝은 아직 준비 중이에요.' };
+        }
+        if (request.target !== 'resume') {
+          return { ok: false, code: 'action-rejected', message: '테이블 스텝은 [계속하기]로만 이어갈 수 있어요.' };
+        }
+        const resumed = this.liveAdapter.resume(profileId, run.runId);
+        if (!resumed.ok) return resumed;
+        run.phase = this.liveAdapter.phase(profileId) ?? 'live-play';
+        run.updatedAt = this.now();
+        break;
+      }
       case 'result':
         this.finishRun(run);
         this.deps.emit(profileId, this.buildView(run));
@@ -559,6 +598,8 @@ export class StoryRunCoordinator {
     if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
     if (run.runId !== runId) return { ok: false, code: 'stale-state', message: '이미 끝난 챕터 진행이에요.' };
     this.runs.delete(profileId);
+    // 라이브 방이 열려 있으면 즉시 해체 (story-end — 소켓 계층이 세션 roomId를 비운다)
+    this.liveAdapter?.abandon(profileId);
     run.phase = 'ended';
     run.result = null;
     this.deps.emit(profileId, this.buildView(run));
@@ -568,6 +609,31 @@ export class StoryRunCoordinator {
   /** 프로필 폐기·로그아웃 — 런을 조용히 버린다 (emit 없음) */
   clearProfile(profileId: string): void {
     this.runs.delete(profileId);
+    this.liveAdapter?.abandon(profileId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // 라이브 어댑터 → 코디네이터 이벤트
+
+  /** 라이브 스텝 종료(방은 이미 해체됨) — 요약을 쌓고 다음 스텝으로 */
+  private completeLiveStep(profileId: string, runId: string, summary: LiveStepSummary): void {
+    const run = this.runs.get(profileId);
+    if (!run || run.runId !== runId) return;
+    run.liveResults.push(summary);
+    run.updatedAt = this.now();
+    this.enterStep(run, run.stepIndex + 1);
+    if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
+  }
+
+  /** hold/재개/목표 진행 등 — 현재 뷰 재전송 */
+  private refreshLive(profileId: string): void {
+    const run = this.runs.get(profileId);
+    if (!run) return;
+    const step = run.chapter.steps[run.stepIndex];
+    if (!step || !LIVE_STEP_KINDS.has(step.kind)) return;
+    run.phase = this.liveAdapter?.phase(profileId) ?? run.phase;
+    run.updatedAt = this.now();
+    this.deps.emit(profileId, this.buildView(run));
   }
 
   // ---------------------------------------------------------------------------
@@ -599,7 +665,22 @@ export class StoryRunCoordinator {
         cursor += 1;
         continue;
       }
-      // practice-table / sparring: 라이브 어댑터 미주입 → 스킵 (Phase 1b에서 활성)
+      // practice-table / sparring: 어댑터가 방을 열면 라이브 단계, 어댑터가 없거나 열지 못하면 스킵
+      if (this.liveAdapter && run.kind === 'chapter') {
+        const entered = this.liveAdapter.enter({
+          profileId: run.profileId,
+          runId: run.runId,
+          chapterId: run.chapter.id,
+          chapterTitle: run.chapter.title,
+          stepIndex: cursor,
+          step,
+          partnerId: run.partnerId,
+        });
+        if (entered === 'entered') {
+          run.phase = this.liveAdapter.phase(run.profileId) ?? 'live-play';
+          return;
+        }
+      }
       cursor += 1;
     }
     run.stepIndex = steps.length - 1;
@@ -694,8 +775,22 @@ export class StoryRunCoordinator {
     const now = this.now();
     const summary = run.drillSummary;
     const drillScore = scoreDrillSet(summary.outcomes, summary.hintPenalty);
-    const grade = gradeChapter({ drillScore, hintsUsed: summary.hintsUsed });
-    const passed = chapterPassed({ drillCompleted: true, primaryObjectivesMet: null });
+    // 통과 = 드릴 세트 완료 + 스파링 primary 행동 목표 (결과 조건은 등급·뱃지 전용). '연습'은 판정 무관.
+    const sparring = run.liveResults.filter(entry => entry.tag === '대결');
+    const primaryObjectivesMet = sparring.length === 0
+      ? null
+      : !sparring.some(entry => entry.primaryObjectivesMet === false);
+    const liveScores = sparring.map(entry => entry.liveScore).filter((score): score is number => score !== null);
+    const liveScore = liveScores.length > 0 ? liveScores.reduce((sum, score) => sum + score, 0) / liveScores.length : null;
+    const grade = gradeChapter({ drillScore, hintsUsed: summary.hintsUsed, liveScore });
+    const passed = chapterPassed({ drillCompleted: true, primaryObjectivesMet });
+    const liveResult: ChapterResultView['live'] = sparring.length === 0
+      ? null
+      : {
+          objectives: sparring.flatMap(entry => entry.objectives),
+          handsPlayed: sparring.reduce((sum, entry) => sum + entry.handsPlayed, 0),
+          netBB: Math.round(sparring.reduce((sum, entry) => sum + entry.netBB, 0) * 10) / 10,
+        };
 
     if (run.kind === 'daily') {
       const teacherId = run.daily?.teacherId ?? null;
@@ -742,7 +837,7 @@ export class StoryRunCoordinator {
         passed,
         grade,
         drill: { answered: summary.answered, correct: summary.correct, bestStreak: summary.bestStreak, hintsUsed: summary.hintsUsed, score: drillScore },
-        live: null,
+        live: liveResult,
         rewards: { firstClear, dojoXpMilli: grant.dojoXpMilli, affinity: grant.affinity, badgeId: grant.badgeId },
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
@@ -838,7 +933,9 @@ export class StoryRunCoordinator {
       phase: run.phase,
       context: { partnerId: run.partnerId, teacherId: this.resolveTeacherRef(run, run.chapter.teacher) },
       drill: run.drill ? this.buildDrillView(run.drill) : null,
-      live: null,
+      live: LIVE_STEP_KINDS.has(step.kind) && run.phase !== 'ended'
+        ? this.liveAdapter?.view(run.profileId) ?? null
+        : null,
       result: run.result,
       startedAt: run.startedAt,
       updatedAt: run.updatedAt,

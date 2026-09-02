@@ -34,6 +34,7 @@ import {
 } from './socket-payload';
 import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
 import { StoryRunCoordinator, type CoordinatorResult } from './story-run-coordinator';
+import { LiveTableAdapter } from './story-live-adapter';
 import type { StoryRepository } from './story-repository';
 import {
   parseAbandonStoryRequest,
@@ -717,6 +718,11 @@ export function setupSocketHandlers(
             socket?.emit('room-lost', {
               message: '토너먼트 시작을 완료하지 못해 안전하게 로비로 돌아왔어요.',
             });
+          } else if (reason === 'story-end') {
+            // 스토리 라이브 스텝 종료/포기 — 곧이어 story-update가 다음 스텝(또는 종료)을 실어 온다
+            socket?.emit('room-lost', {
+              message: '수련 테이블을 정리했어요 — 이야기를 이어갈게요.',
+            });
           }
           session.roomId = null;
           sessions.releaseIfIdle(session);
@@ -724,6 +730,80 @@ export function setupSocketHandlers(
       },
     },
   );
+
+  // 라이브 스텝 어댑터 (Phase 1b) — 코디네이터가 있을 때만. 히어로 착석은 소켓 계층이 담당한다:
+  // Player 구성(별칭·아바타·코스메틱) → joinRoom → 세션 roomId 교체·socket.join → room-joined.
+  // hold는 어댑터가 착석 전에 세팅하므로 joinRoom의 tryStartGame이 핸드를 시작하지 않는다.
+  const storyLiveAdapter = storyCoordinator
+    ? new LiveTableAdapter({
+      roomManager,
+      hero: {
+        seatHero: (profileId, roomId, seat) => {
+          const targetSession = sessions.getByPlayerId(profileId);
+          const targetSocket = targetSession?.socketId
+            ? io.sockets.sockets.get(targetSession.socketId)
+            : undefined;
+          const room = roomManager.getRoom(roomId);
+          if (!targetSession || !targetSocket || !room) return false;
+          const alias = targetSocket.data.profileAlias;
+          const avatar = targetSocket.data.profileAvatarId;
+          if (!alias || !avatar) return false;
+          let publicCosmetics: Player['publicCosmetics'];
+          if (progression) {
+            try {
+              publicCosmetics = buildPublicCosmetics(progression.getSnapshot(profileId, avatar));
+            } catch {
+              return false;
+            }
+          }
+          // 1세션 1테이블 — 다른 방의 보존 좌석은 먼저 정리한다 (commitRoomMembership과 동일 규칙)
+          const previousRoomId = targetSession.roomId;
+          if (previousRoomId && previousRoomId !== roomId) {
+            if (!roomManager.leaveRoom(previousRoomId, profileId)) return false;
+            targetSocket.leave(previousRoomId);
+            targetSession.roomId = null;
+          }
+          if (!roomManager.leaveAllSeatsExcept(profileId, roomId)) return false;
+          const player: Player = {
+            id: profileId,
+            name: alias,
+            type: 'human',
+            avatar,
+            chips: seat.chips,
+            seatIndex: seat.seatIndex,
+            holeCards: [],
+            currentBet: 0,
+            totalContributed: 0,
+            status: 'waiting',
+            hasActed: false,
+            timeBankChips: 1,
+            ...(publicCosmetics ? { publicCosmetics } : {}),
+          };
+          if (!roomManager.joinRoom(roomId, player)) return false;
+          targetSession.roomId = roomId;
+          targetSocket.join(roomId);
+          eventLog.log('join-room:seated', {
+            roomId,
+            playerId: profileId,
+            data: { seat: seat.seatIndex, chips: seat.chips, story: true },
+          });
+          targetSocket.emit('room-joined', {
+            roomId,
+            gameState: {
+              ...room.engine.getPublicState(profileId),
+              turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+            },
+            chatHistory: roomManager.getChatHistory(roomId),
+          });
+          return true;
+        },
+      },
+    })
+    : undefined;
+  if (storyCoordinator && storyLiveAdapter) {
+    roomManager.setStoryHooks(storyLiveAdapter);
+    storyCoordinator.setLiveAdapter(storyLiveAdapter);
+  }
 
   // 소켓별 개인화(등록 여부·내 테이블) 토너먼트 목록 브로드캐스트 — room-list와 같은 계약
   function publicTournamentList(
@@ -1477,6 +1557,18 @@ export function setupSocketHandlers(
       if (result.ok) ack?.({ ok: true, data: result.value });
       else ack?.({ ok: false, code: result.code, message: result.message });
     };
+    // 스토리 라이브 스텝 방에 앉아 있는 동안은 다른 테이블 착석/개설/대기열/토너 등록을 거절한다 —
+    // 일반 membership 전환(commitRoomMembership)이 스토리 방 좌석을 leaveRoom으로 회수하면
+    // abandon-story를 거치지 않은 이탈이 되어 런이 room-lost로 떨어진다 (이탈은 abandon-story 단일 경로)
+    const rejectDuringStoryRoom = <T>(ack?: AckCallback<T>): boolean => {
+      if (!session.roomId || !roomManager.getRoom(session.roomId)?.config.storyChapterId) return false;
+      ack?.({
+        ok: false,
+        code: 'action-rejected',
+        message: '수련 중에는 다른 테이블에 앉을 수 없어요 — 먼저 [수련 그만두기]를 눌러 주세요.',
+      });
+      return true;
+    };
     const storyNotReady = <T>(ack?: AckCallback<T>): void => {
       ack?.({ ok: false, code: 'action-rejected', message: '이 기능은 아직 준비 중이에요.' });
     };
@@ -1635,6 +1727,7 @@ export function setupSocketHandlers(
       }
       const { ack } = args;
       if (!ensureOwnership(ack)) return;
+      if (rejectDuringStoryRoom(ack)) return;
       if (session.tournamentEngagement) {
         ack?.({
           ok: false,
@@ -2009,6 +2102,8 @@ export function setupSocketHandlers(
       }
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
+      // 스토리 방 히어로의 본인 방 재입장(게임 복귀)은 허용, 다른 방 착석은 거절
+      if (session.roomId !== roomId && rejectDuringStoryRoom(ack)) return;
       const playerName = profileAlias;
       // socket.data에서 라이브로 읽는다 — 연결 후 아바타를 변경해도(refreshAvatar) 새 착석에 반영
       const avatar = socket.data.profileAvatarId ?? profileAvatarId;
@@ -2068,6 +2163,18 @@ export function setupSocketHandlers(
             code: 'action-rejected',
             message: '토너먼트 테이블은 로비에서 등록해 참가해요.',
           });
+          return;
+        }
+      }
+      // 스토리 라이브 스텝 방은 직접 입장 불가 — 어댑터가 앉힌 히어로 본인의 재입장(게임 복귀)만
+      // 허용한다. 목록에도 없는 방이므로 존재를 드러내지 않고 room-not-found로 답한다.
+      if (room.config.storyChapterId) {
+        const mySeat = room.engine.state.players.some(p => p.id === session.playerId && !p.pendingRemoval);
+        if (!mySeat) {
+          eventLog.log('join-room:reject', {
+            roomId, playerId: session.playerId, data: { reason: 'story-room' },
+          });
+          ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
           return;
         }
       }
@@ -2220,6 +2327,7 @@ export function setupSocketHandlers(
           if (
             room.config.gameMode !== 'sng'
             && room.config.gameMode !== 'mtt'
+            && !room.config.storyChapterId // 스토리 방 파산은 리바이가 아니라 어댑터의 실패 분기
             && seated.chips <= 0
             && !inLiveHand
           ) {
@@ -2732,6 +2840,16 @@ export function setupSocketHandlers(
           ack?.({ ok: true });
           return;
         }
+        // 스토리 라이브 스텝 방은 leave-room 전 모드를 거절한다 — 이탈은 abandon-story 단일 경로.
+        // (자리비움/예약 퇴장/즉시 퇴장 모두 히어로 좌석 회수 → 빈 방 dispose → 런 사망으로 이어진다)
+        if (roomManager.getRoom(roomId)?.config.storyChapterId) {
+          ack?.({
+            ok: false,
+            code: 'action-rejected',
+            message: '수련 중에는 [수련 그만두기]로만 테이블을 나갈 수 있어요.',
+          });
+          return;
+        }
         if (isReserveMode) {
           const kind = data.mode === 'reserve-hand'
             ? 'hand' as const
@@ -3136,6 +3254,7 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('createRoom', '방 생성은 잠시 후 다시 시도해 주세요.', ack)) return;
+      if (rejectDuringStoryRoom(ack)) return;
       const config = parsed.value;
       // 운영 가드: 방 수 상한
       if (roomManager.getRoomCount() >= cfg('table.maxRooms')) {
@@ -3399,6 +3518,7 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
+      if (rejectDuringStoryRoom(ack)) return;
       const command = parsed.value;
       const existing = session.tournamentEngagement;
       if (
@@ -3752,6 +3872,7 @@ export function setupSocketHandlers(
         pendingTrainingOfferIds: [],
       };
       tournamentManager.shutdown();
+      storyLiveAdapter?.shutdown();
       sessions.shutdown();
       roomManager.shutdown();
       return report;

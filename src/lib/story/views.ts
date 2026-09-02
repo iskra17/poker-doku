@@ -76,6 +76,8 @@ export interface StoryLiveView {
   tag: '연습' | '대결';
   hold: boolean;
   holdReason: StoryHoldReason | null;
+  /** holdReason 'scene'일 때 재생할 인터럽트 id (챕터 데이터의 step.interrupts에서 조회) */
+  interruptId: string | null;
   objectives: ObjectiveProgressView[];
   handsPlayed: number;
   maxHands: number;
