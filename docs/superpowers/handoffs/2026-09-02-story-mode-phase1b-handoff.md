@@ -2,7 +2,10 @@
 
 날짜: 2026-09-02 KST (Phase 0·1 인계 문서의 다음 세션)
 저장소: `C:\code\claude\poker-doku`, 작업 worktree `.worktrees/story-mode`(브랜치 `feat/story-mode`)
-태그 `story-p1b` = `f948b53`(Phase 1b 완료). main에 ff 병합. **origin 미푸시·Fly 미배포**(프로덕션은 여전히 v71 = Phase 0 이전).
+태그 `story-p1b` = `f948b53`(Phase 1b 완료). main에 ff 병합.
+**2026-09-03 사용자 지시로 origin 푸시(82151a1→eae899d, 태그 story-p0/p1/p1b) + Fly 배포 완료 → v72**(머신 48ed666a50d2e8, healthz ok,
+production server-start 확인, v30 마이그레이션은 신규 테이블뿐이라 무중단). flyctl은 Git Bash PATH에 없어 `~/.fly/bin/flyctl deploy --ha=false`로 실행.
+worktree `.worktrees/story-mode`(feat/story-mode)는 main과 같은 커밋에 있고 `npm ci` 완료 상태 — 다음 세션도 여기서 이어간다.
 기획: `docs/spec-story-mode-2026-09.md` Part C 1b.0~1b.6 · 아키텍처 요약: `AGENTS.md` "수련 스토리 모드 › 라이브 스텝 (Phase 1b)".
 
 ## 이번 세션에서 한 것 (커밋 13개, cf81b78..f948b53)
@@ -46,7 +49,8 @@
 
 ## 다음에 할 일 (우선순위 순)
 
-1. **Ch2 브라우저 실주행 끝까지**(에필로그 → 결산 live 요약 → 허브 반영, halfway 인터럽트) + dev 서버 프로세스 종료 원인 재관찰(재현되면 `server-shutdown.ts` 경로·메모리 확인).
-2. 사용자 지시 시 `git push origin main` + `fly deploy --ha=false`(v30 마이그레이션 포함, 다운타임 없음).
-3. Phase 2 후보: 실패 씬(`failScene`) 재생, `pendingQuiz` 라이브 리딩 퀴즈, 봇 속마음 노출(Ch7)·가면 identity, 2막 데이터, 스토리 BGM, v31 스토리 XP 아이템 트리거.
-4. 세션 운영 메모: **에이전트 4개 병렬 vitest로 메모리 크래시 2회** — 동시 에이전트 ≤2, 단일 파일 vitest, 전체 스위트는 `--maxWorkers=4`로 1회만.
+1. **Ch2 실주행 끝까지**(에필로그 → 결산 live 요약 → 허브 반영, halfway 인터럽트) — 프로덕션(v72)에서 해도 되고 로컬이면 dev 서버 종료 원인도 재관찰(재현되면 `server-shutdown.ts` 경로·메모리 확인). 프로덕션 실주행 뒤엔 `/admin` 이벤트 탭 또는 `GET /api/debug/log?type=story-step`으로 live-enter/live-finish·resume 시퀀스 확인.
+2. 운영 관찰: 배포 후 첫 유저들의 스토리 런에서 `story-step` 이벤트(`hold-timeout`·`script-arm-failed`·`lineup-failed`·`hero-left`)가 뜨는지 — 뜨면 어댑터 room-lost 보존 경로가 실제로 쓰였다는 뜻이니 원인(끊김/타임아웃)을 로그로 분류.
+3. Phase 2 후보: 실패 씬(`failScene`) 재생, `pendingQuiz` 라이브 리딩 퀴즈, 봇 속마음 노출(Ch7)·가면 identity, 2막 데이터, 스토리 BGM, v31 스토리 XP 아이템 트리거(v13 트리거 소스 확장 전엔 스토리 XP 레벨업 아이템 미지급).
+4. 콘텐츠·아트(Phase 1 인계에서 이월): 파트너별 Ch1 대사 변주, 배경 3·미야코 표정 2·가면 아바타(gpt-image-2, `reference_codex-image-gen` 메모리).
+5. 세션 운영 메모: **에이전트 4개 병렬 vitest로 메모리 크래시 2회** — 동시 에이전트 ≤2, 단일 파일 vitest, 전체 스위트는 `--maxWorkers=4`로 1회만. Codex(Sol) 리뷰는 `codex:codex-rescue`가 백그라운드 task id만 돌려주므로 `node ~/.claude/plugins/cache/openai-codex/codex/1.0.3/scripts/codex-companion.mjs status|result <id>`로 직접 회수.
