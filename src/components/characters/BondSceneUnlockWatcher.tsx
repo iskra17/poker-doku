@@ -1,47 +1,38 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { findNewlyUnlockedScenes, type BondScene } from '@/lib/characters/bond-scenes';
+import { useEffect } from 'react';
+import { selectHeldByOthers, usePresentationStore } from '@/lib/store/presentation-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import BondSceneModal from './BondSceneModal';
 
+const HOLD_KEY = 'bond-scene';
+
 /**
- * 인연 씬 해금 감지 — 진행도 스냅샷의 인연 레벨 상승을 지켜보다 마일스톤(5/10/15/20)을
- * 넘는 순간 씬 모달을 띄운다. 첫 스냅샷은 기준선으로만 삼는다(기해금 씬 재생 방지).
- * 멀티 레벨 점프 시 씬을 큐로 순차 재생. 서버 상태 없음 — 레벨에서 파생.
+ * 인연 씬 해금 재생 — 해금 판정·큐는 progression-store(`bondSceneQueue`, 스냅샷 prev/next 비교)가 갖는다.
+ * 이 컴포넌트는 큐의 머리를 모달로 그리는 순수 소비자라 로비·방 어디에 마운트돼도 큐가 유실되지 않는다
+ * (2026-09-03: 컴포넌트 ref baseline은 마운트 경계마다 리셋돼 스토리 완주 뒤 로비에서 씬이 영영 안 뜨던 갭).
+ * 다른 연출(결산 보상 리빌)이 무대를 잡고 있으면 끝날 때까지 기다린다.
  */
 export default function BondSceneUnlockWatcher() {
-  const [queue, setQueue] = useState<BondScene[]>([]);
-  const baselineRef = useRef<Map<string, number> | null>(null);
+  const scene = useProgressionStore(state => state.bondSceneQueue[0] ?? null);
+  const shiftBondScene = useProgressionStore(state => state.shiftBondScene);
+  const heldByOthers = usePresentationStore(state => selectHeldByOthers(state, HOLD_KEY));
+  const hold = usePresentationStore(state => state.hold);
+  const release = usePresentationStore(state => state.release);
+  const open = !!scene && !heldByOthers;
 
+  // 모달이 열린 동안 무대를 잡는다 (외부 스토어 갱신 — effect에서 허용)
   useEffect(() => {
-    return useProgressionStore.subscribe(state => {
-      const affinities = state.snapshot?.affinities;
-      if (!affinities) return;
-      if (baselineRef.current === null) {
-        baselineRef.current = new Map(affinities.map(a => [a.characterId, a.level]));
-        return;
-      }
-      const baseline = baselineRef.current;
-      const unlocked: BondScene[] = [];
-      for (const affinity of affinities) {
-        const previous = baseline.get(affinity.characterId) ?? 1;
-        if (affinity.level > previous) {
-          unlocked.push(...findNewlyUnlockedScenes(affinity.characterId, previous, affinity.level));
-          baseline.set(affinity.characterId, affinity.level);
-        }
-      }
-      if (unlocked.length > 0) {
-        setQueue(current => [...current, ...unlocked]);
-      }
-    });
-  }, []);
+    if (!open) return;
+    hold(HOLD_KEY);
+    return () => release(HOLD_KEY);
+  }, [open, hold, release]);
 
   return (
     <BondSceneModal
-      scene={queue[0] ?? null}
+      scene={open ? scene : null}
       justUnlocked
-      onClose={() => setQueue(current => current.slice(1))}
+      onClose={shiftBondScene}
     />
   );
 }

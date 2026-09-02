@@ -22,6 +22,7 @@ import HelpModal from '@/components/help/HelpModal';
 import { shouldRenderAuthenticatedTable } from '@/lib/profile/profile-view';
 import ArenaLobby from '@/components/arena/ArenaLobby';
 import StoryHub from '@/components/story/StoryHub';
+import StoryRewardLayer from '@/components/story/StoryRewardLayer';
 import StoryStage from '@/components/story/StoryStage';
 import { useArenaStore } from '@/lib/store/arena-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -241,6 +242,8 @@ export default function Home() {
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
       <StoryStage />
+      {/* 로비 보상 레이어 — 스토리 스테이지 위(포털 순서): 도장 레벨업 필·인연 씬 해금 (방 밖 갭 수정) */}
+      <StoryRewardLayer />
       {activeJoinTarget && (
         <JoinRoomModal key={activeJoinTarget.id} room={activeJoinTarget} onClose={closeJoinModal} />
       )}

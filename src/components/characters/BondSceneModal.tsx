@@ -52,7 +52,7 @@ export default function BondSceneModal({ scene, justUnlocked = false, onClose }:
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[95] flex items-center justify-center bg-abyss/90 backdrop-blur-sm"
+          className="fixed inset-0 z-[96] flex items-center justify-center bg-abyss/90 backdrop-blur-sm"
           onClick={onClose}
           onPointerMove={event => {
             pointerX.set(Math.max(-1, Math.min(1, (event.clientX / window.innerWidth) * 2 - 1)));

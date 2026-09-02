@@ -3,6 +3,7 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import type { PokerClientSocket } from '@/lib/realtime/protocol';
 import type { DailyMissionDaySnapshot } from '@/lib/progression/missions';
+import { findNewlyUnlockedScenes, type BondScene } from '@/lib/characters/bond-scenes';
 import type {
   ProgressionCharacterId,
   ProgressionEquipmentSlot,
@@ -29,6 +30,12 @@ export interface ProgressionStoreState {
   activeReward: ProgressionRewardSummary | null;
   rewardQueue: ProgressionRewardSummary[];
   economySummaryState: 'idle' | 'active';
+  /**
+   * 새로 해금된 인연 씬 큐 — 스냅샷 prev/next 인연 레벨 비교로 스토어가 쌓는다(첫 스냅샷은 기준선).
+   * 컴포넌트 ref가 아니라 스토어에 두어 로비↔방 마운트 경계를 넘어도 유실되지 않는다(2026-09-03).
+   */
+  bondSceneQueue: BondScene[];
+  shiftBondScene(): void;
   load(): Promise<LoadOutcome>;
   rerollMission(slot: number): Promise<LoadOutcome>;
   selectCharacter(characterId: ProgressionCharacterId): Promise<LoadOutcome>;
@@ -52,6 +59,18 @@ export function selectDisplayReward(
   state: Pick<ProgressionStoreState, 'activeReward' | 'economySummaryState'>,
 ): ProgressionRewardSummary | null {
   return state.economySummaryState === 'idle' ? state.activeReward : null;
+}
+
+/** 이전 스냅샷 대비 새로 넘은 인연 마일스톤 씬 — 이전 스냅샷이 없으면(첫 수신) 기준선만 잡고 빈 배열 */
+export function bondScenesBetween(previous: ProgressionSnapshot | null, next: ProgressionSnapshot): BondScene[] {
+  if (!previous || previous.profile.profileId !== next.profile.profileId) return [];
+  const before = new Map(previous.affinities.map(affinity => [affinity.characterId, affinity.level]));
+  const unlocked: BondScene[] = [];
+  for (const affinity of next.affinities) {
+    const prevLevel = before.get(affinity.characterId) ?? 1;
+    if (affinity.level > prevLevel) unlocked.push(...findNewlyUnlockedScenes(affinity.characterId, prevLevel, affinity.level));
+  }
+  return unlocked;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -374,6 +393,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
       activeReward: null,
       rewardQueue: [],
       economySummaryState: 'idle',
+      bondSceneQueue: [],
 
       load: () => readView(true, true),
 
@@ -459,13 +479,17 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
         const currentProfileId = get().profileId;
         if (!currentProfileId || currentProfileId !== snapshot.profile.profileId) return;
         progressionEpoch += 1;
-        set({
+        const unlocked = bondScenesBetween(get().snapshot, snapshot);
+        set(state => ({
           snapshot: mergeProtectedFields(snapshot),
           status: 'ready',
           error: null,
           authExpired: false,
-        });
+          bondSceneQueue: unlocked.length > 0 ? [...state.bondSceneQueue, ...unlocked] : state.bondSceneQueue,
+        }));
       },
+
+      shiftBondScene: () => set(state => ({ bondSceneQueue: state.bondSceneQueue.slice(1) })),
 
       enqueueReward: summary => {
         if (seenEventIds.has(summary.eventId)) return;
@@ -504,6 +528,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           activeReward: null,
           rewardQueue: [],
           economySummaryState: 'idle',
+          bondSceneQueue: [],
         });
       },
 
@@ -549,6 +574,7 @@ export function createProgressionStore(dependencies: Dependencies): ProgressionS
           activeReward: null,
           rewardQueue: [],
           economySummaryState: 'idle',
+          bondSceneQueue: [],
         });
       },
 
