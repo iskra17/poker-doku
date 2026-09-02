@@ -1,6 +1,7 @@
 import { GameState, Player, RoomDifficulty } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { BotDecision, decideBotAction } from './bot-ai';
+import { BotExplanation, explainBotDecision, explainForcedAction } from './bot-explain';
 import type { OpponentAggro } from './aggro-tracker';
 import {
   getCharacterById,
@@ -105,6 +106,15 @@ export function botThinkDelay(decision: BotDecision, player: Player, state: Game
   return jitter(base + bigness * 700, 1000);
 }
 
+export interface ProcessBotTurnOptions {
+  /**
+   * 봇 속마음(이유 코드 + 대사) 산출 — 스토리 방 전용.
+   * 결과는 스토리 방의 유일한 휴먼에게만 `story-update`로 전달할 것
+   * (`game-update`에 실으면 봇 핸드 강도가 그대로 샌다 — spec B1).
+   */
+  explain?: boolean;
+}
+
 export async function processBotTurn(
   engine: PokerEngine,
   /** 사고 지연 중 루프가 교체됐는지 확인 — true면 액션 없이 중단 (stale 이중 액션 방지) */
@@ -113,7 +123,9 @@ export async function processBotTurn(
   aggroOf?: (playerId: string) => OpponentAggro | undefined,
   /** 사고 시간 배율 (서버 런타임 설정 주입, 1 = 기본) — 결정 난이도별 형태는 유지, 전체 속도만 조절 */
   thinkDelayScale = 1,
-): Promise<{ acted: boolean; action?: ReturnType<typeof decideBotAction> }> {
+  /** 부가 산출물 옵션 (미전달 시 기존 동작 그대로) */
+  options?: ProcessBotTurnOptions,
+): Promise<{ acted: boolean; action?: BotDecision; explanation?: BotExplanation }> {
   const activePlayer = engine.state.players[engine.state.activePlayerIndex];
   if (!activePlayer || activePlayer.type !== 'bot') {
     return { acted: false };
@@ -125,6 +137,12 @@ export async function processBotTurn(
     ? aggroOf?.(aggressorId)
     : undefined;
   const decision = decideBotAction(activePlayer, engine.state, validActions, Math.random, aggro);
+
+  // 속마음은 **결정 직후·사고 지연 전**에 계산한다 — 지연 중 보드/팟이 바뀌어도
+  // 실제로 내린 결정과 그때의 상태를 그대로 설명한다.
+  let explanation = options?.explain
+    ? explainBotDecision({ player: activePlayer, state: engine.state, decision })
+    : undefined;
 
   await new Promise(resolve => setTimeout(
     resolve,
@@ -147,7 +165,10 @@ export async function processBotTurn(
       type: canCheck ? 'check' : 'fold',
       amount: 0,
     });
+    // 실제 일어난 액션은 강제 체크/폴드 — 원래 결정의 속마음은 어긋나므로 'forced'로 대체한다.
+    // (`action`은 기존 계약대로 시도한 결정을 그대로 반환)
+    if (explanation) explanation = explainForcedAction(activePlayer, engine.state);
   }
 
-  return { acted: true, action: decision };
+  return { acted: true, action: decision, ...(explanation ? { explanation } : {}) };
 }

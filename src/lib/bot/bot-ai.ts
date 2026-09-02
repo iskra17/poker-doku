@@ -159,8 +159,11 @@ function detectDraw(hole: Card[], community: Card[]): number {
   return draw;
 }
 
-/** 메이드 핸드 강도(0-1) + 드로우 에퀴티 */
-function analyzeHand(player: Player, community: Card[]): { strength: number; draw: number } {
+/**
+ * 메이드 핸드 강도(0-1) + 드로우 에퀴티.
+ * (bot-explain이 봇 속마음 분류에 같은 눈금을 재사용하므로 export — 결정 로직은 불변)
+ */
+export function analyzeHand(player: Player, community: Card[]): { strength: number; draw: number } {
   const made = evaluateHand(player.holeCards, community);
   const usesHole = made.cards.filter(c =>
     player.holeCards.some(h => h.rank === c.rank && h.suit === c.suit),
