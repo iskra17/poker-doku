@@ -1,6 +1,6 @@
 'use client';
 
-import { useSyncExternalStore } from 'react';
+import { useCallback, useState, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AnimatePresence,
@@ -9,8 +9,10 @@ import {
   useSpring,
   useTransform,
 } from 'framer-motion';
+import type { StoryVideo } from '@/lib/assets/story-video';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
+import VideoCutscene from './VideoCutscene';
 
 export interface CgStageScene {
   /** AnimatePresence 키 */
@@ -28,6 +30,8 @@ export interface CgStageScene {
   badge?: string | null;
   /** 캡션 아래 보조 문구 (기본 '화면을 탭하면 닫혀요') */
   hint?: string;
+  /** 앰비언트 루프 영상(있으면 art 자리에 재생, 실패·reduced-motion이면 정지 CG) — `assets/story-video.ts` */
+  video?: StoryVideo | null;
 }
 
 interface CgStageProps {
@@ -62,6 +66,17 @@ export default function CgStage({ scene, onClose, layer = 'stage' }: CgStageProp
   const rotateX = useTransform(springY, [-1, 1], [3, -3]);
   const shiftX = useTransform(springX, [-1, 1], [-8, 8]);
   const shiftY = useTransform(springY, [-1, 1], [-5, 5]);
+
+  // 영상 실패(파일 없음/디코딩/1.5초 내 canplay 미도달) → 그 씬은 정지 CG. 씬이 바뀌면 다시 시도(렌더 중 보정 패턴)
+  const [videoFailedFor, setVideoFailedFor] = useState<string | null>(null);
+  const [trackedSceneId, setTrackedSceneId] = useState<string | null>(scene?.id ?? null);
+  if ((scene?.id ?? null) !== trackedSceneId) {
+    setTrackedSceneId(scene?.id ?? null);
+    setVideoFailedFor(null);
+  }
+  const sceneId = scene?.id ?? null;
+  const onVideoFallback = useCallback(() => setVideoFailedFor(sceneId), [sceneId]);
+  const useVideo = !!scene?.video && !reduced && videoFailedFor !== scene?.id;
 
   if (!mounted || typeof document === 'undefined') return null;
 
@@ -115,15 +130,25 @@ export default function CgStage({ scene, onClose, layer = 'stage' }: CgStageProp
                 boxShadow: `0 24px 60px rgba(0,0,0,0.6), 0 0 40px ${scene.color}30`,
               }}
             >
-              <motion.img
-                src={scene.art}
-                alt={scene.alt}
-                draggable={false}
-                className="pointer-events-none block select-none object-cover"
-                style={{ maxHeight: 'min(66dvh, 620px)', maxWidth: 'min(88vw, 420px)' }}
-                animate={reduced ? undefined : { scale: [1.02, 1.055, 1.02] }}
-                transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut' }}
-              />
+              {useVideo && scene.video ? (
+                <VideoCutscene
+                  video={scene.video}
+                  poster={scene.art}
+                  alt={scene.alt}
+                  onFallback={onVideoFallback}
+                  className="pointer-events-none block select-none object-cover"
+                />
+              ) : (
+                <motion.img
+                  src={scene.art}
+                  alt={scene.alt}
+                  draggable={false}
+                  className="pointer-events-none block select-none object-cover"
+                  style={{ maxHeight: 'min(66dvh, 620px)', maxWidth: 'min(88vw, 420px)' }}
+                  animate={reduced ? undefined : { scale: [1.02, 1.055, 1.02] }}
+                  transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut' }}
+                />
+              )}
               {/* 비네트 — CG 톤을 다크 UI에 안착 */}
               <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-abyss/45 via-transparent to-abyss/15" />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 p-3 text-left">

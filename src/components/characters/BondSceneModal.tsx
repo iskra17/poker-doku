@@ -1,5 +1,6 @@
 'use client';
 
+import { getStoryVideo } from '@/lib/assets/story-video';
 import { getCharacterById } from '@/lib/characters';
 import { getBondSceneArt, type BondScene } from '@/lib/characters/bond-scenes';
 import CgStage from './CgStage';
@@ -34,6 +35,8 @@ export default function BondSceneModal({ scene, justUnlocked = false, onClose, l
         caption: scene.caption,
         badge: justUnlocked ? `✦ 새로운 인연 씬 해금 — 인연 Lv.${scene.level}` : null,
         hint: justUnlocked ? '기록실에서 다시 볼 수 있어요 · 탭하면 닫혀요' : undefined,
+        // 영상 id는 아트 경로 규약과 같은 '<character>-scene-lv<N>' — 파일럿 3클립 중 사쿠라 Lv5
+        video: getStoryVideo(`${scene.characterId}-scene-lv${scene.level}`),
       } : null}
       onClose={onClose}
     />

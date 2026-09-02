@@ -1,6 +1,7 @@
 'use client';
 
 import CgStage from '@/components/characters/CgStage';
+import { getStoryVideo } from '@/lib/assets/story-video';
 import { getCharacterById } from '@/lib/characters';
 import { teacherArtId, teacherDisplayName } from '@/lib/story/story-hub-rules';
 import type { StoryRewardCutsceneView } from '@/lib/story/views';
@@ -45,6 +46,7 @@ export default function RewardCutscene({ cutscene, justUnlocked = true, onClose,
         caption: cutscene.caption,
         badge,
         hint: justUnlocked ? '기록실에서 다시 볼 수 있어요 · 탭하면 닫혀요' : undefined,
+        video: getStoryVideo(cutscene.id),
       } : null}
       onClose={onClose}
     />
