@@ -526,7 +526,8 @@ export interface ServerToClientEvents {
   'tournament-seat-assigned': (data: TournamentSeatAssigned) => void;
   'table-move': (data: TableMovePayload) => void;
   'room-joined': (data: RoomJoinedPayload) => void;
-  'room-lost': (data?: { message?: string }) => void;
+  /** reason 'story-end' = 수련 라이브 스텝 방 정리(곧 story-update가 다음 스텝을 실어 온다) — 클라는 안내 토스트 없이 조용히 방 상태만 비운다 */
+  'room-lost': (data?: { message?: string; reason?: 'story-end' }) => void;
   'room-created': (data: { roomId: string }) => void;
   'game-update': (data: GameUpdatePayload) => void;
   'game-update-public': (data: GameUpdatePayload) => void;

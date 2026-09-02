@@ -722,6 +722,7 @@ export function setupSocketHandlers(
             // 스토리 라이브 스텝 종료/포기 — 곧이어 story-update가 다음 스텝(또는 종료)을 실어 온다
             socket?.emit('room-lost', {
               message: '수련 테이블을 정리했어요 — 이야기를 이어갈게요.',
+              reason: 'story-end',
             });
           }
           session.roomId = null;
