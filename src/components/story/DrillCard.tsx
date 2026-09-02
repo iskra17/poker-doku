@@ -162,6 +162,7 @@ export default function DrillCard({
 
       <div className="relative">
         <DrillAnswerInput
+          key={key}
           spec={instance.answerSpec}
           value={answer}
           onChange={setAnswer}
