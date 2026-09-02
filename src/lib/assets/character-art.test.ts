@@ -24,10 +24,16 @@ describe('character art outfit axis', () => {
   it('runtime manifest: outfitId=null keeps the legacy path and unshipped outfits fall back (seat rendering unaffected)', () => {
     expect(getCharacterArt('sakura', 'happy')).toBe('/assets/characters/sakura/happy.webp');
     expect(getCharacterArt('sakura', 'happy', null)).toBe('/assets/characters/sakura/happy.webp');
-    expect(getCharacterArt('dealer', 'thinking')).toBe('/assets/characters/miyako/neutral.webp');
+    // 미야코 thinking/confident/surprised는 2026-09-03 아트 배치로 실물 — 폴백은 없는 표정(sad→sad 그대로)만
+    expect(getCharacterArt('dealer', 'thinking')).toBe('/assets/characters/miyako/thinking.webp');
+    expect(getCharacterArt('mochi', 'thinking')).toBe('/assets/characters/mochi/neutral.webp');
     // 아트 미배치 의상은 기본 의상 경로 — CharacterImage가 깨진 이미지를 가리키지 않는다
-    expect(getCharacterArt('sakura', 'happy', 'dojo')).toBe('/assets/characters/sakura/happy.webp');
-    expect(hasOutfitArt('sakura', 'dojo')).toBe(false);
+    // 배치된 의상(사쿠라 도복·하나 가운)은 의상 경로, 미배치 의상 id는 기본 의상으로 폴백
+    expect(getCharacterArt('sakura', 'happy', 'dojo')).toBe('/assets/characters/sakura/outfits/dojo/happy.webp');
+    expect(getCharacterArt('sakura', 'happy', 'nope')).toBe('/assets/characters/sakura/happy.webp');
+    expect(hasOutfitArt('sakura', 'dojo')).toBe(true);
+    expect(hasOutfitArt('hana', 'lab')).toBe(true);
+    expect(hasOutfitArt('sakura', 'lab')).toBe(false);
     expect(hasOutfitArt('nobody', 'dojo')).toBe(false);
   });
 });

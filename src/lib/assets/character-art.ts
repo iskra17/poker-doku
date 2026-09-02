@@ -32,7 +32,7 @@ const ART_FOLDERS: Record<string, string> = {
 // 보유 중인 표정 — 스타터 6명은 6종 풀세트(2026-07-22 확장), 나머지는 3종
 // (thinking/confident/surprised 미보유 캐릭터는 EXPRESSION_FALLBACK으로 강등)
 const AVAILABLE: Record<string, Expression[]> = {
-  miyako: ['neutral', 'happy', 'sad'],
+  miyako: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
   sakura: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
   ara: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
   hana: ['neutral', 'happy', 'sad', 'thinking', 'confident', 'surprised'],
@@ -69,8 +69,8 @@ const EXPRESSION_FALLBACK: Record<Expression, Expression> = {
 export type OutfitManifest = Record<string, Record<string, readonly Expression[]>>;
 
 const OUTFITS: OutfitManifest = {
-  // sakura: { dojo: ['neutral', 'happy', 'confident'] },  ← P3 아트 배치 후 활성화
-  // hana: { lab: ['neutral', 'happy', 'confident'] },
+  sakura: { dojo: ['neutral', 'happy', 'confident'] },
+  hana: { lab: ['neutral', 'happy', 'confident'] },
 };
 
 interface ArtManifest {

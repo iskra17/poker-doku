@@ -5,8 +5,8 @@
  */
 export type StoryBackgroundId = 'dojo-gate' | 'dojo-table' | 'dojo-garden-night' | 'dojo-study' | 'dojo-office';
 
-/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 */
-const AVAILABLE: ReadonlySet<string> = new Set<string>([]);
+/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 (2026-09-03 1막 4장, `dojo-office`는 아직 그라디언트) */
+const AVAILABLE: ReadonlySet<string> = new Set<string>(['dojo-gate', 'dojo-table', 'dojo-garden-night', 'dojo-study']);
 
 const GRADIENT: Readonly<Record<StoryBackgroundId, string>> = Object.freeze({
   'dojo-gate': 'from-abyss via-mystic/20 to-gilded/20',
