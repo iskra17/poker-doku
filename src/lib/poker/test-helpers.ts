@@ -43,8 +43,8 @@ export class RiggedDeck extends Deck {
         if (!used.has(`${rank}${suit}`)) rest.push({ suit, rank });
       }
     }
-    // splice(0, n)으로 앞에서부터 딜하므로 rigged를 앞에 배치
-    (this as unknown as { cards: Card[] }).cards = [...this.rigged.map(c => ({ ...c })), ...rest];
+    // splice(0, n)으로 앞에서부터 딜하므로 rigged를 앞에 배치 (Deck.cards는 protected)
+    this.cards = [...this.rigged.map(c => ({ ...c })), ...rest];
   }
 }
 

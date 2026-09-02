@@ -23,7 +23,7 @@ export function secureRandomInt(maxExclusive: number): number {
 }
 
 export class Deck {
-  private cards: Card[] = [];
+  protected cards: Card[] = [];
 
   constructor() {
     this.reset();
