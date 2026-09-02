@@ -9,6 +9,7 @@
  * - 익명 닉을 직접 부르지 않는다(플레이스홀더 금지). 선택지는 정답이 없고 플래그만 남긴다.
  */
 import type { Chapter } from '../../types';
+import { guidedSituation, guidedStageSituation } from '../helpers';
 
 export const CH01: Chapter = {
   id: 'act1-ch01',
@@ -127,6 +128,8 @@ export const CH01: Chapter = {
           kind: 'guided',
           teacher: 'miyako',
           intro: '그럼 보드를 함께 읽어 볼까요♪ 보드는 K♠ K♥ 7♦ 4♣ 2♠예요.',
+          // 보드만 읽는 1단계는 내 카드 없이, 2단계에서 홀카드 K♦3♣ 공개 — 카드는 상황 패널이 상시 보여 준다
+          situation: guidedSituation({ board: 'Ks Kh 7d 4c 2s', note: '리버까지 다 깔린 보드예요' }),
           stages: [
             {
               prompt: '보드에 K가 두 장 있죠. 이 보드에서 누군가 만들 수 있는 가장 높은 족보는 무엇일까요?',
@@ -136,6 +139,7 @@ export const CH01: Chapter = {
             },
             {
               prompt: '그럼 홀카드가 K♦ 3♣인 사람의 족보는 무엇일까요?',
+              situation: guidedStageSituation({ hero: 'Kd 3c', note: '이 사람의 홀카드를 내 자리에 놓고 볼게요' }),
               answer: { kind: 'multiple-choice', options: ['트리플', '풀하우스', '투페어'], correctIndex: 0 },
               onCorrect: '맞아요♪ 보드의 K 두 장과 합쳐 K가 셋 — 트리플이에요.',
               onWrong: 'K는 셋이 모였지만 짝지어 줄 다른 페어가 없어요. 그래서 풀하우스가 아니라 트리플이랍니다♪',

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { parseCards } from '@/lib/poker/card-notation';
 import { makeChapter, makeChapterChain, makeScene, makeTable } from '../test-fixtures';
-import type { Chapter, Step } from '../types';
+import type { Chapter, LessonBlock, Step } from '../types';
 import { findRequiresCycle, getChapter, STORY_CHAPTERS, validateChapters } from './index';
 
 const TEMPLATE_IDS = new Set(['rank-who-wins', 'pos-name']);
@@ -57,6 +58,38 @@ describe('validateChapters', () => {
     const chapter = makeChapter();
     chapter.rewards = { ...chapter.rewards, first: { ...chapter.rewards.first, affinity: [{ target: 'miyako' as never, milli: 10 }] } };
     expect(validateChapters([chapter]).some(e => e.includes('miyako is not an affinity target'))).toBe(true);
+  });
+
+  it('checks guided situations: required, no duplicate cards across stages, pot >= call (2026-09-03 피드백 ①)', () => {
+    const base = makeChapter();
+    const patchGuided = (mutate: (block: Extract<LessonBlock, { kind: 'guided' }>) => LessonBlock): Chapter =>
+      withStep(base, steps => steps.map(step => step.kind === 'lesson'
+        ? { ...step, blocks: step.blocks.map(block => (block.kind === 'guided' ? mutate(block) : block)) }
+        : step));
+
+    expect(validateChapters([base])).toEqual([]);
+
+    const missing = patchGuided(block => ({ ...block, situation: undefined as never }));
+    expect(validateChapters([missing]).some(e => e.includes('guided block has no situation'))).toBe(true);
+
+    // 2단계 오버라이드가 보드와 겹치는 홀카드를 주면 병합 결과에서 잡힌다
+    const duplicate = patchGuided(block => ({
+      ...block,
+      stages: [{ ...block.stages[0], situation: { hero: parseCards('Qh 2c') } }],
+    }));
+    expect(validateChapters([duplicate]).some(e => e.includes('guided stage 0: duplicate card'))).toBe(true);
+
+    const badPot = patchGuided(block => ({ ...block, situation: { ...block.situation, potChips: 50, toCallChips: 120 } }));
+    expect(validateChapters([badPot]).some(e => e.includes('potChips >= toCallChips'))).toBe(true);
+
+    const badBoard = patchGuided(block => ({ ...block, situation: { ...block.situation, board: parseCards('Qh 7h') } }));
+    expect(validateChapters([badBoard]).some(e => e.includes('board must have 0/3/4/5 cards'))).toBe(true);
+
+    const badVillain = patchGuided(block => ({
+      ...block,
+      situation: { ...block.situation, villains: [{ seatIndex: 1, characterId: 'nobody', position: 'CO', stackChips: 1_000 }] },
+    }));
+    expect(validateChapters([badVillain]).some(e => e.includes('unknown villain nobody'))).toBe(true);
   });
 
   it('checks step structure: unique ids, single trailing result, drill templates', () => {

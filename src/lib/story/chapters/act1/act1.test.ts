@@ -226,6 +226,26 @@ describe('1막 챕터 데이터', () => {
     }
   });
 
+  it('함께 풀기 블록은 전부 구조화된 상황(보드·내 카드)을 들고, 보드를 말하는 단계는 보드 카드가 있다 (2026-09-03 피드백 ①)', () => {
+    const guided = ACT1.flatMap(chapter => chapter.steps
+      .filter((step): step is Extract<Step, { kind: 'lesson' }> => step.kind === 'lesson')
+      .flatMap(step => step.blocks.filter(block => block.kind === 'guided')));
+    expect(guided.length).toBe(5);
+    for (const block of guided) {
+      expect(block.situation).toBeDefined();
+      for (const stage of block.stages) {
+        const merged = { ...block.situation, ...stage.situation };
+        const mentionsBoard = `${block.intro} ${stage.prompt}`.includes('보드');
+        if (mentionsBoard) expect(merged.board.length).toBeGreaterThanOrEqual(3);
+      }
+    }
+    // Ch1: 1단계는 보드만, 2단계에서 K♦3♣ 공개 — 문장 밖 데이터로 보드가 유지된다
+    const ch01 = guided[0];
+    expect(ch01.situation.board).toHaveLength(5);
+    expect(ch01.situation.hero).toHaveLength(0);
+    expect(ch01.stages[1].situation?.hero).toHaveLength(2);
+  });
+
   it('Ch3은 미통과 단축판(failScene)을 가진다', () => {
     expect(CH01.failScene).toBeUndefined();
     expect(CH03.failScene).toBeDefined();

@@ -10,6 +10,7 @@ import { findDuplicateCard, tryParseCards } from '@/lib/poker/card-notation';
 import { CH01 } from './act1/ch01-dojo-gate';
 import { CH02 } from './act1/ch02-art-of-waiting';
 import { CH03 } from './act1/ch03-numbers-dont-lie';
+import { mergeGuidedSituation } from './helpers';
 import type { Card } from '@/lib/poker/types';
 import {
   isStoryHeroineId,
@@ -124,6 +125,27 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
           if (block.kind === 'guided') {
             if (!isStoryTeacherRef(block.teacher)) errors.push(`${stepAt}: unknown guided teacher ${String(block.teacher)}`);
             if (block.stages.length === 0) errors.push(`${stepAt}: guided block has no stages`);
+            // 상황은 필수 — 단계마다 병합 결과가 유효해야 한다(카드 중복 없음, 팟 ≥ 콜 ≥ 0)
+            if (!block.situation) {
+              errors.push(`${stepAt}: guided block has no situation`);
+            } else {
+              block.stages.forEach((stage, stageIndex) => {
+                const merged = mergeGuidedSituation(block.situation, stage.situation);
+                const at = `${stepAt} guided stage ${stageIndex}`;
+                const duplicate = findDuplicateCard([
+                  ...merged.hero,
+                  ...merged.board,
+                  ...merged.villains.flatMap(villain => villain.holeCards ?? []),
+                ]);
+                if (duplicate) errors.push(`${at}: duplicate card ${duplicate}`);
+                if (![0, 3, 4, 5].includes(merged.board.length)) errors.push(`${at}: board must have 0/3/4/5 cards`);
+                if (merged.hero.length !== 0 && merged.hero.length !== 2) errors.push(`${at}: hero must have 0 or 2 cards`);
+                if (!(merged.potChips >= merged.toCallChips && merged.toCallChips >= 0)) errors.push(`${at}: potChips >= toCallChips >= 0 required`);
+                for (const villain of merged.villains) {
+                  if (!getCharacterById(villain.characterId)) errors.push(`${at}: unknown villain ${villain.characterId}`);
+                }
+              });
+            }
           }
         }
         break;

@@ -11,6 +11,7 @@
  *   드라코가 팟 60에 120(2배 오버벳) → 팟 180 · 콜 120 → 120 ÷ 300 = 40% → 폴드.
  */
 import type { Chapter } from '../../types';
+import { guidedSituation } from '../helpers';
 
 export const CH03: Chapter = {
   id: 'act1-ch03',
@@ -97,6 +98,7 @@ export const CH03: Chapter = {
           kind: 'guided',
           teacher: 'hana',
           intro: '같이 한 번 세어 볼까요. 당신 핸드는 A♥K♥, 보드는 Q♥ 7♥ 2♣예요.',
+          situation: guidedSituation({ hero: 'Ah Kh', board: 'Qh 7h 2c', heroPosition: 'BTN', potChips: 60, note: '플랍, 아직 아무도 벳하지 않았어요' }),
           stages: [
             {
               prompt: '먼저 아우츠예요. 하트는 열세 장인데 지금 네 장이 보이죠 — 하트가 몇 장 남았죠?',
@@ -116,6 +118,15 @@ export const CH03: Chapter = {
           kind: 'guided',
           teacher: 'hana',
           intro: '이제 값을 매겨 봐요. 같은 핸드인데 드라코가 팟 60에 120을 던졌어요 — 중앙에는 180이 있고, 콜은 120이에요.',
+          situation: guidedSituation({
+            hero: 'Ah Kh',
+            board: 'Qh 7h 2c',
+            heroPosition: 'BTN',
+            potChips: 180,
+            toCallChips: 120,
+            villains: [{ seatIndex: 1, characterId: 'draco', position: 'CO', rangeTag: '겜블러', stackChips: 1_880 }],
+            note: '드라코가 120을 벳했어요 — 팟은 벳 포함 180',
+          }),
           stages: [
             {
               prompt: '필요 승률은 몇 %일까요?',

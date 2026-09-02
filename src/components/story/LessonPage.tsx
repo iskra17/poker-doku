@@ -5,10 +5,12 @@ import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
+import { mergeGuidedSituation } from '@/lib/story/chapters/helpers';
 import { gradeLocally, isAnswerComplete } from '@/lib/story/drill-input';
-import type { DrillAnswer } from '@/lib/story/drills/types';
-import type { LessonBlock, StoryHeroineId, StoryTeacherRef } from '@/lib/story/types';
+import type { DrillAnswer, DrillSituation } from '@/lib/story/drills/types';
+import type { GuidedStage, LessonBlock, StoryHeroineId, StoryTeacherRef } from '@/lib/story/types';
 import DrillAnswerInput from './DrillAnswerInput';
+import DrillTableView from './DrillTableView';
 import { resolveSpeaker } from './ScenePlayer';
 
 interface LessonPageProps {
@@ -63,7 +65,7 @@ export default function LessonPage({ title, blocks, partnerId, onFinish }: Lesso
           <TextBlock speaker={block.speaker} text={block.text} partnerId={partnerId} onNext={next} last={last} />
         )}
         {block.kind === 'guided' && (
-          <GuidedBlock key={blockIndex} teacher={block.teacher} intro={block.intro} stages={block.stages} partnerId={partnerId} onDone={next} last={last} />
+          <GuidedBlock key={blockIndex} teacher={block.teacher} intro={block.intro} situation={block.situation} stages={block.stages} partnerId={partnerId} onDone={next} last={last} />
         )}
       </motion.div>
     </div>
@@ -94,10 +96,16 @@ function TextBlock({ speaker, text, partnerId, onNext, last }: { speaker: string
   );
 }
 
-function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
+/**
+ * 함께 풀기 — 상황(보드·내 카드·팟·콜)은 `DrillTableView`로 **단계·피드백과 무관하게 상시** 그린다.
+ * 예전엔 보드가 intro 문장에만 있어 2단계·오답 피드백 때 사라져 풀 수 없었다(2026-09-03 피드백 ①).
+ * intro는 정적 한 줄로 항상 보이고, 말풍선은 이번 단계의 프롬프트/피드백만 담는다.
+ */
+function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, last }: {
   teacher: StoryTeacherRef;
   intro: string;
-  stages: Array<{ prompt: string; answer: Parameters<typeof gradeLocally>[0]; onCorrect: string; onWrong: string }>;
+  situation: DrillSituation;
+  stages: GuidedStage[];
   partnerId: StoryHeroineId | null;
   onDone: () => void;
   last: boolean;
@@ -107,9 +115,10 @@ function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
   const [feedback, setFeedback] = useState<{ correct: boolean; text: string } | null>(null);
   const who = resolveSpeaker(teacher, partnerId);
   const outfitId = useOutfitId(who.artId);
-  const stage = stages[stageIndex];
+  const stage = stages[stageIndex] as GuidedStage | undefined;
   const finished = stageIndex >= stages.length;
-  const bubble = finished ? '잘했어요. 이제 진짜 문제로 가 볼까요?' : feedback ? feedback.text : stageIndex === 0 ? `${intro} ${stage.prompt}` : stage.prompt;
+  const merged = mergeGuidedSituation(situation, stage?.situation);
+  const bubble = finished || !stage ? '잘했어요. 이제 진짜 문제로 가 볼까요?' : feedback ? feedback.text : stage.prompt;
   const { display, done } = useTypewriter(bubble, 20);
 
   const submit = () => {
@@ -126,6 +135,10 @@ function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
   return (
     <div className="rounded-2xl border border-gilded/40 bg-panel/90 p-4" aria-label="함께 풀기">
       <p className="text-[10px] font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
+      <div className="mt-2">
+        <DrillTableView situation={merged} />
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-ink-dim" aria-label="상황 설명">{intro}</p>
       <div className="mt-2 flex gap-3">
         {who.artId && (
           <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-gilded/30">
@@ -138,7 +151,7 @@ function GuidedBlock({ teacher, intro, stages, partnerId, onDone, last }: {
         </div>
       </div>
 
-      {!finished && !feedback && (
+      {!finished && stage && !feedback && (
         <div className="mt-3">
           <DrillAnswerInput spec={stage.answer} value={answer} onChange={setAnswer} />
           <button

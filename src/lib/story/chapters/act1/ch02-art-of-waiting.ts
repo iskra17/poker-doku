@@ -10,6 +10,7 @@
  * - 백분위는 `hand-rankings.ts`의 `handPercentile` 실측값(A♠A♥ 0.23% / A♦J♦ 2.56% / J♣7♦ 69.68%).
  */
 import type { Chapter } from '../../types';
+import { guidedSituation } from '../helpers';
 
 export const CH02: Chapter = {
   id: 'act1-ch02',
@@ -95,6 +96,7 @@ export const CH02: Chapter = {
           kind: 'guided',
           teacher: 'sakura',
           intro: '머, 먼저 당신 핸드가 어느 정도인지부터 볼게요. J♣7♦, 자리는 UTG예요.',
+          situation: guidedSituation({ hero: 'Jc 7d', heroPosition: 'UTG', potChips: 30, toCallChips: 20, note: '프리플랍, 뒤에 다섯 명이 남아 있어요' }),
           stages: [
             {
               prompt: '이 핸드는 상위 몇 % 근처일까요? 어림으로 괜찮아요.',
@@ -114,6 +116,7 @@ export const CH02: Chapter = {
           kind: 'guided',
           teacher: 'sakura',
           intro: '이번엔 반대예요. A♦J♦, 자리는 BTN이에요.',
+          situation: guidedSituation({ hero: 'Ad Jd', heroPosition: 'BTN', potChips: 30, toCallChips: 20, note: '프리플랍, 앞사람들은 모두 폴드했어요' }),
           stages: [
             {
               prompt: 'A♦J♦는 상위 3% 근처예요. BTN 임계 35%와 비교하면 어느 쪽일까요?',

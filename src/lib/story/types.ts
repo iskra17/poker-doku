@@ -10,7 +10,7 @@
 import type { Expression } from '@/lib/assets/character-art';
 import type { RoomDifficulty } from '@/lib/poker/types';
 import { PROGRESSION_CHARACTER_IDS, type ProgressionCharacterId } from '@/lib/progression/types';
-import type { DrillAnswerSpec } from './drills/types';
+import type { DrillAnswerSpec, DrillSituation } from './drills/types';
 
 // ---------------------------------------------------------------------------
 // 인물
@@ -89,12 +89,24 @@ export interface GuidedStage {
   answer: DrillAnswerSpec;
   onCorrect: string;
   onWrong: string;
+  /** 이 단계에서만 덮어쓰는 상황(예: 홀카드 공개·상대 벳 뒤 팟/콜) — 블록 `situation` 위에 병합 */
+  situation?: Partial<DrillSituation>;
 }
 
 export type LessonBlock =
   | { kind: 'text'; speaker: SceneSpeaker; text: string }
   | { kind: 'concept-card'; title: string; body: string; formula?: string }
-  | { kind: 'guided'; teacher: StoryTeacherRef; intro: string; stages: GuidedStage[] };
+  | {
+    kind: 'guided';
+    teacher: StoryTeacherRef;
+    intro: string;
+    /**
+     * 구조화된 상황(보드·내 카드·팟·콜·상대) — `GuidedBlock`이 단계·피드백과 무관하게 카드로 상시 렌더한다.
+     * 문장(intro/prompt)에만 보드를 적으면 다음 단계에서 사라진다(2026-09-03 피드백 ①). `chapters/helpers.ts guidedSituation`.
+     */
+    situation: DrillSituation;
+    stages: GuidedStage[];
+  };
 
 // ---------------------------------------------------------------------------
 // 드릴 세트

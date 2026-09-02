@@ -39,6 +39,17 @@ export function makeSteps(chapterId: string): Step[] {
           kind: 'guided',
           teacher: 'miyako',
           intro: '같이 풀어 볼까요?',
+          situation: {
+            hero: [{ rank: 'A', suit: 'hearts' }, { rank: 'K', suit: 'hearts' }],
+            board: [{ rank: 'Q', suit: 'hearts' }, { rank: '7', suit: 'hearts' }, { rank: '2', suit: 'clubs' }],
+            potChips: 60,
+            toCallChips: 0,
+            bigBlind: 20,
+            heroStackChips: 2_000,
+            heroPosition: 'BTN',
+            street: 'flop',
+            villains: [],
+          },
           stages: [{
             prompt: '하트가 몇 장 남았죠?',
             answer: { kind: 'numeric', correct: 9, tolerance: 0, unit: 'outs', min: 0, max: 21 },

@@ -77,13 +77,16 @@ export default function DrillTableView({ situation }: DrillTableViewProps) {
         </div>
       </div>
 
-      <div className="mt-2 flex items-center justify-center gap-3" aria-label="내 카드">
-        <span className="rounded bg-cyber/20 px-1.5 py-0.5 text-[10px] font-bold text-cyber">나 · {situation.heroPosition}</span>
-        <div className="flex gap-1">
-          {situation.hero.map(card => <CardComponent key={formatCard(card)} card={card} size="md" highlight />)}
+      {/* 내 카드가 없는 상황(보드만 읽는 문제·rank-nuts)은 행 자체를 숨긴다 — 빈 자리 칩만 남으면 오해를 부른다 */}
+      {situation.hero.length > 0 && (
+        <div className="mt-2 flex items-center justify-center gap-3" aria-label="내 카드">
+          <span className="rounded bg-cyber/20 px-1.5 py-0.5 text-[10px] font-bold text-cyber">나 · {situation.heroPosition}</span>
+          <div className="flex gap-1">
+            {situation.hero.map(card => <CardComponent key={formatCard(card)} card={card} size="md" highlight />)}
+          </div>
+          <span className="text-[10px] text-ink-dim">{formatChips(situation.heroStackChips)} · BB {situation.bigBlind}</span>
         </div>
-        <span className="text-[10px] text-ink-dim">{formatChips(situation.heroStackChips)} · BB {situation.bigBlind}</span>
-      </div>
+      )}
       {situation.note && <p className="mt-2 text-center text-[11px] text-ink-dim">{situation.note}</p>}
     </div>
   );
