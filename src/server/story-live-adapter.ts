@@ -129,6 +129,8 @@ interface LiveSession {
 
 const DEFAULT_HOLD_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_FINISH_DELAY_MS = 6_000;
+/** 종료 시 방 해체가 거절됐을 때(정산 미해결) 재시도 간격 */
+const FINISH_RETRY_MS = 10_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 const BOT_THOUGHT_KEEP = 6;
 
@@ -177,11 +179,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const session: LiveSession = existing && existing.runId === input.runId && existing.stepIndex === input.stepIndex
       ? existing
       : this.freshSession(input);
-    if (!this.openRoom(session)) {
-      this.sessions.delete(input.profileId);
-      return 'unavailable';
-    }
     this.sessions.set(input.profileId, session);
+    if (!this.openRoom(session)) {
+      // 방을 열지 못했다(히어로 소켓 없음·착석 실패 등). 스텝을 **건너뛰지 않고** room-lost hold로 보존해
+      // 「이어하기」(resume)가 다시 연다 — 스파링을 건너뛰면 primary 목표 없이 챕터가 통과될 수 있다.
+      this.markRoomLost(session, false);
+    }
     return 'entered';
   }
 
@@ -209,11 +212,14 @@ export class LiveTableAdapter implements StoryRoomHooks {
     return { ok: true };
   }
 
-  /** 포기/런 종료 — 방을 즉시 해체하고 세션을 버린다 (코디네이터 통지 없음) */
-  abandon(profileId: string): void {
+  /**
+   * 포기/런 종료 — 방을 즉시 해체하고 세션을 버린다 (코디네이터 통지 없음).
+   * 방을 닫을 수 없으면(정산 미해결 재시도 중) false — 세션·방 소유권을 유지해 고아 방을 만들지 않는다.
+   */
+  abandon(profileId: string): boolean {
     const session = this.sessions.get(profileId);
-    if (!session) return;
-    this.dropSession(session);
+    if (!session) return true;
+    return this.dropSession(session);
   }
 
   hasSession(profileId: string): boolean {
@@ -256,8 +262,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
       this.sweepTimer = null;
     }
     for (const session of [...this.sessions.values()]) {
-      this.dropSession(session);
+      this.clearFinishTimer(session);
+      // 종료 시엔 해체 실패(정산 미해결)를 따지지 않는다 — RoomManager.shutdown이 나머지를 정리한다
+      this.disposeOwnRoom(session, 'story-end');
     }
+    this.sessions.clear();
+    this.byRoom.clear();
   }
 
   // ---------------------------------------------------------------------------
@@ -298,7 +308,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
       }
       // 프리셋 핸드는 매번 같은 스택에서 — 히어로·봇 전원 스펙 스택으로 보정 (핸드 사이만, 엔진 무수정)
       this.refillPracticeStacks(session, state.players);
-      this.armScript(session, state.players);
+      // 프리셋을 깔 수 없으면 랜덤 딜로 스크립트를 소비하지 않는다 — 방을 닫고 room-lost 보존(이어하기가 재시도)
+      if (!this.armScript(session, state.players)) return 'hold';
       return 'deal';
     }
 
@@ -421,20 +432,14 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const session = this.byRoom.get(roomId);
     if (!session) return;
     this.byRoom.delete(roomId);
-    if (session.disposing) return; // 자체 해체(story-end) — 후속 처리는 finish/dropSession이 담당
-    this.clearFinishTimer(session);
+    if (session.disposing) return; // 자체 해체(story-end/idle) 중 — 후속 처리는 호출부(finish/dropSession/abort)가 담당
     if (reason === 'shutdown') {
+      this.clearFinishTimer(session);
       this.sessions.delete(session.profileId);
       return;
     }
     // grace 만료 회수·유휴 정리·hold 타임아웃 — 집계를 보존한 채 room-lost hold로 전환
-    session.roomId = null;
-    session.deck = null;
-    session.hold = true;
-    session.holdReason = 'room-lost';
-    session.holdSince = null;
-    session.interruptId = null;
-    this.events?.onLiveChanged(session.profileId);
+    this.markRoomLost(session, true);
   }
 
   // ---------------------------------------------------------------------------
@@ -516,16 +521,23 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const used = new Set<string>();
     for (const seat of table.lineup) {
       const characterId = this.resolveLineupCharacter(seat.characterId, session.partnerId, table.lineup.map(s => s.characterId), used);
-      if (!characterId) continue;
-      const bot = createBotWithCharacter(seat.seatIndex, seat.stackBB * big, characterId, table.difficulty);
-      if (!bot) continue;
-      if (this.options.roomManager.joinRoom(roomId, bot)) used.add(characterId);
+      const bot = characterId
+        ? createBotWithCharacter(seat.seatIndex, seat.stackBB * big, characterId, table.difficulty)
+        : null;
+      if (!bot || !this.options.roomManager.joinRoom(roomId, bot)) {
+        // 라인업은 전원 착석이 전제 — 한 좌석이라도 빠지면 스크립트 villain 좌석·목표 상대가 어긋나므로 방을 열지 않는다
+        eventLog.log('story-step', {
+          roomId,
+          playerId: session.profileId,
+          data: { runId: session.runId, event: 'lineup-failed', seat: seat.seatIndex, characterId: seat.characterId },
+        });
+        this.disposeOwnRoom(session, 'story-end');
+        return false;
+      }
+      used.add(characterId as string);
     }
     if (!this.options.hero.seatHero(session.profileId, roomId, { seatIndex: table.heroSeat, chips: heroSeatChips })) {
       this.disposeOwnRoom(session, 'story-end');
-      session.roomId = null;
-      session.deck = null;
-      session.hold = false;
       return false;
     }
     eventLog.log('story-step', {
@@ -568,10 +580,11 @@ export class LiveTableAdapter implements StoryRoomHooks {
     }
   }
 
-  private armScript(session: LiveSession, players: Player[]): void {
-    if (session.step.kind !== 'practice-table' || !session.deck) return;
+  /** 다음 스크립트를 덱에 arm. 실패하면 방을 닫고 room-lost 보존으로 전환한 뒤 false (랜덤 딜로 스크립트를 소비하지 않는다) */
+  private armScript(session: LiveSession, players: Player[]): boolean {
+    if (session.step.kind !== 'practice-table' || !session.deck) return true;
     const script = session.step.scripts[session.scriptCursor];
-    if (!script) return;
+    if (!script) return true;
     // 엔진 딜인 규칙과 동일: pendingRemoval 제외·칩>0·끊김/자리비움 아님, seatIndex 오름차순 (startHand의 배열 정렬)
     const dealtSeatOrder = players
       .filter(p => !p.pendingRemoval && p.chips > 0 && !p.isDisconnected && !p.sitOutNext)
@@ -579,8 +592,9 @@ export class LiveTableAdapter implements StoryRoomHooks {
       .sort((a, b) => a - b);
     try {
       session.deck.arm({ script, dealtSeatOrder, heroSeat: session.step.table.heroSeat });
+      return true;
     } catch (error) {
-      // 스크립트 불량(중복 카드 등)은 챕터 검증이 막지만, 런타임 좌석 구성 불일치는 랜덤 딜로 강등한다
+      // 스크립트 불량(중복 카드 등)은 챕터 검증이 막는다 — 런타임 좌석 구성 불일치는 방을 닫고 이어하기로 재시도
       session.deck.disarm();
       eventLog.log('story-step', {
         roomId: session.roomId ?? undefined,
@@ -592,7 +606,31 @@ export class LiveTableAdapter implements StoryRoomHooks {
           reason: error instanceof ScenarioDeckError ? error.message : 'unknown',
         },
       });
+      this.abortToRoomLost(session);
+      return false;
     }
+  }
+
+  /** 진행 불가 상황에서 방을 닫고 room-lost hold로 보존 — 닫을 수 없으면(정산 미해결) [계속하기] hold로 대기 */
+  private abortToRoomLost(session: LiveSession): void {
+    if (!session.roomId) return;
+    this.clearFinishTimer(session);
+    if (!this.disposeOwnRoom(session, 'idle')) {
+      this.setHold(session, 'timeout');
+      return;
+    }
+    this.markRoomLost(session, true);
+  }
+
+  private markRoomLost(session: LiveSession, notify: boolean): void {
+    this.clearFinishTimer(session);
+    session.roomId = null;
+    session.deck = null;
+    session.hold = true;
+    session.holdReason = 'room-lost';
+    session.holdSince = null;
+    session.interruptId = null;
+    if (notify) this.events?.onLiveChanged(session.profileId);
   }
 
   private interruptDue(
@@ -649,8 +687,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const summary = this.summarize(session, outcome);
     const complete = (): void => {
       session.finishTimer = null;
+      if (!this.disposeOwnRoom(session, 'story-end')) {
+        // 정산 미해결(progression 재시도 중)로 아직 닫을 수 없다 — isHeld(finishTimer)가 hold를 유지한 채 잠시 뒤 재시도
+        session.finishTimer = setTimeout(complete, FINISH_RETRY_MS);
+        return;
+      }
       this.sessions.delete(session.profileId);
-      this.disposeOwnRoom(session, 'story-end');
       eventLog.log('story-step', {
         playerId: session.profileId,
         data: { runId: session.runId, event: 'live-finish', outcome, handsPlayed: summary.handsPlayed, netBB: summary.netBB },
@@ -697,21 +739,29 @@ export class LiveTableAdapter implements StoryRoomHooks {
     }
   }
 
-  private disposeOwnRoom(session: LiveSession, reason: RoomDisposeReason): void {
+  /**
+   * 어댑터 주도 방 해체 — 트랜잭션: RoomManager가 거절하면(정산 미해결·진행 중 wallet 핸드 등) 매핑·roomId를
+   * 그대로 두고 false. 해체 중엔 disposing으로 onRoomDisposed의 room-lost 전환을 막는다.
+   */
+  private disposeOwnRoom(session: LiveSession, reason: RoomDisposeReason): boolean {
     const roomId = session.roomId;
-    if (!roomId) return;
+    if (!roomId) return true;
     session.disposing = true;
+    const disposed = this.options.roomManager.disposeRoom(roomId, reason);
+    session.disposing = false;
+    if (!disposed) return false;
     this.byRoom.delete(roomId);
-    this.options.roomManager.disposeRoom(roomId, reason);
     session.roomId = null;
     session.deck = null;
-    session.disposing = false;
+    return true;
   }
 
-  private dropSession(session: LiveSession): void {
+  /** 세션 폐기 — 방을 닫을 수 없으면 세션도 남긴다(소유권 유지). */
+  private dropSession(session: LiveSession): boolean {
+    if (!this.disposeOwnRoom(session, 'story-end')) return false;
     this.clearFinishTimer(session);
     this.sessions.delete(session.profileId);
-    this.disposeOwnRoom(session, 'story-end');
+    return true;
   }
 
   /** hold 상한 초과 세션 — 방을 해체하고 room-lost 보존으로 전환 (타이머·방 누수 방지) */
@@ -720,14 +770,13 @@ export class LiveTableAdapter implements StoryRoomHooks {
     for (const session of this.sessions.values()) {
       if (!session.roomId || !session.hold || session.holdSince === null) continue;
       if (now - session.holdSince < this.holdTimeoutMs) continue;
-      const roomId = session.roomId;
       eventLog.log('story-step', {
-        roomId,
+        roomId: session.roomId,
         playerId: session.profileId,
         data: { runId: session.runId, event: 'hold-timeout', holdReason: session.holdReason },
       });
-      // 자체 해체가 아니라 'idle' — onRoomDisposed가 room-lost 전환을 담당한다
-      this.options.roomManager.disposeRoom(roomId, 'idle');
+      // 닫을 수 없으면(정산 미해결) 다음 스윕에서 다시 시도한다
+      this.abortToRoomLost(session);
     }
   }
 }

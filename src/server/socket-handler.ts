@@ -1558,15 +1558,39 @@ export function setupSocketHandlers(
       if (result.ok) ack?.({ ok: true, data: result.value });
       else ack?.({ ok: false, code: result.code, message: result.message });
     };
-    // 스토리 라이브 스텝 방에 앉아 있는 동안은 다른 테이블 착석/개설/대기열/토너 등록을 거절한다 —
-    // 일반 membership 전환(commitRoomMembership)이 스토리 방 좌석을 leaveRoom으로 회수하면
-    // abandon-story를 거치지 않은 이탈이 되어 런이 room-lost로 떨어진다 (이탈은 abandon-story 단일 경로)
-    const rejectDuringStoryRoom = <T>(ack?: AckCallback<T>): boolean => {
-      if (!session.roomId || !roomManager.getRoom(session.roomId)?.config.storyChapterId) return false;
+    // 스토리 런이 살아 있는 동안(방 없는 씬·드릴 포함)은 다른 테이블 착석/개설/아레나 대기열/토너 등록을
+    // 거절한다 — 일반 membership 전환(commitRoomMembership)·토너 착석·아레나 매칭이 스토리 방 좌석을
+    // leaveRoom으로 회수하면 abandon-story를 거치지 않은 이탈이 되고, 방 없는 런은 뒤늦게 열리는 라이브
+    // 스텝이 토너/아레나 좌석을 밀어낸다 (이탈은 abandon-story 단일 경로, 런과 실전 참가는 상호 배타)
+    const rejectDuringStoryRun = <T>(ack?: AckCallback<T>): boolean => {
+      const inStoryRoom = !!session.roomId && !!roomManager.getRoom(session.roomId)?.config.storyChapterId;
+      if (!inStoryRoom && !storyCoordinator?.getActiveRun(session.playerId)) return false;
       ack?.({
         ok: false,
         code: 'action-rejected',
         message: '수련 중에는 다른 테이블에 앉을 수 없어요 — 먼저 [수련 그만두기]를 눌러 주세요.',
+      });
+      return true;
+    };
+    // 반대 방향: 테이블 착석·토너 배정/등록·아레나 대기 중엔 스토리 런을 시작하지 않는다
+    const rejectStoryStartWhileBusy = <T>(ack?: AckCallback<T>): boolean => {
+      const registeredTournament = publicTournamentList(session.playerId).tournaments.some(tournament => {
+        if (!tournament.registered) return false;
+        const stage = tournament.lifecycle ?? 'registering';
+        return stage !== 'completed' && stage !== 'cancelled';
+      });
+      if (
+        !session.roomId
+        && !session.tournamentEngagement
+        && !arenaMatchmaker?.hasBlockingParticipation(session.playerId)
+        && !registeredTournament
+      ) {
+        return false;
+      }
+      ack?.({
+        ok: false,
+        code: 'action-rejected',
+        message: '테이블·토너먼트·아레나 참가를 먼저 마친 뒤 수련을 시작할 수 있어요.',
       });
       return true;
     };
@@ -1602,6 +1626,7 @@ export function setupSocketHandlers(
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
+      if (rejectStoryStartWhileBusy(ack)) return;
       const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId);
       if (started.ok) eventLog.log('story-step', { playerId: session.playerId, data: { chapterId: parsed.value.chapterId, runId: started.value.runId, step: 'start' } });
       replyStory(ack, started);
@@ -1728,7 +1753,7 @@ export function setupSocketHandlers(
       }
       const { ack } = args;
       if (!ensureOwnership(ack)) return;
-      if (rejectDuringStoryRoom(ack)) return;
+      if (rejectDuringStoryRun(ack)) return;
       if (session.tournamentEngagement) {
         ack?.({
           ok: false,
@@ -2104,7 +2129,7 @@ export function setupSocketHandlers(
       const data = parsed.value;
       const { roomId, buyIn, seatIndex } = data;
       // 스토리 방 히어로의 본인 방 재입장(게임 복귀)은 허용, 다른 방 착석은 거절
-      if (session.roomId !== roomId && rejectDuringStoryRoom(ack)) return;
+      if (session.roomId !== roomId && rejectDuringStoryRun(ack)) return;
       const playerName = profileAlias;
       // socket.data에서 라이브로 읽는다 — 연결 후 아바타를 변경해도(refreshAvatar) 새 착석에 반영
       const avatar = socket.data.profileAvatarId ?? profileAvatarId;
@@ -3255,7 +3280,7 @@ export function setupSocketHandlers(
         return;
       }
       if (!ensureRateLimit('createRoom', '방 생성은 잠시 후 다시 시도해 주세요.', ack)) return;
-      if (rejectDuringStoryRoom(ack)) return;
+      if (rejectDuringStoryRun(ack)) return;
       const config = parsed.value;
       // 운영 가드: 방 수 상한
       if (roomManager.getRoomCount() >= cfg('table.maxRooms')) {
@@ -3519,7 +3544,7 @@ export function setupSocketHandlers(
         invalidPayload(ack);
         return;
       }
-      if (rejectDuringStoryRoom(ack)) return;
+      if (rejectDuringStoryRun(ack)) return;
       const command = parsed.value;
       const existing = session.tournamentEngagement;
       if (

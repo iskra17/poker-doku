@@ -4,6 +4,8 @@ import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { makeChapter, makeChapterChain } from '@/lib/story/test-fixtures';
 import type { Chapter, StoryTeacherId } from '@/lib/story/types';
 import type { StoryRunView } from '@/lib/story/views';
+import type { LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
+import type { StoryLiveAdapterPort } from './story-run-coordinator';
 import {
   DAILY_CHAPTER_ID,
   kstDay,
@@ -426,5 +428,192 @@ describe('StoryRunCoordinator misc', () => {
     coordinator.clearProfile(PROFILE);
     expect(coordinator.getActiveRun(PROFILE)).toBeNull();
     expect(coordinator.resend(PROFILE)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 라이브 스텝 (Phase 1b) — 어댑터 포트 계약
+
+interface FakeLiveState {
+  profileId: string;
+  runId: string;
+  stepIndex: number;
+  held: boolean;
+  roomId: string | null;
+}
+
+function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
+  let events: StoryLiveEvents | null = null;
+  const enters: LiveEnterInput[] = [];
+  const resumes: string[] = [];
+  let state: FakeLiveState | null = null;
+  const adapter: StoryLiveAdapterPort = {
+    bindEvents: bound => { events = bound; },
+    enter: input => {
+      enters.push(input);
+      state = { profileId: input.profileId, runId: input.runId, stepIndex: input.stepIndex, held: false, roomId: `room-${input.stepIndex}` };
+      return 'entered';
+    },
+    resume: (profileId, runId) => {
+      if (!state || state.runId !== runId) return { ok: false, code: 'stale-state', message: 'stale' };
+      resumes.push(`${profileId}:${runId}`);
+      state.held = false;
+      return { ok: true };
+    },
+    abandon: () => {
+      if (options.abandonOk && !options.abandonOk()) return false;
+      state = null;
+      return true;
+    },
+    phase: () => (state ? (state.held ? 'live-hold' : 'live-play') : null),
+    view: () => (state
+      ? {
+          roomId: state.roomId,
+          tag: '대결',
+          hold: state.held,
+          holdReason: state.held ? 'timeout' : null,
+          interruptId: null,
+          objectives: [],
+          handsPlayed: 0,
+          maxHands: 3,
+          lastReview: null,
+          botThoughts: [],
+          pendingQuiz: null,
+        }
+      : null),
+  };
+  return {
+    adapter,
+    enters,
+    resumes,
+    hold: () => { if (state) state.held = true; events?.onLiveChanged(state!.profileId); },
+    finish: (summary: LiveStepSummary) => {
+      const finished = state!;
+      state = null;
+      events?.onStepFinished(finished.profileId, finished.runId, summary);
+    },
+  };
+}
+
+function liveSummary(overrides: Partial<LiveStepSummary> = {}): LiveStepSummary {
+  return {
+    outcome: 'done',
+    tag: '대결',
+    objectives: [{ id: 'played', kind: 'hands-played', label: '완주', primary: true, progress: 3, target: 3, achieved: true }],
+    primaryObjectivesMet: true,
+    liveScore: 1,
+    handsPlayed: 3,
+    netBB: 4.5,
+    ...overrides,
+  };
+}
+
+/** 드릴 세트까지 전부 정답으로 통과해 첫 라이브 스텝 앞에 세운다 */
+function driveToLive(ctx: ReturnType<typeof setup>) {
+  const started = ctx.coordinator.start(PROFILE, 'act1-ch01');
+  expect(started.ok).toBe(true);
+  for (let guard = 0; guard < 12; guard++) {
+    const view = ctx.latest();
+    if (view.phase === 'live-play' || view.phase === 'live-hold') return view;
+    if (view.phase === 'drill') {
+      expect(answerCurrent(ctx, true).ok).toBe(true);
+    }
+    const advanced = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: ctx.latest().stepIndex, target: 'next' });
+    expect(advanced.ok).toBe(true);
+  }
+  throw new Error('live step not reached');
+}
+
+describe('StoryRunCoordinator live steps (adapter port)', () => {
+  it('enters practice then sparring through the adapter, only resume advances, and sparring objectives decide the pass', () => {
+    const ctx = setup();
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+
+    const practice = driveToLive(ctx);
+    expect(practice.stepKind).toBe('practice-table');
+    expect(practice.phase).toBe('live-play');
+    expect(practice.live?.roomId).toBe(`room-${practice.stepIndex}`);
+    expect(fake.enters).toHaveLength(1);
+    expect(fake.enters[0]).toMatchObject({ profileId: PROFILE, runId: practice.runId, stepIndex: practice.stepIndex, partnerId: 'sakura' });
+
+    // 라이브 스텝은 next/skip으로 못 넘긴다 — resume만
+    const next = ctx.coordinator.advance(PROFILE, { runId: practice.runId, expectedStepIndex: practice.stepIndex, target: 'next' });
+    expect(next).toMatchObject({ ok: false, code: 'action-rejected' });
+    fake.hold();
+    expect(ctx.latest().phase).toBe('live-hold');
+    expect(ctx.latest().live?.holdReason).toBe('timeout');
+    const resumed = ctx.coordinator.advance(PROFILE, { runId: practice.runId, expectedStepIndex: practice.stepIndex, target: 'resume' });
+    expect(resumed.ok).toBe(true);
+    expect(fake.resumes).toEqual([`${PROFILE}:${practice.runId}`]);
+    expect(ctx.latest().phase).toBe('live-play');
+
+    // 연습 종료 → 스파링 진입 (새 방)
+    fake.finish(liveSummary({ tag: '연습', objectives: [], primaryObjectivesMet: null, liveScore: null, handsPlayed: 1, netBB: 0 }));
+    const sparring = ctx.latest();
+    expect(sparring.stepKind).toBe('sparring');
+    expect(sparring.stepIndex).toBe(practice.stepIndex + 1);
+    expect(fake.enters).toHaveLength(2);
+
+    // 스파링 종료(primary 미달) → 에필로그/결산까지 진행 → 통과 실패, 결산 live 요약은 스파링만
+    fake.finish(liveSummary({ primaryObjectivesMet: false, objectives: [{ id: 'played', kind: 'hands-played', label: '완주', primary: true, progress: 1, target: 3, achieved: false }], handsPlayed: 1, liveScore: 0 }));
+    for (let guard = 0; guard < 6 && ctx.latest().phase !== 'ended'; guard++) {
+      const view = ctx.latest();
+      expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
+    }
+    const ended = ctx.latest();
+    expect(ended.phase).toBe('ended');
+    expect(ended.result?.passed).toBe(false);
+    expect(ended.result?.live).toMatchObject({ handsPlayed: 1 });
+    expect(ended.result?.live?.objectives.map(o => o.id)).toEqual(['played']);
+    expect(ctx.repository.listProgress(PROFILE).find(row => row.chapterId === 'act1-ch01')?.completions ?? 0).toBe(0);
+  });
+
+  it('passes and grades with the live score when sparring primary objectives are met', () => {
+    const ctx = setup();
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    driveToLive(ctx);
+    fake.finish(liveSummary({ tag: '연습', objectives: [], primaryObjectivesMet: null, liveScore: null, handsPlayed: 2, netBB: 0 }));
+    fake.finish(liveSummary());
+    for (let guard = 0; guard < 6 && ctx.latest().phase !== 'ended'; guard++) {
+      const view = ctx.latest();
+      expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
+    }
+    const ended = ctx.latest();
+    expect(ended.result?.passed).toBe(true);
+    expect(ended.result?.live).toEqual({ objectives: liveSummary().objectives, handsPlayed: 3, netBB: 4.5 });
+    expect(ctx.repository.listProgress(PROFILE).find(row => row.chapterId === 'act1-ch01')?.completions).toBe(1);
+  });
+
+  it('keeps the run when the adapter cannot close the room yet, and abandons once it can', () => {
+    let canAbandon = false;
+    const ctx = setup();
+    const fake = makeFakeAdapter({ abandonOk: () => canAbandon });
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    const live = driveToLive(ctx);
+    const refused = ctx.coordinator.abandon(PROFILE, live.runId);
+    expect(refused).toMatchObject({ ok: false, code: 'server-error' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.runId).toBe(live.runId);
+    canAbandon = true;
+    expect(ctx.coordinator.abandon(PROFILE, live.runId).ok).toBe(true);
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    expect(ctx.latest().phase).toBe('ended');
+  });
+
+  it('skips live steps entirely when no adapter is installed (Phase 1 behaviour)', () => {
+    const ctx = setup();
+    const started = ctx.coordinator.start(PROFILE, 'act1-ch01');
+    expect(started.ok).toBe(true);
+    const kinds = new Set<string>();
+    for (let guard = 0; guard < 16 && ctx.latest().phase !== 'ended'; guard++) {
+      const view = ctx.latest();
+      kinds.add(view.stepKind);
+      if (view.phase === 'drill') expect(answerCurrent(ctx, true).ok).toBe(true);
+      expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: ctx.latest().stepIndex, target: 'next' }).ok).toBe(true);
+    }
+    expect(kinds.has('practice-table')).toBe(false);
+    expect(kinds.has('sparring')).toBe(false);
+    expect(ctx.latest().result?.live).toBeNull();
   });
 });

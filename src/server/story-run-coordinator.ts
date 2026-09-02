@@ -46,7 +46,8 @@ import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvent
 export interface StoryLiveAdapterPort {
   enter(input: LiveEnterInput): 'entered' | 'unavailable';
   resume(profileId: string, runId: string): LiveCommandResult;
-  abandon(profileId: string): void;
+  /** false = 방을 아직 닫을 수 없음(정산 미해결) — 런을 지우지 말고 재시도 안내 */
+  abandon(profileId: string): boolean;
   phase(profileId: string): 'live-hold' | 'live-play' | null;
   view(profileId: string): StoryLiveView | null;
   bindEvents(events: StoryLiveEvents): void;
@@ -597,9 +598,12 @@ export class StoryRunCoordinator {
     const run = this.runs.get(profileId);
     if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
     if (run.runId !== runId) return { ok: false, code: 'stale-state', message: '이미 끝난 챕터 진행이에요.' };
+    // 라이브 방이 열려 있으면 먼저 해체 (story-end — 소켓 계층이 세션 roomId를 비운다). 해체가 거절되면
+    // (정산 미해결 재시도 중) 런을 지우지 않는다 — 소유자 없는 방이 남으면 소켓이 갇힌다
+    if (this.liveAdapter && !this.liveAdapter.abandon(profileId)) {
+      return { ok: false, code: 'server-error', message: '테이블 정리를 아직 마치지 못했어요. 잠시 후 다시 시도해 주세요.' };
+    }
     this.runs.delete(profileId);
-    // 라이브 방이 열려 있으면 즉시 해체 (story-end — 소켓 계층이 세션 roomId를 비운다)
-    this.liveAdapter?.abandon(profileId);
     run.phase = 'ended';
     run.result = null;
     this.deps.emit(profileId, this.buildView(run));

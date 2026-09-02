@@ -431,7 +431,7 @@ describe('LiveTableAdapter', () => {
     expect(thought.text.length).toBeGreaterThan(0);
   });
 
-  it('enter: 히어로 착석에 실패하면 방을 정리하고 unavailable을 돌려준다', () => {
+  it('enter: 히어로 착석에 실패하면 방을 정리하되 스텝을 건너뛰지 않고 room-lost hold로 보존한다 (이어하기가 재시도)', async () => {
     seatHero.mockImplementationOnce(() => false);
     const entered = adapter.enter({
       profileId: PROFILE,
@@ -442,9 +442,58 @@ describe('LiveTableAdapter', () => {
       step: practiceStep(),
       partnerId: null,
     });
-    expect(entered).toBe('unavailable');
-    expect(adapter.hasSession(PROFILE)).toBe(false);
+    expect(entered).toBe('entered');
+    expect(adapter.hasSession(PROFILE)).toBe(true);
     expect(manager.getRoomCount()).toBe(0);
+    expect(adapter.view(PROFILE)).toMatchObject({ roomId: null, hold: true, holdReason: 'room-lost', handsPlayed: 0 });
+    expect(adapter.phase(PROFILE)).toBe('live-hold');
+
+    // 소켓이 돌아온 뒤 이어하기 → 같은 스텝을 새 방으로 연다
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    const roomId = adapter.view(PROFILE)!.roomId;
+    expect(roomId).toBeTruthy();
+    await tick(2_100);
+    expect(stateOf(roomId!)!.isHandInProgress).toBe(true);
+  });
+
+  it('abandon: 핸드 정산이 미해결이면 방을 닫지 못하고 false — 세션·방 소유권을 유지하고 회복 뒤 다시 성공한다', async () => {
+    adapter.shutdown();
+    manager.shutdown();
+    let failCompleteHand = true;
+    manager = new RoomManager(() => {}, () => {}, undefined, {
+      progression: {
+        captureHandStart: () => {},
+        confirmHandStart: () => {},
+        cancelHand: () => {},
+        completeHand: () => {
+          if (failCompleteHand) throw new Error('db down');
+        },
+        completeSng: () => {},
+        disposeRoom: () => {},
+      },
+    });
+    seatHero.mockImplementation((profileId: string, roomId: string, seat: { seatIndex: number; chips: number }) => (
+      manager.joinRoom(roomId, makeHero(profileId, seat))
+    ));
+    buildAdapter();
+    const roomId = enter(sparringStep(5)); // 스파링은 핸드 XP 경로를 탄다 → completeHand 실패 → 정산 미해결
+    const settled = await pumpUntil(
+      () => (stateOf(roomId)?.handNumber ?? 0) >= 1 && !stateOf(roomId)!.isHandInProgress,
+      { roomId: () => roomId, maxMs: 60_000, step: 100 },
+    );
+    expect(settled).toBe(true);
+
+    expect(adapter.abandon(PROFILE)).toBe(false);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    expect(adapter.hasSession(PROFILE)).toBe(true);
+    expect(adapter.view(PROFILE)!.roomId).toBe(roomId);
+
+    // 저장 연결 회복 → RoomManager 정산 재시도(10초 간격) 성공 → 이제 닫을 수 있다
+    failCompleteHand = false;
+    await tick(11_000);
+    expect(adapter.abandon(PROFILE)).toBe(true);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(adapter.hasSession(PROFILE)).toBe(false);
   });
 
   it('partner 해석: 파트너가 없거나 라인업과 겹치면 다른 히로인으로 대체된다', () => {
