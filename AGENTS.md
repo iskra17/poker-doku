@@ -265,9 +265,10 @@ npx tsc --noEmit
   순으로 끝낸다. 회귀: `persistent-mtt-lifecycle.integration.test.ts`,
   `tournament-recovery-service.test.ts`.
 - **수련 스토리 모드 (드릴 × 미연시)**: 기획 `docs/spec-story-mode-2026-09.md`. 로비 4번째 탭 [수련 스토리]
-  (`StoryHub`) → 챕터 런은 `StoryStage`(로비 위 풀스크린 포털)가 그린다. **MVP(Phase 1)는 포커 방 코드 0줄** —
-  씬·레슨·드릴·결산은 `src/server/story-run-coordinator.ts`(`StoryRunCoordinator`, 방 무관·프로필당 런 1개·
-  인메모리)가 돌고, 프리셋/스파링 라이브 스텝은 Phase 1b(`LiveTableAdapter`+`StoryRoomHooks`)까지 **스킵**된다.
+  (`StoryHub`) → 챕터 런은 `StoryStage`(로비 위 풀스크린 포털)가 그린다. 씬·레슨·드릴·결산은
+  `src/server/story-run-coordinator.ts`(`StoryRunCoordinator`, 방 무관·프로필당 런 1개·인메모리)가 돌고,
+  프리셋 '연습'/스파링 '대결' **라이브 스텝만** `LiveTableAdapter`(Phase 1b)가 실제 포커 방을 붙인다 —
+  어댑터가 주입되지 않은 환경(테스트·`storyRepository` 없음)에선 라이브 스텝을 스킵한다.
   - **데이터**: 챕터는 `src/lib/story/chapters/act1/*.ts` 수기 TS(`STORY_CHAPTERS` 레지스트리, `validateChapters`가
     id·requires 순환·교사·스텝·프리셋 카드·목표 kind를 검증). 해금은 저장하지 않고 `unlocks.ts`가 완료 집합+requires
     그래프에서 파생(서버 start 거절과 클라 허브가 같은 함수). 띠는 코스메틱(막 완주 → 노란/파란/갈색, 검은띠는
@@ -294,6 +295,30 @@ npx tsc --noEmit
     `dismissRun()`까지 보관), VN 커서는 `scene-cursor.ts`(순수), 입력 4종 `DrillAnswerInput`, 함께 풀기는
     `drill-input.ts`의 로컬 채점(점수 없음). PartnerCard CTA는 보존 좌석 > 스토리 > 자유 연습(`story-hub-rules.ts`).
     회귀: `story-run-coordinator.test.ts`·`socket-handler.story.test.ts`·`generator.test.ts`·`chapters/act1/act1.test.ts`.
+  - **라이브 스텝 (Phase 1b — 방 오케스트레이션)**: `src/server/story-live-adapter.ts`(`LiveTableAdapter`)가
+    `StoryRoomHooks`(room-manager.ts, `MttRoomHooks`와 같은 병렬 패턴 — **일반화 금지**)를 구현해 `setStoryHooks`로
+    주입되고, RoomManager의 모든 훅 호출은 `isStoryRoom(config.storyChapterId)` 가드 뒤에 있어 **비스토리 방 실행 경로는
+    불변**이다(회귀 `room-manager.story.test.ts` 비스토리 spy 0). 스토리 방 규칙: `tableType 'bots'`·`economyMode
+    'practice'` 전용(그 외·훅 미주입·스토리 전용 필드 단독은 `createRoom`이 throw), 로비 목록·초대 코드 없음, 봇 자동
+    충원/파산 회수 없음(라인업 고정), 자리비움·나가기 예약·leave-room·탑업·다른 방 착석/방 생성/아레나/토너 등록 전부
+    거절 — **이탈은 `abandon-story` 단일 경로**. 히어로 좌석은 서버 타이머(미납 BB·방치·파산 30초)로 회수하지 않는다.
+    **hold 계약**: `beforeHand`가 `engine.startHand()` 앞(sitOutAuto 소거 루프 전)에서 히어로 상태를 보고 — 턴 타임아웃
+    마킹/끊김이면 마킹을 해제하고 `'hold'`(holdReason 'timeout') → 클라 [계속하기] = `story-advance target:'resume'` →
+    `resumeRoom`. '연습'은 매 핸드 라인업 스택을 스펙으로 되돌리고 `ScenarioDeck.arm`(`src/lib/story/scenario-deck.ts`,
+    `deck.ts` `cards`를 protected로 연 서브클래스 — 원샷 arm, 배치 순서는 엔진 딜인 규칙과 같은 seatIndex 오름차순,
+    **번 카드 없음**)으로 프리셋을 깐다; `createRoom` 4번째 인자 deck는 스토리 practice 방에서만 허용. '연습' 핸드는
+    `captureHandStart`+`completeHand`를 **함께** 생략(핸드 XP·일일 미션 미적립 — 한쪽만 빼면 런타임 hand context가
+    고아로 남는다)하고 히스토리는 `story_tag`로 구분. `onHandComplete`는 히어로 딜인 핸드만 집계(handsPlayed·목표
+    tally `objectives.ts`·결정 리뷰 `review.ts`), 스크립트 소진/maxHands/히어로 파산(failed)이면 승리 연출 뒤 6초에
+    `disposeRoom('story-end')`+코디네이터 `onStepFinished`, halfway/first-showdown/hand-index 인터럽트는
+    `'hold'`(holdReason 'scene', `live.interruptId`) — `first-my-turn`은 클라 연출(턴 타이머 안). grace 만료·유휴·hold
+    10분 상한 스윕으로 방이 사라지면 세션을 room-lost hold로 **보존**해 허브/스테이지 「이어하기」(resume)가 같은 스텝을
+    새 방으로 이어간다(집계·스택 연속). 봇 속마음은 `bot-explain.ts`(`processBotTurn {explain}` 옵션) 산출을
+    `onBotActed`로 수집만 하고 `exposeBotThoughts`(기본 false) 전엔 뷰에 싣지 않는다. 소켓: 히어로 착석은 `seatHero`
+    포트(Player 구성→joinRoom→room-joined, hold 선세팅이라 tryStartGame이 시작하지 않음), 방 해체 시 `room-lost
+    {reason:'story-end'}` 뒤 `story-update`. 결산은 스파링 primary 목표 AND(+`liveScore` 평균)로 통과·등급 판정.
+    회귀: `story-live-adapter.test.ts`(RoomManager 실물+fake timers)·`scenario-deck.test.ts`·`objectives.test.ts`·
+    `review.test.ts`·`bot-explain.test.ts`.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -478,9 +503,9 @@ npx tsc --noEmit
   토너먼트 탭, wallet MTT(토너 단위 에스크로+다인 페이아웃), 레이트 레지/리엔트리, ops_event
   화이트리스트·table_hand.tournament_id, 9-max UI 좌표, 봇 AI 대사 토너 단위 상한
   (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
-- 수련 스토리 Phase 1b 이후 — 라이브 스텝(프리셋 '연습' 덱·스파링/보스전·`StoryRoomHooks`·히어로 타임아웃 hold
-  계약·목표/결정 리뷰), 2~4막 데이터, 라이브 리딩 퀴즈·봇 속마음, 하드 모드·기록실, 스토리 XP 카탈로그 아이템(v31),
-  파트너별 Ch1 대사 변주, 스토리 배경·미야코 표정 아트(폴백 중). 현재 챕터 런은 라이브 스텝을 스킵한다.
+- 수련 스토리 Phase 2 이후 — 2~4막 데이터, 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
+  `exposeBotThoughts`)·가면 봇 identity 분리, 실패 씬(`failScene`) 재생, 하드 모드·기록실, 스토리 XP 카탈로그
+  아이템(v31), 파트너별 Ch1 대사 변주, 스토리 배경·미야코 표정 아트(폴백 중), 스토리 BGM 트랙.
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.
