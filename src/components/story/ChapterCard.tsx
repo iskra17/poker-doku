@@ -20,6 +20,8 @@ interface ChapterCardProps {
   state: ChapterCardState;
   /** 이 챕터가 다루는 드릴 유형 + 내 정확도 (수련 목록의 "부족한 부분 고르기" 단서) */
   skills: ChapterSkill[];
+  /** 아직 못 받은 보상 미리보기 — '🎁 사쿠라 · 도복 (첫 완주)' */
+  rewardHints: string[];
   recommended: boolean;
   partnerId: StoryHeroineId | null;
   pending: boolean;
@@ -56,7 +58,7 @@ function SkillChip({ skill }: { skill: ChapterSkill }) {
  * 순서 강제 없음: 잠김은 requires가 있는 후속 막에서만 나온다. 진행 중은 강조, 추천은 테두리로 표시.
  */
 export default function ChapterCard({
-  number, chapter, progress, state, skills, recommended, partnerId, pending, onStart, onExam,
+  number, chapter, progress, state, skills, rewardHints, recommended, partnerId, pending, onStart, onExam,
 }: ChapterCardProps) {
   const teacherId = chapter?.teacher === 'partner' ? (partnerId ?? 'miyako') : (chapter?.teacher ?? 'miyako');
   const teacherName = teacherDisplayName(teacherId, id => getCharacterById(id)?.name);
@@ -95,6 +97,11 @@ export default function ChapterCard({
           <div className="mt-1 flex flex-wrap gap-1" aria-label="다루는 유형">
             {skills.map(skill => <SkillChip key={skill.category} skill={skill} />)}
           </div>
+        )}
+        {rewardHints.length > 0 && (
+          <p className="mt-1 truncate text-[10px] text-gilded" title={rewardHints.join(' · ')}>
+            🎁 {rewardHints.join(' · ')}
+          </p>
         )}
         <div className="mt-1.5 flex items-center gap-2 text-[10px] text-ink-dim">
           {chapter && <span>약 {chapter.estimatedMinutes}분</span>}

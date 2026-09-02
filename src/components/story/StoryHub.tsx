@@ -16,6 +16,7 @@ import {
   teacherArtId,
   teacherDisplayName,
 } from '@/lib/story/story-hub-rules';
+import { nextStoryRewards } from '@/lib/story/rewards/catalog';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -47,6 +48,8 @@ export default function StoryHub() {
 
   const acts = useMemo(() => {
     if (!progress) return [];
+    // 획득한 보상 id — 서버 보상 라인이 없으면 빈 집합(전부 미획득으로 표시)
+    const granted = new Set((progress.rewards ?? []).filter(item => item.granted).map(item => item.id));
     const byId = new Map(progress.chapters.map(chapter => [chapter.chapterId, chapter]));
     const grouped = new Map<StoryAct, typeof STORY_CHAPTERS[number][]>();
     for (const chapter of STORY_CHAPTERS) {
@@ -59,6 +62,10 @@ export default function StoryHub() {
         chapter,
         row: byId.get(chapter.id)!,
         skills: chapterSkills(chapter, progress.drillStats),
+        // 이 챕터로 아직 못 받은 보상(칩 제외) — 첫 완주/S 조건 문구와 함께
+        rewardHints: nextStoryRewards(STORY_CHAPTERS, granted, chapter.id, 2)
+          .filter(item => item.trigger.kind !== 'act-complete')
+          .map(item => `${item.name} (${item.trigger.kind === 'chapter-grade' ? 'S등급' : '첫 완주'})`),
       })),
     }));
   }, [progress]);
@@ -153,7 +160,7 @@ export default function StoryHub() {
           <div key={act}>
             <h3 className="mb-1.5 text-[11px] font-bold text-mystic">{ACT_TITLE[act]}</h3>
             <div className="grid gap-2 md:grid-cols-2">
-              {chapters.map(({ chapter, row, skills }) => (
+              {chapters.map(({ chapter, row, skills, rewardHints }) => (
                 <ChapterCard
                   key={chapter.id}
                   number={chapterNumber(STORY_CHAPTERS, chapter.id) ?? 0}
@@ -161,6 +168,7 @@ export default function StoryHub() {
                   progress={row}
                   state={chapterCardState(row, activeRun)}
                   skills={skills}
+                  rewardHints={rewardHints}
                   recommended={recommendation?.chapterId === chapter.id}
                   partnerId={partnerId}
                   pending={pending || (!!activeRun && activeRun.chapterId !== chapter.id)}
