@@ -364,6 +364,24 @@ npx tsc --noEmit
     아트 규격·후처리는 `scripts/art/convert.mjs`(bg 1280 / cg 768×1152 / bust 크로마키 512²) — 배경 `public/assets/story/bg`,
     CG `public/assets/story/cg`, 의상 `public/assets/characters/<id>/outfits/<outfitId>/<expr>.webp`(매니페스트
     `story-backgrounds.ts AVAILABLE`·`character-art.ts OUTFITS`에 등록해야 노출, 미등록은 그라디언트/기본 의상 폴백).
+  - **v74 플레이 피드백 4건 반영(2026-09-03 3차)**: ①**함께 풀기 상황 패널** — `guided` LessonBlock은 `situation: DrillSituation`
+    필수(`chapters/helpers.ts guidedSituation`, 단계 `situation` 오버라이드 병합 `mergeGuidedSituation`)이고 `GuidedBlock`이
+    `DrillTableView`를 말풍선 위에 **상시** 그린다. 보드를 intro 문장에만 적으면 2단계·오답 피드백에서 사라진다 —
+    `validateChapters`가 situation 누락·카드 중복·팟<콜·상대 캐릭터를 잡는다. ②**기록실**(`src/lib/gallery/catalog.ts buildGallery`
+    순수 + `components/gallery/GalleryModal`): 인연 씬·이벤트 CG(보상 4 + 씬 CG 6, 챕터 완주 해금)·의상·칭호·배경. 진입은 로비
+    헤더 🖼·수련 허브 `GalleryCard`·결산 [기록실 보기](런 닫고 열기) — NEW는 프로필별 localStorage 기준선(`gallery/seen.ts`,
+    첫 진행 스냅샷 시점에 `GallerySeenBaseline`이 1회 기록, 서버 상태 없음). **`CgStage layer='modal'`(z-120)** — `Modal`(z-100/110)
+    안에서 연 뷰어는 반드시 이 레이어(안 주면 모달 뒤에 깔린다). ③**칭호 플레이트** — `lib/cosmetics/titles.ts resolveTitle`이 컬렉션(도장·
+    아레나 접미 판정)→스토리 카탈로그 폴백으로 `{tier, glyph, belt}`를 주고 `components/cosmetics/TitlePlate`(xs 좌석/sm 프로필·보관함·
+    리더보드/lg 보상 카드·기록실, SVG 노치 리본 + 등급 토큰 `--color-rarity-*` + 띠 색 변형, 이름은 HTML span)가 그린다.
+    `EquippedCosmetics` title 슬롯이 이 경로라 스토리 칭호도 좌석에 보인다(전엔 컬렉션만 봐서 사라졌음). 새 칭호 = 카탈로그 + `STYLE` 한 줄.
+    ④**씬 연출** — `SceneSayLine.cg`(그 라인에서만 풀스크린, `assets/story-cgs.ts` 매니페스트, 미배치는 스프라이트 폴백)·
+    `effect`('shake'|'flash'|'zoom'|'sfx:<SCENE_SFX>', reduced-motion은 sfx만, framer `animate`로 DOM 직접 — setState 없음),
+    `validateScene`이 선택 반응 라인까지 검사. 스토리 컷인 `components/story/StoryCutIn`(prop 구동, **우측/상단** — 승자 컷인
+    좌측/하단과 비충돌) + `lib/story/story-cut-ins.ts`(퍼펙트 = `story-drill-result` perfect 이벤트, 미션 클리어/보스 격파 =
+    `minHands` 이후 primary 전부 achieved·boss 라인업, 스텝당 1회). 영상 계약 `assets/story-video.ts`(`VIDEO_AVAILABLE` 비면 정지 CG) +
+    `VideoCutscene`(muted·playsInline·autoPlay·loop, onError/1.5초 canplay 폴백) — `CgStage scene.video` 슬롯, 보상 CG는 아이템 id,
+    인연 씬은 `<character>-scene-lv<N>` 파일명. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·
@@ -492,10 +510,18 @@ npx tsc --noEmit
   드라코(아기 드래곤·드로우 겜블러), 카피(카피바라·평화주의 림퍼) + 인간 3 — 유즈키(일본
   무녀·직감 돈크벳), 린(대만 차예사·스몰볼), 잉그리드(노르웨이 드러머·타이트 매니악).
   마스코트도 인간과 동일한 CharacterProfile/HUD 스탯 계약을 따른다 (나이·국적은 세계관 표기).
-- `src/lib/sound/` — 효과음은 Web Audio 합성(에셋 없음), BGM은 `music-manager.ts`가
-  `public/assets/music/{lobby,table,tension,victory}.mp3`(Suno 생성) 재생 — 장면 전환은
-  로비(page.tsx)/테이블·우승(GameRoomView)/올인 긴장(game-events 구독), 설정에 효과음과
-  별개 배경음악 토글(`musicMuted`)
+- `src/lib/sound/` — 효과음은 Web Audio 합성(에셋 없음). **BGM은 장면(mood)당 트랙 여러 개**(2026-09-03 "한 곡만 있어 질린다"):
+  `music-library.ts`(순수)가 `MusicMood` 9종(lobby/table/tension/victory + story-calm/warm/tense/triumph/sad)과 `MUSIC_TRACKS`
+  매니페스트(`public/assets/music/<id>.mp3`, Suno 생성 — 기존 4파일은 `lobby-sakura-morning`·`table-dojo`·`tension-allin`·`victory-fanfare`
+  id로 그대로 참조)를 갖고, `music-manager.ts`가 `setMusicScene(mood)`에서 설정 `musicTrackPrefs[mood]`('auto' | 트랙 id)로 골라 튼다.
+  auto는 직전 곡 제외 무작위 + 로비·테이블·긴장은 곡이 끝나면 다음 곡(`ROTATING_MOODS`), 스토리 mood는 루프. **404는 트랙 단위**
+  `unavailable` → 같은 mood 다른 트랙 → `MOOD_FALLBACK` 체인(story-* → story-calm → lobby, story-triumph → victory) — 무한 재시도 없음.
+  `nextTrack()`/`previewTrack()`(12초 뒤 복귀)/`duck()`/`getNowPlaying()`+`useNowPlaying`. UI: 설정 사운드 탭 `MusicTrackPicker`(mood별
+  라디오·▶ 미리듣기·재생 중), 로비 헤더 🎵 `NowPlayingButton`(다음 곡·음소거). 장면 전환은 로비(page.tsx)/테이블·우승(GameRoomView)/
+  올인 긴장(game-events)/스토리(ScenePlayer 라인 `music` 우선, `StoryStage` 레슨·드릴 calm·결산 triumph/sad, 보스 스파링 tense).
+  **징글** `stingers.ts`(`chapter-clear`/`belt-up`/`perfect`/`level-up`, `public/assets/music/stinger-*.mp3` 3~7초, 없으면 합성 폴백 +
+  BGM 덕킹) — 단발 UI 효과음은 계속 합성. 새 곡은 Suno([[reference_suno-music-gen]])로 만들어 파일 + 매니페스트 한 줄.
+  설정 persist v4 `musicTrackPrefs`, 효과음과 별개 배경음악 토글(`musicMuted`).
 - `src/lib/assets/character-art.ts` — 일러스트 매니페스트 (이미지 없으면 이모지 fallback)
 - `src/components/table/` — 테이블 UI. **세로형 단일 레이아웃** — 모든 화면에서 세로 타원 컬럼
   (`max-w-[min(440px,60dvh)]`) 하나를 중앙 렌더. 좌석/베팅/팟/딜러버튼 좌표는 `table-layout.ts`가
