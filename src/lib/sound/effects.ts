@@ -23,7 +23,11 @@ export type SoundName =
   | 'ui-click'    // 버튼 블립
   | 'chat'        // 채팅 수신 팝
   | 'throw'       // 투척물 발사 휘익
-  | 'splat';      // 투척물 명중 철퍼덕
+  | 'splat'       // 투척물 명중 철퍼덕
+  | 'reward'      // 보상 카드 플립·스탬프 (수련 스토리 결산)
+  | 'level-up'    // 띠 승급·도장 레벨업 4음 상행
+  | 'unlock'      // CG·의상 해금 차임
+  | 'combo';      // 드릴 콤보 블립
 
 function chipClack(delayMs: number, gain = 0.14) {
   playTone(2400, 45, { type: 'sine', gain, delayMs });
@@ -107,6 +111,34 @@ export function playEffect(name: SoundName): void {
 
     case 'ui-click':
       playTone(880, 50, { type: 'sine', gain: 0.06 });
+      break;
+
+    case 'reward':
+      // 카드 플립 노이즈 + 상승 사인
+      playNoise(50, 2600, { gain: 0.06 });
+      playTone(880, 120, { type: 'sine', gain: 0.07, freqEnd: 1320 });
+      break;
+
+    case 'level-up': {
+      // C5-E5-G5-C6 장조 상행 + 옥타브 화음 — big-win(A장조 팡파레)과 조성을 달리해 구분
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      notes.forEach((freq, i) => {
+        playTone(freq, 180, { type: 'triangle', gain: 0.12, delayMs: i * 110 });
+      });
+      playTone(1046.5, 500, { type: 'triangle', gain: 0.1, delayMs: 460 });
+      playTone(523.25, 500, { type: 'sine', gain: 0.07, delayMs: 460 });
+      break;
+    }
+
+    case 'unlock':
+      // 2음 차임 + 저역 패드
+      playTone(1318.5, 140, { type: 'sine', gain: 0.07 });
+      playTone(1975.5, 260, { type: 'sine', gain: 0.06, delayMs: 140 });
+      playTone(110, 700, { type: 'sine', gain: 0.05 });
+      break;
+
+    case 'combo':
+      playTone(660, 90, { type: 'triangle', gain: 0.07, freqEnd: 990 });
       break;
 
     case 'chat':
