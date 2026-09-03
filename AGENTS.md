@@ -392,6 +392,21 @@ npx tsc --noEmit
     인연 씬은 `<character>-scene-lv<N>` 파일명. **파일럿 3클립 배치(2026-09-03)** — `VIDEO_AVAILABLE`에 노란띠 승급·드라코 보스·사쿠라 Lv5,
     생성은 로컬 ComfyUI + MiniMax H3 fl2va(first_frame=last_frame=CG → 이음새 없는 4.4초 루프, Wan 2.2 다운로드 불필요) —
     절차·러너 `scripts/art/story-video.md`·`story-video-h3.py`. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
+- **운영자 모드 (QA·검수용 비밀 경로, 2026-09-03)**: 서버 세션 capability `operator`가 단일 권한 소스 —
+  `src/server/operator-access.ts`(`OPERATOR_PROFILE_IDS` ∪ `TOURNAMENT_OPERATOR_PROFILE_IDS`, **production이 아니고 둘 다 비면
+  전원 운영자**·production에서 비면 아무도 아님, 테스트는 `operatorProfileIds` 옵션/하네스 `grantOperator`). 서버가 운영자에게
+  허용하는 것 둘뿐: ①잠긴 챕터 `start-story-chapter`(해금 그래프 우회) ②`story-advance target:'skip'` —
+  `StoryRunCoordinator.skipStep`이 씬/레슨 넘김·드릴 세트 강제 퍼펙트(`forceDrillSet`)·라이브 스텝 `LiveTableAdapter.forceFinish`
+  (목표 전부 achieved·liveScore 1·방 즉시 해체 후 `onStepFinished` **동기** 호출, 정산 미해결이면 'busy'→server-error)·결산 확정
+  (보상 지급은 실제 완주와 같은 reconcile 경로 — 운영자 계정 DB에 영수증이 남는다). 비운영자의 skip은 action-rejected.
+  **클라 진입은 로비 compact 로고를 3초 안에 7번 탭**(`lib/operator/secret-tap.ts` 순수 상태 머신, `LobbyHeader`) — capability가
+  없으면 무반응, 있으면 `operator-store`(persist `poker-doku-operator`) 토글 + 'OP' 배지 + 2.4초 안내. **`useOperatorMode()` =
+  capability && 토글**이 모든 UI 게이트: 기록실/인연 탭 전 항목 해금 표시(`buildGallery unlockAll` — NEW 기준선·본 것 표시는
+  실제 해금 `unlockedIds`만), 허브 잠긴 챕터 열림, StoryStage 헤더·StoryOverlay 좌상단 [⏭ 스킵], 미보유 의상 [👁 미리보기]
+  (`outfitPreview` 로컬 오버라이드 → `useOutfitId`가 우선 적용, 서버 장착 아님 — 카드백/펠트/칭호 장착은 여전히 실제 보유 필요).
+  뷰 오버라이드일 뿐 DB 지급이 아니므로 토글을 끄면 원상복구. 회귀: `operator-access.test.ts`·`secret-tap.test.ts`·
+  `catalog.test.ts`(unlockAll)·`story-run-coordinator.test.ts`(skip 5건)·`story-live-adapter.test.ts`(forceFinish)·
+  `socket-handler.story.test.ts`(권한 게이트).
 - **채팅은 프리셋 전용**: 휴먼 채팅은 `src/lib/chat/presets.ts`의 presetId만 서버(send-chat)가
   수용 — 욕설/비하 원천 차단 설계라 자유 텍스트 입력을 되살리지 말 것. 클라이언트 텍스트는
   신뢰하지 않고 서버가 id→문구 조회. UI는 ChatPresetPicker (카테고리 탭 + 탭 즉시 전송). 휴먼·

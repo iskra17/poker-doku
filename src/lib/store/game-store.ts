@@ -408,7 +408,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       publicAvatarId: null,
       myPlayerId: null,
       canCreateTournament: false,
-  isOperator: false,
+      isOperator: false,
       currentRoomId: null,
       pendingRoomId: null,
       pendingAction: null,
