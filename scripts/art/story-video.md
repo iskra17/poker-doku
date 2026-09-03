@@ -81,7 +81,7 @@ Wan 2.2 I2V 다운로드는 필요 없다 — 이미 설치된 **MiniMax H3**(`M
 | sakura-scene-lv20 | 509020260912 | 110초 | 0.79MB / 0.55MB |
 | ara-scene-lv5 | 509020260913 | 120초 | 1.02MB / 0.66MB |
 | ara-scene-lv10 | 509020260914 | 115초 | 1.58MB / 0.95MB |
-| ara-scene-lv15 | 509020260915 | 120초 | 0.95MB / 0.64MB |
+| ara-scene-lv15 | 509020260915 (+2000, v3 — CG 보정 후 재생성) | 105초 | 0.99MB / 0.64MB |
 | ara-scene-lv20 | 509020260916 | 105초 | 1.37MB / 0.77MB |
 | hana-scene-lv5 | 509020260917 | 120초 | 0.75MB / 0.45MB |
 | hana-scene-lv10 | 509020260918 | 115초 | 0.86MB / 0.54MB |
@@ -116,6 +116,9 @@ Wan 2.2 I2V 다운로드는 필요 없다 — 이미 설치된 **MiniMax H3**(`M
   검수하고 승인분을 곧바로 인코딩해 생성·검수·인코딩을 병행했다.
 - 재생성 1건: `scene-act2-ch04-epilogue` v1은 한 프레임에서 입이 벌어져(대사처럼 보임) `H3_SEED_OFFSET=1000 … v2`로 다시 만들어 채택 —
   러너에 seed 오프셋 env를 추가한 계기. 나머지 33클립은 첫 seed 그대로.
+- **CG가 바뀌면 영상도 다시**: `ara-scene-lv15`(야시장)는 사용자 피드백(꼬치를 고기 부분이 아니라 손잡이를 쥐게)으로 CG를 gpt-image-2 edit 모드로
+  보정(`poker-doku-art/story-rewards/prompts/fix-ara-lv15*.txt`, 3안×2라운드 중 b3 채택)한 뒤 `H3_SEED_OFFSET=2000 … v3`로 재생성했다(2026-09-04).
+  주의: 영상의 눈 깜빡임 프레임을 캡처하면 눈을 감은 것처럼 보인다 — 원본 CG의 표정은 눈을 뜬 상태이니 보정 프롬프트에 '감은 눈'을 넣지 말 것.
 - 씬 CG 영상 id는 `scene-<SceneCgId>`(= `public/assets/story/cg/scene-<id>.webp` 파일명, `story-video.ts sceneCgVideoId`). ScenePlayer 라인 CG와
   기록실 SCENE CG 뷰어가 이 규약으로 `VideoCutscene`을 끼운다(폴백 계약은 CgStage와 같음).
 - 프롬프트 요령(3차에서 굳힌 것): 캐릭터 외형(머리색·소품·의상)을 클립마다 한 문장으로 다시 쓰고, 손에 든 소품(찻잔·꼬치·장미·카드·칩 탑)은
