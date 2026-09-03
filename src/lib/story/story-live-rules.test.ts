@@ -6,6 +6,7 @@ import {
   isStoryLiveRoom,
   liveHintLevel,
   needsResumeFromLobby,
+  formatObjectiveProgress,
   objectiveHudLines,
   pendingInterrupt,
   practicePrompt,
@@ -233,5 +234,15 @@ describe('needsResumeFromLobby', () => {
   it('이미 방에 앉았거나 런이 없으면 false', () => {
     expect(needsResumeFromLobby(runFixture({ phase: 'live-hold' }))).toBe(false);
     expect(needsResumeFromLobby(null)).toBe(false);
+  });
+});
+
+describe('formatObjectiveProgress', () => {
+  it('횟수 목표는 n/target, 비율 목표(minRatio)는 퍼센트로 그린다', () => {
+    expect(formatObjectiveProgress({ progress: 1, target: 2 })).toBe('1/2');
+    expect(formatObjectiveProgress({ progress: 3, target: 2 })).toBe('2/2');
+    expect(formatObjectiveProgress({ progress: 1, target: 0.7 })).toBe('100%/70%');
+    expect(formatObjectiveProgress({ progress: 0.5, target: 1 })).toBe('50%/100%');
+    expect(formatObjectiveProgress({ progress: 0, target: null })).toBeNull();
   });
 });

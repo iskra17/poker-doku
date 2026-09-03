@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import type { ObjectiveHudLine } from '@/lib/story/story-live-rules';
+import { formatObjectiveProgress, type ObjectiveHudLine } from '@/lib/story/story-live-rules';
 
 interface ObjectiveHudProps {
   tag: '연습' | '대결';
@@ -39,7 +39,7 @@ function ObjectiveRow({ line }: { line: ObjectiveHudLine }) {
       </span>
       {hasTarget && (
         <span className="shrink-0 tabular text-[10px] text-ink-dim">
-          {Math.min(line.progress, line.target as number)}/{line.target}
+          {formatObjectiveProgress(line)}
         </span>
       )}
       <span className="h-1 w-8 shrink-0 overflow-hidden rounded-full bg-white/10" aria-hidden>

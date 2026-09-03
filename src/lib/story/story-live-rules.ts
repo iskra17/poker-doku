@@ -89,6 +89,18 @@ function toHudLine(objective: ObjectiveProgressView): ObjectiveHudLine {
 }
 
 /**
+ * HUD 진행 표기 — 비율 목표(서버가 target에 minRatio, progress에 기회 중 실행 비율을 싣는다)는 "100%/70%"로,
+ * 횟수 목표는 "1/2"로 그린다. 비율은 target·progress 중 하나라도 정수가 아니면 판정한다(minRatio 0.7 등).
+ * 2026-09-04 CH6 실주행에서 하위 폴드 1/1이 "0.7/0.7"로 보이던 오독을 고친 규약.
+ */
+export function formatObjectiveProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target'>): string | null {
+  if (line.target === null || line.target <= 0) return null;
+  const ratio = !Number.isInteger(line.target) || !Number.isInteger(line.progress);
+  if (ratio) return `${Math.round(line.progress * 100)}%/${Math.round(line.target * 100)}%`;
+  return `${Math.min(line.progress, line.target)}/${line.target}`;
+}
+
+/**
  * HUD 표시 순서 — **primary(통과 조건) 먼저**, 그 안에서는 서버 순서를 그대로 둔다.
  * 보너스 목표가 통과 조건보다 위에 뜨면 "저것만 하면 되나" 오독이 난다.
  */
