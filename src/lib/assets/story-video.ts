@@ -10,11 +10,17 @@ export interface StoryVideo {
   mp4: string;
 }
 
-/** 실제로 배치된 클립 id — 2026-09-03 파일럿 3클립 */
+/** 실제로 배치된 클립 id — 2026-09-03 파일럿 3클립 + 2026-09-04 2차 배치(보상 CG·비비안 Lv5) */
 const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   'story-cg-act1-belt-yellow',
   'story-cg-act1-draco-boss',
   'sakura-scene-lv5',
+  'story-cg-act1-belt-white',
+  'story-cg-act1-sakura-garden',
+  'story-cg-act2-paeng-boss',
+  'story-cg-act2-ara-victory',
+  'story-cg-act2-belt-blue',
+  'vivian-scene-lv5',
 ]);
 
 export function hasStoryVideo(cgId: string | null | undefined): boolean {

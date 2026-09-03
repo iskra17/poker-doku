@@ -54,6 +54,23 @@ Wan 2.2 I2V 다운로드는 필요 없다 — 이미 설치된 **MiniMax H3**(`M
 | story-cg-act1-draco-boss | 509020260902 | 95초 | 1.10MB / 0.66MB |
 | sakura-scene-lv5 | 509020260903 | 110초 | 1.43MB / 0.86MB |
 
+## 2차 배치 기록 (2026-09-04) — 보상 CG 5 + 비비안 Lv5
+
+| id | seed | 생성 | webm / mp4 |
+|---|---|---|---|
+| story-cg-act1-belt-white | 509020260904 | 105초 | 0.80MB / 0.50MB |
+| story-cg-act1-sakura-garden | 509020260905 | 95초 | 1.13MB / 0.71MB |
+| story-cg-act2-paeng-boss | 509020260906 | 105초 | 1.04MB / 0.68MB |
+| story-cg-act2-ara-victory | 509020260907 | 95초 | 1.94MB / 1.02MB (칩이 많이 날려 가장 큼) |
+| story-cg-act2-belt-blue | 509020260908 | 95초 | 0.81MB / 0.54MB |
+| vivian-scene-lv5 | 509020260909 | 100초 | 0.90MB / 0.61MB |
+
+- 인코딩은 `bash scripts/art/story-video-encode.sh v1 <cgId> [...]`(webm/mp4 동시, 106프레임)로 일괄.
+- **러너 실행은 분리 프로세스로**: 에이전트 도구의 백그라운드 명령은 10분에 강제 종료되므로 6클립(≈10분)을 한 호출에 걸면 끊긴다 —
+  PowerShell `Start-Process python … -RedirectStandardOutput <log>`로 띄우고 로그를 폴링한다. 러너는 폴링 예외를 삼키고 30초마다
+  진행을 찍으며 900초를 넘기면 그 클립을 포기한다(2026-09-04 보강).
+- 남은 것: 인연 씬 22장(사쿠라 Lv5·비비안 Lv5 외), 챕터 프롤로그/에필로그 씬 CG 12장. 같은 절차로 `CLIPS`에 프롬프트만 추가.
+
 원본 mp4·제출 JSON은 `D:\AI-Image-Video\output\poker-doku\`에 보관(리포 밖). Wan Animate 2(구동 영상 모션 전이)는 CG 애니메이션엔
 맞지 않아 쓰지 않았다 — 캐릭터가 춤추는 류의 클립이 필요해지면 `C:\code\1. codex\AI-Image-Video\scripts\run-chika-full-12fps-rife.ps1`
 (12fps 생성 → RIFE 2배) 참고.
