@@ -8,7 +8,7 @@
 | 영상 | `VIDEO_AVAILABLE` **43클립 전부** — 파일럿 3 + 2차 6 + **3차 34**(인연 씬 22 + 챕터 씬 CG 12). 씬 CG 영상 id는 `scene-<SceneCgId>`(`sceneCgVideoId`) |
 | 코드 | ScenePlayer 라인 CG·기록실 SCENE CG 뷰어에 `VideoCutscene` 슬롯(CgStage와 같은 폴백 계약), `GalleryEntry.sceneCgId` |
 | 실주행 | **CH5(클로이) 스파링 2회** — 1차 14핸드 max-hands 「A · 미통과」, 2차 **8핸드 primary 전부 달성 → 「MISSION CLEAR」 컷인 → 조기 종료(reason `objectives`) → 「S · 통과」** + 첫 완주 보상(밸류 장인 칭호·스트리머 후디·800칩) 지급 확인 |
-| 검증 | 세션 시작 시 전체 vitest `--maxWorkers=4` 196파일/2449 통과 · 변경 파일 tsc/eslint ✓ · `story-video.test.ts`·`gallery/catalog.test.ts` ✓ |
+| 검증 | 전체 vitest `--maxWorkers=4` 세션 시작 2449 통과 → 변경 후 **196파일/2451 통과** · `tsc --noEmit` ✓ · `npm run lint` ✓ · 영상 86파일 68MB(3차 34클립 ≈55MB, 클립당 ≤1.9MB) |
 | 배포 | Fly **v80** = main `ea99b76` 그대로(이번 세션 결과 미배포) |
 | 로컬 프로세스 | 세션 종료 시 dev 서버(3000)·ComfyUI(8188)·H3 러너 종료 확인 — 살아 있으면 `Stop-Process` |
 | 메모리 | [[project_story-mode-plan]](8차 이력) · [[reference_browser-qa-recipe]](fiber 스냅샷 자동 플레이) · [[reference_comfyui-h3-video]](3차 배치 교훈) |
@@ -18,7 +18,7 @@
 ## 1. 새 세션 시작 절차
 
 1. 이 문서 → AGENTS.md 스토리 섹션(v74 ④ 영상 bullet 갱신됨) → `scripts/art/story-video.md`(3차 배치 기록).
-2. **사용자에게 먼저 묻는다**: 푸시·`fly deploy --ha=false` 여부(영상 34클립 ≈ 50MB 추가 — Docker 이미지 크기 확인), 실기기 재생 피드백.
+2. **사용자에게 먼저 묻는다**: 푸시·`fly deploy --ha=false` 여부(영상 34클립 ≈ 55MB 추가 — Docker 이미지 크기 확인), 실기기 재생 피드백.
 3. worktree `.worktrees/story-mode`에서 작업. dev 서버는 `npm run dev` 백그라운드 + `curl localhost:3000/healthz`.
 4. QA는 운영자 모드(로고 7연타 → OP). 스파링 자동 플레이는 §4의 fiber 스냅샷 루프를 재사용.
 
@@ -54,8 +54,8 @@
 
 ## 3. 못 한 것 / 판단 필요
 
-- **파란띠 승급 연출**(2막 3챕터 완주 필요 — 이 프로필은 CH5만 완료), 보스 격파 컷인(CH6 보스는 이전 세션에 max-hands 종료로 미발생 —
-  CH6를 §4 루프 + 3벳 정책으로 다시 치면 볼 수 있다), 실패 씬 재생(미구현).
+- **파란띠 승급 연출**(2막 3챕터 완주 필요 — 이 프로필은 CH5·CH6 완료, CH4가 남음), 보스 격파 컷인(§2-3 — 기회 확률 문제, 설계 판단 필요),
+  실패 씬 재생(미구현).
 - **실기기 재생 확인**: 3차 34클립은 시트 검수만 — 자동화 창은 hidden이라 `<video>` 재생을 못 본다. 사용자 실기기 체크 항목: 인연 탭/기록실에서
   인연 씬 24장·이벤트 CG 탭 씬 CG 12장이 루프 재생되는지, ScenePlayer 라인 CG(CH1 프롤로그 첫 라인 등) 영상 전환이 자연스러운지,
   용량(webm 0.5~1.9MB).
