@@ -4,7 +4,7 @@
 
 | 항목 | 상태 |
 |---|---|
-| 브랜치 | `feat/story-video-batch3` (worktree `.worktrees/story-mode`, main `f45f208`에서 분기) — **main 병합·푸시·배포 미실행** |
+| 브랜치 | `feat/story-video-batch3` → **main ff 병합 완료(`fda70be`)**, worktree `.worktrees/story-mode`는 같은 커밋 — **origin 푸시·Fly 배포 미실행**(사용자 확인 후) |
 | 영상 | `VIDEO_AVAILABLE` **43클립 전부** — 파일럿 3 + 2차 6 + **3차 34**(인연 씬 22 + 챕터 씬 CG 12). 씬 CG 영상 id는 `scene-<SceneCgId>`(`sceneCgVideoId`) |
 | 코드 | ScenePlayer 라인 CG·기록실 SCENE CG 뷰어에 `VideoCutscene` 슬롯(CgStage와 같은 폴백 계약), `GalleryEntry.sceneCgId` |
 | 실주행 | **CH5(클로이) 스파링 2회** — 1차 14핸드 max-hands 「A · 미통과」, 2차 **8핸드 primary 전부 달성 → 「MISSION CLEAR」 컷인 → 조기 종료(reason `objectives`) → 「S · 통과」** + 첫 완주 보상(밸류 장인 칭호·스트리머 후디·800칩) 지급 확인 |
@@ -18,7 +18,7 @@
 ## 1. 새 세션 시작 절차
 
 1. 이 문서 → AGENTS.md 스토리 섹션(v74 ④ 영상 bullet 갱신됨) → `scripts/art/story-video.md`(3차 배치 기록).
-2. **사용자에게 먼저 묻는다**: main ff 병합·푸시·`fly deploy --ha=false` 여부(영상 34클립 ≈ 50MB 추가 — Docker 이미지 크기 확인), 실기기 재생 피드백.
+2. **사용자에게 먼저 묻는다**: 푸시·`fly deploy --ha=false` 여부(영상 34클립 ≈ 50MB 추가 — Docker 이미지 크기 확인), 실기기 재생 피드백.
 3. worktree `.worktrees/story-mode`에서 작업. dev 서버는 `npm run dev` 백그라운드 + `curl localhost:3000/healthz`.
 4. QA는 운영자 모드(로고 7연타 → OP). 스파링 자동 플레이는 §4의 fiber 스냅샷 루프를 재사용.
 
@@ -73,7 +73,7 @@
 
 ## 5. 다음 세션 순서
 
-1. 사용자 확인 후 main ff 병합 → `git push origin main --tags` → `fly deploy --ha=false`(영상 용량 반영).
+1. 사용자 확인 후 `git push origin main` → `fly deploy --ha=false`(영상 용량 반영).
 2. 실기기 피드백(§3) 반영. 필요하면 특정 클립 seed 변경 재생성(`python scripts/art/story-video-h3.py v2 <id>` → 인코딩 → 파일 교체).
 3. CH6 보스 격파 컷인 실주행(§4 루프 + 3벳 정책), 파란띠 승급(CH4·CH6 완료 프로필).
 4. 3막 데이터(비비안·클로이·엘레나, 가면 봇 identity 분리 선행) 또는 하드 모드.
