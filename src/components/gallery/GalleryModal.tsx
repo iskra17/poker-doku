@@ -26,7 +26,7 @@ interface GalleryModalProps {
  * 탭 → 본 것으로 표시(NEW 해제) → 뷰어. 뷰어는 모달 위 레이어(`layer="modal"`).
  */
 export default function GalleryModal({ isOpen, onClose, initialSection }: GalleryModalProps) {
-  const { profileId, entries, summary, newIds } = useGallery();
+  const { profileId, entries, summary, newIds, unlockedIds, preview } = useGallery();
   const progressStatus = useStoryStore(state => state.progressStatus);
   const load = useStoryStore(state => state.load);
   const [section, setSection] = useState<GallerySection>('bond');
@@ -75,12 +75,17 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
     }
   };
   const markAll = () => {
-    if (profileId) markSeen(profileId, entries.filter(entry => entry.unlocked).map(entry => entry.id));
+    if (profileId) markSeen(profileId, unlockedIds);
   };
 
   return (
     <>
       <Modal isOpen={isOpen} onClose={onClose} title="기록실" maxWidthClass="max-w-2xl">
+        {preview && (
+          <p className="mb-1 rounded-lg border border-gilded/40 bg-gilded/10 px-2 py-1 text-[10px] font-bold text-gilded" role="status">
+            운영자 미리보기 — 모든 항목을 해금 상태로 보여 줘요 (실제 획득·NEW 기록엔 영향 없음)
+          </p>
+        )}
         <div className="-mx-1 flex gap-1 overflow-x-auto pb-1 scrollbar-thin" role="tablist" aria-label="기록실 섹션">
           {summary.map(row => {
             const fresh = entries.filter(entry => entry.section === row.section && newIds.has(entry.id)).length;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { useGameStore } from '@/lib/store/game-store';
+import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import {
   firstMyTurnInterrupt,
@@ -41,6 +42,9 @@ export default function StoryOverlay() {
   const { active, run, live, step, stepKey } = useStoryLive();
   const pending = useStoryStore(state => state.pending);
   const resumeLive = useStoryStore(state => state.resumeLive);
+  const advance = useStoryStore(state => state.advance);
+  // 운영자 모드 — 라이브 스텝을 목표 전부 달성으로 즉시 끝내는 [⏭ 스킵] (방 해체 → 다음 스텝)
+  const operator = useOperatorMode();
   const gameState = useGameStore(state => state.gameState);
   const myPlayerId = useGameStore(state => state.myPlayerId);
 
@@ -131,6 +135,17 @@ export default function StoryOverlay() {
           컨테이너 우측 끝은 데스크탑 채팅 패널, 좌상단은 액션 로그가 쓴다 */}
       <div className="pointer-events-none absolute inset-0 z-30 flex justify-center">
         <div className="relative h-full w-full" style={{ maxWidth: 'min(440px, 60dvh)' }}>
+          {operator && (
+            <button
+              type="button"
+              onClick={() => void advance('skip')}
+              disabled={pending}
+              title="운영자 — 이 테이블 스텝을 목표 달성으로 건너뛰기"
+              className="pointer-events-auto absolute left-1 top-[4.5rem] rounded-lg border border-gilded/50 bg-gilded/20 px-2 py-1 text-[10px] font-bold text-gilded backdrop-blur disabled:opacity-50"
+            >
+              ⏭ 스킵
+            </button>
+          )}
           <div className="absolute right-1 top-[4.5rem]">
             <ObjectiveHud
               tag={live?.tag ?? '대결'}

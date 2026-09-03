@@ -2,7 +2,10 @@
 
 /* eslint-disable @next/next/no-img-element */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { registerSecretTap, type SecretTapState } from '@/lib/operator/secret-tap';
+import { useGameStore } from '@/lib/store/game-store';
+import { useOperatorStore } from '@/lib/store/operator-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import GalleryNewDot from '../gallery/GalleryNewDot';
 import NeonText from '../ui/NeonText';
@@ -26,6 +29,28 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
   const [logoError, setLogoError] = useState(false);
   const { muted, musicMuted, toggleAllMuted } = useSettingsStore();
   const allMuted = muted && musicMuted;
+
+  // 비밀 제스처 — compact 로고를 3초 안에 7번 탭하면 운영자 모드 토글. 서버 capability(operator)가 없는
+  // 프로필은 아무 반응이 없다(조용히 무시). 토글 결과는 2.4초 안내 후 사라지고, 켜져 있는 동안 'OP' 배지가 남는다.
+  const isOperator = useGameStore(state => state.isOperator);
+  const operatorEnabled = useOperatorStore(state => state.enabled);
+  const toggleOperator = useOperatorStore(state => state.toggle);
+  const tapRef = useRef<SecretTapState | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(null), 2_400);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const onLogoTap = () => {
+    if (!isOperator) return;
+    const result = registerSecretTap(tapRef.current, Date.now());
+    tapRef.current = result.state;
+    if (!result.triggered) return;
+    const enabled = toggleOperator();
+    setNotice(enabled ? '운영자 모드 ON — 모든 보상 미리보기 · 수련 스킵' : '운영자 모드 OFF');
+  };
+  const operatorOn = isOperator && operatorEnabled;
 
   if (!compact) {
     return (
@@ -56,21 +81,33 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
   return (
     // 광폭 데스크탑에서 로고/메뉴가 화면 양끝으로 흩어지지 않게 콘텐츠 컬럼(max-w-4xl,
     // EconomyBar·로비 탭과 동일)에 맞춰 중앙 정렬 — 게임 화면 상단바 중앙 정렬과 같은 문법
-    <header className="py-1.5">
+    <header className="relative py-1.5">
       <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-2 px-3 md:px-4">
-        {logoError ? (
-          <h1 className="text-lg font-bold">
-            <NeonText size="sm" color="#A78BFA">POKER DOKU</NeonText>
-          </h1>
-        ) : (
-          <img
-            src="/assets/logo.webp"
-            alt="POKER DOKU"
-            className="h-10 w-auto mix-blend-screen drop-shadow-[0_0_12px_rgba(255,126,182,0.3)] md:h-12"
-            onError={() => setLogoError(true)}
-            draggable={false}
-          />
-        )}
+        {/* 로고 — 비밀 제스처 대상(운영자만 반응). 일반 유저에겐 그냥 로고라 button 의미론을 주지 않는다 */}
+        <span className="flex select-none items-center gap-1.5" onClick={onLogoTap} data-testid="lobby-logo">
+          {logoError ? (
+            <h1 className="text-lg font-bold">
+              <NeonText size="sm" color="#A78BFA">POKER DOKU</NeonText>
+            </h1>
+          ) : (
+            <img
+              src="/assets/logo.webp"
+              alt="POKER DOKU"
+              className="h-10 w-auto mix-blend-screen drop-shadow-[0_0_12px_rgba(255,126,182,0.3)] md:h-12"
+              onError={() => setLogoError(true)}
+              draggable={false}
+            />
+          )}
+          {operatorOn && (
+            <span
+              className="rounded border border-gilded/60 bg-gilded/15 px-1 py-0.5 text-[9px] font-black tracking-wider text-gilded"
+              title="운영자 모드 — 로고를 7번 탭하면 꺼져요"
+              aria-label="운영자 모드 켜짐"
+            >
+              OP
+            </span>
+          )}
+        </span>
         <div className="flex items-center gap-1.5">
           <IconButton label={allMuted ? '사운드 켜기' : '사운드 끄기'} onClick={toggleAllMuted}>
             <path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none" />
@@ -121,6 +158,14 @@ export default function LobbyHeader({ compact, onOpenSettings, onOpenFeedback, o
           )}
         </div>
       </div>
+      {notice && (
+        <p
+          role="status"
+          className="pointer-events-none absolute left-1/2 top-full z-20 mt-1 -translate-x-1/2 whitespace-nowrap rounded-full border border-gilded/50 bg-abyss/95 px-3 py-1 text-[11px] font-bold text-gilded shadow-lg"
+        >
+          {notice}
+        </p>
+      )}
     </header>
   );
 }

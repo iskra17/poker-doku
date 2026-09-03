@@ -10,12 +10,12 @@ import { useStoryStore } from '@/lib/store/story-store';
  * 그 뒤 해금은 NEW로 남아 결산 [기록실 보기]에서 바로 보인다. 렌더 없음.
  */
 export default function GallerySeenBaseline() {
-  const { profileId, entries } = useGallery();
+  const { profileId, unlockedIds } = useGallery();
   const progressStatus = useStoryStore(state => state.progressStatus);
   const ready = progressStatus === 'ready' || progressStatus === 'error';
   useEffect(() => {
     if (!profileId || !ready) return;
-    ensureBaseline(profileId, entries.filter(entry => entry.unlocked).map(entry => entry.id));
-  }, [profileId, ready, entries]);
+    ensureBaseline(profileId, unlockedIds);
+  }, [profileId, ready, unlockedIds]);
   return null;
 }

@@ -54,6 +54,8 @@ export interface BuildGalleryInput {
   snapshot: ProgressionSnapshot | null;
   progress: StoryProgressView | null;
   chapters?: readonly Chapter[];
+  /** 운영자 모드 — 모든 항목을 해금 상태로(뷰 오버라이드, 조건 문구는 유지) */
+  unlockAll?: boolean;
 }
 
 interface SayLike { kind?: unknown; bg?: unknown }
@@ -75,7 +77,7 @@ export function collectChapterBackgroundIds(chapter: Chapter): string[] {
   return [...out];
 }
 
-export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS }: BuildGalleryInput): GalleryEntry[] {
+export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, unlockAll = false }: BuildGalleryInput): GalleryEntry[] {
   const owned = new Set<string>(snapshot?.inventory.map(item => item.itemId) ?? []);
   for (const reward of progress?.rewards ?? []) if (reward.granted) owned.add(reward.id);
   const completed = new Set(progress?.chapters.filter(chapter => chapter.completions > 0).map(chapter => chapter.chapterId) ?? []);
@@ -168,7 +170,7 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS }: 
     });
   }
 
-  return entries;
+  return unlockAll ? entries.map(entry => (entry.unlocked ? entry : { ...entry, unlocked: true })) : entries;
 }
 
 const BACKGROUND_NAME: Readonly<Record<string, string>> = Object.freeze({

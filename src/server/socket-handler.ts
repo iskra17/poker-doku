@@ -36,6 +36,7 @@ import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
 import { StoryRunCoordinator, type CoordinatorResult } from './story-run-coordinator';
 import type { StoryRewardService } from './story-reward-service';
 import { LiveTableAdapter } from './story-live-adapter';
+import { operatorAccessFromSet, resolveOperatorAccess } from './operator-access';
 import type { StoryRepository } from './story-repository';
 import {
   parseAbandonStoryRequest,
@@ -366,6 +367,8 @@ export interface SocketRuntimeOptions {
   onProfileConnected?: (profileId: string) => void;
   economy?: CashAdmissionEconomy & SngAdmissionEconomy & MttAdmissionEconomy & RoomEconomyHooks;
   tournamentOperatorProfileIds?: ReadonlySet<string>;
+  /** 운영자 프로필(세션 capability `operator` — 잠긴 챕터 시작·스텝 건너뛰기). 생략 시 env(OPERATOR_PROFILE_IDS ∪ 토너먼트 운영자, dev는 전원) */
+  operatorProfileIds?: ReadonlySet<string>;
   persistentTournamentStart?: PersistentTournamentStartPorts;
   persistentRuntimeEnabled?: boolean;
   persistentTournamentRegistration?:
@@ -1162,6 +1165,9 @@ export function setupSocketHandlers(
       ?? parseTournamentOperatorIds(process.env.TOURNAMENT_OPERATOR_PROFILE_IDS),
     options.persistentTournamentStart,
   );
+  const operatorAccess = options.operatorProfileIds
+    ? operatorAccessFromSet(options.operatorProfileIds)
+    : resolveOperatorAccess(process.env);
 
   if (arena) {
     arenaRuntime = new ArenaRuntime(roomManager, arena.service, {
@@ -1477,11 +1483,13 @@ export function setupSocketHandlers(
       return true;
     };
 
-    // 클라이언트에 공개 playerId 통지 (히어로 식별용)
+    // 클라이언트에 공개 playerId 통지 (히어로 식별용) + 권한. operator는 접속 시점에 한 번 판정한다.
+    const isOperator = operatorAccess.has(session.playerId);
     socket.emit('session', {
       playerId: session.playerId,
       capabilities: {
         createTournament: tournamentCommands.canOperateProfile(session.playerId),
+        operator: isOperator,
       },
     });
 
@@ -1661,7 +1669,7 @@ export function setupSocketHandlers(
       if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
       if (rejectStoryStartWhileBusy(ack)) return;
       const mode = parsed.value.mode ?? 'full';
-      const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId, mode);
+      const started = storyCoordinator!.start(session.playerId, parsed.value.chapterId, mode, { operator: isOperator });
       if (started.ok) eventLog.log('story-step', { playerId: session.playerId, data: { chapterId: parsed.value.chapterId, runId: started.value.runId, step: 'start', mode } });
       replyStory(ack, started);
     });
@@ -1681,7 +1689,7 @@ export function setupSocketHandlers(
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      const advanced = storyCoordinator!.advance(session.playerId, parsed.value);
+      const advanced = storyCoordinator!.advance(session.playerId, parsed.value, { operator: isOperator });
       if (advanced.ok) {
         const view = storyCoordinator!.getView(session.playerId);
         eventLog.log('story-step', { playerId: session.playerId, data: { runId: parsed.value.runId, from: parsed.value.expectedStepIndex, target: parsed.value.target, to: view?.stepIndex ?? null, phase: view?.phase ?? 'ended' } });

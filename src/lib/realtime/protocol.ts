@@ -516,7 +516,8 @@ export interface ArenaStateReplay {
 export interface ServerToClientEvents {
   session: (data: {
     playerId: string;
-    capabilities: { createTournament: boolean };
+    /** operator: 운영자 프로필(잠긴 챕터 시작·스토리 스텝 건너뛰기 허용, 클라 운영자 모드 토글의 전제) */
+    capabilities: { createTournament: boolean; operator: boolean };
   }) => void;
   'session-replaced': (data: { message: string }) => void;
   'room-list': (rooms: RoomListItem[]) => void;

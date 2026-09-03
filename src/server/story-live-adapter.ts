@@ -41,7 +41,7 @@ import type { RoomDisposeReason, RoomManager, StoryRoomHooks } from './room-mana
 export type LiveStep = Extract<Step, { kind: 'practice-table' | 'sparring' }>;
 
 /** 라이브 스텝 종료 사유(이벤트 로그 전용) — 'objectives'는 미션형 조기 종료 */
-export type LiveFinishReason = 'objectives' | 'max-hands' | 'table-short' | 'bust' | 'scripts';
+export type LiveFinishReason = 'objectives' | 'max-hands' | 'table-short' | 'bust' | 'scripts' | 'operator-skip';
 
 export interface LiveStepSummary {
   outcome: 'done' | 'failed' | 'abandoned';
@@ -228,6 +228,27 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
   hasSession(profileId: string): boolean {
     return this.sessions.has(profileId);
+  }
+
+  /**
+   * 운영자 스킵 — 현재 라이브 스텝을 "목표 전부 달성(done)"으로 즉시 끝낸다. 방이 있으면 해체(story-end)하고
+   * 세션을 버린 뒤 onStepFinished를 **동기** 호출한다(승리 연출 대기·finish 타이머 무시). 정산 미해결로 방을 닫지
+   * 못하면 'busy' — 세션·방 소유권은 그대로 둔다. 방이 이미 사라진 room-lost 보존 세션도 그대로 끝낸다.
+   */
+  forceFinish(profileId: string): 'finished' | 'no-session' | 'busy' {
+    const session = this.sessions.get(profileId);
+    if (!session) return 'no-session';
+    const summary = this.summarizeForced(session);
+    if (!this.disposeOwnRoom(session, 'story-end')) return 'busy';
+    this.clearFinishTimer(session);
+    this.sessions.delete(session.profileId);
+    const reason: LiveFinishReason = 'operator-skip';
+    eventLog.log('story-step', {
+      playerId: session.profileId,
+      data: { runId: session.runId, event: 'live-finish', outcome: 'done', reason, handsPlayed: summary.handsPlayed, netBB: summary.netBB },
+    });
+    this.events?.onStepFinished(session.profileId, session.runId, summary);
+    return 'finished';
   }
 
   phase(profileId: string): 'live-hold' | 'live-play' | null {
@@ -743,6 +764,18 @@ export class LiveTableAdapter implements StoryRoomHooks {
       handsPlayed: session.handsPlayed,
       netBB: Math.round((session.netChips / big) * 10) / 10,
     };
+  }
+
+  /** 운영자 스킵용 요약 — 모든 목표를 달성(progress=target)으로 채운 done 요약. '연습'은 목표가 없으니 그대로. */
+  private summarizeForced(session: LiveSession): LiveStepSummary {
+    const base = this.summarize(session, 'done');
+    if (session.step.kind === 'practice-table') return base;
+    const objectives = base.objectives.map(objective => ({
+      ...objective,
+      progress: objective.target ?? Math.max(objective.progress, 1),
+      achieved: true,
+    }));
+    return { ...base, objectives, primaryObjectivesMet: true, liveScore: 1 };
   }
 
   private clearFinishTimer(session: LiveSession): void {

@@ -22,6 +22,7 @@ import {
   type StoryRewardDefinition,
 } from '@/lib/story/rewards/catalog';
 import type { StoryRewardCutsceneView } from '@/lib/story/views';
+import { useOperatorMode, useOperatorStore } from '@/lib/store/operator-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 
 /** 잠긴 갤러리 타일 — 🔒 + 해금 조건 */
@@ -50,15 +51,20 @@ export default function AffinityTab() {
   const setCosmetic = useProgressionStore(state => state.setCosmetic);
   const [viewingScene, setViewingScene] = useState<BondScene | null>(null);
   const [viewingCg, setViewingCg] = useState<StoryRewardCutsceneView | null>(null);
+  // 운영자 모드 — CG·인연 씬은 전부 열어 보여 주고(뷰 오버라이드), 미보유 의상은 로컬 미리보기로 입혀 본다(서버 장착 아님)
+  const operator = useOperatorMode();
+  const outfitPreview = useOperatorStore(state => state.outfitPreview);
+  const setOutfitPreview = useOperatorStore(state => state.setOutfitPreview);
   if (!snapshot) return null;
   const balance = getBalance(snapshot.profile.balanceVersion);
   const owned = new Set(snapshot.inventory.map(item => item.itemId));
+  const viewable = (itemId: string): boolean => operator || owned.has(itemId);
   const cosmetics = snapshot.cosmetics;
   const dojoCgs = STORY_REWARD_CATALOG.filter(item => item.kind === 'cg' && !item.characterId);
 
   const cgTile = (item: StoryRewardDefinition) => {
     const cutscene = toStoryRewardCutscene(item);
-    if (!owned.has(item.id) || !cutscene) {
+    if (!viewable(item.id) || !cutscene) {
       return <LockedTile key={item.id} label={item.name} hint={storyRewardRequirement(item, STORY_CHAPTERS)} />;
     }
     return (
@@ -84,6 +90,11 @@ export default function AffinityTab() {
         함께 인연을 쌓는 파트너예요. 로비에 상주하고 혼자 연습 방에 합류해요.
         좌석에 보일 내 모습은 아바타 탭에서 바꿔요. 의상은 로비·수련 화면에서만 입어요.
       </p>
+      {operator && (
+        <p className="rounded-lg border border-gilded/40 bg-gilded/10 px-2 py-1 text-[10px] font-bold text-gilded" role="status">
+          운영자 미리보기 — CG·인연 씬은 전부 열려 있고, 미보유 의상은 [미리보기]로 로비·수련 화면에 입혀 볼 수 있어요(실제 장착 아님)
+        </p>
+      )}
 
       {/* 도장 기록 — 히로인에 속하지 않는 CG(띠 수여 등) */}
       {dojoCgs.length > 0 && (
@@ -127,7 +138,7 @@ export default function AffinityTab() {
             {/* 인연 씬 갤러리 — 마일스톤(5/10/15/20) 해금 이벤트 CG 다시보기 */}
             <div className="mt-2 grid grid-cols-4 gap-1.5">
               {scenes.map(scene => {
-                const unlocked = isBondSceneUnlocked(scene, level);
+                const unlocked = operator || isBondSceneUnlocked(scene, level);
                 return unlocked ? (
                   <button
                     key={scene.id}
@@ -186,6 +197,23 @@ export default function AffinityTab() {
                     const has = owned.has(item.id);
                     const equipped = equippedOutfit === item.id;
                     const artReady = item.outfitId ? hasOutfitArt(characterId, item.outfitId) : false;
+                    // 운영자 미리보기 — 미보유 의상: 탭하면 로컬 미리보기 토글(다시 탭하면 해제)
+                    if (operator && !has) {
+                      const previewing = outfitPreview[characterId] === item.id;
+                      return (
+                        <button
+                          key={item.id}
+                          type="button"
+                          aria-pressed={previewing}
+                          title={`운영자 미리보기 — ${item.description}${artReady ? '' : ' (일러스트 준비 중)'}`}
+                          onClick={() => setOutfitPreview(characterId, previewing ? null : item.id)}
+                          className={`rounded-md border px-2 py-0.5 text-[10px] font-bold ${previewing ? 'border-gilded bg-gilded/20 text-gilded' : 'border-gilded/40 border-dashed text-gilded/80'}`}
+                        >
+                          👁 {item.name.replace(`${character?.name ?? ''} · `, '')}
+                          <span className="ml-1 font-normal">· {previewing ? '미리보기 중' : '미리보기'}</span>
+                        </button>
+                      );
+                    }
                     return (
                       <button
                         key={item.id}

@@ -94,6 +94,8 @@ interface GameStore {
   publicAvatarId: string | null;
   myPlayerId: string | null;
   canCreateTournament: boolean;
+  /** 서버 capability operator — 운영자 모드 토글(operator-store)의 전제 */
+  isOperator: boolean;
   currentRoomId: string | null;
   pendingRoomId: string | null;
   pendingAction: PendingAction | null;
@@ -176,6 +178,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   publicAvatarId: null,
   myPlayerId: null,
   canCreateTournament: false,
+  isOperator: false,
   currentRoomId: null,
   pendingRoomId: null,
   pendingAction: null,
@@ -248,6 +251,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       set({
         myPlayerId: playerId,
         canCreateTournament: capabilities.createTournament,
+        isOperator: capabilities.operator === true,
       });
     });
 
@@ -404,6 +408,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       publicAvatarId: null,
       myPlayerId: null,
       canCreateTournament: false,
+  isOperator: false,
       currentRoomId: null,
       pendingRoomId: null,
       pendingAction: null,
@@ -437,6 +442,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     publicAvatarId: null,
     myPlayerId: null,
     canCreateTournament: false,
+  isOperator: false,
   }),
 
   joinRoom: (roomId, buyIn, seatIndex, password) => {

@@ -607,4 +607,32 @@ describe('LiveTableAdapter', () => {
     })).toThrow(/storyChapterId/);
     bare.shutdown();
   });
+  describe('operator forceFinish', () => {
+    it('ends a sparring step at once with every objective achieved, disposes the room and reports synchronously', async () => {
+      const roomId = enter(sparringStep(3));
+      await tick(50);
+      expect(adapter.forceFinish(PROFILE)).toBe('finished');
+      expect(manager.getRoom(roomId)).toBeUndefined();
+      expect(adapter.hasSession(PROFILE)).toBe(false);
+      expect(adapter.view(PROFILE)).toBeNull();
+      expect(onStepFinished).toHaveBeenCalledTimes(1);
+      const summary = onStepFinished.mock.calls[0][2];
+      expect(summary.outcome).toBe('done');
+      expect(summary.tag).toBe('대결');
+      expect(summary.primaryObjectivesMet).toBe(true);
+      expect(summary.liveScore).toBe(1);
+      expect(summary.objectives.length).toBeGreaterThan(0);
+      expect(summary.objectives.every(objective => objective.achieved)).toBe(true);
+      expect(summary.objectives.find(objective => objective.id === 'played')).toMatchObject({ progress: 3, target: 3 });
+      expect(adapter.forceFinish(PROFILE)).toBe('no-session');
+    });
+
+    it('keeps a practice step summary objective-less (null primary/score)', async () => {
+      enter(practiceStep());
+      await tick(50);
+      expect(adapter.forceFinish(PROFILE)).toBe('finished');
+      const summary = onStepFinished.mock.calls[0][2];
+      expect(summary).toMatchObject({ outcome: 'done', tag: '연습', objectives: [], primaryObjectivesMet: null, liveScore: null });
+    });
+  });
 });

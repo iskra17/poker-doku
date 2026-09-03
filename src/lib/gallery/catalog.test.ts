@@ -86,3 +86,18 @@ describe('buildGallery', () => {
     expect(entries.filter(entry => entry.sceneCg)).toHaveLength(12);
   });
 });
+
+describe('buildGallery unlockAll (운영자 미리보기)', () => {
+  it('모든 항목을 해금 상태로 돌려주되 조건 문구·id·섹션은 그대로다', () => {
+    const real = buildGallery({ snapshot: snapshot(), progress: progress() });
+    const all = buildGallery({ snapshot: snapshot(), progress: progress(), unlockAll: true });
+    expect(all).toHaveLength(real.length);
+    expect(all.every(entry => entry.unlocked)).toBe(true);
+    expect(all.map(entry => entry.id)).toEqual(real.map(entry => entry.id));
+    const lockedBefore = real.find(entry => !entry.unlocked)!;
+    const same = all.find(entry => entry.id === lockedBefore.id)!;
+    expect(same.hint).toBe(lockedBefore.hint);
+    expect(same.section).toBe(lockedBefore.section);
+    expect(summarizeGallery(all).every(row => row.unlocked === row.total)).toBe(true);
+  });
+});

@@ -20,6 +20,7 @@ import { nextStoryRewards } from '@/lib/story/rewards/catalog';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
+import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import GalleryCard from '@/components/gallery/GalleryCard';
 import ChapterCard from './ChapterCard';
@@ -40,6 +41,8 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const startChapter = useStoryStore(state => state.startChapter);
   const startDaily = useStoryStore(state => state.startDaily);
   const load = useStoryStore(state => state.load);
+  // 운영자 모드 — 잠긴 챕터도 열어 둔다(서버 start도 operator면 해금 검사를 우회)
+  const operator = useOperatorMode();
   const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null) as StoryHeroineId | null;
 
   const recommendation = progress ? recommendChapter(STORY_CHAPTERS, progress) : null;
@@ -169,7 +172,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                   number={chapterNumber(STORY_CHAPTERS, chapter.id) ?? 0}
                   chapter={chapter}
                   progress={row}
-                  state={chapterCardState(row, activeRun)}
+                  state={chapterCardState(operator && !row.unlocked ? { ...row, unlocked: true } : row, activeRun)}
                   skills={skills}
                   rewardHints={rewardHints}
                   recommended={recommendation?.chapterId === chapter.id}

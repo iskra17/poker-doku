@@ -10,6 +10,7 @@ import { setMusicScene } from '@/lib/sound/music-manager';
 import { drillPerfectCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
 import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
 import { useGameStore } from '@/lib/store/game-store';
+import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
@@ -44,6 +45,8 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
 
   const visible = !!run && !run.live?.roomId;
   const ended = run?.phase === 'ended';
+  // 운영자 모드 — 현재 스텝을 무적으로 건너뛰는 [⏭ 스킵] (서버가 operator capability를 다시 검사한다)
+  const operator = useOperatorMode();
   const passed = run?.result?.passed ?? false;
   const isMobile = useIsMobile();
 
@@ -110,6 +113,17 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             </div>
             <div className="flex items-center gap-2 text-[10px] text-ink-dim">
               <span aria-label="진행">{Math.min(run.stepIndex + 1, run.stepCount)}/{run.stepCount}</span>
+              {operator && run.phase !== 'ended' && (
+                <button
+                  type="button"
+                  onClick={() => void advance('skip')}
+                  disabled={pending}
+                  title="운영자 — 이 단계를 무적으로 건너뛰기"
+                  className="rounded-lg border border-gilded/50 bg-gilded/15 px-2 py-1 font-bold text-gilded disabled:opacity-50"
+                >
+                  ⏭ 스킵
+                </button>
+              )}
               {run.phase !== 'ended' && (
                 <button
                   type="button"

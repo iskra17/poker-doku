@@ -56,6 +56,11 @@ export interface StoryLiveAdapterPort {
   resume(profileId: string, runId: string): LiveCommandResult;
   /** false = 방을 아직 닫을 수 없음(정산 미해결) — 런을 지우지 말고 재시도 안내 */
   abandon(profileId: string): boolean;
+  /**
+   * 운영자 스킵 — 라이브 스텝을 "목표 전부 달성"으로 즉시 끝낸다. 'finished'면 방을 해체하고 onStepFinished를
+   * **동기** 호출한 뒤다(코디네이터가 그 안에서 다음 스텝으로 옮긴다). 'busy'는 정산 미해결로 방을 닫지 못한 경우.
+   */
+  forceFinish(profileId: string): 'finished' | 'no-session' | 'busy';
   phase(profileId: string): 'live-hold' | 'live-play' | null;
   view(profileId: string): StoryLiveView | null;
   bindEvents(events: StoryLiveEvents): void;
@@ -173,6 +178,11 @@ export interface StoryRunCoordinatorDeps {
   maxRetries?: number;
   /** 재출제 전에 [다시 풀기]/[넘어가기] 오퍼를 낼지 (기본 true, false면 자동 재출제 — 롤백 스위치) */
   retryOffer?: boolean;
+}
+
+/** 소켓 계층이 접속 시 판정한 권한 — operator면 잠긴 챕터 시작·`target:'skip'` 허용 */
+export interface StoryCommandOptions {
+  operator?: boolean;
 }
 
 export type CoordinatorResult<T = undefined> =
@@ -396,7 +406,12 @@ export class StoryRunCoordinator {
    * 챕터 시작. mode 'exam'(실력 확인)은 미완료 챕터에서만 — 드릴 세트가 있어야 하고, 씬·레슨·라이브 스텝은
    * enterStep이 건너뛴다. 이미 완료한 챕터는 [다시](full)로만 재주행한다.
    */
-  start(profileId: string, chapterId: ChapterId, mode: StoryRunMode = 'full'): CoordinatorResult<{ runId: string }> {
+  start(
+    profileId: string,
+    chapterId: ChapterId,
+    mode: StoryRunMode = 'full',
+    options: StoryCommandOptions = {},
+  ): CoordinatorResult<{ runId: string }> {
     if (this.runs.has(profileId)) {
       return { ok: false, code: 'story-busy', message: '진행 중인 챕터가 있어요. 이어서 하거나 포기한 뒤 시작할 수 있어요.' };
     }
@@ -405,7 +420,8 @@ export class StoryRunCoordinator {
       return { ok: false, code: 'story-locked', message: '없는 챕터예요.' };
     }
     const completed = this.completedSet(this.deps.repository.listProgress(profileId));
-    if (!isChapterUnlocked(chapter, completed)) {
+    // 운영자는 잠긴 챕터도 바로 연다 (QA·검수 경로 — 해금 그래프는 그대로, 권한만 우회)
+    if (!options.operator && !isChapterUnlocked(chapter, completed)) {
       return { ok: false, code: 'story-locked', message: '아직 열리지 않은 챕터예요. 이전 챕터를 먼저 끝내 주세요.' };
     }
     if (mode === 'exam') {
@@ -524,7 +540,13 @@ export class StoryRunCoordinator {
     return { ok: true, value: { runId } };
   }
 
-  advance(profileId: string, request: StoryAdvanceRequest): CoordinatorResult {
+  advance(profileId: string, request: StoryAdvanceRequest, options: StoryCommandOptions = {}): CoordinatorResult {
+    if (request.target === 'skip') {
+      if (!options.operator) {
+        return { ok: false, code: 'action-rejected', message: '건너뛰기는 운영자만 쓸 수 있어요.' };
+      }
+      return this.skipStep(profileId, request);
+    }
     const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
     if (!checked.ok) return checked;
     const run = checked.value;
@@ -570,6 +592,65 @@ export class StoryRunCoordinator {
     }
     if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
     return { ok: true, value: undefined };
+  }
+
+  /**
+   * 운영자 스킵(무적) — 현재 스텝을 "다 한 것"으로 치고 다음 스텝으로. 씬·레슨은 그냥 넘기고, 드릴 세트는 남은/틀린
+   * 슬롯을 전부 첫 시도 정답(힌트 없음)으로 채워 세트를 닫으며, 라이브 스텝은 어댑터가 목표 전부 달성으로 방을 해체한다.
+   * 결산 스텝이면 결산을 확정한다(보상 지급 포함 — 실제 완주와 같은 경로).
+   */
+  private skipStep(profileId: string, request: StoryAdvanceRequest): CoordinatorResult {
+    const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
+    if (!checked.ok) return checked;
+    const run = checked.value;
+    const step = run.chapter.steps[run.stepIndex];
+    switch (step.kind) {
+      case 'scene':
+      case 'lesson':
+        this.enterStep(run, run.stepIndex + 1);
+        break;
+      case 'drill-set': {
+        const drill = run.drill;
+        if (drill) this.forceDrillSet(run, drill);
+        else this.enterStep(run, run.stepIndex + 1);
+        break;
+      }
+      case 'practice-table':
+      case 'sparring': {
+        const forced = this.liveAdapter?.forceFinish(profileId) ?? 'no-session';
+        if (forced === 'busy') {
+          return { ok: false, code: 'server-error', message: '테이블 정리를 아직 마치지 못했어요. 잠시 후 다시 시도해 주세요.' };
+        }
+        // 'finished'면 어댑터가 onStepFinished → completeLiveStep으로 이미 다음 스텝에 들어가고 emit까지 끝났다
+        if (forced === 'finished') return { ok: true, value: undefined };
+        this.enterStep(run, run.stepIndex + 1);
+        break;
+      }
+      case 'result':
+        this.finishRun(run);
+        this.deps.emit(profileId, this.buildView(run));
+        return { ok: true, value: undefined };
+    }
+    if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
+    return { ok: true, value: undefined };
+  }
+
+  /** 드릴 세트 강제 완료 — 아직 안 푼/틀린 슬롯을 첫 시도 정답으로 채우고 세트를 닫는다(퍼펙트 세트로 집계) */
+  private forceDrillSet(run: StoryRun, drill: DrillSetState): void {
+    drill.slots.forEach((_, slotIndex) => {
+      const existing = drill.outcomes.get(slotIndex);
+      if (existing?.firstCorrect && existing.finallyCorrect && !existing.hintUsed) return;
+      if (!existing) {
+        drill.answered += 1;
+        drill.correct += 1;
+      } else if (!existing.finallyCorrect) {
+        drill.correct += 1;
+      }
+      drill.outcomes.set(slotIndex, { firstCorrect: true, finallyCorrect: true, hintUsed: false, attempts: existing?.attempts ?? 1 });
+    });
+    drill.current = null;
+    drill.stage = 'first';
+    this.finalizeSet(run, drill);
   }
 
   /** 선택지 — 정답 없음. 현재 씬에 존재하는 선택지/옵션이어야 하고, 플래그는 결산 때 한꺼번에 영속된다. */

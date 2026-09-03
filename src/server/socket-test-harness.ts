@@ -46,7 +46,7 @@ import type {
 export interface ConnectedTestClient {
   socket: PokerClientSocket;
   playerId: string;
-  sessionCapabilities: { createTournament: boolean };
+  sessionCapabilities: { createTournament: boolean; operator: boolean };
   initialProgression: ProgressionSnapshot;
   arenaReplays: ArenaStateReplay[];
   arenaMatches: Array<{ matchId: string; training: boolean }>;
@@ -69,6 +69,8 @@ export interface SocketTestHarness {
   progressionService: ProgressionService;
   grantProgressionItem: (profileId: string, itemId: string) => void;
   grantTournamentOperator: (profileId: string) => void;
+  /** 운영자 capability(operator) 부여 — 스토리 스킵·잠긴 챕터 시작 */
+  grantOperator: (profileId: string) => void;
   profileManager: ProfileManager;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
@@ -139,6 +141,7 @@ export async function createSocketTestHarness(
   const progressionRepository = new ProgressionRepository(database);
   const progressionService = new ProgressionService(database, progressionRepository);
   const tournamentOperatorProfileIds = new Set<string>();
+  const operatorProfileIds = new Set<string>();
   const grantProgressionItem = (profileId: string, itemId: string): void => {
     const identity = database.db.prepare(
       'SELECT avatar_id FROM profiles WHERE id = ?',
@@ -238,6 +241,7 @@ export async function createSocketTestHarness(
     sngRetentionMs: options.sngRetentionMs,
     economy: economyRuntime,
     tournamentOperatorProfileIds,
+    operatorProfileIds,
     progressionService,
     persistentRuntimeEnabled: options.persistentRuntimeEnabled,
     persistentTournamentRegistration:
@@ -314,6 +318,7 @@ export async function createSocketTestHarness(
     progressionService,
     grantProgressionItem,
     grantTournamentOperator: profileId => tournamentOperatorProfileIds.add(profileId),
+    grantOperator: profileId => operatorProfileIds.add(profileId),
     profileManager,
     createProfile,
     recoverProfile,
@@ -348,7 +353,7 @@ export async function createSocketTestHarness(
           reject(error);
         };
         let playerId: string | undefined;
-        let sessionCapabilities: { createTournament: boolean } | undefined;
+        let sessionCapabilities: { createTournament: boolean; operator: boolean } | undefined;
         let initialProgression: ProgressionSnapshot | undefined;
         const arenaReplays: ArenaStateReplay[] = [];
         const arenaMatches: Array<{ matchId: string; training: boolean }> = [];

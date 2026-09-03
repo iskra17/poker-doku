@@ -292,4 +292,32 @@ describe('story socket events', () => {
     expect(h.runtime.storyProgress(profile.profile.id)?.activeRun).toBeNull();
     expect(await withAck(done => replacement.socket.emit('abandon-story', { runId }, done))).toMatchObject({ ok: false, code: 'story-no-run' });
   });
+  it('operator capability gates story skip and locked-chapter start (harness set → session.capabilities.operator)', async () => {
+    const { harness: h, client } = await setup();
+    expect(client.sessionCapabilities.operator).toBe(false);
+    const started = await withAck<{ runId: string }>(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01' }, done));
+    expect(started.ok).toBe(true);
+    const runId = started.ok ? started.data!.runId : '';
+    const denied = await withAck(done => client.socket.emit('story-advance', { runId, expectedStepIndex: 0, target: 'skip' }, done));
+    expect(denied).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(await withAck(done => client.socket.emit('abandon-story', { runId }, done))).toMatchObject({ ok: true });
+
+    // 같은 프로필에 운영자 권한을 주고 다시 접속하면 capability가 켜지고 잠긴 챕터·스킵이 열린다
+    const operatorProfile = await h.createProfile();
+    h.grantOperator(operatorProfile.profile.id);
+    const operator = await h.connect('token-operator', { profileCookie: operatorProfile.cookie });
+    expect(operator.sessionCapabilities.operator).toBe(true);
+    const updates = collect<StoryRunView>(operator, 'story-update');
+    const locked = await withAck<{ runId: string }>(done => operator.socket.emit('start-story-chapter', { chapterId: 'act1-ch02' }, done));
+    expect(locked.ok).toBe(true);
+    await sleep(20);
+    const first = updates.at(-1)!;
+    expect(first).toMatchObject({ chapterId: 'act1-ch02', stepIndex: 0, phase: 'scene' });
+    const skipped = await withAck(done => operator.socket.emit('story-advance', { runId: first.runId, expectedStepIndex: first.stepIndex, target: 'skip' }, done));
+    expect(skipped).toMatchObject({ ok: true });
+    await sleep(20);
+    expect(updates.at(-1)!.stepIndex).toBe(first.stepIndex + 1);
+    expect(h.recentEvents().some(event => event.type === 'story-step' && (event.data as { target?: string }).target === 'skip')).toBe(true);
+    operator.socket.disconnect();
+  });
 });

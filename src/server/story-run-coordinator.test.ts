@@ -635,6 +635,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
   let events: StoryLiveEvents | null = null;
   const enters: LiveEnterInput[] = [];
   const resumes: string[] = [];
+  const forced: number[] = [];
   let state: FakeLiveState | null = null;
   const adapter: StoryLiveAdapterPort = {
     bindEvents: bound => { events = bound; },
@@ -653,6 +654,15 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
       if (options.abandonOk && !options.abandonOk()) return false;
       state = null;
       return true;
+    },
+    forceFinish: () => {
+      if (!state) return 'no-session';
+      if (options.abandonOk && !options.abandonOk()) return 'busy';
+      const finished = state;
+      state = null;
+      forced.push(finished.stepIndex);
+      events?.onStepFinished(finished.profileId, finished.runId, liveSummary({ handsPlayed: 0, netBB: 0 }));
+      return 'finished';
     },
     phase: () => (state ? (state.held ? 'live-hold' : 'live-play') : null),
     view: () => (state
@@ -676,6 +686,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
     adapter,
     enters,
     resumes,
+    forced,
     hold: () => { if (state) state.held = true; events?.onLiveChanged(state!.profileId); },
     finish: (summary: LiveStepSummary) => {
       const finished = state!;
@@ -805,5 +816,76 @@ describe('StoryRunCoordinator live steps (adapter port)', () => {
     expect(kinds.has('practice-table')).toBe(false);
     expect(kinds.has('sparring')).toBe(false);
     expect(ctx.latest().result?.live).toBeNull();
+  });
+});
+
+describe('StoryRunCoordinator operator skip', () => {
+  it("rejects target 'skip' without the operator flag and leaves the step untouched", () => {
+    const ctx = setup();
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    const view = ctx.latest();
+    const denied = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'skip' });
+    expect(denied).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(ctx.latest().stepIndex).toBe(view.stepIndex);
+  });
+
+  it('lets an operator start a locked chapter (non-operator still gets story-locked)', () => {
+    const ctx = setup();
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch02')).toMatchObject({ ok: false, code: 'story-locked' });
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch02', 'full', { operator: true }).ok).toBe(true);
+    expect(ctx.latest().chapterId).toBe('act1-ch02');
+  });
+
+  it('skips every step kind — drill set becomes a perfect set, live steps are force-finished, result grants the pass', () => {
+    const ctx = setup();
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    const kinds: string[] = [];
+    for (let guard = 0; guard < 20 && ctx.latest().phase !== 'ended'; guard++) {
+      const view = ctx.latest();
+      kinds.push(view.stepKind);
+      const skipped = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'skip' }, { operator: true });
+      expect(skipped.ok).toBe(true);
+    }
+    const ended = ctx.latest();
+    expect(ended.phase).toBe('ended');
+    expect(kinds).toEqual(expect.arrayContaining(['scene', 'drill-set', 'practice-table', 'sparring', 'result']));
+    expect(fake.forced.length).toBe(2);
+    expect(ended.result?.passed).toBe(true);
+    expect(ended.result?.drill.perfect).toBe(true);
+    expect(ended.result?.drill.finalCorrect).toBe(ended.result?.drill.slots);
+    expect(ended.result?.live?.objectives.every(objective => objective.achieved)).toBe(true);
+    expect(ctx.repository.listProgress(PROFILE).find(row => row.chapterId === 'act1-ch01')?.completions).toBe(1);
+  });
+
+  it('skipping a drill set midway keeps it perfect and moves on (wrong answers are overwritten)', () => {
+    const ctx = setup();
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01', 'exam').ok).toBe(true);
+    expect(ctx.latest().phase).toBe('drill');
+    expect(answerCurrent(ctx, false).ok).toBe(true);
+    const view = ctx.latest();
+    const skipped = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'skip' }, { operator: true });
+    expect(skipped.ok).toBe(true);
+    expect(ctx.latest().stepKind).toBe('result');
+    const finished = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: ctx.latest().stepIndex, target: 'skip' }, { operator: true });
+    expect(finished.ok).toBe(true);
+    expect(ctx.latest().phase).toBe('ended');
+    expect(ctx.latest().result?.drill.perfect).toBe(true);
+    expect(ctx.latest().result?.passed).toBe(true);
+  });
+
+  it('reports server-error when the adapter cannot close the live room yet', () => {
+    const ctx = setup();
+    let canClose = false;
+    const fake = makeFakeAdapter({ abandonOk: () => canClose });
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    const live = driveToLive(ctx);
+    const busy = ctx.coordinator.advance(PROFILE, { runId: live.runId, expectedStepIndex: live.stepIndex, target: 'skip' }, { operator: true });
+    expect(busy).toMatchObject({ ok: false, code: 'server-error' });
+    expect(ctx.latest().stepIndex).toBe(live.stepIndex);
+    canClose = true;
+    expect(ctx.coordinator.advance(PROFILE, { runId: live.runId, expectedStepIndex: live.stepIndex, target: 'skip' }, { operator: true }).ok).toBe(true);
+    expect(ctx.latest().stepIndex).toBe(live.stepIndex + 1);
   });
 });
