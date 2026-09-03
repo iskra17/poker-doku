@@ -7,8 +7,8 @@
 
 | 항목 | 상태 |
 |---|---|
-| main | `d75c735` = origin/main(푸시 완료). 브랜치 `feat/story-video-batch3`는 병합 끝(같은 커밋). 이후 아라 Lv15 CG 보정 커밋이 붙을 수 있다(§6) |
-| 배포 | Fly **v81** = `bd7cdd4`(2026-09-04). 머신 `48ed666a50d2e8`(nrt, 1대 고정), https://poker-doku.fly.dev |
+| main | `4954439` = origin/main(푸시 완료) — 영상 3차 배치 + 아라 Lv15 CG 보정까지 |
+| 배포 | Fly **v82** = `4954439`(2026-09-04, 아라 Lv15 보정 포함). 머신 `48ed666a50d2e8`(nrt, 1대 고정), https://poker-doku.fly.dev |
 | 최신 작업 | 수련 스토리 모드 1·2막(Ch1~6) 완성, 보상·연출·BGM·운영자 모드, **컷신 영상 43클립 전부 배치**, CH4~6 스파링 실주행 완료 |
 | 직전 인계 | `docs/superpowers/handoffs/2026-09-04-video-batch3-ch5-handoff.md`(8차) ← `2026-09-04-operator-video-handoff.md`(7차) ← `2026-09-03-act2-video-handoff.md`(5차). 셋 다 유효 |
 | 기획서 | `docs/spec-story-mode-2026-09.md`(Part A~V), `docs/spec-mtt-2026-07-23.md` |
@@ -75,7 +75,7 @@ Claude가 쓰던 메모리는 평문 마크다운이다. 인덱스 `C:\Users\JEO
 
 ## 7. 다음 순서 (우선순위)
 
-1. **아라 Lv15 「야시장」 CG 보정 — 완료(브랜치 `fix/ara-lv15-skewer` → main)**: 사용자 지적(꼬치를 고기 부분이 아니라 손잡이를 쥐게)으로 gpt-image-2 edit 모드 2라운드(6안) 중 b3 채택 → `public/assets/characters/ara/scene-lv15.webp` 교체 → `H3_SEED_OFFSET=2000 v3`로 영상 재생성·인코딩. 후보 원본은 `poker-doku-art/story-rewards/out/fix/ara-scene-lv15-{a,b}{1,2,3}.png`. **배포는 사용자 지시 대기**(v81에는 구 CG·영상).
+1. **아라 Lv15 「야시장」 CG 보정 — 완료(브랜치 `fix/ara-lv15-skewer` → main)**: 사용자 지적(꼬치를 고기 부분이 아니라 손잡이를 쥐게)으로 gpt-image-2 edit 모드 2라운드(6안) 중 b3 채택 → `public/assets/characters/ara/scene-lv15.webp` 교체 → `H3_SEED_OFFSET=2000 v3`로 영상 재생성·인코딩 → **Fly v82 배포 완료**. 후보 원본은 `poker-doku-art/story-rewards/out/fix/ara-scene-lv15-{a,b}{1,2,3}.png`(다른 안을 원하면 교체).
 2. 사용자 실기기 피드백 반영: 영상 43클립 재생·씬 플레이어 라인 CG 전환·BGM.
 3. CH6 보스 격파 컷인 설계 판단(8차 인계 §2-3 — 프리미엄 3벳 "기회"가 거의 안 와 컷인이 사실상 안 뜬다). 파란띠 승급 연출 실주행(2막 3챕터 완주 프로필 필요).
 4. 3막 데이터(비비안·클로이·엘레나 담당, 가면 봇 identity 분리 선행, 비비안/엘레나 의상·해설 말투), 하드 모드, 실패 씬(`failScene`) 재생, 라이브 리딩 퀴즈·봇 속마음(Ch7). 미구현 목록은 AGENTS.md 「미구현」.
