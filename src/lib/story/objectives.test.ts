@@ -912,3 +912,60 @@ describe('2막 목표 판정', () => {
     expect(evaluateObjective(objective('no-junk-4bet'), folds, true).achieved).toBe(true);
   });
 });
+
+describe('헤즈업(2인) 포지션 라벨 — Ch6 보스 팽팽', () => {
+  // positionLabels(2)는 'BTN/SB'·'BB'라 OPEN_THRESHOLDS에 없다. 3벳 3구간 사실은 포지션 무관이어야 Ch6 primary가 헤즈업에서 집계된다.
+  it('BB에서 BTN/SB 오픈을 맞은 프리미엄은 3벳 기회로 잡힌다', () => {
+    const faced = (hole: string, kind: 'raise' | 'call') => makeRecord({
+      seats: [{ id: 'hero', hole, position: 'BB' }, { id: 'paeng', hole: '9s 9c', position: 'BTN/SB' }],
+      actions: [
+        ['preflop', 'paeng', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'paeng', 'raise', 150],
+        ['preflop', 'hero', kind, kind === 'raise' ? 450 : 100],
+        ...(kind === 'raise' ? ([['preflop', 'paeng', 'fold', 0], ['preflop', 'hero', 'uncalled-return', 300]] as ActionTuple[]) : []),
+      ],
+      winners: [{ playerId: 'hero', amount: 300 }],
+    });
+    const threeBet = deriveHeroHandFacts(faced('Ks Kh', 'raise'), 'hero');
+    expect(threeBet.facedOpen).toBe(true);
+    expect(threeBet.premiumThreeBetOpportunity).toBe(true);
+    expect(threeBet.premiumThreeBet).toBe(true);
+    expect(deriveHeroHandFacts(faced('Ks Kh', 'call'), 'hero').premiumThreeBet).toBe(false);
+  });
+
+  it('BTN/SB에서 오픈이 3벳을 맞으면 3구간이 잡히고, 오픈/스틸 기회는 헤즈업 라벨이라 세지 않는다', () => {
+    const vsThreeBet = (hole: string, kind: 'fold' | 'raise') => makeRecord({
+      seats: [{ id: 'hero', hole, position: 'BTN/SB' }, { id: 'paeng', hole: 'Qs Qc', position: 'BB' }],
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'paeng', 'post-bb', 50],
+        ['preflop', 'hero', 'raise', 150],
+        ['preflop', 'paeng', 'raise', 450],
+        ['preflop', 'hero', kind, kind === 'raise' ? 1000 : 0],
+        ...(kind === 'raise' ? ([['preflop', 'paeng', 'fold', 0], ['preflop', 'hero', 'uncalled-return', 550]] as ActionTuple[]) : []),
+        ...(kind === 'fold' ? ([['preflop', 'paeng', 'uncalled-return', 300]] as ActionTuple[]) : []),
+      ],
+      winners: [{ playerId: kind === 'fold' ? 'paeng' : 'hero', amount: 300 }],
+    });
+    const fold = deriveHeroHandFacts(vsThreeBet('Ad Tc', 'fold'), 'hero');
+    expect(fold.facedThreeBet).toBe(true);
+    expect(fold.junkVsThreeBet).toBe(true);
+    expect(fold.foldedVsThreeBet).toBe(true);
+    expect(fold.openRaiseOpportunity).toBe(false);
+    expect(fold.stealOpportunity).toBe(false);
+    const fourBet = deriveHeroHandFacts(vsThreeBet('Ad Tc', 'raise'), 'hero');
+    expect(fourBet.junkFourBet).toBe(true);
+
+    // Ch6 primary 3종은 헤즈업 사실만으로 판정된다
+    const tally = tallyOf({ record: vsThreeBet('Ad Tc', 'fold') }, { record: vsThreeBet('Ad Tc', 'fold') });
+    const results = evaluateObjectives({
+      primary: [
+        { id: 'fold-junk', kind: 'fold-vs-3bet-junk', label: '폴드', minRatio: 0.7 },
+        { id: 'no-4bet', kind: 'no-junk-4bet', label: '4벳 0', maxCount: 0 },
+      ],
+      bonus: [],
+    }, tally);
+    expect(results.map(view => [view.id, view.achieved])).toEqual([['fold-junk', true], ['no-4bet', true]]);
+  });
+});
