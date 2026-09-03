@@ -389,7 +389,9 @@ npx tsc --noEmit
     좌측/하단과 비충돌) + `lib/story/story-cut-ins.ts`(퍼펙트 = `story-drill-result` perfect 이벤트, 미션 클리어/보스 격파 =
     `minHands` 이후 primary 전부 achieved·boss 라인업, 스텝당 1회). 영상 계약 `assets/story-video.ts`(`VIDEO_AVAILABLE` 비면 정지 CG) +
     `VideoCutscene`(muted·playsInline·autoPlay·loop, onError/1.5초 canplay 폴백) — `CgStage scene.video` 슬롯, 보상 CG는 아이템 id,
-    인연 씬은 `<character>-scene-lv<N>` 파일명. **파일럿 3클립(2026-09-03) + 2차 6클립(2026-09-04)** — `VIDEO_AVAILABLE`에 보상 CG 7종 전부(백띠·노란띠·파란띠 승급, 기다림의 뜰, 드라코·팽팽 보스, 아라 승리)와 사쿠라·비비안 Lv5,
+    인연 씬은 `<character>-scene-lv<N>` 파일명, **챕터 씬 CG는 `scene-<SceneCgId>`**(`sceneCgVideoId` — ScenePlayer 라인 CG와 기록실
+    SCENE CG 뷰어가 같은 규약으로 `VideoCutscene`을 끼운다, 3차 배치 2026-09-04). **43클립 전부 배치**(파일럿 3 + 2차 6 + 3차 34 —
+    보상 CG 7종·인연 씬 24장·씬 CG 12장) — 새 CG를 추가하면 `VIDEO_AVAILABLE` 등록 전까지 정지 CG로 폴백한다.
     생성은 로컬 ComfyUI + MiniMax H3 fl2va(first_frame=last_frame=CG → 이음새 없는 4.4초 루프, Wan 2.2 다운로드 불필요) —
     절차·러너 `scripts/art/story-video.md`·`story-video-h3.py`. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
 - **운영자 모드 (QA·검수용 비밀 경로, 2026-09-03)**: 서버 세션 capability `operator`가 단일 권한 소스 —
@@ -602,10 +604,11 @@ npx tsc --noEmit
   토너먼트 탭, wallet MTT(토너 단위 에스크로+다인 페이아웃), 레이트 레지/리엔트리, ops_event
   화이트리스트·table_hand.tournament_id, 9-max UI 좌표, 봇 AI 대사 토너 단위 상한
   (v1은 practice 프리즈아웃까지 구현 — 위 MTT 섹션)
-- 수련 스토리 Phase 3 이후 — 3~4막 데이터(2막 Ch4~6은 2026-09-03 배치, CH4·CH6 스파링은 2026-09-04 실주행 확인·CH5 미확인), 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
+- 수련 스토리 Phase 3 이후 — 3~4막 데이터(2막 Ch4~6은 2026-09-03 배치, CH4~6 스파링은 2026-09-04 실주행 확인 — CH5는 primary
+  조기 종료·「MISSION CLEAR」 컷인·S등급 보상 지급까지), 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·봇 속마음 노출(Ch7,
   `exposeBotThoughts`)·가면 봇 identity 분리, 실패 씬(`failScene`) 재생, 하드 모드, 스토리 XP 카탈로그
-  아이템(v13 뷰 확장 — v32는 스토리 보상 카탈로그만 우회), 파트너별 Ch1 대사 변주, 2막 라이브 스텝의 질문권(L4 힌트)·비비안/엘레나 의상·
-  나머지 CG 영상(보상 CG 7종·사쿠라/비비안 Lv5는 배치됨 — 남은 인연 씬 22장·씬 CG 12장, 절차는 `scripts/art/story-video.md`).
+  아이템(v13 뷰 확장 — v32는 스토리 보상 카탈로그만 우회), 파트너별 Ch1 대사 변주, 2막 라이브 스텝의 질문권(L4 힌트)·비비안/엘레나 의상
+  (CG 영상은 43클립 전부 배치 완료 — 새 CG가 생기면 `scripts/art/story-video.md` 절차로 클립을 추가한다).
 - `/healthz`와 보호된 debug-log endpoint 외에 별도 어드민 UI/대시보드는 없다. 방 운영 가드는 최소한만: 방 수 상한(MAX_ROOMS=30),
   휴먼 0명 유저 방 10분 후 자동 정리(기본 방 4개는 persistent로 제외)
 - 영속성 없음 — 전부 인메모리, 서버 재시작 시 초기화. 단일 인스턴스 전제.

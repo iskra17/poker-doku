@@ -5,6 +5,7 @@ import BondSceneModal from '@/components/characters/BondSceneModal';
 import CgStage, { type CgStageScene } from '@/components/characters/CgStage';
 import RewardCutscene from '@/components/story/RewardCutscene';
 import Modal from '@/components/ui/Modal';
+import { getStoryVideo, sceneCgVideoId } from '@/lib/assets/story-video';
 import { getCharacterById } from '@/lib/characters';
 import type { BondScene } from '@/lib/characters/bond-scenes';
 import { GALLERY_SECTION_LABEL, GALLERY_SECTIONS, type GalleryEntry, type GallerySection } from '@/lib/gallery/catalog';
@@ -56,7 +57,19 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
     } else if (entry.section === 'cg' && entry.cutscene) {
       setCutscene(entry.cutscene);
     } else if (entry.section === 'cg' && entry.sceneCg && entry.art) {
-      setScene({ id: entry.id, art: entry.art, alt: entry.name, name: '', color: '#ffd76a', kicker: 'SCENE CG', title: entry.name, caption: entry.caption ?? '', hint: '탭하면 닫혀요' });
+      setScene({
+        id: entry.id,
+        art: entry.art,
+        alt: entry.name,
+        name: '',
+        color: '#ffd76a',
+        kicker: 'SCENE CG',
+        title: entry.name,
+        caption: entry.caption ?? '',
+        hint: '탭하면 닫혀요',
+        // 챕터 씬 CG 앰비언트 루프 — 3차 배치(2026-09-04). 미배치면 null → 정지 CG
+        video: entry.sceneCgId ? getStoryVideo(sceneCgVideoId(entry.sceneCgId)) : null,
+      });
     } else if (entry.section === 'outfit' && entry.art) {
       const character = entry.characterId ? getCharacterById(entry.characterId) : null;
       setScene({

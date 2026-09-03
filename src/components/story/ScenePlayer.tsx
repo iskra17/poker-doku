@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { animate, AnimatePresence, motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
+import VideoCutscene from '@/components/characters/VideoCutscene';
 import { getCharacterById } from '@/lib/characters';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
 import { getSceneCg } from '@/lib/assets/story-cgs';
+import { getStoryVideo, sceneCgVideoId } from '@/lib/assets/story-video';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
@@ -65,6 +67,13 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
   const flashRef = useRef<HTMLDivElement>(null);
   // 라인 CG — 이 라인에서만 풀스크린(bg처럼 누적하지 않음). 미배치 id는 null → 스프라이트 그대로.
   const sceneCg = line?.cg ? getSceneCg(line.cg) : null;
+  // 씬 CG 앰비언트 루프(3차 배치) — CgStage와 같은 계약: 파일 없음/디코딩 실패/1.5초 내 canplay 미도달이면 그 CG는 정지 이미지,
+  // 다른 CG 라인으로 바뀌면 다시 시도. reduced-motion은 영상을 마운트하지 않는다.
+  const sceneCgVideo = sceneCg ? getStoryVideo(sceneCgVideoId(sceneCg.id)) : null;
+  const [cgVideoFailedFor, setCgVideoFailedFor] = useState<string | null>(null);
+  const sceneCgId = sceneCg?.id ?? null;
+  const onCgVideoFallback = useCallback(() => setCgVideoFailedFor(sceneCgId), [sceneCgId]);
+  const useCgVideo = !!sceneCgVideo && !reduced && cgVideoFailedFor !== sceneCgId;
 
   // 라인 연출 — 라인 객체(정적 데이터)가 바뀔 때 1회. 흔들림/플래시/줌은 framer `animate`로 DOM에 직접(setState 없음),
   // reduced-motion이면 효과음만. 로그/자동 토글은 라인이 안 바뀌므로 재발화하지 않는다.
@@ -157,7 +166,24 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
       </AnimatePresence>
       {/* 씬 CG — 이 라인에서만, 느린 숨쉬기 줌(reduced-motion 정지). 스프라이트 컬럼은 CG 동안 비운다 */}
       <AnimatePresence initial={false}>
-        {sceneCg && (
+        {sceneCg && useCgVideo && sceneCgVideo ? (
+          <motion.div
+            key={`${sceneCg.src}#video`}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5 }}
+            className="pointer-events-none absolute inset-0 -z-10 select-none"
+          >
+            <VideoCutscene
+              video={sceneCgVideo}
+              poster={sceneCg.src}
+              alt={sceneCg.title}
+              onFallback={onCgVideoFallback}
+              className="block h-full w-full object-cover"
+            />
+          </motion.div>
+        ) : sceneCg ? (
           <motion.img
             key={sceneCg.src}
             src={sceneCg.src}
@@ -169,7 +195,7 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
             transition={{ opacity: { duration: 0.5 }, scale: { duration: 8, ease: 'linear' } }}
             className="pointer-events-none absolute inset-0 -z-10 h-full w-full select-none object-cover"
           />
-        )}
+        ) : null}
       </AnimatePresence>
       {(background.src || sceneCg) && <div className="pointer-events-none absolute inset-0 -z-10 bg-gradient-to-t from-abyss/80 via-abyss/25 to-transparent" aria-hidden />}
       {/* 플래시 오버레이 — effect 'flash'가 opacity를 직접 애니메이션 */}

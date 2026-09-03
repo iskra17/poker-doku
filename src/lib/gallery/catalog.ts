@@ -7,7 +7,7 @@
  */
 import { getCharacterArt } from '@/lib/assets/character-art';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
-import { getSceneCg, SCENE_CG_IDS, sceneCgChapterId } from '@/lib/assets/story-cgs';
+import { getSceneCg, SCENE_CG_IDS, sceneCgChapterId, type SceneCgId } from '@/lib/assets/story-cgs';
 import { getBondSceneArt, getBondScenes, isBondSceneUnlocked, type BondScene } from '@/lib/characters/bond-scenes';
 import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import { resolveTitle } from '@/lib/cosmetics/titles';
@@ -47,6 +47,8 @@ export interface GalleryEntry {
   cutscene?: StoryRewardCutsceneView;
   /** 씬 CG(챕터 완주 해금) — 뷰어는 CgStage 'SCENE CG' */
   sceneCg?: boolean;
+  /** 씬 CG 매니페스트 id — 뷰어가 `sceneCgVideoId`로 앰비언트 영상을 찾는다 */
+  sceneCgId?: SceneCgId;
   caption?: string;
 }
 
@@ -132,6 +134,7 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
       hint: `「${chapter?.title ?? chapterId}」 완주`,
       art: cg.src,
       sceneCg: true,
+      sceneCgId: id,
       caption: chapter?.title ?? '',
     });
   }
