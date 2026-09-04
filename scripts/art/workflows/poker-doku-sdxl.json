@@ -1,0 +1,179 @@
+{
+    "1":  {
+              "class_type":  "CheckpointLoaderSimple",
+              "inputs":  {
+                             "ckpt_name":  "animagine-xl-4.0-opt.safetensors"
+                         }
+          },
+    "2":  {
+              "class_type":  "LoadImage",
+              "inputs":  {
+                             "image":  "poker-doku-a1-20260905/sakura-face.png"
+                         }
+          },
+    "3":  {
+              "class_type":  "CLIPVisionLoader",
+              "inputs":  {
+                             "clip_name":  "CLIP-ViT-H-14-laion2B-s32B-b79K.safetensors"
+                         }
+          },
+    "4":  {
+              "class_type":  "IPAdapterModelLoader",
+              "inputs":  {
+                             "ipadapter_file":  "ip-adapter-plus-face_sdxl_vit-h.safetensors"
+                         }
+          },
+    "7":  {
+              "class_type":  "PrepImageForClipVision",
+              "inputs":  {
+                             "image":  [
+                                           "2",
+                                           0
+                                       ],
+                             "interpolation":  "LANCZOS",
+                             "crop_position":  "pad",
+                             "sharpening":  0.1
+                         }
+          },
+    "10":  {
+               "class_type":  "IPAdapterAdvanced",
+               "inputs":  {
+                              "model":  [
+                                            "1",
+                                            0
+                                        ],
+                              "ipadapter":  [
+                                                "4",
+                                                0
+                                            ],
+                              "image":  [
+                                            "7",
+                                            0
+                                        ],
+                              "weight":  0.35,
+                              "weight_type":  "linear",
+                              "combine_embeds":  "concat",
+                              "start_at":  0.0,
+                              "end_at":  0.75,
+                              "embeds_scaling":  "V only",
+                              "clip_vision":  [
+                                                  "3",
+                                                  0
+                                              ]
+                          }
+           },
+    "12":  {
+               "class_type":  "CLIPTextEncode",
+               "inputs":  {
+                              "text":  "A1 manifest supplies adult character and scene",
+                              "clip":  [
+                                           "1",
+                                           1
+                                       ]
+                          }
+           },
+    "13":  {
+               "class_type":  "CLIPTextEncode",
+               "inputs":  {
+                              "text":  "A1 manifest supplies negative prompt",
+                              "clip":  [
+                                           "1",
+                                           1
+                                       ]
+                          }
+           },
+    "14":  {
+               "class_type":  "EmptyLatentImage",
+               "inputs":  {
+                              "width":  832,
+                              "height":  1216,
+                              "batch_size":  1
+                          }
+           },
+    "15":  {
+               "class_type":  "KSampler",
+               "inputs":  {
+                              "model":  [
+                                            "10",
+                                            0
+                                        ],
+                              "seed":  270827201,
+                              "steps":  28,
+                              "cfg":  5.0,
+                              "sampler_name":  "euler_ancestral",
+                              "scheduler":  "normal",
+                              "positive":  [
+                                               "24",
+                                               0
+                                           ],
+                              "negative":  [
+                                               "24",
+                                               1
+                                           ],
+                              "latent_image":  [
+                                                   "14",
+                                                   0
+                                               ],
+                              "denoise":  1.0
+                          }
+           },
+    "16":  {
+               "class_type":  "VAEDecode",
+               "inputs":  {
+                              "samples":  [
+                                              "15",
+                                              0
+                                          ],
+                              "vae":  [
+                                          "1",
+                                          2
+                                      ]
+                          }
+           },
+    "17":  {
+               "class_type":  "SaveImage",
+               "inputs":  {
+                              "images":  [
+                                             "16",
+                                             0
+                                         ],
+                              "filename_prefix":  "poker-doku-library/a1-20260905/example"
+                          }
+           },
+    "20":  {
+               "class_type":  "LoadImage",
+               "inputs":  {
+                              "image":  "poker-doku-a1-20260905/pose-table.png"
+                          }
+           },
+    "23":  {
+               "class_type":  "ControlNetLoader",
+               "inputs":  {
+                              "control_net_name":  "controlnet-openpose-sdxl-1.0.safetensors"
+                          }
+           },
+    "24":  {
+               "class_type":  "ControlNetApplyAdvanced",
+               "inputs":  {
+                              "positive":  [
+                                               "12",
+                                               0
+                                           ],
+                              "negative":  [
+                                               "13",
+                                               0
+                                           ],
+                              "control_net":  [
+                                                  "23",
+                                                  0
+                                              ],
+                              "image":  [
+                                            "20",
+                                            0
+                                        ],
+                              "strength":  0.55,
+                              "start_percent":  0.0,
+                              "end_percent":  0.65
+                          }
+           }
+}

@@ -1,0 +1,35 @@
+{
+  "reviewer": "Codex agent visual review; final human approval pending",
+  "gate": "not_passed",
+  "approved_for_export": [],
+  "reason": "Sakura does not have four scenes satisfying intended direction/action. Elena also needs mature eye/jaw identity review against neutral.webp. Do not start bulk production from these settings.",
+  "definition": "review_candidate means useful for human comparison, not approved or a guaranteed scene pass. Preserve scene intent and all originals.",
+  "a1": [
+    {"scene":"sakura-card-sort","decision":"reject","candidates":[1,2],"reason":"Both rest head on arms; neither sorts cards."},
+    {"scene":"sakura-garden-walk","decision":"review_candidate","preferred":1,"reason":"Back/turn and full-body variation works. Gaze returns toward camera; cardigan/skirt become pink, flower ornament expands. Not faithful default outfit."},
+    {"scene":"sakura-garden-tea","decision":"review_candidate","preferred":1,"reason":"Right profile, cup and calm expression work. Cardigan becomes pink and hair ornament gains hanging decoration; cup stays below lips."},
+    {"scene":"sakura-resolve","decision":"reject","candidates":[1,2],"reason":"Frontal camera gaze instead of determined offscreen opponent gaze."},
+    {"scene":"sakura-table-review","decision":"reject","candidates":[1,2],"reason":"Frontal seated reading instead of over-the-shoulder review."},
+    {"scene":"sakura-evening-stroll","decision":"partial","preferred":2,"reason":"Full-body walking and river setting work, but left-facing instead of planned right profile; outfit colors drift."},
+    {"scene":"elena-snow-window","decision":"reject","candidates":[1,2],"reason":"Faces inside room away from window instead of looking outside."},
+    {"scene":"elena-cafe-tea","decision":"review_candidate","preferred":2,"reason":"Profile and cup gaze work; eyes/jaw look younger than canonical 27-year-old reference. Cup below lips and daytime background instead of rain."},
+    {"scene":"elena-coat-turn","decision":"reject","candidates":[1,2],"reason":"Frontal already-worn coat with hand at tie; not back-view putting on coat."},
+    {"scene":"elena-analysis","decision":"reject","candidates":[1,2],"reason":"Frontal composition/camera gaze, c2 partly downward, instead of side analytical gaze."},
+    {"scene":"elena-small-smile","decision":"reject","candidates":[1,2],"reason":"Camera gaze and youthful face instead of mature face looking to offscreen partner."},
+    {"scene":"elena-night-garden","decision":"review_candidate","preferred":1,"reason":"Profile, open-hand gesture, offscreen gaze and night garden work. Mature identity and hands need final human review; c2 lighting too bright."}
+  ],
+  "a1b": [
+    {"scene":"sakura-card-sort","decision":"partial","preferred":1,"reason":"Cards and spread hands now present; cream cardigan restored. Finger shape, absent pink neck ribbon, frontal/downward composition remain. No acceptance."},
+    {"scene":"sakura-resolve","decision":"reject","candidates":[1,2],"reason":"Still frontal camera gaze, hair/head silhouette and detached ornament artifacts; cream color alone does not fix scene."},
+    {"scene":"sakura-table-review","decision":"partial","preferred":2,"reason":"Over-shoulder composition and cream cardigan restored, but gaze looks back instead of at notebook. Do not rename as passing review action."},
+    {"scene":"elena-snow-window","decision":"review_candidate","preferred":1,"reason":"Now faces snow outside in profile. Hands are clasped rather than on sill; face is still younger than canonical reference."},
+    {"scene":"elena-coat-turn","decision":"partial","preferred":1,"reason":"Back-view coat and turn achieved, but coat already worn and raised hand reaches forward rather than gripping collar. Youthful face remains."},
+    {"scene":"elena-analysis","decision":"review_candidate","preferred":1,"reason":"Profile and eyes directed at chips improve original intent. Added hand-at-chin deviates from correction prompt; identity/prop review still pending."}
+  ],
+  "next_research_only": [
+    "Use approved nonfrontal references with canonical mature face proportions, rather than simply increasing face weight.",
+    "Author scene-specific body and hand control maps from vetted pose references; current 18-point skeleton does not constrain fingers or prop contact.",
+    "Separate identity, gaze and hand/prop acceptance. Do not infer success from model/CLIP score or image count.",
+    "No additional batch, model download, LoRA training, export or A2 production is authorized by this review file."
+  ]
+}
