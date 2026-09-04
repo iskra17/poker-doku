@@ -7,6 +7,7 @@ import {
   liveHintLevel,
   needsResumeFromLobby,
   formatObjectiveProgress,
+  formatObjectiveDetailProgress,
   objectiveHudLines,
   pendingInterrupt,
   practicePrompt,
@@ -14,6 +15,19 @@ import {
 } from './story-live-rules';
 import type { Interrupt, Step } from './types';
 import type { ObjectiveProgressView, StoryLiveView, StoryRunView } from './views';
+
+describe('상세 미션 진행도', () => {
+  it('실제 위반 횟수를 상한으로 잘라 버리지 않는다', () => {
+    expect(formatObjectiveDetailProgress({ progress: 2, target: 1 })).toBe('현재 2 · 기준 1');
+  });
+  it('0회 상한과 실제 위반 횟수도 보인다', () => {
+    expect(formatObjectiveDetailProgress({ progress: 1, target: 0 })).toBe('현재 1 · 기준 0');
+  });
+  it('비율과 판정 기준이 없는 목표를 구분한다', () => {
+    expect(formatObjectiveDetailProgress({ progress: 0.5, target: 0.7 })).toBe('현재 50% · 기준 70%');
+    expect(formatObjectiveDetailProgress({ progress: 0, target: null })).toBeNull();
+  });
+});
 
 function liveFixture(overrides: Partial<StoryLiveView> = {}): StoryLiveView {
   return {

@@ -148,6 +148,7 @@ export default function StoryOverlay() {
           )}
           <div className="absolute right-1 top-[4.5rem]">
             <ObjectiveHud
+              key={stepKey}
               tag={live?.tag ?? '대결'}
               handsPlayed={live?.handsPlayed ?? 0}
               maxHands={live?.maxHands ?? 0}

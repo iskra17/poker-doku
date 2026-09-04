@@ -35,7 +35,7 @@ const oddsCore: CoreBuilder = f => [
 const breakevenCore: CoreBuilder = f => [
   `팟 ${v(f, 'potChips')}은 벳을 넣기 전 금액이에요. 여기에 ${v(f, 'betChips')}을 벳하면 중앙은 ${v(f, 'potAfterBet')}이 돼요.`,
   `필요 폴드율 = ${v(f, 'betChips')} ÷ ${v(f, 'potAfterBet')} = ${v(f, 'breakeven')}%예요.`,
-  `상대가 그보다 자주 접으면 이 블러프는 카드와 상관없이 이득이에요.`,
+  `상대가 그보다 자주 폴드하면 이 블러프는 카드와 상관없이 이득이에요.`,
 ];
 
 const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({

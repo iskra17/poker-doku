@@ -1,4 +1,5 @@
 import { getCharacterById } from '../lib/characters';
+import { hasAwkwardPokerTerminology, POKER_TERMINOLOGY_RULE } from '../lib/characters/poker-terminology';
 import { BOT_PERSONALITIES } from '../lib/bot/personalities';
 import { cfg } from './game-config/live';
 
@@ -117,7 +118,8 @@ export class AIDialogue {
       `성격: ${character.personality}${personality ? ` (플레이 스타일: ${personality.style})` : ''}\n` +
       `말투 예시: ${styleHints}\n` +
       `규칙: 지금 상황에 대한 대사 한 줄만 출력한다. 반드시 한국어, 1문장, 45자 이내. ` +
-      `말투 예시의 어미/톤을 그대로 유지한다. 따옴표나 지문 없이 대사만. 이모지는 최대 1개.\n\n` +
+      `말투 예시의 어미/톤을 그대로 유지한다. 따옴표나 지문 없이 대사만. 이모지는 최대 1개.\n` +
+      `${POKER_TERMINOLOGY_RULE}\n\n` +
       `상황: ${situation}` +
       (recent.length > 0 ? `\n최근에 이미 한 말 (똑같이 반복 금지): ${recent.join(' | ')}` : '');
 
@@ -158,7 +160,7 @@ export class AIDialogue {
         .filter(Boolean)
         .join('');
       const line = text.trim().replace(/^["'「]|["'」]$/g, '');
-      if (!line || line.length > 80) return null;
+      if (!line || line.length > 80 || hasAwkwardPokerTerminology(line)) return null;
 
       this.noteLine(characterId, line);
       return line;

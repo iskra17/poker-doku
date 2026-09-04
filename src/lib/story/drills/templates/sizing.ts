@@ -116,7 +116,7 @@ const cbetTexture: GeneratedDrillDefinition = {
         texture: textureKo,
         size,
         villainName,
-        reason: texture === 'dry' ? '상대가 맞춘 게 적어서 작은 벳으로도 충분히 접혀요' : '드로우가 많아서 크게 받아야 값을 나쁘게 만들어요',
+        reason: texture === 'dry' ? '상대가 맞춘 게 적어서 작은 벳으로도 폴드를 유도할 수 있어요' : '드로우가 많아서 크게 받아야 값을 나쁘게 만들어요',
       } satisfies DrillFacts,
     };
   },
@@ -198,7 +198,7 @@ const riverValue: GeneratedDrillDefinition = {
         villainType: '스테이션',
         handKind: mode === 'value' ? '탑페어' : '에어(미스 드로우)',
         size,
-        reason: mode === 'value' ? '스테이션은 약한 핸드로도 콜하니까 크게 받아요' : '접지 않는 상대에게 블러프는 돈을 버리는 거예요',
+        reason: mode === 'value' ? '스테이션은 약한 핸드로도 콜하니까 크게 받아요' : '폴드하지 않는 상대에게 블러프는 돈을 버리는 거예요',
       } satisfies DrillFacts,
     };
   },

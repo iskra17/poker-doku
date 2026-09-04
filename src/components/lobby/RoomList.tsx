@@ -6,6 +6,7 @@ import { useGameStore, RoomInfo } from '@/lib/store/game-store';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
 import { SITOUT_MISSED_BB_LIMIT } from '@/server/sitout';
 import { useServerNow } from '@/lib/hooks/use-server-now';
+import { PUBLIC_MTT_ENABLED } from '@/lib/release-features';
 import Button from '../ui/Button';
 import TournamentDetailModal from './TournamentDetailModal';
 import InviteCodeEntry from './InviteCodeEntry';
@@ -41,7 +42,7 @@ const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
   { id: 'all', label: '전체' },
   { id: 'cash', label: '캐시' },
   { id: 'sng', label: 'Sit & Go' },
-  { id: 'mtt', label: '토너먼트' },
+  ...(PUBLIC_MTT_ENABLED ? [{ id: 'mtt' as const, label: '토너먼트' }] : []),
 ];
 
 const TYPE_FILTERS: Array<{ id: TypeFilter; label: string }> = [
@@ -125,6 +126,7 @@ export default function RoomList({
   );
   // 토너먼트는 캐시/SnG 방과 같은 목록에 테이블 카드로 섞여 보인다 ('전체'와 '토너먼트' 탭)
   const visibleTournaments = useMemo(() => {
+    if (!PUBLIC_MTT_ENABLED) return [];
     if (modeFilter !== 'all' && modeFilter !== 'mtt') return [];
     let list = (tournaments as PublicTournamentSummary[])
       .filter(t => t.lifecycle !== 'cancelled');
@@ -135,14 +137,14 @@ export default function RoomList({
   }, [tournaments, modeFilter, joinableOnly]);
   // 초대로 들어온 토너먼트는 목록 도착을 기다리지 않고 바로 상세를 연다.
   // effect로 setState 하지 않고 파생값으로 처리한다 (렌더 순수성 규칙).
-  const activeDetailId = mttDetailId ?? (inviteOpened ? null : inviteTournamentId);
+  const activeDetailId = PUBLIC_MTT_ENABLED ? mttDetailId ?? (inviteOpened ? null : inviteTournamentId) : null;
 
   // 자리비움 등으로 좌석이 보존된 방 — 필터와 무관하게 상단 복귀 배너로 노출
   const myRooms = useMemo(() => rooms.filter(r => r.mySeat), [rooms]);
   // 자리비움으로 떠난 MTT 생존 좌석 — 방 목록엔 MTT 테이블이 없으므로 토너 목록에서 판별
   const myTournamentSeats = useMemo(
-    () => (tournaments as PublicTournamentSummary[])
-      .filter(t => t.lifecycle === 'running' && t.mySeat),
+    () => PUBLIC_MTT_ENABLED ? (tournaments as PublicTournamentSummary[])
+      .filter(t => t.lifecycle === 'running' && t.mySeat) : [],
     [tournaments],
   );
 
@@ -151,7 +153,7 @@ export default function RoomList({
     <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-3 md:px-4">
       <div className="flex flex-none items-center justify-between mb-2 md:mb-3">
         <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
-        {modeFilter === 'mtt' && canCreateTournament ? (
+        {PUBLIC_MTT_ENABLED && modeFilter === 'mtt' && canCreateTournament ? (
           <Button variant="primary" size="sm" onClick={() => setMttCreateOpen(true)}>
             + 토너먼트 개설
           </Button>
@@ -271,11 +273,12 @@ export default function RoomList({
       </div>
 
       <InviteCodeEntry
+        allowTournaments={PUBLIC_MTT_ENABLED}
         onRoom={onJoin}
         onTournament={id => setMttDetailId(id)}
       />
 
-      {tournamentError && (
+      {PUBLIC_MTT_ENABLED && tournamentError && (
         <button
           type="button"
           onClick={clearTournamentError}
@@ -417,7 +420,7 @@ export default function RoomList({
           }}
         />
       )}
-      {mttCreateOpen && canCreateTournament && (
+      {PUBLIC_MTT_ENABLED && mttCreateOpen && canCreateTournament && (
         <CreateTournamentModal
           onClose={() => setMttCreateOpen(false)}
           onCreated={id => {

@@ -43,14 +43,14 @@ export const CH03: Chapter = {
           {
             kind: 'say',
             speaker: 'hana',
-            text: '(화이트보드를 돌린다) 뒷산 보물창고의 드라코, 최근 40핸드 기록이에요. 드로우가 보이면 팟의 두 배를 던져요 — 예외 없이요.',
+            text: '(화이트보드를 돌린다) 뒷산 보물창고의 드라코, 최근 40핸드 기록이에요. 드로우가 보이면 팟의 두 배를 벳해요 — 예외 없이요.',
             expression: 'thinking',
             cg: 'act1-ch03-prologue',
           },
           {
             kind: 'say',
             speaker: 'draco',
-            text: '보물이다!! 크게 던지면 크게 돌아온다구!! 그게 용의 방식이야!!',
+            text: '보물이다!! 크게 벳하면 크게 돌아온다구!! 그게 용의 방식이야!!',
             expression: 'confident',
             effect: 'shake',
           },
@@ -119,7 +119,7 @@ export const CH03: Chapter = {
         {
           kind: 'guided',
           teacher: 'hana',
-          intro: '이제 값을 매겨 봐요. 같은 핸드인데 드라코가 팟 60에 120을 던졌어요 — 중앙에는 180이 있고, 콜은 120이에요.',
+          intro: '이제 값을 매겨 봐요. 같은 핸드인데 드라코가 팟 60에 120을 벳했어요 — 중앙에는 180이 있고, 콜은 120이에요.',
           situation: guidedSituation({
             hero: 'Ah Kh',
             board: 'Qh 7h 2c',
@@ -334,7 +334,7 @@ export const CH03: Chapter = {
                 },
                 {
                   id: 'about-draco',
-                  text: '「드라코는 왜 계속 크게 던져요?」',
+                  text: '「드라코는 왜 계속 크게 벳해요?」',
                   setFlags: { 'choice:act1-ch03:study': 'about-draco' },
                   reply: [{
                     kind: 'say',

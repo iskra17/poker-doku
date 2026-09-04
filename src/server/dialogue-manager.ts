@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
+import { hasAwkwardPokerTerminology } from '@/lib/characters/poker-terminology';
 
 /**
  * 캐릭터 대화 관리자 — 3층 전략으로 API 비용과 대사 품질의 균형을 잡는다.
@@ -102,7 +103,7 @@ export class DialogueManager {
       characterId,
       situationText + NO_NUMBERS_RULE,
     );
-    if (generated) {
+    if (generated && !hasAwkwardPokerTerminology(generated)) {
       this.addToPool(poolKey, generated);
       this.lastServed.set(poolKey, generated);
       return generated;
@@ -170,7 +171,9 @@ export class DialogueManager {
       const raw = JSON.parse(readFileSync(this.opts.persistPath, 'utf-8')) as Record<string, CachedLine[]>;
       for (const [key, lines] of Object.entries(raw)) {
         if (Array.isArray(lines)) {
-          this.pools.set(key, lines.filter(l => typeof l?.line === 'string').slice(0, this.opts.maxPool));
+          this.pools.set(key, lines.filter(l =>
+            typeof l?.line === 'string' && !hasAwkwardPokerTerminology(l.line),
+          ).slice(0, this.opts.maxPool));
         }
       }
       console.log(`[dialogue] 캐시 로드 — 풀 ${this.pools.size}개, 대사 ${this.stats.lines}줄`);

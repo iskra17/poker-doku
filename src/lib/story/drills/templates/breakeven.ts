@@ -145,7 +145,7 @@ const foldPctChoice: GeneratedDrillDefinition = {
   template: {
     id: 'breakeven-choice',
     category: 'breakeven',
-    title: '몇 % 접어야 본전?',
+    title: '폴드율 몇 %면 본전?',
     difficulty: 1,
     hints: ['벳하면 중앙은 {potAfterBet}이 돼요. 그중 내 벳 {betChips}이 차지하는 비율이 답이에요.'],
     source: { kind: 'generated', params: {} },

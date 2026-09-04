@@ -100,6 +100,14 @@ export function formatObjectiveProgress(line: Pick<ObjectiveHudLine, 'progress' 
   return `${Math.min(line.progress, line.target)}/${line.target}`;
 }
 
+/** 상세 화면은 0회 상한·초과 위반 횟수까지 서버 원값을 보여 준다. */
+export function formatObjectiveDetailProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target'>): string | null {
+  if (line.target === null) return null;
+  const ratio = !Number.isInteger(line.target) || !Number.isInteger(line.progress);
+  if (ratio) return `현재 ${Math.round(line.progress * 100)}% · 기준 ${Math.round(line.target * 100)}%`;
+  return `현재 ${line.progress} · 기준 ${line.target}`;
+}
+
 /**
  * HUD 표시 순서 — **primary(통과 조건) 먼저**, 그 안에서는 서버 순서를 그대로 둔다.
  * 보너스 목표가 통과 조건보다 위에 뜨면 "저것만 하면 되나" 오독이 난다.

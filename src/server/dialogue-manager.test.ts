@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DialogueManager, LineGenerator } from './dialogue-manager';
 
 /**
@@ -22,6 +25,30 @@ const mk = (gen: LineGenerator, opts = {}) =>
   new DialogueManager(gen, { persistPath: null, ...opts });
 
 describe('DialogueManager 3층 전략', () => {
+  it('어색한 번역이 있는 생성 대사는 반환하거나 캐시하지 않는다', async () => {
+    const dm = mk(stubGenerator(['좋은 손이 들어왔네.']));
+    expect(await dm.getLine('r', 'hana', 'all-in', '올인')).toBeNull();
+    expect(dm.stats.lines).toBe(0);
+    dm.shutdown();
+  });
+
+  it('기존 캐시의 어색한 대사도 재사용하지 않는다', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'poker-dialogue-terms-'));
+    const persistPath = join(dir, 'cache.json');
+    writeFileSync(persistPath, JSON.stringify({ 'hana:all-in': [
+      { line: '여기선 접는다.', uses: 1, createdAt: 1 },
+      { line: '침착하게 콜할게요.', uses: 1, createdAt: 1 },
+    ] }));
+    const dm = new DialogueManager(stubGenerator([null]), { persistPath, minPool: 1, reuseChance: 1 });
+    try {
+      expect(await dm.getLine('r', 'hana', 'all-in', '올인')).toBe('침착하게 콜할게요.');
+      expect(dm.stats.lines).toBe(1);
+    } finally {
+      dm.shutdown();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('풀이 비어 있으면 AI를 호출하고 결과를 풀에 적립한다', async () => {
     const gen = stubGenerator(['첫 대사!']);
     const dm = mk(gen);

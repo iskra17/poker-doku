@@ -13,9 +13,11 @@ import { normalizeInviteCode } from '@/lib/invite/invite-code';
 export default function InviteCodeEntry({
   onRoom,
   onTournament,
+  allowTournaments = true,
 }: {
   onRoom: (roomId: string) => void;
   onTournament: (tournamentId: string) => void;
+  allowTournaments?: boolean;
 }) {
   const resolveInvite = useGameStore(state => state.resolveInvite);
   const [value, setValue] = useState('');
@@ -32,6 +34,10 @@ export default function InviteCodeEntry({
       const target = await resolveInvite(normalized);
       if (!target) {
         setError('그런 초대 코드는 없어요. 다시 확인해 주세요.');
+        return;
+      }
+      if (target.kind === 'tournament' && !allowTournaments) {
+        setError('현재 사용할 수 없는 초대 코드예요.');
         return;
       }
       if (target.kind === 'room') onRoom(target.id);

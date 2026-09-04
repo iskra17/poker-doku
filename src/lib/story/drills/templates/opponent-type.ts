@@ -24,7 +24,7 @@ export const OPPONENT_TYPE_LABEL: Readonly<Record<OpponentType, string>> = Objec
 });
 
 export const OPPONENT_EXPLOIT: Readonly<Record<OpponentType, string>> = Object.freeze({
-  nit: '블라인드를 넓게 스틸하고, 레이즈를 맞으면 접기',
+  nit: '블라인드를 넓게 스틸하고, 레이즈를 맞으면 폴드하기',
   tag: '포지션에서만 싸우고, 마지널 핸드는 피하기',
   station: '밸류는 크게 받고, 블러프는 하지 않기',
   maniac: '탑페어급으로 콜다운하고, 강한 핸드는 트랩',
@@ -127,7 +127,7 @@ const exploit: GeneratedDrillDefinition = {
     category: 'opponent-type',
     title: '이 상대에겐 이렇게',
     difficulty: 2,
-    hints: ['{type} 상대예요. 접지 않는 상대에겐 블러프 대신 밸류, 너무 접는 상대에겐 스틸이에요.'],
+    hints: ['{type} 상대예요. 폴드하지 않는 상대에겐 블러프 대신 밸류, 너무 자주 폴드하는 상대에겐 스틸이에요.'],
     source: { kind: 'generated', params: {} },
   },
   build: ({ rng, bigBlind }) => {

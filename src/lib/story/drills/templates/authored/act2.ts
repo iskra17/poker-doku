@@ -29,7 +29,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
     category: 'action-judgment',
     title: 'BTN의 K♥T♣',
     difficulty: 2,
-    hints: ['앞이 다 접었고 뒤엔 블라인드 둘뿐이야. 둘 다 접으면 1.5BB가 공짜로 들어와.'],
+    hints: ['앞이 다 폴드했고 뒤엔 블라인드 둘뿐이야. 둘 다 폴드하면 1.5BB가 공짜로 들어와.'],
     source: {
       kind: 'authored',
       instance: {
@@ -54,12 +54,12 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
         },
         question: '앞이 모두 폴드하고 버튼(BTN)입니다. 최선의 액션은?',
         answerSpec: { kind: 'action-pick', options: ['fold', 'call', 'raise'], correct: ['raise'], sizingBB: { min: 2, max: 3 } },
-        hint: '앞이 다 접었고 뒤엔 블라인드 둘뿐이야. 둘 다 접으면 1.5BB가 공짜로 들어와.',
+        hint: '앞이 다 폴드했고 뒤엔 블라인드 둘뿐이야. 둘 다 폴드하면 1.5BB가 공짜로 들어와.',
         explanation: {
           text:
             'K♥T♣는 상위 22% 정도 — BTN 임계 35% 안이야. 뒤에 남은 건 블라인드 둘뿐이고. '
-            + '2.5BB 오픈이면 1.5BB를 얻으려고 2.5BB를 거는 거라, 둘이 63%만 접어도 본전이야. '
-            + '실제론 그보다 훨씬 자주 접어. 그러니까 이건 스틸 — 레이즈. 콜(림프)은 없어.',
+            + '2.5BB 오픈이면 1.5BB를 얻으려고 2.5BB를 거는 거라, 둘이 63%만 폴드해도 본전이야. '
+            + '실제론 그보다 훨씬 자주 폴드해. 그러니까 이건 스틸 — 레이즈. 콜(림프)은 없어.',
           speaker: 'ara',
           facts: { pct: 21.7, threshold: 35, breakeven: 63 },
         },
@@ -94,8 +94,8 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
         explanation: {
           text:
             '탑페어 탑키커에 드라이 보드. 여기서 체크하면 카피한테 공짜 카드를 주는 거야. '
-            + '드라이 보드에선 작은 c벳(팟의 ⅓, 2~3BB)이면 충분해 — 맞춘 게 없는 상대는 그 정도에도 접고, '
-            + '카피처럼 안 접는 상대한텐 싸게 밸류를 쌓기 시작하는 거지. 벳해.',
+            + '드라이 보드에선 작은 c벳(팟의 ⅓, 2~3BB)이면 충분해 — 맞춘 게 없는 상대는 그 정도에도 폴드하고, '
+            + '카피처럼 안 폴드하는 상대한텐 싸게 밸류를 쌓기 시작하는 거지. 벳해.',
           speaker: 'ara',
           facts: { potChips: 140, sizePct: 33 },
         },
@@ -137,7 +137,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
           text:
             '9♠8♠는 상위 11%, SB 임계 25% 안이야. 앞에 림퍼가 있으면 "같이 림프"가 제일 나쁜 선택이고 — '
             + '레이즈해서 팟을 내 것으로 만들어. 림퍼가 있으니 기본 3BB에 1BB 더, 4BB 정도. '
-            + '카피가 따라와도 내가 어그레서로 플랍을 보는 거고, 접으면 그냥 팟 먹는 거지.',
+            + '카피가 따라와도 내가 어그레서로 플랍을 보는 거고, 폴드하면 그냥 팟 먹는 거지.',
           speaker: 'ara',
           facts: { pct: 10.6, threshold: 25 },
         },
@@ -187,7 +187,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
     category: 'action-judgment',
     title: '리버, 스테이션 상대 미스 드로우',
     difficulty: 2,
-    hints: ['블러프는 상대가 접어야 성공하는 거야. 근데 나는… 안 접는다구?'],
+    hints: ['블러프는 상대가 폴드해야 성공하는 거야. 근데 나는… 안 폴드한다구?'],
     source: {
       kind: 'authored',
       instance: {
@@ -206,11 +206,11 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
         },
         question: '플러시 드로우가 빗나갔고 클로이가 체크했습니다. 최선의 액션은?',
         answerSpec: { kind: 'action-pick', options: ['check', 'raise'], correct: ['check'] },
-        hint: '블러프는 상대가 접어야 성공하는 거야. 근데 나는… 안 접는다구?',
+        hint: '블러프는 상대가 폴드해야 성공하는 거야. 근데 나는… 안 폴드한다구?',
         explanation: {
           text:
-            'J♥T♥는 아무것도 없어 — J하이야. 여기서 벳하는 건 블러프인데, 블러프는 상대가 접어야 이기는 거잖아? '
-            + '나는 페어 하나만 있어도 끝까지 보는 사람이라서, 이 벳은 접히지 않아. 체크하고 쇼다운을 보든가, 지면 그냥 지는 거야. '
+            'J♥T♥는 아무것도 없어 — J하이야. 여기서 벳하는 건 블러프인데, 블러프는 상대가 폴드해야 이기는 거잖아? '
+            + '나는 페어 하나만 있어도 끝까지 보는 사람이라서, 이 정도 벳엔 폴드하지 않아. 체크하고 쇼다운을 보든가, 지면 그냥 지는 거야. '
             + '스테이션한테 블러프 안 하기 — 이게 오늘의 룰이야~',
           speaker: 'chloe',
           facts: { potChips: 200 },
@@ -254,7 +254,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
         explanation: {
           text:
             'AA는 상위 0.2% — 3벳 구간(상위 6%)의 한가운데야. 콜로 숨기는 건 "슬로플레이"라고 부르지만, 실제론 팟만 작아지고 '
-            + '뒤의 블라인드가 싸게 들어오게 하는 거야. 오픈 3BB의 3배, 9BB로 3벳. 모찌가 접으면 그것도 이득이고.',
+            + '뒤의 블라인드가 싸게 들어오게 하는 거야. 오픈 3BB의 3배, 9BB로 3벳. 모찌가 폴드하면 그것도 이득이고.',
           speaker: 'ara',
           facts: { pct: 0.2, threeBet: 6 },
         },
@@ -296,7 +296,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
           text:
             'A♦T♣는 상위 19% — CO 오픈(25%)엔 들지만, 3벳을 받는 구간은 콜 8%까지야. 한참 밖이지. '
             + '팽팽은 미지근한 콜이 없는 녀석이라 3벳 레인지도 좁고. 여기서 콜하면 포지션 없이 약한 A로 큰 팟을 하는 거야. '
-            + '4벳은 더 말도 안 되고. 접어. 3BB 잃은 걸로 끝내는 게 이기는 거야.',
+            + '4벳은 더 말도 안 되고. 폴드해. 3BB 잃은 걸로 끝내는 게 이기는 거야.',
           speaker: 'ara',
           facts: { pct: 19.3, callLine: 8 },
         },
@@ -308,7 +308,7 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
     category: 'action-judgment',
     title: 'T♠T♦로 3벳을 맞았다',
     difficulty: 3,
-    hints: ['TT는 4벳 구간(3.5%)은 아니지만 접기엔 너무 좋아. 그 사이 구간이 있어.'],
+    hints: ['TT는 4벳 구간(3.5%)은 아니지만 폴드하기엔 너무 좋아. 그 사이 구간이 있어.'],
     source: {
       kind: 'authored',
       instance: {
@@ -333,11 +333,11 @@ export const ACT2_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
         },
         question: '팽팽의 3벳을 맞았습니다. 최선의 액션은?',
         answerSpec: { kind: 'action-pick', options: ['fold', 'call', 'raise'], correct: ['call'] },
-        hint: 'TT는 4벳 구간(3.5%)은 아니지만 접기엔 너무 좋아. 그 사이 구간이 있어.',
+        hint: 'TT는 4벳 구간(3.5%)은 아니지만 폴드하기엔 너무 좋아. 그 사이 구간이 있어.',
         explanation: {
           text:
             'T♠T♦는 상위 4%. 4벳 구간(상위 3.5%)엔 살짝 못 미치고, 콜 구간(8%까지)엔 넉넉히 들어. '
-            + '4벳하면 팽팽의 QQ+·AK한테만 액션을 받고, 접으면 3BB를 그냥 버리는 거야. '
+            + '4벳하면 팽팽의 QQ+·AK한테만 액션을 받고, 폴드하면 3BB를 그냥 버리는 거야. '
             + '콜하고 플랍을 봐 — 오버카드가 없는 플랍이면 계속 가고, A·K·Q가 뜨면 조심하면 돼. 3구간, 기억해.',
           speaker: 'ara',
           facts: { pct: 4.1, fourBet: 3.5, callLine: 8 },

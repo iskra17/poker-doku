@@ -76,7 +76,7 @@ export const CH02: Chapter = {
         },
         {
           kind: 'concept-card',
-          title: '상위 %로 보는 손',
+          title: '상위 %로 보는 핸드',
           body: '169가지 스타팅 핸드를 강한 순서로 줄 세우면, 내 핸드가 상위 몇 %인지가 나와요. A♠A♥는 1%도 안 되는 맨 앞, J♣7♦는 70% 근처랍니다.',
         },
         {

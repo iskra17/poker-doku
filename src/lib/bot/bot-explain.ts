@@ -69,7 +69,7 @@ export const BOT_EXPLANATION_TEXTS: Record<BotExplanationCode, string[]> = {
   ],
   'semi-bluff': [
     '아직 완성은 아니지만 밀 만한 그림이야.',
-    '접히면 좋고, 안 접혀도 뒤가 남았어.',
+    '상대가 폴드하면 좋고, 콜해도 아우츠가 남았어.',
     '기회가 살아 있으니 공격이 낫다.',
   ],
   'draw-chase': [
@@ -85,10 +85,10 @@ export const BOT_EXPLANATION_TEXTS: Record<BotExplanationCode, string[]> = {
   'bluff-catch': [
     '허풍일 가능성이 충분해. 받아본다.',
     '이 정도면 잡아줘야 하는 자리야.',
-    '접기엔 아까운 자리다.',
+    '폴드하기엔 아까운 자리다.',
   ],
   'fold-weak': [
-    '이건 아니야. 접는다.',
+    '이건 아니야. 폴드한다.',
     '싸울 만한 패가 아니야. 다음 기회에.',
     '여기서 버티는 건 낭비지.',
   ],
@@ -115,7 +115,7 @@ export const BOT_EXPLANATION_TEXTS: Record<BotExplanationCode, string[]> = {
   'defend-blind': [
     '이미 낸 몫이 있어. 그냥은 못 준다.',
     '블라인드는 지켜야지.',
-    '여기서 매번 접으면 계속 털린다.',
+    '여기서 매번 폴드하면 계속 털린다.',
   ],
   'shove-short': [
     '스택이 얕아. 지금 밀어야 해.',
