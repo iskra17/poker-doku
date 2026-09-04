@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "queue_approved": true,
+  "scope": "general",
+  "kind": "image",
+  "approval_document": "docs/superpowers/plans/2026-09-05-art-a1c-followup.md",
+  "workflow": {
+    "path": "qwen-edit-2511-a2.workflow.json",
+    "sha256": "1963823eb7698d63bb94be07ea1781d59cc83e4bb3879f4f1cb4cf6f215799a5"
+  },
+  "models": [
+    {
+      "path": "D:\\AI-Image-Video\\models\\diffusion_models\\qwen_image_edit_2511_int8_convrot.safetensors",
+      "sha256": "11b5af5ac601821d73930c84846c9a158e67177356daf927ce1c8d10f3963829",
+      "repo": "Comfy-Org/Qwen-Image-Edit_ComfyUI",
+      "revision": "984166f60a9b1fcede5e9b9287b7a7aebc050010"
+    },
+    {
+      "path": "D:\\AI-Image-Video\\models\\text_encoders\\qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "sha256": "cb5636d852a0ea6a9075ab1bef496c0db7aef13c02350571e388aea959c5c0b4",
+      "repo": "Comfy-Org/Qwen-Image_ComfyUI",
+      "revision": "7beb7b647f04469fbe64ba8adc2bb0d7e5e9f73f"
+    },
+    {
+      "path": "D:\\AI-Image-Video\\models\\vae\\qwen_image_vae.safetensors",
+      "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+      "repo": "Comfy-Org/Qwen-Image_ComfyUI",
+      "revision": "7beb7b647f04469fbe64ba8adc2bb0d7e5e9f73f"
+    },
+    {
+      "path": "D:\\AI-Image-Video\\models\\loras\\Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "sha256": "22226e8d05d354bb356627d428809f5afd7819399b077238a2b70a82883a904f",
+      "repo": "lightx2v/Qwen-Image-Edit-2511-Lightning",
+      "revision": "d74eba145674fd7e31b949324e148e21e7118abd"
+    }
+  ],
+  "allowed_nodes": [
+    "CFGNorm",
+    "CLIPLoader",
+    "FluxKontextImageScale",
+    "FluxKontextMultiReferenceLatentMethod",
+    "KSampler",
+    "LoadImage",
+    "LoraLoaderModelOnly",
+    "ModelSamplingAuraFlow",
+    "SaveImage",
+    "TextEncodeQwenImageEditPlus",
+    "UNETLoader",
+    "VAEDecode",
+    "VAEEncode",
+    "VAELoader"
+  ],
+  "bindings": {
+    "prompt": [
+      "8",
+      "prompt"
+    ],
+    "seed": [
+      "15",
+      "seed"
+    ],
+    "output_prefix": [
+      "17",
+      "filename_prefix"
+    ],
+    "inputs": {
+      "reference": [
+        "4",
+        "image"
+      ]
+    }
+  },
+  "output_node": "17",
+  "output_collection": "images",
+  "media": {
+    "width": 832,
+    "height": 1248
+  },
+  "provenance": {
+    "official_template_sha256": "f69153d857a3e7ad374c4b79775fa2d8d99361135806a5ecf7106f2e41cd2336",
+    "official_docs": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-edit-2511",
+    "sampler": "euler",
+    "scheduler": "simple",
+    "steps": 4,
+    "cfg": 1.0
+  }
+}

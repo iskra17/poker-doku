@@ -1,0 +1,263 @@
+{
+  "version": 1,
+  "scope": "general",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "recipe": "qwen-edit-2511-a2.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/a1c2-20260905",
+  "approval_document": "docs/superpowers/plans/2026-09-05-art-a1c-followup.md",
+  "authorized_jobs": 12,
+  "jobs": [
+    {
+      "id": "sakura-garden-walk-q1",
+      "character": "sakura",
+      "scene": "garden-walk",
+      "seed": 509020261400,
+      "angle": "full-body side view moving left to right",
+      "gaze": "cherry blossoms beside path",
+      "expression": "relaxed",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Show her walking from left to right along a stone path in a spacious Japanese garden in full-body side view. She holds a small closed book against her chest with both arms and looks at the cherry blossoms beside the path with a relaxed expression. Show the broad garden setting; no eye contact with the camera. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-victory-q1",
+      "character": "sakura",
+      "scene": "victory",
+      "seed": 509020261401,
+      "angle": "three-quarter face, slightly elevated camera",
+      "gaze": "both eyes closed",
+      "expression": "brief relieved laugh",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Seat her beside a green felt poker table immediately after a small victory. Use a slightly elevated camera and a three-quarter view of her face. She closes both eyes and laughs briefly with relief. Both hands rest together naturally in her lap. All chips remain on the table. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-rain-veranda-q1",
+      "character": "sakura",
+      "scene": "rain-veranda",
+      "seed": 509020261402,
+      "angle": "waist-up right-facing profile",
+      "gaze": "rain falling into garden",
+      "expression": "thoughtful",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Place her on a wooden veranda during rain. Show a waist-up right-facing profile, gently resting her elbows on the railing and looking at the rain falling into the garden. Her expression is thoughtful. Her hands rest on the railing, never cover her chin or face. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-library-q1",
+      "character": "sakura",
+      "scene": "library",
+      "seed": 509020261403,
+      "angle": "three-quarter rear view beside bookshelf",
+      "gaze": "book on low shelf",
+      "expression": "quiet concentration",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Place her beside a bookshelf in warm indoor light, viewed from three quarters behind. Only a small contour of her profile is visible over her shoulder; she does not look back. One hand draws a book from a low shelf and the other supports the underside of that book. Her eyes look toward the book. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-lesson-q1",
+      "character": "elena",
+      "scene": "lesson",
+      "seed": 509020261404,
+      "angle": "over right rear shoulder",
+      "gaze": "open notebook on table",
+      "expression": "composed teacher",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Position the camera behind her right shoulder at a green felt practice table. She points one index finger at a single place on an open notebook containing faint abstract marks, no readable text. The other hand rests flat on the table. Her eyes look down at the notebook with a composed teaching expression. Preserve her black suit and very long silver hair. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-river-walk-q1",
+      "character": "elena",
+      "scene": "river-walk",
+      "seed": 509020261405,
+      "angle": "wide full-body left three-quarter profile",
+      "gaze": "distant river lights",
+      "expression": "mature and calm",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Show her walking along a river at dusk in a wide full-body composition. Show a left-facing three-quarter profile as she looks at distant lights across the river. Both hands hang naturally beside her body. Keep her black tailored suit and mature calm expression. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-victory-q1",
+      "character": "elena",
+      "scene": "victory",
+      "seed": 509020261406,
+      "angle": "shoulder-up three-quarter close-up",
+      "gaze": "off-screen opponent to right",
+      "expression": "restrained confident smile",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Place her beside a poker table in a shoulder-up three-quarter close-up. Her chin is slightly raised, her eyes remain narrow and mature, and she has a restrained confident smile. She looks toward an off-screen opponent to the right of the frame, not at the viewer. Her hands are outside the frame. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-coffee-q1",
+      "character": "elena",
+      "scene": "coffee",
+      "seed": 509020261407,
+      "angle": "oblique view from above cafe table",
+      "gaze": "coffee cup below",
+      "expression": "thoughtful",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Place her at a cafe table, viewed obliquely from above. One hand gently holds the handle of a coffee cup and the other hand rests beside its saucer. She looks down at the coffee with a thoughtful expression. Preserve her black suit and pale grey necktie. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-garden-walk-q2",
+      "character": "sakura",
+      "scene": "garden-walk",
+      "seed": 509020261408,
+      "angle": "full-body rear three-quarter view",
+      "gaze": "cherry blossoms on right",
+      "expression": "relaxed",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Show her walking along a stone path in a spacious Japanese garden in a full-body rear three-quarter view. She holds a small closed book against her chest with both arms and turns her head toward cherry blossoms on the right. She must not turn back toward the camera. Her expression is relaxed and the broad garden remains visible. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-library-q2",
+      "character": "sakura",
+      "scene": "library",
+      "seed": 509020261409,
+      "angle": "waist-up side view beside bookshelf",
+      "gaze": "open book in both hands",
+      "expression": "quiet concentration",
+      "outfit": "original cream cardigan, white blouse and pink ribbon",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+          "sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\sakura\\showcase.webp",
+        "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Place her beside a bookshelf in warm indoor light in a waist-up side view. She has just taken a book from a low shelf and now holds it open with both hands, looking down at its pages with quiet concentration. The pages contain faint abstract lines, no readable text. She does not look toward the viewer. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-lesson-q2",
+      "character": "elena",
+      "scene": "lesson",
+      "seed": 509020261410,
+      "angle": "over left rear shoulder",
+      "gaze": "one of three rows of chip stacks",
+      "expression": "composed teacher",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Position the camera behind her left shoulder at a green felt practice table. Three rows of neat chip stacks are arranged on the felt. She points an index finger toward one stack while the other hand rests flat on the table. Her eyes look directly down at that stack with a composed teaching expression. Show clear anatomically natural hand contact. Preserve her black suit and very long silver hair. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-river-walk-q2",
+      "character": "elena",
+      "scene": "river-walk",
+      "seed": 509020261411,
+      "angle": "full-body side view beside river railing",
+      "gaze": "distant river",
+      "expression": "mature and calm",
+      "outfit": "original black suit, white shirt and pale grey necktie",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+          "sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a"
+        }
+      },
+      "canonical_source": {
+        "path": "C:\\code\\claude\\poker-doku\\.worktrees\\art-library-pilot\\public\\assets\\characters\\elena\\showcase.webp",
+        "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+      },
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Show her stopped beside a river railing at dusk in a full-body side view. Both hands rest lightly and naturally on top of the railing. She looks far across the river with a mature, calm expression. Preserve her black tailored suit and long silver hair; no camera eye contact. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    }
+  ]
+}
