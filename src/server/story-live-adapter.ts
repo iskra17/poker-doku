@@ -19,7 +19,8 @@ import type { PokerEngine } from '../lib/poker/engine';
 import type { CompletedHandRecord } from '../lib/poker/hand-history';
 import type { Player, RoomConfig } from '../lib/poker/types';
 import type { BotDecision } from '../lib/bot/bot-ai';
-import { createBotWithCharacter } from '../lib/bot/bot-manager';
+import { createBotWithCharacter, type BotDisplayIdentity } from '../lib/bot/bot-manager';
+import { DEALER_CHARACTER, getCharacterById, MASKED_BOT_CHARACTER } from '../lib/characters';
 import type { RealtimeErrorCode } from '../lib/realtime/protocol';
 import { ScenarioDeck, ScenarioDeckError } from '../lib/story/scenario-deck';
 import {
@@ -63,6 +64,11 @@ export interface LiveEnterInput {
   stepIndex: number;
   step: LiveStep;
   partnerId: StoryHeroineId | null;
+  /**
+   * 좌석별 **표시 identity 덮어쓰기**(가면) — 실제 성향은 라인업이 그대로 결정하고 얼굴만 바꾼다.
+   * 생략한 좌석은 실제 캐릭터를 그대로 보여준다.
+   */
+  botDisplaysBySeat?: Readonly<Record<number, BotDisplayIdentity>>;
 }
 
 /** 소켓 계층이 구현 — 히어로 Player 생성·좌석 착석·room-joined 통지 */
@@ -102,6 +108,21 @@ export type LiveCommandResult =
   | { ok: true }
   | { ok: false; code: RealtimeErrorCode; message: string };
 
+/**
+ * 좌석별 identity 계획 — **서버 전용**. 런 하나에서 한 번만 확정하고, 방이 사라졌다 다시 열려도
+ * 같은 계획을 재사용한다(재개마다 성향을 다시 뽑으면 가면 뒤 상대가 바뀐다).
+ * 어떤 스냅샷·이벤트로도 내보내지 않는다.
+ */
+interface StoryBotIdentity {
+  seatIndex: number;
+  /** 실제 행동 캐릭터 (getPublicState가 제거하는 축) */
+  personalityId: string;
+  /** 가면 표시값 — null이면 실제 캐릭터를 그대로 보여준다 */
+  maskedDisplay: BotDisplayIdentity | null;
+  /** 공개된 좌석은 이후 열리는 방에서도 실제 얼굴로 앉는다 */
+  revealed: boolean;
+}
+
 interface LiveSession {
   profileId: string;
   runId: string;
@@ -110,6 +131,10 @@ interface LiveSession {
   stepIndex: number;
   step: LiveStep;
   partnerId: StoryHeroineId | null;
+  /** 진입 입력의 복사본 — 호출자가 나중에 손대도 세션 계획이 흔들리지 않는다 */
+  botDisplaysBySeat: Record<number, BotDisplayIdentity> | undefined;
+  /** openRoom이 최초 1회 확정 (재개 시 재사용) */
+  botIdentities: StoryBotIdentity[] | null;
   roomId: string | null;
   deck: ScenarioDeck | null;
   /** 다음에 arm할 스크립트 index ('연습') */
@@ -137,6 +162,20 @@ const DEFAULT_FINISH_DELAY_MS = 6_000;
 const FINISH_RETRY_MS = 10_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 const BOT_THOUGHT_KEEP = 6;
+
+/** 진입 입력의 표시 덮어쓰기를 깊이 복사 — 호출자가 들고 있는 객체를 세션이 공유하지 않는다 */
+function copyBotDisplays(
+  input: Readonly<Record<number, BotDisplayIdentity>> | undefined,
+): Record<number, BotDisplayIdentity> | undefined {
+  if (!input) return undefined;
+  const copy: Record<number, BotDisplayIdentity> = {};
+  for (const [seat, display] of Object.entries(input)) {
+    const seatIndex = Number(seat);
+    if (!Number.isInteger(seatIndex)) continue;
+    copy[seatIndex] = { name: display.name, characterId: display.characterId };
+  }
+  return copy;
+}
 
 export class LiveTableAdapter implements StoryRoomHooks {
   private readonly sessions = new Map<string, LiveSession>();
@@ -249,6 +288,53 @@ export class LiveTableAdapter implements StoryRoomHooks {
     });
     this.events?.onStepFinished(session.profileId, session.runId, summary);
     return 'finished';
+  }
+
+  /**
+   * 가면 벗기기 — **서버 전용 seam**(소켓 이벤트 없음). 호출자는 좌석만 지목하고 실제 캐릭터는
+   * 서버 계획에서만 나온다(클라가 정체를 제출할 수 없다). 방이 있으면 그 자리에서 얼굴을 바꾸고,
+   * 방이 없으면 계획에만 남겨 다음 재개 방이 실제 얼굴로 앉는다. 좌석 id·성향은 절대 바꾸지 않는다.
+   */
+  revealBotIdentity(profileId: string, runId: string, seatIndex: number): LiveCommandResult {
+    const session = this.sessions.get(profileId);
+    if (!session || session.runId !== runId) {
+      return { ok: false, code: 'stale-state', message: '이미 끝난 테이블 스텝이에요.' };
+    }
+    const identity = session.botIdentities?.find(candidate => candidate.seatIndex === seatIndex);
+    // 가면·딜러는 얼굴일 뿐 공개할 정체가 아니다
+    const actual = identity ? getCharacterById(identity.personalityId) : undefined;
+    if (!identity || !actual || actual.id === DEALER_CHARACTER.id || actual.id === MASKED_BOT_CHARACTER.id) {
+      return { ok: false, code: 'action-rejected', message: '공개할 봇 좌석을 찾지 못했어요.' };
+    }
+    if (identity.revealed) return { ok: true };
+
+    let botId: string | null = null;
+    if (session.roomId) {
+      // 좌석 + 성향으로 찾는다 — 공개 id는 불투명하므로 좌석만으로는 다른 봇을 건드릴 수 있다
+      const bot = this.options.roomManager.getRoom(session.roomId)?.engine.state.players.find(player => (
+        player.seatIndex === seatIndex
+        && player.type === 'bot'
+        && player.personalityId === identity.personalityId
+        && !player.pendingRemoval
+      ));
+      if (!bot) {
+        return { ok: false, code: 'action-rejected', message: '공개할 봇 좌석을 찾지 못했어요.' };
+      }
+      botId = bot.id;
+    }
+
+    identity.revealed = true;
+    if (session.roomId && botId && !this.options.roomManager.updateStoryBotDisplayIdentity(
+      session.roomId,
+      botId,
+      { name: actual.name, characterId: actual.id },
+    )) {
+      // 방 갱신이 거절되면 계획도 되돌린다 — 좌석은 가면, 계획은 공개인 반쪽 상태를 남기지 않는다
+      identity.revealed = false;
+      return { ok: false, code: 'action-rejected', message: '봇 정체를 공개하지 못했어요.' };
+    }
+    this.events?.onLiveChanged(profileId);
+    return { ok: true };
   }
 
   phase(profileId: string): 'live-hold' | 'live-play' | null {
@@ -439,7 +525,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
     session.botThoughts.push({
       handNumber: room.engine.state.handNumber,
       playerId,
-      characterId: bot.personalityId ?? bot.avatar,
+      // 발화 시점의 **표시 얼굴**을 값으로 스냅샷한다 — 성향을 실으면 가면 봇의 정체가 뷰로 샌다
+      characterId: bot.avatar,
       street: room.engine.state.street,
       action: decision.action,
       reason: explanation.code,
@@ -487,6 +574,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
       stepIndex: input.stepIndex,
       step: input.step,
       partnerId: input.partnerId,
+      botDisplaysBySeat: copyBotDisplays(input.botDisplaysBySeat),
+      botIdentities: null,
       roomId: null,
       deck: null,
       scriptCursor: 0,
@@ -530,6 +619,17 @@ export class LiveTableAdapter implements StoryRoomHooks {
       storyHandTag: step.kind === 'practice-table' ? 'practice' : 'sparring',
       botThinkScale: table.botThinkScale,
     };
+    // identity 계획은 방보다 먼저 확정한다 — 잘못된 표시 입력이면 방을 아예 만들지 않는다(원자적 거절).
+    const identities = session.botIdentities ?? this.buildBotIdentityPlan(session);
+    if (!identities) {
+      eventLog.log('story-step', {
+        playerId: session.profileId,
+        data: { runId: session.runId, event: 'lineup-failed', reason: 'invalid-identity-plan' },
+      });
+      return false;
+    }
+    session.botIdentities = identities;
+
     const deck = step.kind === 'practice-table' ? this.deckFactory() : undefined;
     let roomId: string;
     try {
@@ -551,23 +651,24 @@ export class LiveTableAdapter implements StoryRoomHooks {
     session.disposing = false;
     this.byRoom.set(roomId, session);
 
-    const used = new Set<string>();
-    for (const seat of table.lineup) {
-      const characterId = this.resolveLineupCharacter(seat.characterId, session.partnerId, table.lineup.map(s => s.characterId), used);
-      const bot = characterId
-        ? createBotWithCharacter(seat.seatIndex, seat.stackBB * big, characterId, table.difficulty)
-        : null;
+    const stackBySeat = new Map(table.lineup.map(seat => [seat.seatIndex, seat.stackBB * big]));
+    for (const identity of identities) {
+      // 이미 공개된 좌석은 실제 캐릭터로(표시 덮어쓰기 없이) 앉는다 — 공개는 새 방에도 이어진다
+      const display = identity.revealed ? undefined : identity.maskedDisplay ?? undefined;
+      const stack = stackBySeat.get(identity.seatIndex);
+      const bot = stack === undefined
+        ? null
+        : createBotWithCharacter(identity.seatIndex, stack, identity.personalityId, table.difficulty, display);
       if (!bot || !this.options.roomManager.joinRoom(roomId, bot)) {
         // 라인업은 전원 착석이 전제 — 한 좌석이라도 빠지면 스크립트 villain 좌석·목표 상대가 어긋나므로 방을 열지 않는다
         eventLog.log('story-step', {
           roomId,
           playerId: session.profileId,
-          data: { runId: session.runId, event: 'lineup-failed', seat: seat.seatIndex, characterId: seat.characterId },
+          data: { runId: session.runId, event: 'lineup-failed', seat: identity.seatIndex },
         });
         this.disposeOwnRoom(session, 'story-end');
         return false;
       }
-      used.add(characterId as string);
     }
     if (!this.options.hero.seatHero(session.profileId, roomId, { seatIndex: table.heroSeat, chips: heroSeatChips })) {
       this.disposeOwnRoom(session, 'story-end');
@@ -581,6 +682,33 @@ export class LiveTableAdapter implements StoryRoomHooks {
     this.clearHold(session);
     this.options.roomManager.resumeRoom(roomId);
     return true;
+  }
+
+  /**
+   * 좌석별 실제 성향 + 가면 표시를 **한 번만** 확정한다. 좌석 하나라도 실제 캐릭터를 못 정하거나
+   * 표시 덮어쓰기가 부적합하면(빈 이름·미등록 캐릭터) null — 호출부가 방을 만들기 전에 거절한다.
+   */
+  private buildBotIdentityPlan(session: LiveSession): StoryBotIdentity[] | null {
+    const refs = session.step.table.lineup.map(seat => seat.characterId);
+    const used = new Set<string>();
+    const plan: StoryBotIdentity[] = [];
+
+    for (const seat of session.step.table.lineup) {
+      const personalityId = this.resolveLineupCharacter(seat.characterId, session.partnerId, refs, used);
+      const display = session.botDisplaysBySeat?.[seat.seatIndex];
+      if (
+        !personalityId
+        || (display && (!display.name.trim() || !getCharacterById(display.characterId)))
+      ) return null;
+      plan.push({
+        seatIndex: seat.seatIndex,
+        personalityId,
+        maskedDisplay: display ? { name: display.name.trim(), characterId: display.characterId } : null,
+        revealed: false,
+      });
+      used.add(personalityId);
+    }
+    return plan;
   }
 
   /** 'partner' → 선택 파트너(없거나 라인업에 이미 있으면 다른 히로인), 그 외는 캐릭터 id 그대로 */

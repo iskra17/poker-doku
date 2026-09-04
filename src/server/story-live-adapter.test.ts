@@ -135,7 +135,11 @@ describe('LiveTableAdapter', () => {
 
   const tick = (ms: number) => vi.advanceTimersByTimeAsync(ms);
 
-  function enter(step: LiveStep, partnerId: LiveEnterInput['partnerId'] = 'sakura'): string {
+  function enter(
+    step: LiveStep,
+    partnerId: LiveEnterInput['partnerId'] = 'sakura',
+    botDisplaysBySeat?: LiveEnterInput['botDisplaysBySeat'],
+  ): string {
     const entered = adapter.enter({
       profileId: PROFILE,
       runId: RUN,
@@ -144,6 +148,7 @@ describe('LiveTableAdapter', () => {
       stepIndex: 3,
       step,
       partnerId,
+      botDisplaysBySeat,
     });
     expect(entered).toBe('entered');
     const roomId = adapter.view(PROFILE)?.roomId;
@@ -505,13 +510,22 @@ describe('LiveTableAdapter', () => {
     adapter.abandon(PROFILE);
 
     buildAdapter({ exposeBotThoughts: true });
-    const roomId2 = enter(sparringStep(3));
+    const roomId2 = enter(sparringStep(3), 'sakura', {
+      1: { name: '가면 A', characterId: 'story-mask' },
+      2: { name: '가면 B', characterId: 'story-mask' },
+      3: { name: '가면 C', characterId: 'story-mask' },
+    });
     const acted2 = await pumpUntil(() => (adapter.view(PROFILE)?.botThoughts.length ?? 0) > 0, { roomId: () => roomId2, maxMs: 30_000 });
     expect(acted2).toBe(true);
     const thought = adapter.view(PROFILE)!.botThoughts[0];
     expect(thought.playerId).toMatch(/^bot-/);
     expect(typeof thought.reason).toBe('string');
     expect(thought.text.length).toBeGreaterThan(0);
+    // 속마음도 성향이 아니라 그 시점의 표시 얼굴을 스냅샷한다
+    expect(thought.characterId).toBe('story-mask');
+    expect(thought.characterId).toBe(
+      stateOf(roomId2)!.players.find(player => player.id === thought.playerId)!.avatar,
+    );
   });
 
   it('enter: 히어로 착석에 실패하면 방을 정리하되 스텝을 건너뛰지 않고 room-lost hold로 보존한다 (이어하기가 재시도)', async () => {
@@ -607,6 +621,109 @@ describe('LiveTableAdapter', () => {
     })).toThrow(/storyChapterId/);
     bare.shutdown();
   });
+  describe('가면 봇 identity', () => {
+    // 좌석 1(파트너 좌석)만 공용 가면으로 가린다 — 실제 성향은 라인업이 그대로 정한다
+    const MASK: LiveEnterInput['botDisplaysBySeat'] = {
+      1: { name: '가면 A', characterId: 'story-mask' },
+    };
+
+    function seatOne(roomId: string): Player {
+      return stateOf(roomId)!.players.find(player => player.seatIndex === 1)!;
+    }
+
+    it('가면 좌석은 표시 identity만 공개하고 실제 성향은 서버에만 남는다', () => {
+      const roomId = enter(practiceStep(), 'sakura', MASK);
+      const bot = seatOne(roomId);
+      expect(bot).toMatchObject({ name: '가면 A', avatar: 'story-mask', personalityId: 'sakura' });
+      expect(bot.id).not.toContain('sakura');
+
+      const publicSeat = manager.getRoom(roomId)!.engine.getPublicState(PROFILE)
+        .players.find(player => player.seatIndex === 1)!;
+      expect(publicSeat).toMatchObject({ id: bot.id, name: '가면 A', avatar: 'story-mask' });
+      expect('personalityId' in publicSeat).toBe(false);
+
+      // 가면을 씌우지 않은 좌석은 그대로 실제 캐릭터를 보여준다
+      expect(stateOf(roomId)!.players.find(player => player.seatIndex === 2)).toMatchObject({
+        avatar: 'kapi', personalityId: 'kapi',
+      });
+    });
+
+    it('room-lost 재개는 저장된 계획을 재사용해 성향·가면을 그대로 이어간다', () => {
+      const roomId = enter(practiceStep(), null, MASK);
+      const before = { personalityId: seatOne(roomId).personalityId, name: seatOne(roomId).name };
+      expect(before.name).toBe('가면 A');
+
+      manager.handleDisconnect(roomId, PROFILE, Date.now() + 60_000);
+      expect(manager.handleGraceExpired(roomId, PROFILE)).toBe(false);
+      expect(adapter.view(PROFILE)!.roomId).toBeNull();
+
+      expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+      const resumedRoomId = adapter.view(PROFILE)!.roomId!;
+      expect(resumedRoomId).not.toBe(roomId);
+      expect(seatOne(resumedRoomId)).toMatchObject({
+        personalityId: before.personalityId,
+        name: '가면 A',
+        avatar: 'story-mask',
+      });
+    });
+
+    it('공개는 stale 요청을 거절하고, 성공해도 id·성향은 그대로 둔 채 얼굴만 바꾼다', async () => {
+      buildAdapter({ exposeBotThoughts: true });
+      const roomId = enter(sparringStep(10), 'sakura', MASK);
+      const bot = seatOne(roomId);
+      const before = { id: bot.id, personalityId: bot.personalityId, seatIndex: bot.seatIndex };
+
+      expect(adapter.revealBotIdentity(PROFILE, 'old-run', 1)).toMatchObject({ ok: false, code: 'stale-state' });
+      expect(adapter.revealBotIdentity('someone-else', RUN, 1)).toMatchObject({ ok: false, code: 'stale-state' });
+      expect(adapter.revealBotIdentity(PROFILE, RUN, 5)).toMatchObject({ ok: false, code: 'action-rejected' });
+      expect(seatOne(roomId)).toMatchObject({ name: '가면 A', avatar: 'story-mask' });
+
+      expect(adapter.revealBotIdentity(PROFILE, RUN, 1)).toEqual({ ok: true });
+      expect(seatOne(roomId)).toMatchObject({ ...before, name: '사쿠라', avatar: 'sakura' });
+
+      // 공개 뒤 새로 쌓이는 속마음 스냅샷은 실제 얼굴을 쓴다
+      const acted = await pumpUntil(
+        () => (adapter.view(PROFILE)?.botThoughts ?? []).some(thought => thought.playerId === before.id),
+        { roomId: () => roomId, maxMs: 60_000 },
+      );
+      expect(acted).toBe(true);
+      const thought = adapter.view(PROFILE)!.botThoughts.find(candidate => candidate.playerId === before.id)!;
+      expect(thought.characterId).toBe('sakura');
+    });
+
+    it('방이 없는 동안의 공개는 계획에 남아 다음 재개 방에 실제 얼굴로 적용된다', () => {
+      const roomId = enter(practiceStep(), 'sakura', MASK);
+      manager.handleDisconnect(roomId, PROFILE, Date.now() + 60_000);
+      expect(manager.handleGraceExpired(roomId, PROFILE)).toBe(false);
+      expect(adapter.view(PROFILE)!.roomId).toBeNull();
+
+      expect(adapter.revealBotIdentity(PROFILE, RUN, 1)).toEqual({ ok: true });
+      expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+
+      const resumedRoomId = adapter.view(PROFILE)!.roomId!;
+      expect(seatOne(resumedRoomId)).toMatchObject({
+        personalityId: 'sakura', name: '사쿠라', avatar: 'sakura',
+      });
+    });
+
+    it('잘못된 표시 identity는 방을 만들기 전에 거절하고 room-lost hold로 남긴다', () => {
+      expect(adapter.enter({
+        profileId: PROFILE,
+        runId: RUN,
+        chapterId: 'act1-ch01',
+        chapterTitle: '도장의 문',
+        stepIndex: 3,
+        step: practiceStep(),
+        partnerId: 'sakura',
+        botDisplaysBySeat: { 1: { name: '가면 A', characterId: 'missing-character' } },
+      })).toBe('entered');
+
+      expect(manager.getRoomCount()).toBe(0);
+      expect(seatHero).not.toHaveBeenCalled();
+      expect(adapter.view(PROFILE)).toMatchObject({ roomId: null, hold: true, holdReason: 'room-lost' });
+    });
+  });
+
   describe('operator forceFinish', () => {
     it('ends a sparring step at once with every objective achieved, disposes the room and reports synchronously', async () => {
       const roomId = enter(sparringStep(3));
