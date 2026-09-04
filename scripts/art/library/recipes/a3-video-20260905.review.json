@@ -1,0 +1,17 @@
+{
+  "reviewed_by": "Astra root",
+  "items": [
+    {
+      "job_id": "sakura-rain-veranda-video-v1",
+      "decision": "rejected",
+      "sha256": "3a9a57d0c3d4e39e60648a1bb79c27940fd27d55fed85e6df9ae5bcfa3c13e17",
+      "reason": "Decoded all 107 frames; visually inspected 12 temporal samples including frame 48 (2.000 seconds), where the mouth opens. Reject silent closed-mouth contract; preserve v1, separately authorize one v2."
+    },
+    {
+      "job_id": "elena-river-walk-video-v1",
+      "decision": "approved",
+      "sha256": "ad0700ebc0372aa99dea51aea267cf7dc2dcdb14e5b40863a3793e07c0ea4bff",
+      "reason": "Decoded all 107 frames; visually inspected 12 temporal samples across 0-106. Mature identity, river gaze, rail hand contact, closed mouth and restrained hair/water motion maintained. First/last decoded-frame mean absolute difference 1.6104 at 384x576. Review method is temporal sampling, not continuous realtime playback."
+    }
+  ]
+}

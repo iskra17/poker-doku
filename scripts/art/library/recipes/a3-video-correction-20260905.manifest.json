@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "general",
+  "target_root": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control",
+  "recipe": "h3-fl2v-a3.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/a1c2-20260905",
+  "approval_document": "docs/superpowers/plans/2026-09-05-art-first-supply.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "sakura-rain-veranda-video-v2",
+      "character": "sakura",
+      "scene": "rain-veranda",
+      "parent_job": "sakura-rain-veranda-q1",
+      "seed": 509020262500,
+      "angle": "left-facing profile, fixed camera",
+      "gaze": "rainy garden",
+      "expression": "quiet thoughtful expression",
+      "outfit": "cream cardigan, white blouse, pink ribbon",
+      "prompt": "A completely still adult anime portrait with only rain and distant water animated. Her lips are gently pressed together and remain completely closed in every frame. Preserve the exact closed-mouth silhouette from the input; no mouth opening, no jaw movement, no talking, no breathing face motion, no smile change. Anime illustration with the exact fine linework and softly painted shading of the supplied illustration. Perfectly fixed camera, no zoom, no pan. Start and end on the exact same frame. Subtle ambient motion only. One fully clothed adult woman; no other person, no dialogue, no lip movement, no text, no logo, no costume change. The same adult 22-year-old woman with a short pink bob and one small white flower hairpin leans gently on a wooden veranda railing, looking left at the rainy garden. Her face remains in profile and her gaze stays away from the camera. Only rain falls in the background, tiny pond ripples move and the tips of her pink hair sway very slightly. Her mouth, fingers, both forearms, cardigan and wooden railing stay still. Preserve every hand contact and all foreground shapes. The face and both hands are entirely motionless. Animate only the rain and pond. No facial expression animation.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-rain-veranda-q1--181db36bcbc44620b8cbcbb3843f0436--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+          "sha256": "a1820ee603acb89bf1e582416e9aa54c02f1fbd92464583fe8786811b5198c3b"
+        }
+      }
+    }
+  ]
+}
