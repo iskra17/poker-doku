@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "reviewer": "Astra root",
+  "date": "2026-09-05",
+  "method": "Canonical showcase comparison and all 12 full-resolution PNGs",
+  "generated": 12,
+  "approved": 6,
+  "rejected": 6,
+  "exported": 0,
+  "recipe_hash": "2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3",
+  "results": [
+    {
+      "job_id": "sakura-garden-walk-q1",
+      "scene": "garden-walk",
+      "output_sha256": "dfed9ab0c689777c56a49bc135e3d4b1dedda2794d0ea18081323583b5dac367",
+      "decision": "rejected",
+      "reason": "Identity and anatomy hold, but the backward glance weakens the specified flower-facing walk; q2 better fits this same scene. Not a distinct scene."
+    },
+    {
+      "job_id": "sakura-victory-q1",
+      "scene": "victory",
+      "output_sha256": "3f679b88915226226934cad27a793d34c6cc362936a03afbff0a515577e88aec",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: closed-eye laugh, high three-quarter camera, relaxed hands on lap and character identity pass. Distant card decorations are not a playable board."
+    },
+    {
+      "job_id": "sakura-rain-veranda-q1",
+      "scene": "rain-veranda",
+      "output_sha256": "a1820ee603acb89bf1e582416e9aa54c02f1fbd92464583fe8786811b5198c3b",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: thoughtful profile, rain gaze and railing contact pass. Requested right profile became left; exact direction failed and is recorded, without changing the scene intent."
+    },
+    {
+      "job_id": "sakura-library-q1",
+      "scene": "library",
+      "output_sha256": "a046e47963f8fd40e6663e41c4079116d18176f395adbba7ffeff32f0f8f5a55",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: rear three-quarter pose, book-directed gaze and both hands supporting the book pass. Identity, style and book contact preserved."
+    },
+    {
+      "job_id": "elena-lesson-q1",
+      "scene": "lesson",
+      "output_sha256": "933ea84ca8d88ff273faff50b53febf28fac0ef9eeb1af7db9ed2b5e375724ae",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: mature identity, downward notebook gaze, pointing finger and other hand on felt pass. Rear camera is shallower than requested but remains three-quarter; notebook contains only abstract marks."
+    },
+    {
+      "job_id": "elena-river-walk-q1",
+      "scene": "river-walk",
+      "output_sha256": "4cc7e52135154d3b21b7232caced8de659bb172d82e3b403d235004970374ee0",
+      "decision": "rejected",
+      "reason": "Identity and anatomy hold, but the requested wide full-body walking scene is cropped at the thighs and reads as static. q2 better fits the explicitly allowed railing variant; do not count both."
+    },
+    {
+      "job_id": "elena-victory-q1",
+      "scene": "victory",
+      "output_sha256": "852c257383a6dc61843bf2528c234ef265bac606700beffa5cfa647a02848837",
+      "decision": "rejected",
+      "reason": "Requested shoulder close-up with hands outside frame instead shows extra people and malformed foreground playing cards. Do not relabel this as a successful no-extra-person scene."
+    },
+    {
+      "job_id": "elena-coffee-q1",
+      "scene": "coffee",
+      "output_sha256": "677ea45d1ece1dd78be2ec3789b1a52d4df1dbc412b51e616547e7085d999d2f",
+      "decision": "rejected",
+      "reason": "Cup contact and identity hold, but the face/eyes engage the viewer rather than looking down at coffee as requested; this repeats the frontal-gaze issue."
+    },
+    {
+      "job_id": "sakura-garden-walk-q2",
+      "scene": "garden-walk",
+      "output_sha256": "843d88fd31aa6f7d8651314fbb19bae5b9dc492593d34c8a93e84b34242e9196",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: rear three-quarter full-body walk, book hold, gaze toward right-side blossoms and identity pass. No camera gaze; a distinct scene from library/rain/victory."
+    },
+    {
+      "job_id": "sakura-library-q2",
+      "scene": "library",
+      "output_sha256": "2064988690fbb4c6ad1520f3f920a3a7e69e162fca25e4773353bb7257702c9c",
+      "decision": "rejected",
+      "reason": "Secondary candidate for the same scene. Large abstract page scribbles dominate; q1 has clearer action and better rear camera. Not counted as another scene."
+    },
+    {
+      "job_id": "elena-lesson-q2",
+      "scene": "lesson",
+      "output_sha256": "f81f79ac6555f4fd87d32ae5fa48dcc78bad35b50ca3a05de991ad5f4bb202be",
+      "decision": "rejected",
+      "reason": "Reverts to frontal camera gaze and generates card-topped chip stacks instead of a clear lesson prop. q1 is the valid candidate for this scene."
+    },
+    {
+      "job_id": "elena-river-walk-q2",
+      "scene": "river-walk",
+      "output_sha256": "3aacb804f22946485d40c80308bbde0435275e29a7917d9f64fbdd2a9a3a961d",
+      "decision": "approved",
+      "reason": "Full-resolution reference comparison: mature identity, side/back view facing river and two natural hands on railing pass. Lower legs are cropped, so exact full-body framing failed; the intended paused railing scene is intact."
+    }
+  ]
+}

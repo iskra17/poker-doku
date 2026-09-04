@@ -64,13 +64,14 @@ describe('buildGallery', () => {
     expect(collectChapterBackgroundIds(STORY_CHAPTERS[0])).toEqual(expect.arrayContaining(['dojo-gate', 'dojo-table', 'dojo-garden-night']));
   });
 
-  it('칭호 섹션은 도장 4종 + 스토리 5종을 항상 보여 주고 보유 아레나 칭호를 덧붙인다', () => {
+  it('칭호 섹션은 도장 4종 + 스토리 6종을 항상 보여 주고 보유 아레나 칭호를 덧붙인다', () => {
     const entries = buildGallery({
       snapshot: snapshot({ inventory: [{ itemId: 'story-title-white-belt', quantity: 1, updatedAt: 0 }, { itemId: 'dojo-title-sprout-challenger', quantity: 1, updatedAt: 0 }] as ProgressionSnapshot['inventory'] }),
       progress: null,
     });
     const titles = entries.filter(entry => entry.section === 'title');
-    expect(titles).toHaveLength(9);
+    expect(titles).toHaveLength(10);
+    expect(titles.find(entry => entry.id === 'story-title-unmasker')?.unlocked).toBe(false);
     expect(titles.filter(entry => entry.unlocked).map(entry => entry.id).sort()).toEqual(['dojo-title-sprout-challenger', 'story-title-white-belt']);
     expect(titles.find(entry => entry.id === 'dojo-title-steady-trainee')?.hint).toBe('도장 Lv.15');
   });

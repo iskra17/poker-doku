@@ -71,7 +71,8 @@ describe('ScenarioDeck 배치', () => {
     expect(codes(deck.deal(2))).toEqual(['As', 'Ks']);
     const second = codes(deck.deal(2));
     expect(codes(deck.deal(2))).toEqual(['Qh', 'Qd']);
-    for (const code of second) expect(SCRIPT_CARDS.has(code)).toBe(false);
+    // 이 시나리오에는 보드가 없다. FULL_SCRIPT의 보드 5장은 정상적으로 딜될 수 있다.
+    for (const code of second) expect(['As', 'Ks', 'Qh', 'Qd']).not.toContain(code);
   });
 
   it('무장 후에도 덱은 52장 유니크이고 스크립트 카드가 잔여에 다시 나타나지 않는다', () => {

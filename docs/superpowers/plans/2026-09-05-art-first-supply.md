@@ -1,0 +1,38 @@
+# 일반 CG 첫 공급과 영상 연결
+
+사용자가 승인한 신규 일반 아트 제작 범위다. 기존 이미지·영상은 교체하지 않는다. 총괄은 A1c 첫 4장과 A2 후속 12장 전체를 원본 캐릭터 및 확대본으로 검수했다. 첫 4장은 채택 후보, 후속은 6채택/6제외다. 좌우·프레이밍의 사소한 지시 불일치는 기록했고, 정면 시선 재발·잘못된 카드/칩·추가 인물·동일 장면의 열세 후보는 제외했다.
+
+레시피 품질 gate: 사쿠라 6장면 모두에 유효 후보, 엘레나 6장면 중 4장면(analysis/snow-window/lesson/river-walk)에 유효 후보가 있다. 같은 장면 q1/q2는 중복 집계하지 않았다. 첫 공급은 아래 8개 장면이다.
+
+| 새 SceneCgId | 제목 | 원본 작업 |
+|---|---|---|
+| act1-ch02-garden-walk | 책과 벚꽃길 | A2 sakura-garden-walk-q2 |
+| act1-ch02-victory | 작은 승리 | A2 sakura-victory-q1 |
+| act1-ch02-rain-veranda | 빗소리와 기다림 | A2 sakura-rain-veranda-q1 |
+| act1-ch02-library | 책장에서 꺼낸 질문 | A2 sakura-library-q1 |
+| act3-ch09-lesson | 그림자 읽기 | A2 elena-lesson-q1 |
+| act3-ch09-river-walk | 강변의 생각 | A2 elena-river-walk-q2 |
+| act3-ch09-snow-window | 창밖의 흰 여백 | A1c elena-snow-window-q1 |
+| act3-ch09-analysis | 칩 앞의 침묵 | A1c elena-analysis-q1 |
+
+## 출처·export
+
+A2 6장은 `library`의 정확한 SHA 승인 영수증과 기존 no-overwrite export를 이용한다. A1c 2장은 큐 구축 전 단발 러너 결과이므로 **A2 intent/attempt를 사후 조작하거나 새 생성 이력으로 만들지 않는다**. 이미 검수된 `poker-doku-library-qwen-manifest.json`의 원본 SHA를 다시 검증한 뒤 기존 `convert.mjs cg`로 별도 수동 export 기록을 남긴다. 모든 출력은 신규 `public/assets/story/cg/scene-<id>.webp`, 768×1152, 원본/출력 SHA·변환 도구 SHA·수동/큐 경로를 정본 공급 매니페스트에 기록한다. 기존 대상이 있으면 중단한다.
+
+## 게임 연결
+
+`story-cgs.ts`에 8개 ID·제목·실제 배치 목록을 추가한다. `sceneCgChapterId`의 prologue/climax/epilogue 정규식 가정은 명시적인 챕터 매핑으로 바꾼다. 기록실은 현재 계약대로 해당 챕터 완주로 해금하고 새 DB 보상 아이템을 발명하지 않는다. 모든 ID와 실제 파일·챕터 관계를 검사한다.
+
+Ch2의 기존 씬·CG는 보존하고 수련 후 일상 장면을 추가 대사로 연결한다. Ch9 구현 담당자는 새 lesson/analysis/river-walk/snow-window를 맥락에 맞는 신규 씬 라인에 연결한다. 기존 캐릭터를 설명 없이 다른 장소로 연속 이동시키지 않으며, 회상/시간 경과를 대사로 명확히 한다. 미완료 Ch9는 새 CG를 미해금 상태로 보여 준다.
+
+## 영상 2개 파일럿
+
+채택된 A2 `sakura-rain-veranda-q1`과 `elena-river-walk-q2`만 부모로 사용한다. 총괄이 이 2건의 완전히 착의한 일상 영상 생성을 승인한다. 기존 H3 FL2V 그래프/모델로 768×1152, 107프레임, 24fps, 동일 첫·끝 이미지, 8스텝을 사용한다. 고정 카메라·작은 머리카락 움직임·배경의 빗방울/물결만 요구하고 새 인물·대사·의상 변경은 넣지 않는다. 모델은 처음에 실파일 SHA를 계산하고 레시피에 고정한다.
+
+같은 영속 큐에서 parent exact hash와 SaveVideo metadata를 보존한다. 실제 ffprobe 태그·프레임·전체 디코드로 등록 후 사람이 영상의 전체 구간과 루프 경계를 검수한다. CPU 가짜 테스트만으로 실영상 성공을 선언하지 않는다. 앱에 공급할 때 마지막 중복 프레임을 제거해 106프레임, MP4+WebM **두 파일**을 만들고 각각 2.5MB 이하로 제한한다. 두 파일 모두 검증·게시되기 전 `VIDEO_AVAILABLE`에 등록하지 않는다. 기존 MP4 단일 export는 새 쌍 단위 export/복구 영수증으로 확장하며, 중간 종료 후에도 기존 파일을 덮어쓰지 않는다.
+
+영상 공급 후 실제 브라우저에서 재생 시간이 진행되는지, 모바일 레이아웃·감소된 모션·영상 실패 시 정지 CG 폴백을 확인한다. 전체 영상은 D: 라이브러리에 남기고 웹용 결과만 git에 넣는다.
+
+## 장기 제작 속도
+
+A2 실측 12개는 270.36초이며 이 중 모델 재검증 217.415초, 제출부터 등록까지 51.889초였다. A2.1에서는 모델만 프로세스 내 SHA 캐시를 사용한다. 최초 완전 해시 후 경로·예상 해시·파일 stat(dev/ino/size/mtime_ns/ctime_ns)가 같을 때만 재사용하고, 바뀌면 다시 해시한다. workflow/input은 매 작업 해시한다. 캐시를 영속화하지 않고 파일 교체·동일 크기 변경 회귀를 검사한다. 레시피/파일 변경 감지를 없애서 속도를 높이지 않는다.
