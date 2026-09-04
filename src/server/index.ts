@@ -505,6 +505,11 @@ function initializePersistenceAndRecover(): void {
       logger: console,
     });
   }
+  const levelReconcileStartedAt = Date.now();
+  const levelReconcile = progressionService.reconcileAllLevelRewards(levelReconcileStartedAt);
+  console.info('[progression] level rewards reconciled', {
+    ...levelReconcile, elapsedMs: Date.now() - levelReconcileStartedAt,
+  });
   // 개발: Node 런타임이 native sqlite backup(23.8+)을 지원하지 않으면 백업을 비활성하고 기동한다.
   // 프로덕션은 무조건 구성 — 미지원 런타임이면 시작 백업에서 실패하는 것이 맞다.
   if (dev && !isNativeSqliteBackupSupported()) {

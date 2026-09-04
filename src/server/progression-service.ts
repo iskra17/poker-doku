@@ -819,16 +819,7 @@ export class ProgressionService {
     }
   }
 
-  /**
-   * 스토리 보상 적용 — 도장 XP 1건 + 히로인 N명 인연.
-   *
-   * `applyReward`와 달리 **카탈로그 영구 아이템을 지급하지 않는다**: 영구 지급 트리거가
-   * source event를 `canonical_progression_reward_source_events` 뷰
-   * (`event_type IN ('completed-hand','sng-finish')`, 단일 characterId 요약)로 한정해
-   * 스토리 이벤트를 소스로 쓰면 INSERT가 ABORT된다. 스토리발 레벨업의 아이템 보상은
-   * 기획상 Phase 2('카탈로그 story-chapter 아이템 보상 소스')이며, 그때 뷰·트리거
-   * 마이그레이션이 함께 필요하다. 카운터도 건드리지 않는다(핸드/SnG 수가 아니다).
-   */
+  /** 스토리 XP와 모든 히로인 레벨 보상을 한 트랜잭션에서 지급한다. */
   private applyStoryReward(input: {
     eventId: string;
     eventType: string;
@@ -917,6 +908,8 @@ export class ProgressionService {
       },
       updatedAt: Math.max(input.profile.updatedAt, input.completedAt),
     });
+    const candidates = this.repository.getMissingLevelRewardsInTransaction(input.profile.profileId);
+    summary.grantedItemIds = candidates.map(candidate => candidate.itemId);
     const inserted = this.repository.insertProgressionEvent({
       idempotencyKey: input.eventId,
       profileId: input.profile.profileId,
@@ -925,10 +918,47 @@ export class ProgressionService {
       summary: { ...summary },
       createdAt: input.completedAt,
     });
+    const granted = this.repository.grantLevelRewardsInTransaction(
+      input.profile.profileId, candidates,
+      { reason: 'story', sourceEventId: input.eventId }, input.completedAt,
+    );
+    if (granted.length !== summary.grantedItemIds.length
+        || granted.some((id, index) => id !== summary.grantedItemIds[index])) {
+      throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+    }
     return {
       summary: parseStoredSummary(inserted.event, input.eventId),
       affinityTransitions,
     };
+  }
+
+  reconcileLevelRewards(profileId: string, at = Date.now()): string[] {
+    assertBoundedId(profileId);
+    assertTimestamp(at);
+    return this.database.transaction(() => {
+      this.repository.getSnapshotInTransaction(profileId);
+      return this.repository.grantLevelRewardsInTransaction(
+        profileId, this.repository.getMissingLevelRewardsInTransaction(profileId),
+        { reason: 'reconcile-v34', sourceEventId: null }, at,
+      );
+    });
+  }
+
+  /** Called before listen; each profile commits independently so interrupted runs can resume. */
+  reconcileAllLevelRewards(at = Date.now()): { profiles: number; granted: number } {
+    assertTimestamp(at);
+    let after = '';
+    let profiles = 0;
+    let granted = 0;
+    for (;;) {
+      const ids = this.repository.listProgressionProfileIdsAfter(after);
+      if (ids.length === 0) return { profiles, granted };
+      for (const profileId of ids) {
+        granted += this.reconcileLevelRewards(profileId, at).length;
+        profiles += 1;
+        after = profileId;
+      }
+    }
   }
 
   rerollMission(
@@ -1183,12 +1213,15 @@ export class ProgressionService {
       })) {
         throw new Error('unknown permanent reward claim');
       }
-      const receipts = this.repository
-        .getPermanentGrantItemIdsForEventInTransaction(
+      const receipts = (event.eventType === EVENT_TYPE_STORY_CHAPTER
+        || event.eventType === EVENT_TYPE_STORY_DAILY_DRILLS
+        ? this.repository.getLevelGrantItemIdsForEventInTransaction(
+          event.profileId, event.idempotencyKey,
+        )
+        : this.repository.getPermanentGrantItemIdsForEventInTransaction(
           event.profileId,
           event.idempotencyKey,
-        )
-        .sort();
+        )).sort();
       if (
         claimed.length !== receipts.length
         || claimed.some((itemId, index) => itemId !== receipts[index])

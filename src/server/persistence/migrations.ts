@@ -6920,6 +6920,120 @@ export const migrations: readonly Migration[] = [
         ('story-cg-act2-belt-blue', 'cg', NULL, NULL, NULL);
     `,
   },
+  {
+    version: 34,
+    name: 'progression_level_reward_entitlements',
+    sql: `
+      CREATE VIEW eligible_progression_level_rewards AS
+      SELECT p.profile_id, c.item_id, c.source_kind, c.required_level,
+             c.character_id, p.balance_version,
+             CASE c.source_kind WHEN 'dojo-level' THEN p.dojo_level ELSE a.level END AS observed_level,
+             CASE c.source_kind WHEN 'dojo-level' THEN p.dojo_xp_milli ELSE a.xp_milli END AS observed_xp_milli
+      FROM progression_profiles p
+      JOIN collection_catalog c ON c.stackable = 0
+      LEFT JOIN character_affinity a
+        ON a.profile_id = p.profile_id AND a.character_id = c.character_id
+      WHERE (c.source_kind = 'dojo-level' AND p.dojo_level >= c.required_level)
+         OR (c.source_kind = 'affinity-level' AND a.level >= c.required_level);
+
+      CREATE TABLE progression_level_reward_grants (
+        profile_id TEXT NOT NULL REFERENCES progression_profiles(profile_id) ON DELETE CASCADE,
+        item_id TEXT NOT NULL REFERENCES collection_catalog(item_id),
+        source_kind TEXT NOT NULL CHECK(source_kind IN ('dojo-level','affinity-level')),
+        required_level INTEGER NOT NULL CHECK(required_level BETWEEN 2 AND 50),
+        character_id TEXT,
+        balance_version INTEGER NOT NULL CHECK(balance_version = 1),
+        observed_level INTEGER NOT NULL CHECK(observed_level BETWEEN 2 AND 50),
+        observed_xp_milli INTEGER NOT NULL CHECK(observed_xp_milli BETWEEN 0 AND 9007199254740991),
+        reason TEXT NOT NULL CHECK(reason IN ('story','reconcile-v34')),
+        source_event_id TEXT,
+        granted_at INTEGER NOT NULL CHECK(granted_at BETWEEN 0 AND 253402300799999),
+        PRIMARY KEY(profile_id,item_id),
+        CHECK((reason = 'story' AND source_event_id IS NOT NULL)
+           OR (reason = 'reconcile-v34' AND source_event_id IS NULL)),
+        FOREIGN KEY(source_event_id,profile_id)
+          REFERENCES progression_events(idempotency_key,profile_id) ON DELETE NO ACTION
+      ) STRICT;
+      CREATE INDEX idx_level_reward_grants_source_event
+        ON progression_level_reward_grants(source_event_id,profile_id);
+
+      CREATE TRIGGER validate_level_reward_grant_insert
+      BEFORE INSERT ON progression_level_reward_grants
+      WHEN NOT EXISTS (
+        SELECT 1 FROM eligible_progression_level_rewards e
+        WHERE e.profile_id = NEW.profile_id AND e.item_id = NEW.item_id
+          AND e.source_kind = NEW.source_kind AND e.required_level = NEW.required_level
+          AND e.character_id IS NEW.character_id AND e.balance_version = NEW.balance_version
+          AND e.observed_level = NEW.observed_level AND e.observed_xp_milli = NEW.observed_xp_milli
+      ) OR EXISTS (
+        SELECT 1 FROM inventory_items i
+        WHERE i.profile_id = NEW.profile_id AND i.item_id = NEW.item_id
+      ) OR EXISTS (
+        SELECT 1 FROM permanent_progression_grants g
+        WHERE g.profile_id = NEW.profile_id AND g.item_id = NEW.item_id
+      ) OR (NEW.reason = 'story' AND NOT EXISTS (
+        SELECT 1 FROM progression_events e
+        WHERE e.idempotency_key = NEW.source_event_id AND e.profile_id = NEW.profile_id
+          AND e.event_type IN ('story-chapter','story-daily-drills')
+          AND e.balance_version = NEW.balance_version AND e.created_at = NEW.granted_at
+          AND json_valid(e.summary_json)
+          AND json_type(e.summary_json) = 'object'
+          AND json_type(e.summary_json,'$.eventId') = 'text'
+          AND json_type(e.summary_json,'$.grantedItemIds') = 'array'
+          AND json_extract(e.summary_json,'$.eventId') = e.idempotency_key
+          AND EXISTS (SELECT 1 FROM json_each(e.summary_json,'$.grantedItemIds') j
+                      WHERE j.type = 'text' AND j.value = NEW.item_id)
+      ))
+      BEGIN SELECT RAISE(ABORT,'invalid level reward entitlement'); END;
+
+      CREATE TRIGGER sync_level_reward_inventory
+      AFTER INSERT ON progression_level_reward_grants
+      BEGIN
+        INSERT INTO inventory_items(profile_id,item_id,quantity,granted_at,updated_at)
+        VALUES(NEW.profile_id,NEW.item_id,1,NEW.granted_at,NEW.granted_at);
+      END;
+      CREATE TRIGGER freeze_level_reward_grant_update
+      BEFORE UPDATE ON progression_level_reward_grants
+      BEGIN SELECT RAISE(ABORT,'immutable level reward grant'); END;
+      CREATE TRIGGER freeze_level_reward_grant_delete
+      BEFORE DELETE ON progression_level_reward_grants
+      WHEN EXISTS(SELECT 1 FROM progression_profiles WHERE profile_id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward grant'); END;
+      CREATE TRIGGER freeze_level_reward_event_update
+      BEFORE UPDATE ON progression_events
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants WHERE source_event_id = OLD.idempotency_key)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward source event'); END;
+      CREATE TRIGGER freeze_level_reward_event_insert
+      BEFORE INSERT ON progression_events
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants
+                  WHERE source_event_id = NEW.idempotency_key)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward source event'); END;
+      CREATE TRIGGER prevent_legacy_level_reward_double_receipt
+      BEFORE INSERT ON permanent_progression_grants
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants
+                  WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id)
+      BEGIN SELECT RAISE(ABORT,'level reward already granted'); END;
+      CREATE TRIGGER protect_level_reward_inventory_update
+      BEFORE UPDATE ON inventory_items
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants
+                  WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward inventory'); END;
+      CREATE TRIGGER protect_level_reward_inventory_delete
+      BEFORE DELETE ON inventory_items
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants
+                  WHERE profile_id = OLD.profile_id AND item_id = OLD.item_id)
+       AND EXISTS(SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward inventory'); END;
+
+      CREATE TRIGGER protect_level_reward_inventory_insert
+      BEFORE INSERT ON inventory_items
+      WHEN EXISTS(SELECT 1 FROM progression_level_reward_grants
+                  WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id)
+       AND EXISTS(SELECT 1 FROM inventory_items
+                  WHERE profile_id = NEW.profile_id AND item_id = NEW.item_id)
+      BEGIN SELECT RAISE(ABORT,'immutable level reward inventory'); END;
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -277,9 +277,8 @@ describe('ProgressionService story rewards', () => {
       level: 3,
       xpMilli: 5_000,
     });
-    // 스토리 이벤트는 카탈로그 영구 아이템을 지급하지 않는다(Phase 2 — 뷰/트리거 소스 한정).
-    expect(result.summary.grantedItemIds).toEqual([]);
-    expect(result.snapshot.inventory).toEqual([]);
+    expect(result.summary.grantedItemIds).toEqual(['dojo-title-sprout-challenger']);
+    expect(result.snapshot.inventory.map(item => item.itemId)).toEqual(['dojo-title-sprout-challenger']);
   });
 
   it('rejects invalid input and leaves no partial state behind', () => {

@@ -302,8 +302,14 @@ npx tsc --noEmit
     `drill_review_notes` + `hand_history.story_tag`(`game_mode`는 'cash' 유지 — CHECK 위반 회피). 보상은
     `ProgressionService.recordStoryChapterComplete`/`recordStoryDailyDrills`(`progression_events` 키
     `story-chapter:<chapter>:first|run`, `story-daily-drills:<kstDate>` 멱등, 비파트너 히로인 행은
-    `ensureAffinityInTransaction`으로 생성). **스토리 XP는 카탈로그 영구 아이템을 못 준다** — v13 트리거가
-    completed-hand/sng-finish만 소스로 허용하므로 스토리 XP로 넘긴 레벨의 아이템은 v31 뷰·트리거 확장 전까지 미지급.
+    `ensureAffinityInTransaction`으로 생성). **일반 레벨 아이템 지급(v34)**: 스토리 XP 갱신 후
+    `eligible_progression_level_rewards`가 현재 도장·모든 히로인 인연 레벨과 카탈로그를 대조하고,
+    `progression_level_reward_grants` 불변 영수증이 인벤토리를 생성한다. 기존 v13 일반 경기 이벤트
+    가드와 v32 스토리 전용 지급은 유지한다. 시작 시 arena 복구 뒤·dev 백업 미지원 조기 return 전에
+    `reconcileAllLevelRewards`가 기존 프로필별 차집합을 커밋하며 중단 후 재실행도 중복 지급하지 않는다.
+    과거 summary를 수정하거나 첫 히로인 요약만으로 소급하지 말 것. story duplicate는 신규 receipt의
+    정확한 item 집합을 검증한다. 원본 이벤트·인벤토리의 INSERT OR REPLACE도 v34 가드가 차단한다.
+    회귀: `progression-service.level-rewards.test.ts`.
   - **소켓/HTTP**: `story-*` 7 이벤트 + `get-story-progress`(개인 `story-update` emit, 파서 `story-payload.ts`,
     레이트리밋 `story` 10/5s·`storyStart` 2/10s), `GET /api/story`(허브, 30/분). 명령은 (runId, expectedStepIndex)
     또는 (setId, index) stale 검사 → 'stale-state'. 방 없는 런의 `resync`는 room-lost 대신 `story-update` 재전송.
@@ -627,10 +633,9 @@ npx tsc --noEmit
 
 ### 실제 미완료와 후순위 범위 (2026-09-05 코드 대조)
 
-- 우선 제안: 스토리 XP로 넘긴 일반 도장/인연 레벨의 카탈로그 아이템 지급(v13의 기존 이벤트 근거 뷰와
-  `ProgressionService` 경로 연결, v32 스토리 전용 보상과 구분), Ch3/Ch6 `failScene` 재생 연결과
-  스파링만 재도전, 기존 1·2막의 보상·재접속·모바일 라이브 완주 확인. 실패 씬 데이터와 전체 챕터
-  재시작 버튼은 이미 있다. 다중 히로인 소급을 첫 히로인만 담긴 이벤트 요약으로 판단하지 않는다.
+- 우선 제안: Ch3/Ch6 `failScene` 재생 연결과 스파링만 재도전, 기존 1·2막의 보상·재접속·모바일
+  라이브 완주 확인. 실패 씬 데이터와 전체 챕터 재시작 버튼은 이미 있다. 스토리 XP의 일반 레벨
+  아이템 누락과 다중 히로인 소급은 v34 정본 레벨 영수증 경로로 수정했다(상단 영속 계약 참조).
 - 별도 아트 트랙: 24후보 파일럿 → 품질 확인 → 영속 작업 큐·재시작 복구·검수·export → 새 CG/영상 공급.
   현재는 제작 설계만 완료했으며 새 상시 제작 워커는 아직 없다. 기존 이미지는 교체하지 않는다.
 - 다음 확장: Ch7 라이브 리딩 퀴즈(`pendingQuiz`는 항상 null)·속마음의 공개 정책과 챕터 연결,

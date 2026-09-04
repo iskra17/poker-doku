@@ -36,6 +36,18 @@ export const PLAYABLE_CHARACTER_IDS = [
 ] as const;
 
 export type PlayableCharacterId = typeof PLAYABLE_CHARACTER_IDS[number];
+export interface LevelRewardCandidate {
+  itemId: string;
+  sourceKind: 'dojo-level' | 'affinity-level';
+  requiredLevel: number;
+  characterId: PlayableCharacterId | null;
+  balanceVersion: number;
+  observedLevel: number;
+  observedXpMilli: number;
+}
+export type LevelRewardOrigin =
+  | { reason: 'story'; sourceEventId: string }
+  | { reason: 'reconcile-v34'; sourceEventId: null };
 export type EquipmentSlot = 'title' | 'frame' | 'skin' | 'cutin';
 
 const EQUIPMENT_SLOTS: readonly EquipmentSlot[] = [
@@ -1680,6 +1692,80 @@ export class ProgressionRepository {
     } catch (error) {
       rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
     }
+  }
+
+  getMissingLevelRewardsInTransaction(profileId: string): LevelRewardCandidate[] {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    return this.database.db.prepare(`
+      SELECT e.item_id AS itemId, e.source_kind AS sourceKind,
+        e.required_level AS requiredLevel, e.character_id AS characterId,
+        e.balance_version AS balanceVersion, e.observed_level AS observedLevel,
+        e.observed_xp_milli AS observedXpMilli
+      FROM eligible_progression_level_rewards e
+      WHERE e.profile_id = ? AND NOT EXISTS (
+        SELECT 1 FROM inventory_items i
+        WHERE i.profile_id = e.profile_id AND i.item_id = e.item_id
+      ) ORDER BY e.item_id
+    `).all(profileId) as unknown as LevelRewardCandidate[];
+  }
+
+  /** The caller owns the XP/event/receipt transaction. SQL rechecks every candidate. */
+  grantLevelRewardsInTransaction(
+    profileId: string,
+    candidates: readonly LevelRewardCandidate[],
+    origin: LevelRewardOrigin,
+    grantedAt: number,
+  ): string[] {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    assertTimestamp(grantedAt, 'PROGRESSION_TIME_INVALID');
+    if (new Set(candidates.map(candidate => candidate.itemId)).size !== candidates.length) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    try {
+      const insert = this.database.db.prepare(`
+        INSERT INTO progression_level_reward_grants
+        (profile_id,item_id,source_kind,required_level,character_id,balance_version,
+         observed_level,observed_xp_milli,reason,source_event_id,granted_at)
+        VALUES(?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      for (const c of candidates) {
+        insert.run(profileId,c.itemId,c.sourceKind,c.requiredLevel,c.characterId,
+          c.balanceVersion,c.observedLevel,c.observedXpMilli,
+          origin.reason,origin.sourceEventId,grantedAt);
+        const inventory = this.database.db.prepare(`
+          SELECT quantity, granted_at, updated_at FROM inventory_items
+          WHERE profile_id = ? AND item_id = ?
+        `).get(profileId,c.itemId) as InventoryItemRow | undefined;
+        if (!inventory || inventory.quantity !== 1
+            || inventory.granted_at !== grantedAt || inventory.updated_at !== grantedAt) {
+          throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+        }
+      }
+      return candidates.map(candidate => candidate.itemId);
+    } catch (error) {
+      rethrowUnexpected(error, 'PROGRESSION_PERSISTENCE_INVALID');
+    }
+  }
+
+  listProgressionProfileIdsAfter(after: string, limit = 100): string[] {
+    assertPositiveSafeInteger(limit, 'PROGRESSION_VALUE_INVALID');
+    if (limit > 100) {
+      throw new ProgressionPersistenceError('PROGRESSION_VALUE_INVALID');
+    }
+    return this.database.db.prepare(`SELECT profile_id FROM progression_profiles
+      WHERE profile_id > ? ORDER BY profile_id LIMIT ?`).all(after,limit)
+      .map(row => row.profile_id as string);
+  }
+
+  getLevelGrantItemIdsForEventInTransaction(profileId: string, sourceEventId: string): string[] {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    assertNonemptyString(sourceEventId, 'PROGRESSION_VALUE_INVALID');
+    return this.database.db.prepare(`SELECT item_id FROM progression_level_reward_grants
+      WHERE profile_id = ? AND source_event_id = ? ORDER BY item_id`)
+      .all(profileId,sourceEventId).map(row => row.item_id as string);
   }
 
   private assertTransaction(): void {
