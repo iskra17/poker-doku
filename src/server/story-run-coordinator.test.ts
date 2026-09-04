@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
-import { makeChapter, makeChapterChain } from '@/lib/story/test-fixtures';
+import { makeChapter, makeChapterChain, makeScene } from '@/lib/story/test-fixtures';
 import type { Chapter, StoryTeacherId } from '@/lib/story/types';
 import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
 import type { StoryRewardItemView, StoryRunView } from '@/lib/story/views';
@@ -638,6 +638,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
   const forced: number[] = [];
   let state: FakeLiveState | null = null;
   const adapter: StoryLiveAdapterPort = {
+    hasSession: () => state !== null,
     bindEvents: bound => { events = bound; },
     enter: input => {
       enters.push(input);
@@ -686,6 +687,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
     adapter,
     enters,
     resumes,
+    changed: (profileId: string) => events?.onLiveChanged(profileId),
     forced,
     hold: () => { if (state) state.held = true; events?.onLiveChanged(state!.profileId); },
     finish: (summary: LiveStepSummary) => {
@@ -888,4 +890,157 @@ describe('StoryRunCoordinator operator skip', () => {
     expect(ctx.coordinator.advance(PROFILE, { runId: live.runId, expectedStepIndex: live.stepIndex, target: 'skip' }, { operator: true }).ok).toBe(true);
     expect(ctx.latest().stepIndex).toBe(live.stepIndex + 1);
   });
+});
+
+
+describe('failure scene and sparring retry', () => {
+  function failed(alreadyCompleted = false) {
+    const chapter = makeChapter({ failScene: makeScene('failure') });
+    const ctx = setup([chapter]);
+    if (alreadyCompleted) ctx.repository.complete(PROFILE, chapter.id);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    driveToLive(ctx);
+    fake.finish(liveSummary({ tag: '연습', primaryObjectivesMet: null }));
+    const source = ctx.latest();
+    fake.finish(liveSummary({ primaryObjectivesMet: false, handsPlayed: 2 }));
+    return { ...ctx, fake, source };
+  }
+  it('restores failure scene and ends once with zero rewards', () => {
+    const ctx = failed();
+    expect(ctx.latest()).toMatchObject({ phase: 'failure-scene', stepIndex: ctx.source.stepIndex, live: null, result: { passed: false, rewards: { dojoXpMilli: 0 } } });
+    expect(ctx.coordinator.resend(PROFILE)).toBe(true);
+    expect(ctx.latest().phase).toBe('failure-scene');
+    expect(ctx.coordinator.choose(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, choiceId: 'x', optionId: 'y' }).ok).toBe(false);
+    const next = { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'next' as const };
+    expect(ctx.coordinator.advance(PROFILE, next).ok).toBe(true);
+    expect(ctx.latest().phase).toBe('ended');
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    expect(ctx.coordinator.getProgress(PROFILE).activeRun).toBeNull();
+    expect(ctx.coordinator.advance(PROFILE, next).ok).toBe(false);
+    expect(ctx.rewards.chapters).toHaveLength(0);
+    expect(ctx.coordinator.resend(PROFILE)).toBe(true);
+  });
+  it('copies completed drill and earlier live results into an idempotent new run', () => {
+    const ctx = failed();
+    ctx.coordinator.advance(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'next' });
+    expect(ctx.coordinator.retrySparring('other', ctx.source.runId).ok).toBe(false);
+    const retry = ctx.coordinator.retrySparring(PROFILE, ctx.source.runId);
+    expect(retry).toEqual({ ok: true, value: { runId: 'run-2' } });
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId)).toEqual(retry);
+    expect(ctx.fake.enters).toHaveLength(3);
+    const run = ctx.coordinator.getActiveRun(PROFILE)!;
+    expect(run.stepIndex).toBe(ctx.source.stepIndex);
+    expect(run.drillSummary.outcomes).toHaveLength(2);
+    expect(run.liveResults.map(r => r.tag)).toEqual(['연습']);
+    expect(ctx.repository.attemptStarts).toHaveLength(2);
+  });
+  it('expires failure scenes and dismisses terminal results', () => {
+    const ctx = failed();
+    ctx.tick(10 * 60_000);
+    ctx.coordinator.sweepExpired();
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    expect(ctx.latest()).toMatchObject({ phase: 'ended', result: { sparringRetry: null } });
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(false);
+    const other = failed();
+    other.coordinator.advance(PROFILE, { runId: other.source.runId, expectedStepIndex: other.source.stepIndex, target: 'next' });
+    expect(other.coordinator.abandon(PROFILE, other.source.runId).ok).toBe(true);
+    expect(other.coordinator.resend(PROFILE)).toBe(false);
+  });
+  it('retains eligibility after adapter exceptions and rejects residual sessions', () => {
+    const ctx = failed();
+    ctx.coordinator.advance(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'next' });
+    const enter = ctx.fake.adapter.enter;
+    ctx.fake.adapter.enter = () => { throw new Error('seat failed'); };
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId)).toMatchObject({ ok: false, code: 'server-error' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    expect(ctx.repository.attemptStarts).toHaveLength(1);
+    ctx.fake.adapter.enter = enter;
+    ctx.fake.adapter.hasSession = () => true;
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(false);
+    ctx.fake.adapter.hasSession = () => false;
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(true);
+  });
+  it('preserves earlier successful sparring only and replaces eligibility on repeated failure', () => {
+    const chapter = makeChapter({ failScene: makeScene('failure') });
+    const first = chapter.steps.find(step => step.kind === 'sparring')!;
+    chapter.steps.splice(chapter.steps.length - 1, 0, { ...structuredClone(first), id: 'second-sparring' });
+    const ctx = setup([chapter]);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    driveToLive(ctx);
+    fake.finish(liveSummary({ tag: '연습', primaryObjectivesMet: null }));
+    fake.finish(liveSummary());
+    const source = ctx.latest();
+    fake.finish(liveSummary({ outcome: 'failed', primaryObjectivesMet: null }));
+    expect(ctx.latest().result?.passed).toBe(false);
+    expect(ctx.latest().result?.live?.handsPlayed).toBe(6);
+    ctx.coordinator.advance(PROFILE, { runId: source.runId, expectedStepIndex: source.stepIndex, target: 'next' });
+    expect(ctx.coordinator.retrySparring(PROFILE, source.runId).ok).toBe(true);
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.liveResults.map(r => r.tag)).toEqual(['연습', '대결']);
+    fake.finish(liveSummary({ primaryObjectivesMet: false }));
+    expect(ctx.coordinator.retrySparring(PROFILE, source.runId).ok).toBe(false);
+    expect(ctx.latest().phase).toBe('failure-scene');
+  });
+
+  it('ignores late live notifications and cleans an attempt-recording exception before retrying', () => {
+    const ctx = failed();
+    ctx.fake.adapter.phase = () => 'live-play';
+    ctx.fake.changed(PROFILE);
+    expect(ctx.latest().phase).toBe('failure-scene');
+    expect(ctx.latest().live).toBeNull();
+    ctx.coordinator.advance(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'skip' }, { operator: true });
+    const record = ctx.repository.recordAttemptStart.bind(ctx.repository);
+    ctx.repository.recordAttemptStart = () => { throw new Error('db unavailable'); };
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(false);
+    expect(ctx.fake.adapter.hasSession(PROFILE)).toBe(false);
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    ctx.repository.recordAttemptStart = record;
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(true);
+    ctx.tick(11 * 60_000);
+    ctx.coordinator.sweepExpired();
+    const runId = ctx.coordinator.getActiveRun(PROFILE)!.runId;
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId)).toEqual({ ok: true, value: { runId } });
+  });
+  it('accepts a new room-lost hold and clears old eligibility on full restart', () => {
+    const ctx = failed();
+    ctx.coordinator.advance(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'next' });
+    ctx.fake.adapter.phase = () => 'live-hold';
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(true);
+    expect(ctx.latest().phase).toBe('live-hold');
+    ctx.coordinator.abandon(PROFILE, ctx.latest().runId);
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(false);
+    const other = failed();
+    other.coordinator.advance(PROFILE, { runId: other.source.runId, expectedStepIndex: other.source.stepIndex, target: 'next' });
+    expect(other.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(other.coordinator.retrySparring(PROFILE, other.source.runId).ok).toBe(false);
+  });
+
+  it('keeps existing completion on failure and grants the retried success once', () => {
+    const ctx = failed(true);
+    expect(ctx.repository.listProgress(PROFILE)[0].completions).toBe(1);
+    expect(ctx.latest().result?.rewards.dojoXpMilli).toBe(0);
+    expect(ctx.rewards.chapters).toHaveLength(0);
+    ctx.coordinator.advance(PROFILE, { runId: ctx.source.runId, expectedStepIndex: ctx.source.stepIndex, target: 'next' });
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(true);
+    const retryRun = ctx.latest().runId;
+    expect(ctx.coordinator.abandon(PROFILE, ctx.source.runId)).toMatchObject({ ok: false, code: 'stale-state' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.runId).toBe(retryRun);
+    ctx.fake.finish(liveSummary());
+    const next = { runId: retryRun, expectedStepIndex: ctx.latest().stepIndex, target: 'next' as const };
+    expect(ctx.coordinator.advance(PROFILE, next).ok).toBe(true);
+    expect(ctx.latest().result).toMatchObject({ passed: true, rewards: { firstClear: false } });
+    expect(ctx.repository.listProgress(PROFILE)[0].completions).toBe(2);
+    expect(ctx.rewards.chapters).toHaveLength(1);
+    expect(ctx.coordinator.advance(PROFILE, next).ok).toBe(false);
+    expect(ctx.coordinator.retrySparring(PROFILE, ctx.source.runId).ok).toBe(false);
+    expect(ctx.rewards.chapters).toHaveLength(1);
+  });
+
+});
+
+it('rejects authored choices in failure scenes', () => {
+  const choiceScene = makeScene('failure');
+  choiceScene.lines = [{ kind: 'choice', choice: { id: 'bad', prompt: 'bad', options: [{ id: 'yes', label: 'yes' }] } } as unknown as typeof choiceScene.lines[number]];
+  expect(() => setup([makeChapter({ failScene: choiceScene })])).toThrow('failure scene');
 });

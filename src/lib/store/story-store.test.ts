@@ -264,3 +264,30 @@ describe('story-store', () => {
     expect(store.getState().lastDrillResult).toBeNull();
   });
 });
+
+it('retry sends only failedRunId, locks until ack, and keeps the result after expiry', async () => {
+  const store = createStoryStore({ fetch: async () => jsonResponse(200, { progress: progressFixture() }) });
+  const fake = makeSocket();
+  store.getState().bindSocket(fake.socket);
+  store.getState().receiveRun(runFixture());
+  const command = store.getState().retrySparring();
+  expect(fake.emitted[0]).toMatchObject({ event: 'retry-story-sparring', payload: { failedRunId: 'run-1' } });
+  expect(await store.getState().retrySparring()).toBe(false);
+  fake.emitted[0].ack!({ ok: false, code: 'story-no-run', message: '만료: 처음부터 다시 시작해 주세요.' });
+  expect(await command).toBe(false);
+  expect(store.getState().run?.runId).toBe('run-1');
+  expect(store.getState().pending).toBe(false);
+  expect(store.getState().error).toContain('만료');
+});
+
+it('closes an expired terminal on abandon no-run without discarding an active run', async () => {
+  const store = createStoryStore({ fetch: async () => jsonResponse(200, { progress: progressFixture() }) });
+  const fake = makeSocket();
+  store.getState().bindSocket(fake.socket);
+  const ended = runFixture({ phase: 'ended', result: { chapterId: 'act1-ch01', passed: false } as StoryRunView['result'] });
+  store.getState().receiveRun(ended);
+  const closing = store.getState().abandon();
+  fake.emitted.at(-1)!.ack!({ ok: false, code: 'story-no-run', message: 'expired' });
+  expect(await closing).toBe(true);
+  expect(store.getState().run).toBeNull();
+});

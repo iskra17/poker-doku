@@ -41,6 +41,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const skipRetry = useStoryStore(state => state.skipRetry);
   const abandon = useStoryStore(state => state.abandon);
   const dismissRun = useStoryStore(state => state.dismissRun);
+  const retrySparring = useStoryStore(state => state.retrySparring);
   const startChapter = useStoryStore(state => state.startChapter);
 
   const visible = !!run && !run.live?.roomId;
@@ -62,7 +63,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   // 스테이지 BGM — 스텝 종류로 mood를 정한다: 레슨·드릴 story-calm, 결산은 통과 story-triumph / 미통과 story-sad.
   // 씬 스텝은 ScenePlayer가 라인 `music`으로 직접 정하므로 여기서 덮어쓰지 않는다(부모 effect가 나중에 돌아 덮는 문제 방지).
   // 닫히면 로비/테이블로 복귀 (외부 시스템 호출)
-  const stepKind = run?.stepKind ?? null;
+  const stepKind = run?.phase === 'failure-scene' ? 'scene' : run?.stepKind ?? null;
   useEffect(() => {
     if (!visible) return;
     if (ended) {
@@ -142,29 +143,42 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             {run.phase === 'ended' && run.result && (
               <ChapterResult
                 result={run.result}
-                onClose={dismissRun}
+                pending={pending}
+                onClose={() => {
+                  if (run.result?.sparringRetry) void abandon();
+                  else dismissRun();
+                }}
+                onRetrySparring={() => void retrySparring()}
                 onOpenGallery={onOpenGallery ? () => { dismissRun(); onOpenGallery(); } : undefined}
                 onNextChapter={chapterId => {
-                  dismissRun();
                   void startChapter(chapterId);
                 }}
                 onRetry={() => {
                   const chapterId = run.chapterId;
-                  dismissRun();
                   void startChapter(chapterId);
                 }}
                 onFullCourse={() => {
                   const chapterId = run.chapterId;
-                  dismissRun();
                   void startChapter(chapterId, 'full');
                 }}
               />
             )}
 
+            {run.phase === 'failure-scene' && chapter?.failScene && (
+              <div className="w-full max-w-md">
+                <ScenePlayer key={`${run.runId}:failure-scene`} scene={chapter.failScene} partnerId={partnerId}
+                  onFinish={() => { if (!pending) void advance(); }} />
+                <button type="button" disabled={pending} onClick={() => void advance()}
+                  className="mt-2 w-full rounded-xl border border-mystic/30 py-2 text-sm text-ink-dim disabled:opacity-50">
+                  결산 보기
+                </button>
+              </div>
+            )}
+
             {run.phase === 'scene' && step?.kind === 'scene' && (
               <div className="w-full max-w-md">
                 <ScenePlayer
-                  key={step.id}
+                  key={`${run.runId}:${step.id}`}
                   scene={step.scene}
                   partnerId={partnerId}
                   onFinish={({ chosen }) => void finishScene(chosen)}

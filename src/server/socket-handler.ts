@@ -40,6 +40,7 @@ import { operatorAccessFromSet, resolveOperatorAccess } from './operator-access'
 import type { StoryRepository } from './story-repository';
 import {
   parseAbandonStoryRequest,
+  parseRetryStorySparringRequest,
   parseStartStoryChapterRequest,
   parseStoryAdvanceRequest,
   parseStoryChoiceRequest,
@@ -1343,6 +1344,7 @@ export function setupSocketHandlers(
   const sweepTimer = sweepIntervalMs > 0
     ? setInterval(() => {
         roomManager.sweepIdleRooms();
+        storyCoordinator?.sweepExpired();
       }, sweepIntervalMs)
     : null;
 
@@ -1650,6 +1652,21 @@ export function setupSocketHandlers(
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
       ack?.({ ok: true, data: storyCoordinator!.getProgress(session.playerId) });
+    });
+
+    socket.on('retry-story-sparring', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<{ runId: string }>(rawArgs);
+      if (!args.ok) { invalidPayload(args.ack); return; }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseRetryStorySparringRequest(payload);
+      if (!parsed.ok) { invalidPayload(ack); return; }
+      if (storyUnavailable(ack)) return;
+      if (!ensureRateLimit('storyStart', '챕터 시작 요청이 너무 빨라요.', ack)) return;
+      // The existing retry owns its live room: an ACK retransmission must not fail table admission.
+      if (!storyCoordinator!.currentSparringRetry(session.playerId, parsed.value.failedRunId)
+        && rejectStoryStartWhileBusy(ack)) return;
+      replyStory(ack, storyCoordinator!.retrySparring(session.playerId, parsed.value.failedRunId));
     });
 
     socket.on('start-story-chapter', (...rawArgs: unknown[]) => {
@@ -3940,6 +3957,7 @@ export function setupSocketHandlers(
         pendingTrainingOfferIds: [],
       };
       tournamentManager.shutdown();
+      storyCoordinator?.dispose();
       storyLiveAdapter?.shutdown();
       sessions.shutdown();
       roomManager.shutdown();

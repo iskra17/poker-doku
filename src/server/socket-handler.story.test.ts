@@ -3,7 +3,7 @@ import type { ProgressionSnapshot } from '../lib/progression/types';
 import type { RealtimeAck } from '../lib/realtime/protocol';
 import { generateDrill, gradeDrill } from '../lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '../lib/story/drills/types';
-import { makeChapterChain } from '../lib/story/test-fixtures';
+import { makeChapterChain, makeChapter, makeScene, makeSteps } from '../lib/story/test-fixtures';
 import type { StoryTeacherId } from '../lib/story/types';
 import type { StoryDrillAck, StoryProgressView, StoryRunView } from '../lib/story/views';
 import { createSocketTestHarness } from './socket-test-harness';
@@ -320,4 +320,37 @@ describe('story socket events', () => {
     expect(h.recentEvents().some(event => event.type === 'story-step' && (event.data as { target?: string }).target === 'skip')).toBe(true);
     operator.socket.disconnect();
   });
+  it('retry validates payloads, restores a real failed terminal, and reuses the new live room on duplicate ACK requests', async () => {
+    const sparring = makeSteps('act1-ch01').find(step => step.kind === 'sparring')!;
+    harness = await createSocketTestHarness({ storyChapters: [makeChapter({ steps: [sparring, { kind: 'result', id: 'end' }], failScene: makeScene('failure') })] });
+    const h = harness;
+    const profile = await h.createProfile();
+    const client = await h.connect('retry-owner', { profileCookie: profile.cookie });
+    const views = collect<StoryRunView>(client, 'story-update');
+    expect(await withAck(done => client.socket.emit('retry-story-sparring', { failedRunId: 'r', stepIndex: 0 }, done))).toMatchObject({ code: 'invalid-payload' });
+    expect(await withAck(done => client.socket.emit('start-story-chapter', { chapterId: 'act1-ch01' }, done))).toMatchObject({ ok: true });
+    const initial = views.at(-1)!;
+    const room = h.runtime.roomManager.getRoom(initial.live!.roomId!)!;
+    // Bust before the next deal drives the actual adapter -> coordinator failure path.
+    room.engine.state.players.find(player => player.id === client.playerId)!.chips = 0;
+    for (let i = 0; i < 170 && views.at(-1)?.phase !== 'failure-scene'; i++) await sleep(50);
+    expect(views.at(-1)?.phase).toBe('failure-scene');
+    const failed = views.at(-1)!;
+    expect(await withAck(done => client.socket.emit('story-advance', { runId: failed.runId, expectedStepIndex: failed.stepIndex, target: 'next' }, done))).toMatchObject({ ok: true });
+    expect(h.runtime.storyProgress(profile.profile.id)?.activeRun).toBeNull();
+    const restored = await h.connect('retry-owner', { profileCookie: profile.cookie });
+    const restoredViews = collect<StoryRunView>(restored, 'story-update');
+    expect(await withAck(done => restored.socket.emit('resync', done))).toMatchObject({ ok: true });
+    expect(restoredViews.at(-1)).toMatchObject({ phase: 'ended', result: { passed: false } });
+    const first = await withAck<{ runId: string }>(done => restored.socket.emit('retry-story-sparring', { failedRunId: failed.runId }, done));
+    expect(first).toMatchObject({ ok: true });
+    const live = restoredViews.at(-1)!;
+    expect(live.live?.roomId).not.toBe(initial.live?.roomId);
+    const fresh = h.runtime.roomManager.getRoom(live.live!.roomId!)!;
+    expect(fresh.engine.state.players.find(player => player.id === client.playerId)?.chips).toBe(sparring.table.heroStackBB * sparring.table.blinds.big);
+    expect(await withAck(done => restored.socket.emit('retry-story-sparring', { failedRunId: failed.runId }, done))).toEqual(first);
+    expect(restoredViews.at(-1)?.live?.roomId).toBe(live.live?.roomId);
+    restored.socket.disconnect();
+  }, 15_000);
+
 });

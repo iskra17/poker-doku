@@ -610,6 +610,7 @@ export interface ClientToServerEvents {
     ack?: AckCallback,
   ) => void;
   // --- 수련 스토리 모드 (ack 규약: 성공 시 story-update가 뒤따른다) ---
+  'retry-story-sparring': (data: unknown, ack?: AckCallback<{ runId: string }>) => void;
   'start-story-chapter': (data: unknown, ack?: AckCallback<{ runId: string }>) => void;
   'story-advance': (data: unknown, ack?: AckCallback) => void;
   'story-choice': (data: unknown, ack?: AckCallback) => void;

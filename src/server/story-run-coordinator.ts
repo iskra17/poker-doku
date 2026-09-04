@@ -27,7 +27,7 @@ import type {
   StoryHeroineId,
   StoryTeacherId,
 } from '../lib/story/types';
-import { LIVE_STEP_KINDS, isStoryHeroineId } from '../lib/story/types';
+import { isStoryHeroineId } from '../lib/story/types';
 import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
 import { nextStoryRewards, pickStoryCutscene } from '../lib/story/rewards/catalog';
@@ -52,6 +52,7 @@ import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvent
 
 /** 라이브 스텝 어댑터 포트 — LiveTableAdapter가 구현 (테스트는 fake) */
 export interface StoryLiveAdapterPort {
+  hasSession(profileId: string): boolean;
   enter(input: LiveEnterInput): 'entered' | 'unavailable';
   resume(profileId: string, runId: string): LiveCommandResult;
   /** false = 방을 아직 닫을 수 없음(정산 미해결) — 런을 지우지 말고 재시도 안내 */
@@ -291,7 +292,16 @@ function emptySummary(hintPenalty = 0.5): StoryRun['drillSummary'] {
   return { outcomes: [], hintsUsed: 0, bestStreak: 0, answered: 0, correct: 0, hintPenalty, wrongSlots: 0, sets: 0, perfectSets: 0, retrySkipped: false };
 }
 
+interface SparringCheckpoint {
+  source: StoryRun;
+  expiresAt: number;
+  consumedByRunId: string | null;
+}
+export const SPARRING_RETRY_TTL_MS = 10 * 60_000;
+
 export class StoryRunCoordinator {
+  private readonly retries = new Map<string, SparringCheckpoint>();
+  private readonly terminals = new Map<string, StoryRun>();
   private readonly runs = new Map<string, StoryRun>();
   private readonly chapters: readonly Chapter[];
   private readonly now: () => number;
@@ -303,6 +313,11 @@ export class StoryRunCoordinator {
 
   constructor(private readonly deps: StoryRunCoordinatorDeps) {
     this.chapters = deps.chapters ?? STORY_CHAPTERS;
+    for (const chapter of this.chapters) {
+      if (chapter.failScene?.lines.some(line => line.kind === 'choice')) {
+        throw new Error(`Choices are not supported in failure scene: ${chapter.id}`);
+      }
+    }
     this.now = deps.now ?? (() => Date.now());
     this.runIdFactory = deps.runIdFactory ?? defaultRunId;
     this.dailyTotal = deps.dailyTotal ?? 3;
@@ -321,6 +336,82 @@ export class StoryRunCoordinator {
 
   // ---------------------------------------------------------------------------
   // 조회
+
+  private clearRetry(profileId: string): void {
+    this.retries.delete(profileId);
+    this.terminals.delete(profileId);
+  }
+
+  /** Idempotent retry detection precedes socket/table admission checks. */
+  currentSparringRetry(profileId: string, failedRunId: string): { runId: string } | null {
+    const checkpoint = this.retries.get(profileId);
+    const run = this.runs.get(profileId);
+    return checkpoint?.source.runId === failedRunId && run?.runId === checkpoint.consumedByRunId
+      ? { runId: run.runId } : null;
+  }
+
+  retrySparring(profileId: string, failedRunId: string): CoordinatorResult<{ runId: string }> {
+    const duplicate = this.currentSparringRetry(profileId, failedRunId);
+    if (duplicate) {
+      this.resend(profileId);
+      return { ok: true, value: duplicate };
+    }
+    this.sweepExpired();
+    const checkpoint = this.retries.get(profileId);
+    if (!checkpoint || checkpoint.source.runId !== failedRunId || checkpoint.consumedByRunId) {
+      return { ok: false, code: 'story-no-run', message: '스파링 재도전 시간이 만료됐어요. [처음부터]로 다시 시작해 주세요.' };
+    }
+    const source = checkpoint.source;
+    const completedSets = source.chapter.steps.slice(0, source.stepIndex).filter(step => step.kind === 'drill-set').length;
+    if (source.mode !== 'full' || source.chapter.steps[source.stepIndex]?.kind !== 'sparring'
+      || source.drill !== null || source.drillSummary.sets !== completedSets || this.runs.has(profileId)
+      || !this.liveAdapter || this.liveAdapter.hasSession(profileId)) {
+      return { ok: false, code: 'story-busy', message: '진행 중인 수련이나 테이블을 마친 뒤 다시 시도해 주세요.' };
+    }
+    const now = this.now();
+    const run: StoryRun = { ...structuredClone(source), runId: this.runIdFactory(), result: null,
+      phase: 'live-play', startedAt: now, updatedAt: now };
+    const step = run.chapter.steps[run.stepIndex];
+    if (step.kind !== 'sparring') throw new Error('Invalid retry checkpoint');
+    this.runs.set(profileId, run);
+    try {
+      const entered = this.liveAdapter.enter({ profileId, runId: run.runId, chapterId: run.chapter.id,
+        chapterTitle: run.chapter.title, stepIndex: run.stepIndex, step, partnerId: run.partnerId });
+      if (entered !== 'entered') throw new Error('스파링 테이블을 준비하지 못했어요. 다시 시도해 주세요.');
+      run.phase = this.liveAdapter.phase(profileId) ?? 'live-hold';
+      this.deps.repository.recordAttemptStart(profileId, run.chapter.id, now);
+    } catch (error) {
+      this.liveAdapter.abandon(profileId);
+      this.runs.delete(profileId);
+      return { ok: false, code: 'server-error', message: error instanceof Error ? error.message : '재도전을 준비하지 못했어요.' };
+    }
+    checkpoint.consumedByRunId = run.runId;
+    this.terminals.delete(profileId);
+    this.deps.emit(profileId, this.buildView(run));
+    return { ok: true, value: { runId: run.runId } };
+  }
+
+  sweepExpired(): void {
+    for (const [profileId, checkpoint] of this.retries) {
+      // A consumed checkpoint is the retry command receipt until that active run ends.
+      if (checkpoint.consumedByRunId && this.runs.get(profileId)?.runId === checkpoint.consumedByRunId) continue;
+      if (checkpoint.expiresAt > this.now()) continue;
+      const run = this.runs.get(profileId);
+      if (run?.runId === checkpoint.source.runId && run.phase === 'failure-scene') {
+        if (run.result) run.result.sparringRetry = null;
+        this.endRun(run);
+        this.deps.emit(profileId, this.buildView(run));
+      }
+      this.clearRetry(profileId);
+    }
+  }
+
+  dispose(): void {
+    for (const profileId of this.runs.keys()) this.liveAdapter?.abandon(profileId);
+    this.runs.clear();
+    this.retries.clear();
+    this.terminals.clear();
+  }
 
   getProgress(profileId: string): StoryProgressView {
     const rows = this.deps.repository.listProgress(profileId);
@@ -389,7 +480,8 @@ export class StoryRunCoordinator {
 
   /** 재접속: 진행 중 런이 있으면 현재 뷰를 다시 보내고 true */
   resend(profileId: string): boolean {
-    const run = this.runs.get(profileId);
+    this.sweepExpired();
+    const run = this.runs.get(profileId) ?? this.terminals.get(profileId);
     if (!run) return false;
     this.deps.emit(profileId, this.buildView(run));
     return true;
@@ -453,6 +545,7 @@ export class StoryRunCoordinator {
       startedAt: now,
       updatedAt: now,
     };
+    this.clearRetry(profileId);
     this.runs.set(profileId, run);
     try {
       this.enterStep(run, 0);
@@ -529,6 +622,7 @@ export class StoryRunCoordinator {
       startedAt: now,
       updatedAt: now,
     };
+    this.clearRetry(profileId);
     this.runs.set(profileId, run);
     try {
       this.enterStep(run, 0);
@@ -541,6 +635,17 @@ export class StoryRunCoordinator {
   }
 
   advance(profileId: string, request: StoryAdvanceRequest, options: StoryCommandOptions = {}): CoordinatorResult {
+    const failure = this.runs.get(profileId);
+    if (failure?.phase === 'failure-scene') {
+      const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
+      if (!checked.ok) return checked;
+      if (request.target !== 'next' && !(request.target === 'skip' && options.operator)) {
+        return { ok: false, code: 'action-rejected', message: '실패 장면을 마친 뒤 결산을 확인해 주세요.' };
+      }
+      this.endRun(failure);
+      this.deps.emit(profileId, this.buildView(failure));
+      return { ok: true, value: undefined };
+    }
     if (request.target === 'skip') {
       if (!options.operator) {
         return { ok: false, code: 'action-rejected', message: '건너뛰기는 운영자만 쓸 수 있어요.' };
@@ -659,7 +764,7 @@ export class StoryRunCoordinator {
     if (!checked.ok) return checked;
     const run = checked.value;
     const step = run.chapter.steps[run.stepIndex];
-    const scene = step.kind === 'scene' ? step.scene : null;
+    const scene = run.phase === 'scene' && step.kind === 'scene' ? step.scene : null;
     const choiceLine = scene?.lines.find(line => line.kind === 'choice' && line.choice.id === request.choiceId);
     const choice = choiceLine && choiceLine.kind === 'choice' ? choiceLine.choice : null;
     const option = choice?.options.find(candidate => candidate.id === request.optionId);
@@ -788,6 +893,12 @@ export class StoryRunCoordinator {
   }
 
   abandon(profileId: string, runId: string): CoordinatorResult {
+    const terminal = this.terminals.get(profileId);
+    if (terminal?.runId === runId) {
+      this.clearRetry(profileId);
+      this.deps.emit(profileId, { ...this.buildView(terminal), result: null });
+      return { ok: true, value: undefined };
+    }
     const run = this.runs.get(profileId);
     if (!run) return { ok: false, code: 'story-no-run', message: '진행 중인 챕터가 없어요.' };
     if (run.runId !== runId) return { ok: false, code: 'stale-state', message: '이미 끝난 챕터 진행이에요.' };
@@ -797,6 +908,7 @@ export class StoryRunCoordinator {
       return { ok: false, code: 'server-error', message: '테이블 정리를 아직 마치지 못했어요. 잠시 후 다시 시도해 주세요.' };
     }
     this.runs.delete(profileId);
+    this.clearRetry(profileId);
     run.phase = 'ended';
     run.result = null;
     this.deps.emit(profileId, this.buildView(run));
@@ -805,6 +917,7 @@ export class StoryRunCoordinator {
 
   /** 프로필 폐기·로그아웃 — 런을 조용히 버린다 (emit 없음) */
   clearProfile(profileId: string): void {
+    this.clearRetry(profileId);
     this.runs.delete(profileId);
     this.liveAdapter?.abandon(profileId);
   }
@@ -815,9 +928,24 @@ export class StoryRunCoordinator {
   /** 라이브 스텝 종료(방은 이미 해체됨) — 요약을 쌓고 다음 스텝으로 */
   private completeLiveStep(profileId: string, runId: string, summary: LiveStepSummary): void {
     const run = this.runs.get(profileId);
-    if (!run || run.runId !== runId) return;
-    run.liveResults.push(summary);
+    if (!run || run.runId !== runId || !['live-play', 'live-hold'].includes(run.phase)) return;
+    const failed = run.mode === 'full' && run.chapter.steps[run.stepIndex]?.kind === 'sparring'
+      && (summary.primaryObjectivesMet === false || summary.outcome === 'failed');
+    const checkpoint = failed ? structuredClone(run) : null;
+    run.liveResults.push(failed ? { ...summary, primaryObjectivesMet: false } : summary);
     run.updatedAt = this.now();
+    if (checkpoint) {
+      checkpoint.liveResults = checkpoint.liveResults.filter(entry => entry.outcome === 'done' && entry.primaryObjectivesMet !== false);
+      const expiresAt = this.now() + SPARRING_RETRY_TTL_MS;
+      this.retries.set(profileId, { source: checkpoint, expiresAt, consumedByRunId: null });
+      this.computeResult(run);
+      run.result!.sparringRetry = { expiresAt };
+      const scene = run.chapter.failScene;
+      if (scene) run.phase = 'failure-scene';
+      else this.endRun(run);
+      this.deps.emit(profileId, this.buildView(run));
+      return;
+    }
     this.enterStep(run, run.stepIndex + 1);
     if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
   }
@@ -827,7 +955,7 @@ export class StoryRunCoordinator {
     const run = this.runs.get(profileId);
     if (!run) return;
     const step = run.chapter.steps[run.stepIndex];
-    if (!step || !LIVE_STEP_KINDS.has(step.kind)) return;
+    if (!step || !['live-play', 'live-hold'].includes(run.phase)) return;
     run.phase = this.liveAdapter?.phase(profileId) ?? run.phase;
     run.updatedAt = this.now();
     this.deps.emit(profileId, this.buildView(run));
@@ -1042,6 +1170,12 @@ export class StoryRunCoordinator {
   // 내부: 결산 / 데일리
 
   private finishRun(run: StoryRun): void {
+    this.computeResult(run);
+    this.clearRetry(run.profileId);
+    this.endRun(run);
+  }
+
+  private computeResult(run: StoryRun): void {
     const now = this.now();
     const summary = run.drillSummary;
     const drillScore = scoreDrillSet(summary.outcomes, summary.hintPenalty);
@@ -1170,10 +1304,14 @@ export class StoryRunCoordinator {
         beltAwarded: beltAfter !== beltBefore ? beltAfter : null,
       };
     }
+  }
+
+  private endRun(run: StoryRun): void {
     run.phase = 'ended';
     run.drill = null;
-    run.updatedAt = now;
+    run.updatedAt = this.now();
     this.runs.delete(run.profileId);
+    if (run.result?.sparringRetry) this.terminals.set(run.profileId, run);
   }
 
   /**
@@ -1299,7 +1437,7 @@ export class StoryRunCoordinator {
       phase: run.phase,
       context: { partnerId: run.partnerId, teacherId: this.resolveTeacherRef(run, run.chapter.teacher) },
       drill: run.drill ? this.buildDrillView(run.drill) : null,
-      live: LIVE_STEP_KINDS.has(step.kind) && run.phase !== 'ended'
+      live: ['live-play', 'live-hold'].includes(run.phase)
         ? this.liveAdapter?.view(run.profileId) ?? null
         : null,
       result: run.result,

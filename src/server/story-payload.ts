@@ -168,3 +168,9 @@ export function parseAbandonStoryRequest(input: unknown): ParseResult<AbandonSto
   if (!runId) return fail();
   return { ok: true, value: { runId } };
 }
+
+export function parseRetryStorySparringRequest(input: unknown): ParseResult<{ failedRunId: string }> {
+  if (!isRecord(input) || !hasOnlyKeys(input, ['failedRunId'])) return fail();
+  const failedRunId = idText(input.failedRunId);
+  return failedRunId ? { ok: true, value: { failedRunId } } : fail();
+}

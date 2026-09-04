@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   parseAbandonStoryRequest,
+  parseRetryStorySparringRequest,
   parseDrillAnswer,
   parseStartStoryChapterRequest,
   parseStoryAdvanceRequest,
@@ -129,4 +130,11 @@ describe('story socket payload parsing', () => {
     expect(parseAbandonStoryRequest({ runId: 'run-7' })).toEqual({ ok: true, value: { runId: 'run-7' } });
     expect(parseAbandonStoryRequest({ runId: 'run-7', force: true }).ok).toBe(false);
   });
+});
+
+it('retry accepts only the failed run identifier', () => {
+  expect(parseRetryStorySparringRequest({ failedRunId: 'run-1' })).toEqual({ ok: true, value: { failedRunId: 'run-1' } });
+  for (const value of [null, {}, { failedRunId: 1 }, { failedRunId: 'run-1', stepIndex: 4 }, { failedRunId: 'run-1', profileId: 'other' }]) {
+    expect(parseRetryStorySparringRequest(value).ok).toBe(false);
+  }
 });

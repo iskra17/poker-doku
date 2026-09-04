@@ -45,6 +45,7 @@ export interface StoryStoreState {
   retryDrills(): Promise<boolean>;
   skipRetry(): Promise<boolean>;
   startDaily(): Promise<boolean>;
+  retrySparring(): Promise<boolean>;
   abandon(): Promise<boolean>;
   receiveRun(view: StoryRunView): void;
   /** 결산을 본 뒤 끝난 런을 지운다 (허브로 복귀) */
@@ -265,6 +266,15 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         return !!ack?.ok;
       },
 
+      retrySparring: async () => {
+        const run = get().run;
+        if (!run) return false;
+        const ack = await withAck<{ runId: string }>((socket, done) => {
+          socket.emit('retry-story-sparring', { failedRunId: run.runId }, done);
+        });
+        return !!ack?.ok;
+      },
+
       startDaily: async () => {
         const ack = await withAck<{ runId: string }>((socket, done) => {
           socket.emit('story-daily', done);
@@ -278,8 +288,12 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         const ack = await withAck((socket, done) => {
           socket.emit('abandon-story', { runId: run.runId }, done);
         });
-        if (ack?.ok) void get().load();
-        return !!ack?.ok;
+        const expiredTerminal = run.phase === 'ended' && ack && !ack.ok && ack.code === 'story-no-run';
+        if ((ack?.ok || expiredTerminal) && get().run?.runId === run.runId) {
+          set({ run: null, hint: null, lastDrillResult: null, error: null });
+        }
+        if (ack?.ok || expiredTerminal) void get().load();
+        return !!ack?.ok || !!expiredTerminal;
       },
 
       receiveRun: view => {

@@ -7,7 +7,7 @@ import type { ActionType, Street } from '@/lib/poker/types';
 import type { DrillAnswer, DrillInstancePublic, DrillResult } from './drills/types';
 import type { ChapterGrade, ChapterId, ObjectiveKind, StepKind, StoryAct, StoryBelt, StoryHeroineId, StoryTeacherId } from './types';
 
-export type StoryRunPhase = 'scene' | 'lesson' | 'drill' | 'live-hold' | 'live-play' | 'result' | 'ended';
+export type StoryRunPhase = 'failure-scene' | 'scene' | 'lesson' | 'drill' | 'live-hold' | 'live-play' | 'result' | 'ended';
 /**
  * 런 모드 — 'full'은 챕터 전체, 'exam'은 **실력 확인**: 드릴 세트만 풀고(씬·레슨·라이브 스킵, 힌트 없음)
  * `EXAM_PASS_SCORE` 이상이면 완료로 기록한다. 아는 내용을 억지로 플레이하지 않게 하는 우회로(2026-09-03 피드백 ②).
@@ -170,6 +170,7 @@ export interface ChapterResultRewards {
 }
 
 export interface ChapterResultView {
+  sparringRetry?: { expiresAt: number } | null;
   chapterId: ChapterId;
   mode: StoryRunMode;
   passed: boolean;
