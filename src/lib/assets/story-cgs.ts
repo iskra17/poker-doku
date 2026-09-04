@@ -5,58 +5,76 @@
  */
 export type SceneCgId =
   | 'act1-ch01-prologue'
+  | 'act1-ch01-climax'
   | 'act1-ch01-epilogue'
   | 'act1-ch02-prologue'
+  | 'act1-ch02-climax'
   | 'act1-ch02-epilogue'
   | 'act1-ch03-prologue'
+  | 'act1-ch03-climax'
   | 'act1-ch03-epilogue'
   | 'act2-ch04-prologue'
+  | 'act2-ch04-climax'
   | 'act2-ch04-epilogue'
   | 'act2-ch05-prologue'
+  | 'act2-ch05-climax'
   | 'act2-ch05-epilogue'
   | 'act2-ch06-prologue'
+  | 'act2-ch06-climax'
   | 'act2-ch06-epilogue';
 
 export const SCENE_CG_IDS: readonly SceneCgId[] = [
   'act1-ch01-prologue',
+  'act1-ch01-climax',
   'act1-ch01-epilogue',
   'act1-ch02-prologue',
+  'act1-ch02-climax',
   'act1-ch02-epilogue',
   'act1-ch03-prologue',
+  'act1-ch03-climax',
   'act1-ch03-epilogue',
   'act2-ch04-prologue',
+  'act2-ch04-climax',
   'act2-ch04-epilogue',
   'act2-ch05-prologue',
+  'act2-ch05-climax',
   'act2-ch05-epilogue',
   'act2-ch06-prologue',
+  'act2-ch06-climax',
   'act2-ch06-epilogue',
 ];
 
 export const SCENE_CG_TITLE: Readonly<Record<SceneCgId, string>> = Object.freeze({
   'act1-ch01-prologue': '도장의 아침',
+  'act1-ch01-climax': '첫 쇼다운',
   'act1-ch01-epilogue': '첫날 밤의 툇마루',
   'act1-ch02-prologue': '테이블 앞의 사쿠라',
+  'act1-ch02-climax': '기다림의 반환점',
   'act1-ch02-epilogue': '밤 정원의 사쿠라',
   'act1-ch03-prologue': '화이트보드와 드라코',
+  'act1-ch03-climax': '팟 두 배의 인사',
   'act1-ch03-epilogue': '석양의 사범실',
   'act2-ch04-prologue': '칩을 튕기는 아라',
+  'act2-ch04-climax': '선제 타격',
   'act2-ch04-epilogue': '옥상의 주먹 인사',
   'act2-ch05-prologue': '방송 준비 완료',
+  'act2-ch05-climax': '스테이션의 쇼다운',
   'act2-ch05-epilogue': '칩 탑과 클로이',
   'act2-ch06-prologue': '남극에서 온 손님',
+  'act2-ch06-climax': '빙점의 선전포고',
   'act2-ch06-epilogue': '문 앞의 아라',
 });
 
-/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 (2026-09-03 1막 6장 + 2막 6장) */
+/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 (2026-09-04 씬 CG 18장) */
 const AVAILABLE: ReadonlySet<string> = new Set<string>(SCENE_CG_IDS);
 
 export function isSceneCgId(value: unknown): value is SceneCgId {
   return typeof value === 'string' && (SCENE_CG_IDS as readonly string[]).includes(value);
 }
 
-/** 씬 CG가 속한 챕터 id ('act1-ch01-prologue' → 'act1-ch01') */
+/** 씬 CG가 속한 챕터 id ('act1-ch01-climax' → 'act1-ch01') */
 export function sceneCgChapterId(id: SceneCgId): string {
-  return id.replace(/-(prologue|epilogue)$/, '');
+  return id.replace(/-(prologue|climax|epilogue)$/, '');
 }
 
 export interface SceneCg {

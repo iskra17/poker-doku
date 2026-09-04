@@ -72,7 +72,7 @@ Wan 2.2 I2V 다운로드는 필요 없다 — 이미 설치된 **MiniMax H3**(`M
   PowerShell `Start-Process python … -RedirectStandardOutput <log>`로 띄우고 로그를 폴링한다. 러너는 폴링 예외를 삼키고 30초마다
   진행을 찍으며 900초를 넘기면 그 클립을 포기한다(2026-09-04 보강).
 
-## 3차 배치 기록 (2026-09-04) — 인연 씬 22 + 챕터 씬 CG 12 (이로써 43클립 전부 배치)
+## 3차 배치 기록 (2026-09-04) — 인연 씬 22 + 챕터 씬 CG 12 (43클립 배치)
 
 | id | seed | 생성 | webm / mp4 |
 |---|---|---|---|
@@ -123,6 +123,29 @@ Wan 2.2 I2V 다운로드는 필요 없다 — 이미 설치된 **MiniMax H3**(`M
   기록실 SCENE CG 뷰어가 이 규약으로 `VideoCutscene`을 끼운다(폴백 계약은 CgStage와 같음).
 - 프롬프트 요령(3차에서 굳힌 것): 캐릭터 외형(머리색·소품·의상)을 클립마다 한 문장으로 다시 쓰고, 손에 든 소품(찻잔·꼬치·장미·카드·칩 탑)은
   "stays steady / stays in place"로 고정, 글자가 있는 화이트보드·노트는 "stays perfectly fixed"를 명시, 무인 씬(툇마루)은 "No people."로 시작.
+
+## 4차 배치 기록 (2026-09-04) — Ch1~6 클라이맥스 씬 CG 6 (49클립 완성)
+
+모두 첫 시드의 `v1`을 채택했다. H3 원본 107프레임의 중복 마지막 프레임을 제외해 106프레임·24fps·4.417초로 인코딩했고,
+첫/중간/끝 프레임 시트에서 캐릭터 정체성·손·카드·칩 고정과 루프 복귀를 확인했다.
+
+| id | seed / 채택 | 생성 시간 | webm / mp4 |
+|---|---:|---:|---:|
+| scene-act1-ch01-climax | 509020260944 / v1 | 110초 | 0.58MB / 0.43MB |
+| scene-act1-ch02-climax | 509020260945 / v1 | 110초 | 0.67MB / 0.45MB |
+| scene-act1-ch03-climax | 509020260946 / v1 | 120초 | 1.27MB / 0.73MB |
+| scene-act2-ch04-climax | 509020260947 / v1 | 115초 | 1.22MB / 0.71MB |
+| scene-act2-ch05-climax | 509020260948 / v1 | 115초 | 1.63MB / 0.82MB |
+| scene-act2-ch06-climax | 509020260949 / v1 | 125초 | 0.62MB / 0.45MB |
+
+최종 프롬프트는 공통 `STYLE` 뒤에 다음 씬 델타를 붙였다.
+
+- `scene-act1-ch01-climax`: Miyako, an adult woman with dark purple hair in an elegant updo, a gold flower ornament and hanging tassels, amber eyes, a white pleated shirt, gold bow tie and black vest with gold floral embroidery, leans forward behind a teal felt poker table at showdown, smiling brightly with one hand spread across five deliberately blurred community cards and a large pot of chips in the center; warm paper lanterns and cherry blossoms fill the traditional dojo room. Subtle ambient motion only: cherry petals drift slowly, the lantern light flickers, loose hair strands and gold tassels sway, and she blinks once. Her hand, all five cards and every chip stay perfectly still; card markings remain blurred and unreadable.
+- `scene-act1-ch02-climax`: Sakura, a young woman with a short pink bob, pink eyes and a white flower hairpin, wearing a cream cardigan over a white blouse with a pink ribbon, sits behind a teal felt poker table in a quiet dojo room, shyly smiling as one hand rests over her chest and the other rests on two face-down cards being folded, with a small neat chip stack beside her. Subtle ambient motion only: a few petals drift, the warm lantern glow flickers, her hair and ribbon sway gently, and she blinks once. Both hands, the two cards and all chips stay perfectly still.
+- `scene-act1-ch03-climax`: A tiny teal baby dragon with a cream cracked egg-shell cap, golden belly scales and small wings stands on green felt, grinning while pushing a huge mound of poker chips and puffing a small orange flame; behind it, a calm woman with long purple hair, a side braid, thin glasses and a dark purple suit adjusts her glasses beside a violet hologram of abstract bars and rings. Subtle ambient motion only: the small mouth and tail flames flicker, the dragon's wings twitch once, violet light pulses softly, her hair sways and she blinks once. The dragon's paws, the chip mound, all cards and every hologram shape stay perfectly fixed; no text or numbers appear.
+- `scene-act2-ch04-climax`: Ara, a young woman with very long red twin tails tied by black ribbons, sharp red eyes, a black cropped jacket with gold trim over a red top, leans aggressively across a green felt poker table at sunset, one hand gripping and pushing a tall red chip stack while the other braces on the felt, wearing a taunting grin. Subtle ambient motion only: her twin tails and ribbons sway, sunset clouds drift, the overhead lantern flickers and fine dust motes float. She blinks once. Both hands, all face-down cards, the main chip stack and loose chips stay perfectly still.
+- `scene-act2-ch05-climax`: Chloe, a cheerful young woman with fluffy sky-blue hair, snowflake clips, a single upright strand, blue eyes and a blue-and-white hoodie with star patches, beams behind a green felt table while holding exactly two cards with deliberately blurred unreadable faces; an unbranded blue smartphone on a tripod, a ring light and a microphone frame the bright purple-neon dojo scene. Subtle ambient motion only: the ring light and neon lanterns pulse softly, tiny sparkles drift, her hair sways and she blinks once while keeping her smile. Her mouth does not move; both hands, the two cards, phone, microphone and all chips stay perfectly still; no logos or text appear.
+- `scene-act2-ch06-climax`: A large round black-and-white fantasy penguin with half-lidded icy blue eyes, a dark three-feather crest with a blue diamond, a pale blue crystal bow tie and blue diamond markings on its two flippers stares forward alone across a blue felt poker table, one flipper resting against a tall orderly tower of blue chips amid frost and cold mist; a warm orange dojo lantern glows behind. Subtle ambient motion only: cold mist curls slowly, ice crystals glitter and drift, the bow tie catches faint light and the penguin blinks once. Both flippers, the complete chip tower and the frosted table stay perfectly still; no other character appears.
 
 원본 mp4·제출 JSON은 `D:\AI-Image-Video\output\poker-doku\`에 보관(리포 밖). Wan Animate 2(구동 영상 모션 전이)는 CG 애니메이션엔
 맞지 않아 쓰지 않았다 — 캐릭터가 춤추는 류의 클립이 필요해지면 `C:\code\1. codex\AI-Image-Video\scripts\run-chika-full-12fps-rife.ps1`

@@ -245,6 +245,7 @@ export const CH03: Chapter = {
                 speaker: 'draco',
                 text: '팟 두 배!! 이게 내 인사야!! 받을 거야, 안 받을 거야?!',
                 expression: 'confident',
+                cg: 'act1-ch03-climax',
                 effect: 'shake',
               },
             ],

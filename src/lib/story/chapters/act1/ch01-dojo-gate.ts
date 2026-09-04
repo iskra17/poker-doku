@@ -261,6 +261,7 @@ export const CH01: Chapter = {
                 speaker: 'miyako',
                 text: '쇼다운이에요♪ 마지막까지 남은 사람끼리 카드를 열고, 배운 족보 순서대로 높은 쪽이 팟을 가져간답니다.',
                 expression: 'happy',
+                cg: 'act1-ch01-climax',
                 effect: 'flash',
               },
               {

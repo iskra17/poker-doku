@@ -309,6 +309,44 @@ CLIPS = {
     "lanterns with her hands behind her back, looking away to the side with a blush and a small honest smile; cherry blossom petals drift "
     "and a violet night sky shows above. Subtle ambient motion only: cherry petals drift slowly down, the paper lanterns flicker warmly, "
     "her twin tails and loose hair strands sway in a light breeze, she blinks once and keeps her small smile. Quiet night breeze."),
+  # --- 2026-09-04 4차 배치: 클라이맥스 씬 CG 6 ---
+  "scene-act1-ch01-climax": dict(seed=509020260944, prompt=STYLE +
+    "Miyako, an adult woman with dark purple hair in an elegant updo, a gold flower ornament and hanging tassels, amber eyes, a white "
+    "pleated shirt, gold bow tie and black vest with gold floral embroidery, leans forward behind a teal felt poker table at showdown, "
+    "smiling brightly with one hand spread across five deliberately blurred community cards and a large pot of chips in the center; "
+    "warm paper lanterns and cherry blossoms fill the traditional dojo room. Subtle ambient motion only: cherry petals drift slowly, "
+    "the lantern light flickers, loose hair strands and gold tassels sway, and she blinks once. Her hand, all five cards and every chip "
+    "stay perfectly still; card markings remain blurred and unreadable."),
+  "scene-act1-ch02-climax": dict(seed=509020260945, prompt=STYLE +
+    "Sakura, a young woman with a short pink bob, pink eyes and a white flower hairpin, wearing a cream cardigan over a white blouse with "
+    "a pink ribbon, sits behind a teal felt poker table in a quiet dojo room, shyly smiling as one hand rests over her chest and the other "
+    "rests on two face-down cards being folded, with a small neat chip stack beside her. Subtle ambient motion only: a few petals drift, "
+    "the warm lantern glow flickers, her hair and ribbon sway gently, and she blinks once. Both hands, the two cards and all chips stay "
+    "perfectly still."),
+  "scene-act1-ch03-climax": dict(seed=509020260946, prompt=STYLE +
+    "A tiny teal baby dragon with a cream cracked egg-shell cap, golden belly scales and small wings stands on green felt, grinning while "
+    "pushing a huge mound of poker chips and puffing a small orange flame; behind it, a calm woman with long purple hair, a side braid, "
+    "thin glasses and a dark purple suit adjusts her glasses beside a violet hologram of abstract bars and rings. Subtle ambient motion "
+    "only: the small mouth and tail flames flicker, the dragon's wings twitch once, violet light pulses softly, her hair sways and she "
+    "blinks once. The dragon's paws, the chip mound, all cards and every hologram shape stay perfectly fixed; no text or numbers appear."),
+  "scene-act2-ch04-climax": dict(seed=509020260947, prompt=STYLE +
+    "Ara, a young woman with very long red twin tails tied by black ribbons, sharp red eyes, a black cropped jacket with gold trim over a "
+    "red top, leans aggressively across a green felt poker table at sunset, one hand gripping and pushing a tall red chip stack while the "
+    "other braces on the felt, wearing a taunting grin. Subtle ambient motion only: her twin tails and ribbons sway, sunset clouds drift, "
+    "the overhead lantern flickers and fine dust motes float. She blinks once. Both hands, all face-down cards, the main chip stack and "
+    "loose chips stay perfectly still."),
+  "scene-act2-ch05-climax": dict(seed=509020260948, prompt=STYLE +
+    "Chloe, a cheerful young woman with fluffy sky-blue hair, snowflake clips, a single upright strand, blue eyes and a blue-and-white "
+    "hoodie with star patches, beams behind a green felt table while holding exactly two cards with deliberately blurred unreadable faces; "
+    "an unbranded blue smartphone on a tripod, a ring light and a microphone frame the bright purple-neon dojo scene. Subtle ambient motion "
+    "only: the ring light and neon lanterns pulse softly, tiny sparkles drift, her hair sways and she blinks once while keeping her smile. "
+    "Her mouth does not move; both hands, the two cards, phone, microphone and all chips stay perfectly still; no logos or text appear."),
+  "scene-act2-ch06-climax": dict(seed=509020260949, prompt=STYLE +
+    "A large round black-and-white fantasy penguin with half-lidded icy blue eyes, a dark three-feather crest with a blue diamond, a pale "
+    "blue crystal bow tie and blue diamond markings on its two flippers stares forward alone across a blue felt poker table, one flipper "
+    "resting against a tall orderly tower of blue chips amid frost and cold mist; a warm orange dojo lantern glows behind. Subtle ambient "
+    "motion only: cold mist curls slowly, ice crystals glitter and drift, the bow tie catches faint light and the penguin blinks once. "
+    "Both flippers, the complete chip tower and the frosted table stay perfectly still; no other character appears."),
 }
 
 def build(cid, spec, tag):

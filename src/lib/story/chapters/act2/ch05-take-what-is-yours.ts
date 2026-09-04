@@ -263,6 +263,7 @@ export const CH05: Chapter = {
                 speaker: 'chloe',
                 text: '오~ 쇼다운! 이겼든 졌든 상대 카드 봤지? 그게 HUD보다 확실한 정보야. 다음 핸드에 써먹어!',
                 expression: 'happy',
+                cg: 'act2-ch05-climax',
               },
             ],
           },

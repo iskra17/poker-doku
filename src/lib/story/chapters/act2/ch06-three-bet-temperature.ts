@@ -253,6 +253,7 @@ export const CH06: Chapter = {
                 speaker: 'paeng',
                 text: '…시작하지. 망설이면 얼어 죽는다.',
                 expression: 'neutral',
+                cg: 'act2-ch06-climax',
               },
             ],
           },

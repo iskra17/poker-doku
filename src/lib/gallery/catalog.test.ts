@@ -81,9 +81,9 @@ describe('buildGallery', () => {
     expect(entries.every(entry => !entry.unlocked)).toBe(true);
     const summary = summarizeGallery(entries);
     expect(summary.find(row => row.section === 'bond')).toEqual({ section: 'bond', unlocked: 0, total: 24 });
-    // 보상 CG 7(1막 4 + 2막 3) + 배치된 씬 CG 12(챕터 완주 해금)
-    expect(summary.find(row => row.section === 'cg')?.total).toBe(19);
-    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(12);
+    // 보상 CG 7(1막 4 + 2막 3) + 배치된 씬 CG 18(챕터 완주 해금)
+    expect(summary.find(row => row.section === 'cg')?.total).toBe(25);
+    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(18);
   });
 });
 
