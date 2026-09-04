@@ -539,7 +539,8 @@ export function addHand(tally: ObjectiveTally, facts: HeroHandFacts): ObjectiveT
 
 export interface ObjectiveExtras {
   /** 라이브 리딩 퀴즈 집계 (Ch7+) — 없으면 quiz-accuracy는 판정 불가(null). */
-  quiz?: { answered: number; correct: number };
+  quiz?: { issued?: number; answered: number; correct: number; required?: number };
+  opponentResponse?: { opportunities: number; correct: number };
 }
 
 function view(
@@ -714,8 +715,19 @@ export function evaluateObjective(
       return view(objective, primary, count, maxCount, count <= maxCount);
     }
 
+    case 'opponent-response': {
+      const response = extras?.opponentResponse;
+      return ratioView(objective, primary, response?.opportunities ?? 0, response?.correct ?? 0);
+    }
     case 'quiz-accuracy': {
       const quiz = extras?.quiz;
+      const required = typeof objective.params?.required === 'number' ? objective.params.required : null;
+      if (required !== null) {
+        const ratio = (quiz?.correct ?? 0) / required;
+        const threshold = objective.minRatio ?? DEFAULT_MIN_RATIO;
+        return view(objective, primary, ratio, threshold, !!quiz && quiz.required === required
+          && (quiz.issued ?? 0) >= required && quiz.answered >= required && ratio >= threshold - RATIO_EPSILON);
+      }
       if (!quiz || quiz.answered <= 0) return view(objective, primary, 0, null, null);
       const minRatio = objective.minRatio ?? DEFAULT_MIN_RATIO;
       const ratio = quiz.correct / quiz.answered;

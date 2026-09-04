@@ -153,7 +153,15 @@ export interface LineupSeat {
   role?: 'teacher' | 'boss' | 'partner' | 'neighbor';
 }
 
+export interface MasqueradePolicy {
+  id: 'masquerade-v1';
+  seats: number[];
+  observeHands: 12;
+  revealedMinHands: 2;
+  revealedMaxHands: 10;
+}
 export interface LiveTableSpec {
+  masquerade?: MasqueradePolicy;
   blinds: { small: number; big: number };
   heroSeat: number;
   heroStackBB: number;
@@ -183,6 +191,7 @@ export const OBJECTIVE_KINDS = [
   'value-bet-river',
   'survive',
   'quiz-accuracy',
+  'opponent-response',
   // 2026-09-03 미션형 목표 — "N핸드 채우기" 대신 행동 한 번을 채우면 끝나는 종류
   'reach-showdown',
   'fold-hands',

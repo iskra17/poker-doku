@@ -1,3 +1,4 @@
+import { CH07 } from '../lib/story/chapters/act3/ch07-masquerade';
 /**
  * LiveTableAdapter 통합 테스트 — RoomManager 실물 + fake timers.
  * 기획 Part C 1b.1: hold→ack→resume · 라인업 고정 · 프리셋 덱 · 타임아웃 hold · 파산 실패 분기 ·
@@ -752,4 +753,51 @@ describe('LiveTableAdapter', () => {
       expect(summary).toMatchObject({ outcome: 'done', tag: '연습', objectives: [], primaryObjectivesMet: null, liveScore: null });
     });
   });
+  it('does not manufacture mandatory Ch7 quiz completion when an operator ends the live step', () => {
+    const step = structuredClone(CH07.steps.find(step => step.kind === 'sparring')!) as Extract<Step, { kind: 'sparring' }>;
+    enter(step);
+    expect(adapter.forceFinish(PROFILE)).toBe('finished');
+    expect(onStepFinished.mock.calls[0][2].primaryObjectivesMet).toBe(false);
+    expect(onStepFinished.mock.calls[0][2].objectives.find(o => o.id === 'ch07-quiz')?.achieved).toBe(false);
+  });
+  it('Ch7: twelve real hands lead to four locked quizzes; room loss preserves the deadline and offline issues no new question', async () => {
+    const step = structuredClone(CH07.steps.find(step => step.kind === 'sparring')!) as Extract<Step, { kind: 'sparring' }>;
+    const roomId = enter(step);
+    expect(await pumpUntil(() => !!adapter.view(PROFILE)?.pendingQuiz, { maxMs: 500_000 })).toBe(true);
+    expect(adapter.view(PROFILE)?.handsPlayed).toBe(12);
+    const question = adapter.view(PROFILE)!.pendingQuiz!;
+    expect(adapter.resume(PROFILE, RUN).ok).toBe(false);
+    const publicBefore = JSON.stringify(adapter.view(PROFILE));
+    for (const id of ['mochi','choco','gumi','chloe']) expect(publicBefore).not.toContain(id);
+    expect(manager.disposeRoom(roomId, 'idle')).toBe(true);
+    expect(adapter.view(PROFILE)?.pendingQuiz).toEqual(question);
+    await tick(30_001);
+    expect(adapter.view(PROFILE)?.pendingQuiz).toBeNull();
+    expect(adapter.view(PROFILE)?.masquerade?.answered).toBe(1);
+    await tick(90_000);
+    expect(adapter.view(PROFILE)?.masquerade?.answered).toBe(1);
+    expect(adapter.resume(PROFILE, RUN).ok).toBe(true);
+    const newRoomId = adapter.view(PROFILE)!.roomId!;
+    expect(newRoomId).not.toBe(roomId);
+    for (let i = 1; i < 4; i++) {
+      const q = adapter.view(PROFILE)!.pendingQuiz!;
+      const personality = stateOf(newRoomId)!.players.find(p => p.seatIndex === q.seatIndex)!.personalityId;
+      const optionIndex = ['mochi','choco','gumi','chloe'].indexOf(personality!);
+      const receipt = adapter.answerQuiz(PROFILE, { runId: RUN, quizId: q.quizId, optionIndex });
+      expect(receipt).toEqual({ ok: true, receipt: { quizId: q.quizId, accepted: true } });
+      expect(adapter.answerQuiz(PROFILE, { runId: RUN, quizId: q.quizId, optionIndex: (optionIndex + 1) % 4 })).toEqual(receipt);
+      if (i < 3) { expect(adapter.view(PROFILE)?.masquerade?.feedback).toBeNull(); expect(adapter.view(PROFILE)?.objectives[0].progress).toBe(0); }
+    }
+    expect(adapter.view(PROFILE)?.masquerade?.feedback).toHaveLength(4);
+    expect(adapter.view(PROFILE)?.objectives[0]).toMatchObject({ achieved: true, progress: 0.75 });
+    expect(stateOf(newRoomId)!.players.filter(p => p.type === 'bot').every(p => p.avatar !== 'story-mask')).toBe(true);
+    const hands = stateOf(newRoomId)!.handNumber;
+    await tick(10_000);
+    expect(stateOf(newRoomId)!.handNumber).toBe(hands);
+    expect(adapter.resume(PROFILE, RUN).ok).toBe(true);
+    expect(adapter.view(PROFILE)?.masquerade?.phase).toBe('revealed-play');
+    expect(await pumpUntil(() => onStepFinished.mock.calls.length > 0, { maxMs: 500_000 })).toBe(true);
+    expect(onStepFinished.mock.calls[0][2].objectives.find(o => o.id === 'ch07-quiz')?.achieved).toBe(true);
+  });
+
 });

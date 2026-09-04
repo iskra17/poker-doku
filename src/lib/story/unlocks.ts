@@ -1,3 +1,4 @@
+import type { StoryCurriculum } from './curriculum';
 /**
  * 챕터 해금·띠·다음 챕터 파생 — 순수 함수. 해금 상태는 저장하지 않고
  * `story_progress.completions > 0` 집합 + `Chapter.requires` 그래프에서 매번 계산한다.
@@ -41,9 +42,10 @@ export function nextChapter(chapters: readonly Chapter[], completed: ReadonlySet
 }
 
 /** 막 전체(해당 act의 모든 챕터)를 완료했는지 */
-export function isActCompleted(chapters: readonly Chapter[], act: StoryAct, completed: ReadonlySet<ChapterId>): boolean {
+export function isActCompleted(chapters: readonly Chapter[], act: StoryAct, completed: ReadonlySet<ChapterId>, curriculum: StoryCurriculum): boolean {
   const inAct = chapters.filter(chapter => chapter.act === act);
-  return inAct.length > 0 && inAct.every(chapter => completed.has(chapter.id));
+  const registered = new Set(inAct.map(chapter => chapter.id));
+  return curriculum[act].length > 0 && curriculum[act].every(id => registered.has(id) && completed.has(id));
 }
 
 /**
@@ -54,14 +56,15 @@ export function deriveBelt(
   chapters: readonly Chapter[],
   completed: ReadonlySet<ChapterId>,
   flags: Readonly<Record<string, string>>,
+  curriculum: StoryCurriculum,
 ): StoryBelt {
   let belt: StoryBelt = 'white';
   const ladder: Array<[StoryAct, StoryBelt]> = [[1, 'yellow'], [2, 'blue'], [3, 'brown']];
   for (const [act, next] of ladder) {
-    if (!isActCompleted(chapters, act, completed)) return belt;
+    if (!isActCompleted(chapters, act, completed, curriculum)) return belt;
     belt = next;
   }
-  if (isActCompleted(chapters, 4, completed) && flags[BLACK_BELT_FLAG] === '1') return 'black';
+  if (isActCompleted(chapters, 4, completed, curriculum) && flags[BLACK_BELT_FLAG] === '1') return 'black';
   return belt;
 }
 

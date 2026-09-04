@@ -1,3 +1,4 @@
+import { STORY_CURRICULUM, type StoryCurriculum } from '@/lib/story/curriculum';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import {
   listStoryRewardPreview,
@@ -34,6 +35,7 @@ export interface StoryRewardReconcileResult {
 }
 
 export interface StoryRewardServiceDeps {
+  curriculum?: StoryCurriculum;
   database: PokerDatabase;
   storyRepository: Pick<StoryRepository, 'listProgress' | 'getFlags'>;
   rewardRepository: Pick<StoryRewardRepository, 'listGrantedIds' | 'grantInTransaction'>;
@@ -115,6 +117,7 @@ export class StoryRewardService {
       if (row.bestGrade) bestGrade.set(row.chapterId, row.bestGrade);
     }
     return {
+      curriculum: this.#deps.curriculum ?? STORY_CURRICULUM,
       completed,
       bestGrade,
       flags: this.#deps.storyRepository.getFlags(profileId),

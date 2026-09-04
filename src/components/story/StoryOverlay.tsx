@@ -1,4 +1,5 @@
 'use client';
+import MasqueradePanel from './live/MasqueradePanel';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { onGameEvent } from '@/lib/events/game-events';
@@ -123,7 +124,7 @@ export default function StoryOverlay() {
   // 'scene' hold인데 챕터 데이터에서 인터럽트를 못 찾거나(데이터 불일치), 씬을 다 봤는데도
   // resume이 실패해 hold가 남아 있으면 안내 카드로 폴백한다 — 조용히 멈추면 런이 갇힌다.
   const showScene = holding && holdReason === 'scene' && !!holdInterrupt && sceneDoneFor !== sceneGate;
-  const showHoldPanel = holding && !showScene && holdReason !== 'room-lost';
+  const showHoldPanel = holding && !showScene && holdReason !== 'room-lost' && holdReason !== 'quiz';
 
   return (
     <>
@@ -162,6 +163,7 @@ export default function StoryOverlay() {
         </div>
       </div>
 
+      {live?.masquerade && <div className={`pointer-events-none absolute z-40 flex justify-center px-3 ${holding ? 'inset-0 items-center' : 'inset-x-0 bottom-16'}`}><MasqueradePanel live={live} /></div>}
       <DecisionReviewSheet review={live?.lastReview ?? null} />
       <StoryCutIn data={missionData} isMobile={isMobile} onDone={() => setMissionData(null)} />
 

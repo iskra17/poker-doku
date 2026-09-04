@@ -11,7 +11,7 @@ import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { formatCard } from '@/lib/poker/card-notation';
 import type { PokerClientSocket, RealtimeAck } from '@/lib/realtime/protocol';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
-import type { StoryAdvanceTarget, StoryDrillAck, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
+import type { StoryAdvanceTarget, StoryDrillAck, StoryQuizReceipt, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
 import { emitGameEvent } from '@/lib/events/game-events';
 
 interface Dependencies {
@@ -46,6 +46,7 @@ export interface StoryStoreState {
   skipRetry(): Promise<boolean>;
   startDaily(): Promise<boolean>;
   retrySparring(): Promise<boolean>;
+  answerQuiz(quizId: string, optionIndex: number): Promise<boolean>;
   abandon(): Promise<boolean>;
   receiveRun(view: StoryRunView): void;
   /** 결산을 본 뒤 끝난 런을 지운다 (허브로 복귀) */
@@ -263,6 +264,13 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
           socket.emit('story-drill', { runId: run.runId, setId: drill.setId, index: drill.index, action: 'skip-retry' }, done);
         });
         if (ack?.ok) set({ hint: null, lastDrillResult: null });
+        return !!ack?.ok;
+      },
+
+      answerQuiz: async (quizId, optionIndex) => {
+        const run = get().run;
+        if (!run) return false;
+        const ack = await withAck<StoryQuizReceipt>((socket, done) => socket.emit('story-quiz', { runId: run.runId, quizId, optionIndex }, done));
         return !!ack?.ok;
       },
 

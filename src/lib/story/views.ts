@@ -13,7 +13,7 @@ export type StoryRunPhase = 'failure-scene' | 'scene' | 'lesson' | 'drill' | 'li
  * `EXAM_PASS_SCORE` 이상이면 완료로 기록한다. 아는 내용을 억지로 플레이하지 않게 하는 우회로(2026-09-03 피드백 ②).
  */
 export type StoryRunMode = 'full' | 'exam';
-export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost';
+export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost' | 'quiz';
 
 export interface StoryDrillView {
   setId: string;
@@ -76,7 +76,20 @@ export interface BotThought {
   text: string;
 }
 
+export interface StoryQuizReceipt { quizId: string; accepted: true }
+export interface StoryQuizFeedback { seatIndex: number; selected: number | null; correctIndex: number; correctLabel: string; selectedLabel: string | null; characterId: string; explanation: string }
+export interface ObservationNote { seatIndex: number; hands: number; entered: number; raised: number; called: number }
+export interface MasqueradeView {
+  phase: 'observing' | 'quiz' | 'feedback' | 'revealed-play';
+  notes: ObservationNote[];
+  feedback: StoryQuizFeedback[] | null;
+  answered: number;
+  required: 4;
+}
 export interface HandReadQuizView {
+  seatIndex: number;
+  number: number;
+  required: 4;
   quizId: string;
   prompt: string;
   options: string[];
@@ -98,6 +111,7 @@ export interface StoryLiveView {
   lastReview: DecisionReview | null;
   botThoughts: BotThought[];
   pendingQuiz: HandReadQuizView | null;
+  masquerade?: MasqueradeView;
 }
 
 // ---------------------------------------------------------------------------

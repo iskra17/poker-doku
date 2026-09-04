@@ -23,6 +23,7 @@ import type {
   StoryDrillRequest,
   StoryProgressView,
   StoryQuizRequest,
+  StoryQuizReceipt,
   StoryRunView,
 } from '../story/views';
 import type {
@@ -615,7 +616,7 @@ export interface ClientToServerEvents {
   'story-advance': (data: unknown, ack?: AckCallback) => void;
   'story-choice': (data: unknown, ack?: AckCallback) => void;
   'story-drill': (data: unknown, ack?: AckCallback<StoryDrillAck>) => void;
-  'story-quiz': (data: unknown, ack?: AckCallback<{ correct: boolean }>) => void;
+  'story-quiz': (data: unknown, ack?: AckCallback<StoryQuizReceipt>) => void;
   'story-daily': (dataOrAck?: unknown, ack?: AckCallback<{ runId: string }>) => void;
   'abandon-story': (data: unknown, ack?: AckCallback) => void;
   /** 진행 요약(허브) — HTTP GET /api/story와 같은 뷰 */

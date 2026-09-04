@@ -1,3 +1,4 @@
+import { STORY_CURRICULUM } from '@/lib/story/curriculum';
 /**
  * 2막 3챕터 데이터 회귀 — 스키마(validateChapters)·구조(A6 템플릿)·목표 규약·말투 체크리스트.
  * 1막(`act1.test.ts`)과 같은 관점: "콘텐츠가 계약을 지키는가"만 본다.
@@ -50,7 +51,7 @@ function conceptCards(chapter: Chapter): Array<{ title: string; body: string; fo
 
 describe('2막 챕터 데이터', () => {
   it('레지스트리에 등록됐고 스키마 검증(실제 템플릿 id 집합)을 통과한다', () => {
-    expect(STORY_CHAPTERS.map(chapter => chapter.id)).toEqual([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06']);
+    expect(STORY_CHAPTERS.map(chapter => chapter.id)).toEqual([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06', 'act3-ch07']);
     expect(validateChapters(STORY_CHAPTERS, { templateIds: DRILL_TEMPLATE_IDS })).toEqual([]);
   });
 
@@ -95,9 +96,9 @@ describe('2막 챕터 데이터', () => {
     const act1Done = computeUnlockedChapters(STORY_CHAPTERS, new Set(ACT1_IDS));
     expect(['act2-ch04', 'act2-ch05', 'act2-ch06'].every(id => act1Done.has(id))).toBe(true);
     // 띠: 1막 완주 노란, 2막 완주 파란 — 챕터 데이터의 belt 필드와 파생값이 같은 방향
-    expect(deriveBelt(STORY_CHAPTERS, new Set(ACT1_IDS), {})).toBe('yellow');
-    expect(deriveBelt(STORY_CHAPTERS, new Set([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06']), {})).toBe('blue');
-    expect(isActCompleted(STORY_CHAPTERS, 2, new Set([...ACT1_IDS, 'act2-ch04', 'act2-ch05']))).toBe(false);
+    expect(deriveBelt(STORY_CHAPTERS, new Set(ACT1_IDS), {}, STORY_CURRICULUM)).toBe('yellow');
+    expect(deriveBelt(STORY_CHAPTERS, new Set([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06', 'act3-ch07']), {}, STORY_CURRICULUM)).toBe('blue');
+    expect(isActCompleted(STORY_CHAPTERS, 2, new Set([...ACT1_IDS, 'act2-ch04', 'act2-ch05']), STORY_CURRICULUM)).toBe(false);
     expect([CH04.teacher, CH05.teacher, CH06.teacher]).toEqual(['ara', 'chloe', 'ara']);
     expect([CH04.belt, CH05.belt, CH06.belt]).toEqual(['yellow', 'yellow', 'blue']);
     expect([CH04.order, CH05.order, CH06.order]).toEqual([1, 2, 3]);

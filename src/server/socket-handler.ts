@@ -47,7 +47,7 @@ import {
   parseStoryDrillRequest,
   parseStoryQuizRequest,
 } from './story-payload';
-import type { StoryDrillAck, StoryProgressView } from '../lib/story/views';
+import type { StoryDrillAck, StoryProgressView, StoryQuizReceipt } from '../lib/story/views';
 import type { Chapter } from '../lib/story/types';
 import {
   parseOptionalPayloadArgs,
@@ -776,6 +776,10 @@ export function setupSocketHandlers(
     ? new LiveTableAdapter({
       roomManager,
       hero: {
+        isOnline: profileId => {
+          const current = sessions.getByPlayerId(profileId);
+          return !!current?.socketId && io.sockets.sockets.get(current.socketId)?.connected === true;
+        },
         seatHero: (profileId, roomId, seat) => {
           const targetSession = sessions.getByPlayerId(profileId);
           const targetSocket = targetSession?.socketId
@@ -1637,9 +1641,6 @@ export function setupSocketHandlers(
       });
       return true;
     };
-    const storyNotReady = <T>(ack?: AckCallback<T>): void => {
-      ack?.({ ok: false, code: 'action-rejected', message: '이 기능은 아직 준비 중이에요.' });
-    };
 
     socket.on('get-story-progress', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs<StoryProgressView>(rawArgs);
@@ -1755,20 +1756,21 @@ export function setupSocketHandlers(
     });
 
     socket.on('story-quiz', (...rawArgs: unknown[]) => {
-      const args = parseRequiredPayloadArgs(rawArgs);
+      const args = parseRequiredPayloadArgs<StoryQuizReceipt>(rawArgs);
       if (!args.ok) {
         invalidPayload(args.ack);
         return;
       }
       const { payload, ack } = args;
       if (!ensureOwnership(ack)) return;
-      if (!parseStoryQuizRequest(payload).ok) {
+      const parsed = parseStoryQuizRequest(payload);
+      if (!parsed.ok) {
         invalidPayload(ack);
         return;
       }
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
-      storyNotReady(ack); // Phase 2: 라이브 리딩 퀴즈
+      replyStory(ack, storyCoordinator!.answerQuiz(session.playerId, parsed.value));
     });
 
     socket.on('story-daily', (...rawArgs: unknown[]) => {

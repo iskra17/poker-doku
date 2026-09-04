@@ -17,6 +17,7 @@ import DrillCard from './DrillCard';
 import LessonPage from './LessonPage';
 import ScenePlayer from './ScenePlayer';
 import StoryCutIn from './StoryCutIn';
+import MasqueradePanel from './live/MasqueradePanel';
 
 const noopSubscribe = () => () => {};
 
@@ -225,6 +226,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             {/* 라이브 스텝인데 방이 없는 상태 — ①착석 직전(live-play, 안내만) ②방 유실/타임아웃 hold.
                 ②는 [이어하기]가 새 방을 열어 같은 스텝을 재개한다 (서버 resumeRoom). */}
             {(run.phase === 'live-hold' || run.phase === 'live-play') && (() => {
+              if (run.live?.masquerade && ['quiz', 'feedback'].includes(run.live.masquerade.phase)) return <MasqueradePanel live={run.live} />;
               const copy = holdCopy(needsResumeFromLobby(run) ? (run.live?.holdReason ?? null) : null);
               const canResume = needsResumeFromLobby(run);
               return (

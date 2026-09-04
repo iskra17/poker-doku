@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
-import { makeChapter, makeChapterChain, makeScene } from '@/lib/story/test-fixtures';
+import { makeChapter, makeChapterChain, makeScene, curriculumFor } from '@/lib/story/test-fixtures';
 import type { Chapter, StoryTeacherId } from '@/lib/story/types';
 import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
 import type { StoryRewardItemView, StoryRunView } from '@/lib/story/views';
@@ -159,6 +159,7 @@ function setup(chapters: Chapter[] = makeChapterChain(), partner: 'sakura' | nul
     repository,
     rewards,
     chapters,
+    curriculum: curriculumFor(chapters),
     now: () => clock,
     emit: (profileId, view) => emitted.push({ profileId, view }),
     partnerOf: () => partner,
@@ -638,6 +639,7 @@ function makeFakeAdapter(options: { abandonOk?: () => boolean } = {}) {
   const forced: number[] = [];
   let state: FakeLiveState | null = null;
   const adapter: StoryLiveAdapterPort = {
+    answerQuiz: () => ({ ok: false, code: 'action-rejected', message: 'no quiz' }),
     hasSession: () => state !== null,
     bindEvents: bound => { events = bound; },
     enter: input => {

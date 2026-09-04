@@ -138,7 +138,7 @@ describe('StoryRewardService', () => {
     stories.recordCompletion(HERO, 'act1-ch01', 'A', T0);
     service.reconcile(HERO, T0);
     const preview = service.preview(HERO);
-    expect(preview.map(item => item.id)).toHaveLength(36);
+    expect(preview.map(item => item.id)).toHaveLength(40);
     expect(preview.find(item => item.id === 'story-title-white-belt')).toMatchObject({
       granted: true,
       requirement: expect.stringContaining('첫 완주'),

@@ -969,3 +969,11 @@ describe('헤즈업(2인) 포지션 라벨 — Ch6 보스 팽팽', () => {
     expect(results.map(view => [view.id, view.achieved])).toEqual([['fold-junk', true], ['no-4bet', true]]);
   });
 });
+
+it('mandatory quiz requires all four issued and answered, while random response opportunity zero remains unmeasured', () => {
+  const quiz = objective('quiz-accuracy', { minRatio: 0.75, params: { required: 4 } });
+  expect(evaluateObjective(quiz, emptyTally(), true).achieved).toBe(false);
+  expect(evaluateObjective(quiz, emptyTally(), true, { quiz: { issued: 1, answered: 1, correct: 1, required: 4 } }).achieved).toBe(false);
+  expect(evaluateObjective(quiz, emptyTally(), true, { quiz: { issued: 4, answered: 4, correct: 3, required: 4 } }).achieved).toBe(true);
+  expect(evaluateObjective(objective('opponent-response', { minRatio: 0.5 }), emptyTally(), true).achieved).toBeNull();
+});

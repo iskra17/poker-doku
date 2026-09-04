@@ -1,3 +1,4 @@
+import { type StoryCurriculum, STORY_CURRICULUM } from '@/lib/story/curriculum';
 /**
  * StoryRunCoordinator — 스토리 런(챕터 1회 주행·오늘의 수련)의 서버 상태 머신. **방(RoomManager)과 무관**하다.
  *
@@ -36,6 +37,8 @@ import type {
   ChapterResultView,
   StoryAdvanceRequest,
   StoryChoiceRequest,
+  StoryQuizRequest,
+  StoryQuizReceipt,
   StoryDrillAck,
   StoryDrillRequest,
   StoryDrillView,
@@ -53,6 +56,7 @@ import type { LiveCommandResult, LiveEnterInput, LiveStepSummary, StoryLiveEvent
 /** 라이브 스텝 어댑터 포트 — LiveTableAdapter가 구현 (테스트는 fake) */
 export interface StoryLiveAdapterPort {
   hasSession(profileId: string): boolean;
+  answerQuiz(profileId: string, request: StoryQuizRequest): LiveCommandResult & { receipt?: StoryQuizReceipt };
   enter(input: LiveEnterInput): 'entered' | 'unavailable';
   resume(profileId: string, runId: string): LiveCommandResult;
   /** false = 방을 아직 닫을 수 없음(정산 미해결) — 런을 지우지 말고 재시도 안내 */
@@ -165,6 +169,7 @@ export interface StoryRewardPort {
 }
 
 export interface StoryRunCoordinatorDeps {
+  curriculum?: StoryCurriculum;
   repository: StoryRepositoryPort;
   emit: (profileId: string, view: StoryRunView) => void;
   /** 선택 파트너(인연) — 없으면 null: 'partner' 참조는 미야코로 대체된다 */
@@ -439,7 +444,7 @@ export class StoryRunCoordinator {
         };
       }),
       flags,
-      belt: deriveBelt(this.chapters, completed, flags),
+      belt: deriveBelt(this.chapters, completed, flags, this.deps.curriculum ?? STORY_CURRICULUM),
       nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
       drillStats: this.deps.repository.getDrillStats(profileId),
       reviewQueue: this.deps.repository.countNotes(profileId),
@@ -761,7 +766,19 @@ export class StoryRunCoordinator {
     this.finalizeSet(run, drill);
   }
 
-  /** 선택지 — 정답 없음. 현재 씬에 존재하는 선택지/옵션이어야 하고, 플래그는 결산 때 한꺼번에 영속된다. */
+  /** 퀴즈 답은 서버에 잠그고 정답이 없는 영수증만 반환한다. */
+  answerQuiz(profileId: string, request: StoryQuizRequest): CoordinatorResult<StoryQuizReceipt> {
+    const run = this.runs.get(profileId);
+    if (!run || run.runId !== request.runId || !['live-play', 'live-hold'].includes(run.phase) || !this.liveAdapter) {
+      return { ok: false, code: 'stale-state', message: '현재 수련의 질문이 아니에요.' };
+    }
+    const result = this.liveAdapter.answerQuiz(profileId, request);
+    if (!result.ok) return result;
+    if (!result.receipt) return { ok: false, code: 'server-error', message: '답 제출을 확인하지 못했어요.' };
+    return { ok: true, value: result.receipt };
+  }
+
+  /** 선택지 플래그는 결산 때 한꺼번에 영속된다. */
   choose(profileId: string, request: StoryChoiceRequest): CoordinatorResult {
     const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
     if (!checked.ok) return checked;
@@ -1252,7 +1269,7 @@ export class StoryRunCoordinator {
     } else {
       const rowsBefore = this.deps.repository.listProgress(run.profileId);
       const before = rowsBefore.find(row => row.chapterId === run.chapter.id);
-      const beltBefore = deriveBelt(this.chapters, this.completedSet(rowsBefore), this.deps.repository.getFlags(run.profileId));
+      const beltBefore = deriveBelt(this.chapters, this.completedSet(rowsBefore), this.deps.repository.getFlags(run.profileId), this.deps.curriculum ?? STORY_CURRICULUM);
       const firstClear = passed && (before?.completions ?? 0) === 0;
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
       let transitions: StoryAffinityTransitionRecord[] = [];
@@ -1291,7 +1308,7 @@ export class StoryRunCoordinator {
       }
       const completed = this.completedSet(this.deps.repository.listProgress(run.profileId));
       // 띠는 막 완주에서 파생되므로 순서와 무관하게 "이 완주로 올랐는가"만 본다 — 결산이 승급을 알린다
-      const beltAfter = deriveBelt(this.chapters, completed, this.deps.repository.getFlags(run.profileId));
+      const beltAfter = deriveBelt(this.chapters, completed, this.deps.repository.getFlags(run.profileId), this.deps.curriculum ?? STORY_CURRICULUM);
       const levelsOf = new Map(transitions.map(entry => [entry.characterId, entry]));
       run.result = {
         chapterId: run.chapter.id,

@@ -7034,6 +7034,15 @@ export const migrations: readonly Migration[] = [
       BEGIN SELECT RAISE(ABORT,'immutable level reward inventory'); END;
     `,
   },
+  {
+    version: 35,
+    name: 'story_rewards_ch7',
+    sql: `INSERT INTO story_reward_catalog (item_id, kind, equip_slot, character_id, chip_amount) VALUES
+      ('story-title-unmasker', 'title', 'title', NULL, NULL),
+      ('story-chips-act3-ch07-first', 'chips', NULL, NULL, 500),
+      ('story-outfit-vivian-masquerade', 'outfit', 'outfit', 'vivian', NULL),
+      ('story-chips-act3-ch07-s', 'chips', NULL, NULL, 300);`,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

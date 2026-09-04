@@ -1,3 +1,4 @@
+import type { StoryCurriculum } from '../curriculum';
 /**
  * 수련 스토리 보상 카탈로그 — **단일 소스**(서버 reconcile 지급·허브 미리보기·갤러리·결산 폴백이 함께 쓴다).
  * DB `story_reward_catalog`(v32 시드 + v33 2막 INSERT)는 이 목록의 사본이며 패리티 테스트(`database.test.ts`)로 고정한다 —
@@ -121,6 +122,11 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
     trigger: act(2), art: '/assets/story/cg/act2-belt-blue.webp',
     cutscene: { kind: 'belt', characterId: 'miyako', title: '파란띠 승급', caption: '2막 세 수업을 모두 마치셨네요♪ 오늘부터 파란띠 — 먼저 치는 사람의 띠랍니다.' },
   }),
+  // Ch7: no third-act reward until Ch8 and Ch9 are both registered and completed.
+  def({ id: 'story-title-unmasker', kind: 'title', equipSlot: 'title', name: '가면 벗기기', description: '상대의 행동을 관찰하고 가면 퀴즈를 마쳤다.', trigger: first('act3-ch07') }),
+  def({ id: 'story-chips-act3-ch07-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '관찰 수료금', description: '가면무도회 첫 완주 연습 칩 500.', trigger: first('act3-ch07') }),
+  def({ id: 'story-outfit-vivian-masquerade', kind: 'outfit', equipSlot: 'outfit', characterId: 'vivian', outfitId: 'masquerade', name: '비비안 · 가면무도회', description: '관찰의 밤을 기념하는 비비안의 무도회 의상.', trigger: gradeS('act3-ch07') }),
+  def({ id: 'story-chips-act3-ch07-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '가면무도회 S등급 연습 칩 300.', trigger: gradeS('act3-ch07') }),
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),
   def({ id: 'story-title-empty-note', kind: 'title', equipSlot: 'title', name: '빈 노트', description: '복습 노트를 졸업으로 비웠다.', trigger: { kind: 'flag', key: 'badge:empty-note', label: '복습 노트 비우기' } }),
@@ -134,6 +140,7 @@ export function getStoryRewardDefinition(id: string): StoryRewardDefinition | un
 
 /** 자격 판정 입력 — 전부 durable 상태에서 온다(런·등급 계산 결과가 아니라 저장된 것) */
 export interface StoryRewardState {
+  curriculum: StoryCurriculum;
   completed: ReadonlySet<ChapterId>;
   bestGrade: ReadonlyMap<ChapterId, ChapterGrade>;
   flags: Readonly<Record<string, string>>;
@@ -148,7 +155,7 @@ export function isStoryRewardEntitled(item: StoryRewardDefinition, state: StoryR
     case 'chapter-grade':
       return state.bestGrade.get(trigger.chapterId) === trigger.grade;
     case 'act-complete':
-      return isActCompleted(state.chapters, trigger.act, state.completed);
+      return isActCompleted(state.chapters, trigger.act, state.completed, state.curriculum);
     case 'flag':
       return state.flags[trigger.key] === '1';
   }

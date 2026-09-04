@@ -1,3 +1,4 @@
+import { STORY_CURRICULUM } from '../curriculum';
 import { describe, expect, it } from 'vitest';
 import { STORY_CHAPTERS } from '../chapters';
 import { EMPTY_NOTE_FLAG, PERFECT_SET_FLAG } from '../unlocks';
@@ -16,7 +17,7 @@ import {
 } from './catalog';
 
 function state(overrides: Partial<StoryRewardState> = {}): StoryRewardState {
-  return { completed: new Set(), bestGrade: new Map(), flags: {}, chapters: STORY_CHAPTERS, ...overrides };
+  return { curriculum: STORY_CURRICULUM, completed: new Set(), bestGrade: new Map(), flags: {}, chapters: STORY_CHAPTERS, ...overrides };
 }
 
 describe('story reward catalog', () => {

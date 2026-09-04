@@ -291,3 +291,20 @@ it('closes an expired terminal on abandon no-run without discarding an active ru
   expect(await closing).toBe(true);
   expect(store.getState().run).toBeNull();
 });
+
+it('quiz receipts keep answers server-owned and lock duplicate/offline submissions', async () => {
+  const store = createStoryStore({fetch:vi.fn()});
+  const fake = makeSocket(); store.getState().bindSocket(fake.socket);
+  fake.fire('story-update',runFixture());
+  const request = store.getState().answerQuiz('opaque-question',2);
+  expect(store.getState().pending).toBe(true);
+  expect(await store.getState().answerQuiz('opaque-question',1)).toBe(false);
+  const command=fake.emitted.at(-1)!;
+  expect(command).toMatchObject({event:'story-quiz',payload:{runId:'run-1',quizId:'opaque-question',optionIndex:2}});
+  command.ack!({ok:true,data:{quizId:'opaque-question',accepted:true}});
+  expect(await request).toBe(true);expect(store.getState().pending).toBe(false);
+  fake.socket.connected=false;
+  const count=fake.emitted.length;
+  expect(await store.getState().answerQuiz('opaque-question',0)).toBe(false);
+  expect(fake.emitted).toHaveLength(count);
+});

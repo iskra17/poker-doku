@@ -1,3 +1,4 @@
+import type { StoryCurriculum } from './curriculum';
 /**
  * 스토리 도메인 테스트 픽스처 — 유효한 최소 챕터를 만들고 일부만 덮어쓴다.
  * (테스트 전용. 런타임 코드에서 import 금지.)
@@ -123,4 +124,9 @@ export function makeChapterChain(): Chapter[] {
     makeChapter({ id: 'act1-ch03', act: 1, order: 3, requires: ['act1-ch02'], teacher: 'hana', belt: 'yellow' }),
     makeChapter({ id: 'act2-ch04', act: 2, order: 1, requires: ['act1-ch03'], teacher: 'ara' }),
   ];
+}
+
+export function curriculumFor(chapters: readonly Chapter[]): StoryCurriculum {
+  return { 1: chapters.filter(c => c.act === 1).map(c => c.id), 2: chapters.filter(c => c.act === 2).map(c => c.id),
+    3: chapters.filter(c => c.act === 3).map(c => c.id), 4: chapters.filter(c => c.act === 4).map(c => c.id) };
 }

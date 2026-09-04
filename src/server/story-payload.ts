@@ -157,7 +157,7 @@ export function parseStoryQuizRequest(input: unknown): ParseResult<StoryQuizRequ
   if (!isRecord(input) || !hasOnlyKeys(input, ['runId', 'quizId', 'optionIndex'])) return fail();
   const runId = idText(input.runId);
   const quizId = idText(input.quizId);
-  const optionIndex = boundedInt(input.optionIndex, 0, 15);
+  const optionIndex = boundedInt(input.optionIndex, 0, 3);
   if (!runId || !quizId || optionIndex === null) return fail();
   return { ok: true, value: { runId, quizId, optionIndex } };
 }

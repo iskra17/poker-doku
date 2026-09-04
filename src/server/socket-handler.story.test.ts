@@ -161,14 +161,14 @@ describe('story socket events', () => {
     expect(lost).toHaveLength(0);
   });
 
-  it('choice/drill/daily reach the coordinator after validation; quiz is still a stub', async () => {
+  it('choice/drill/daily reach the coordinator after validation; quiz rejects requests without a live run', async () => {
     const { client } = await setup();
     expect(await withAck(done => client.socket.emit('story-choice', { runId: 'r', expectedStepIndex: 0, choiceId: 'c', optionId: 'o' }, done)))
       .toMatchObject({ ok: false, code: 'story-no-run' });
     expect(await withAck(done => client.socket.emit('story-drill', { runId: 'r', setId: 's', index: 0, action: 'hint' }, done)))
       .toMatchObject({ ok: false, code: 'story-no-run' });
     expect(await withAck(done => client.socket.emit('story-quiz', { runId: 'r', quizId: 'q', optionIndex: 0 }, done)))
-      .toMatchObject({ ok: false, code: 'action-rejected' });
+      .toMatchObject({ ok: false, code: 'stale-state' });
     // Ch1 미완료 → 오늘의 수련 잠김
     expect(await withAck(done => client.socket.emit('story-daily', done)))
       .toMatchObject({ ok: false, code: 'story-locked' });
@@ -261,7 +261,7 @@ describe('story socket events', () => {
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
       'story-cardback-dojo-crest', 'story-chips-act1-ch01-s', 'story-title-perfect',
     ]);
-    expect(progress.data?.rewards).toHaveLength(36);
+    expect(progress.data?.rewards).toHaveLength(40);
     // 재조회 reconcile은 무변경 — 지갑 그대로
     expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
   });

@@ -1,3 +1,4 @@
+import { CH07 } from './act3/ch07-masquerade';
 /**
  * 챕터 레지스트리 + 데이터 검증.
  *
@@ -31,7 +32,7 @@ import {
 } from '../types';
 
 /** 등록된 챕터 — 막·순서 정렬을 유지할 것 (chapters.test.ts가 검증). */
-export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06]);
+export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06, CH07]);
 
 const CHAPTER_BY_ID: ReadonlyMap<ChapterId, Chapter> = new Map(STORY_CHAPTERS.map(chapter => [chapter.id, chapter]));
 
@@ -209,6 +210,15 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
   if (!(table.blinds.small > 0 && table.blinds.big > table.blinds.small)) errors.push(`${at}: invalid blinds`);
   if (!Number.isInteger(table.heroSeat) || table.heroSeat < 0 || table.heroSeat >= MAX_SEATS) errors.push(`${at}: heroSeat out of range`);
   if (!(table.heroStackBB > 0)) errors.push(`${at}: heroStackBB must be > 0`);
+  if (table.masquerade) {
+    const policy = table.masquerade;
+    if (step.kind !== 'sparring' || policy.id !== 'masquerade-v1' || policy.seats.length !== 4 || new Set(policy.seats).size !== 4
+      || policy.seats.some(seat => seat === table.heroSeat || !table.lineup.some(bot => bot.seatIndex === seat && bot.characterId === 'story-mask'))
+      || table.lineup.length !== 4 || policy.observeHands !== 12 || policy.revealedMinHands !== 2 || policy.revealedMaxHands !== 10
+      || step.maxHands !== 22 || step.minHands !== 14
+      || !step.objectives.primary.some(objective => objective.kind === 'quiz-accuracy' && objective.params?.required === 4 && objective.minRatio === 0.75)
+      || !step.objectives.primary.some(objective => objective.kind === 'opponent-response' && objective.minRatio === 0.5)) errors.push(`${at}: invalid masquerade policy`);
+  }
   if (table.lineup.length === 0 || table.lineup.length >= MAX_SEATS) errors.push(`${at}: lineup must have 1..${MAX_SEATS - 1} seats`);
   const seats = new Set<number>([table.heroSeat]);
   const characters = new Set<string>();
@@ -216,10 +226,10 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
     if (seats.has(seat.seatIndex)) errors.push(`${at}: duplicate seat ${seat.seatIndex}`);
     seats.add(seat.seatIndex);
     if (seat.seatIndex < 0 || seat.seatIndex >= MAX_SEATS) errors.push(`${at}: seat ${seat.seatIndex} out of range`);
-    if (characters.has(seat.characterId)) errors.push(`${at}: duplicate character ${seat.characterId}`);
+    if (characters.has(seat.characterId) && !(table.masquerade && seat.characterId === 'story-mask')) errors.push(`${at}: duplicate character ${seat.characterId}`);
     characters.add(seat.characterId);
     // 라인업은 전원 착석이 전제(어댑터가 한 좌석이라도 못 앉히면 방을 열지 않는다) — BOT_CHARACTERS 로스터만 허용(딜러·가면 등 비로스터 캐릭터 불가)
-    if (seat.characterId !== 'partner' && !BOT_CHARACTERS.some(c => c.id === seat.characterId)) {
+    if (seat.characterId !== 'partner' && !(table.masquerade && seat.characterId === 'story-mask') && !BOT_CHARACTERS.some(c => c.id === seat.characterId)) {
       errors.push(`${at}: seat ${seat.seatIndex} character ${seat.characterId} is not a playable bot`);
     }
     if (!(seat.stackBB > 0)) errors.push(`${at}: seat ${seat.seatIndex} stackBB must be > 0`);
