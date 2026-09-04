@@ -5,6 +5,7 @@
 import type { Expression } from '@/lib/assets/character-art';
 import { getCharacterById } from '@/lib/characters';
 import { drillMomentLine } from './drill-moments';
+import { primaryObjectivesMet } from './objectives';
 import { teacherArtId, teacherDisplayName } from './story-hub-rules';
 import type { Step, StoryHeroineId, StoryTeacherRef } from './types';
 import type { StoryLiveView } from './views';
@@ -73,15 +74,22 @@ export interface LiveMissionInput {
  * 스파링 미션 클리어 — `minHands` 이후 primary 전부 달성(판정 불가 없음)이면 컷인. 라인업에 boss가 있으면 BOSS DEFEATED.
  * 서버는 마지막 핸드 뒤 6초 방을 유지하고 tally를 밀어주므로 클라가 조기 종료 직전 상태를 볼 수 있다.
  * '연습' 스텝·목표 미달·판정 불가 → null.
+ * 단 **보스 스텝이 `maxHands`까지 다 돌았으면 결산과 같은 최종 계약**(`primaryObjectivesMet` — 판정 불가는 제외)을 쓴다.
+ * 조기 종료 계약(판정 불가도 미달 취급)을 최종에도 적용하면 통과한 보스전에서 격파 컷인이 조용히 사라진다.
  */
 export function liveMissionCutIn({ step, live, teacher, partnerId, stepKey }: LiveMissionInput): StoryCutInData | null {
   if (!step || step.kind !== 'sparring' || !live) return null;
   const threshold = live.minHands ?? live.maxHands;
   if (live.handsPlayed < threshold) return null;
   const primaries = live.objectives.filter(objective => objective.primary);
-  if (primaries.length === 0 || !primaries.every(objective => objective.achieved === true)) return null;
-  const who = resolveTeacher(teacher, partnerId);
+  if (primaries.length === 0) return null;
   const boss = step.table.lineup.find(seat => seat.role === 'boss');
+  const settled = boss !== undefined && live.handsPlayed >= live.maxHands;
+  const passed = settled
+    ? primaryObjectivesMet(primaries) === true
+    : primaries.every(objective => objective.achieved === true);
+  if (!passed) return null;
+  const who = resolveTeacher(teacher, partnerId);
   if (boss) {
     const bossName = getCharacterById(boss.characterId)?.name ?? boss.characterId;
     return {

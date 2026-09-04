@@ -68,6 +68,19 @@ describe('liveMissionCutIn', () => {
     expect(liveMissionCutIn({ ...base, step, live: null })).toBeNull();
   });
 
+  it('보스전은 maxHands 도달 시 objectives.ts 최종 계약(판정 불가 무시)으로 격파 컷인을 준다', () => {
+    const boss = sparringOf(CH03);
+    const at = (handsPlayed: number, objectives: ObjectiveProgressView[]) =>
+      liveMissionCutIn({ ...base, step: boss, live: live({ handsPlayed, minHands: 6, maxHands: 12, objectives }) });
+
+    // maxHands 전에는 조기 컷인 계약이 그대로 엄격 — 판정 불가가 섞이면 null
+    expect(at(6, [objective('a', true, true), objective('b', true, null)])).toBeNull();
+    // maxHands 도달 = 최종 정산: 판정 불가는 빼고 남은 primary가 전부 true면 격파
+    expect(at(12, [objective('a', true, true), objective('b', true, null)])?.kicker).toMatch(/^BOSS DEFEATED · /);
+    // 평가된 primary가 하나라도 false면 최종에서도 null
+    expect(at(12, [objective('a', true, false), objective('b', true, null)])).toBeNull();
+  });
+
   it('minHands가 없으면 maxHands가 기준', () => {
     const step = sparringOf(CH01);
     expect(liveMissionCutIn({ ...base, step, live: live({ minHands: null, maxHands: 10, handsPlayed: 9, objectives: [objective('a', true, true)] }) })).toBeNull();
