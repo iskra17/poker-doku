@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "phase": "initial-four",
+  "authorized_initial_count": 4,
+  "total_future_cap": 16,
+  "official_docs": "https://docs.comfy.org/tutorials/image/qwen/qwen-image-edit-2511",
+  "official_template": "C:\\code\\1. codex\\AI-Image-Video\\ComfyUI_windows_portable\\python_embeded\\Lib\\site-packages\\comfyui_workflow_templates_json\\templates\\image_qwen_image_edit_2511_int8.json",
+  "official_template_sha256": "f69153d857a3e7ad374c4b79775fa2d8d99361135806a5ecf7106f2e41cd2336",
+  "workflow_sha256": "1963823eb7698d63bb94be07ea1781d59cc83e4bb3879f4f1cb4cf6f215799a5",
+  "references": {
+    "sakura": {
+      "source": "public\\assets\\characters\\sakura\\showcase.webp",
+      "source_sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b",
+      "input": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\sakura-showcase.png",
+      "input_sha256": "2d693b61ba7d2475f17cb9b91f9f7581c78643e4c59064decff3ba961186aeeb",
+      "size": [
+        640,
+        960
+      ],
+      "preparation": "Only alpha composited onto neutral grey; no crop or retouch"
+    },
+    "elena": {
+      "source": "public\\assets\\characters\\elena\\showcase.webp",
+      "source_sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3",
+      "input": "D:\\AI-Image-Video\\input\\poker-doku-a1c-20260905\\elena-showcase.png",
+      "input_sha256": "f313a7a4c8e76f60a71dfe26988f63fa30b46eeb1748fa2dc2046ce8d2dfce1a",
+      "size": [
+        640,
+        960
+      ],
+      "preparation": "Only alpha composited onto neutral grey; no crop or retouch"
+    }
+  },
+  "models_verified": false,
+  "models": [],
+  "jobs": [
+    {
+      "id": "sakura-garden-tea-q1",
+      "character": "sakura",
+      "scene": "garden-tea",
+      "seed": 509020261300,
+      "status": "planned",
+      "review_status": "unreviewed",
+      "expected_size": [
+        832,
+        1248
+      ],
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Move her into a peaceful Japanese garden veranda. Show her seated in a true right-facing profile, her nose pointing toward the right edge of the picture. She gently holds one plain ceramic teacup with both hands at chest height and looks down toward the cup, with a small relieved smile. Frame her from the waist up with the garden visible behind her. Change the original clasped-hands pose into the specified cup-holding pose. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "sakura-table-review-q1",
+      "character": "sakura",
+      "scene": "table-review",
+      "seed": 509020261301,
+      "status": "planned",
+      "review_status": "unreviewed",
+      "expected_size": [
+        832,
+        1248
+      ],
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 22-year-old woman, her exact soft pink bob haircut, pink eyes, face shape, one small white cherry-blossom hairpin, cream ivory cardigan, white collared blouse and pink neck ribbon. Preserve the original clothing colors, delicate linework, softly painted shading, fine hair highlights and Japanese visual-novel art style. Place her seated at a green felt poker practice table, studying an open notebook. Position the camera behind her left shoulder: the back of her head and cream cardigan occupy the left foreground, while the notebook and a few neat chip stacks are visible on the table beyond her. Her head is bowed toward the notebook and her eyes look at the page. One hand rests on the notebook and the other hand rests on the felt. Show only a small side contour of her cheek; she must not turn back toward the camera. The notebook has faint abstract lines, no readable text. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-snow-window-q1",
+      "character": "elena",
+      "scene": "snow-window",
+      "seed": 509020261302,
+      "status": "planned",
+      "review_status": "unreviewed",
+      "expected_size": [
+        832,
+        1248
+      ],
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Place her inside a quiet winter cafe beside a large window on the LEFT side of the picture. Rotate her body and head into a LEFT-facing profile so that her eyes look through the window at falling snow outside. The window is in front of her face, not behind her. Her hands rest gently on the windowsill; remove the chip from her original hand. Her expression is thoughtful and restrained. Frame her from the waist up, with warm indoor light and cool snowy light outside. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    },
+    {
+      "id": "elena-analysis-q1",
+      "character": "elena",
+      "scene": "analysis",
+      "seed": 509020261303,
+      "status": "planned",
+      "review_status": "unreviewed",
+      "expected_size": [
+        832,
+        1248
+      ],
+      "prompt": "Edit the supplied illustration into a new scene of the SAME woman. Keep the same adult 27-year-old woman, her mature elongated face, narrow grey-blue eyes, defined jawline, very long straight silver hair, small silver hoop earrings, black tailored suit jacket, white collared shirt and pale grey necktie. Do not enlarge or round her eyes or shorten her jaw. Preserve the original clothing colors, fine linework, silky hair highlights, softly painted shading and Japanese visual-novel art style. Place her at a green felt poker table in a quiet dojo, leaning slightly forward while analyzing three neat stacks of chips. Put the camera on her right side, showing a left-facing three-quarter profile. Her eyes are directed DOWN toward the chip stacks on the felt, never toward the viewer. Both hands rest naturally on the tabletop close to the stacks, with fingers separated and no chip held near her face. Use a medium shot from the waist up and a soft cool overhead lamp. The result is one coherent illustration with one fully clothed adult woman. No collage, duplicate person, text, logo or watermark. Preserve her identity and rendering style while changing the camera, pose, gaze and setting as instructed."
+    }
+  ],
+  "approved_for_export": []
+}
