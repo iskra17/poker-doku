@@ -7,12 +7,12 @@
 
 | 항목 | 상태 |
 |---|---|
-| main | `4954439` = origin/main(푸시 완료) — 영상 3차 배치 + 아라 Lv15 CG 보정까지 |
-| 배포 | Fly **v82** = `4954439`(2026-09-04, 아라 Lv15 보정 포함). 머신 `48ed666a50d2e8`(nrt, 1대 고정), https://poker-doku.fly.dev |
-| 최신 작업 | 수련 스토리 모드 1·2막(Ch1~6) 완성, 보상·연출·BGM·운영자 모드, **컷신 영상 43클립 전부 배치**, CH4~6 스파링 실주행 완료 |
+| main | `52256b9` = origin/main(푸시 완료) — 가면 봇 identity 기반 + Ch1~6 클라이맥스 에셋까지 |
+| 배포 | Fly **v84** = `52256b9`(2026-09-04). 머신 `48ed666a50d2e8`(nrt, 1대 고정), 체크 1/1 통과, https://poker-doku.fly.dev/healthz 200 |
+| 최신 작업 | 수련 스토리 모드 1·2막(Ch1~6) 완성. 공개/행동 identity 분리·가면 대사/채팅/속마음 누출 차단·room-lost 재개/reveal 서버 seam 완료. Ch1~6 스파링 클라이맥스 CG 6장 + H3 루프 12파일 추가로 **컷신 영상 49클립 배치** |
 | 직전 인계 | `docs/superpowers/handoffs/2026-09-04-video-batch3-ch5-handoff.md`(8차) ← `2026-09-04-operator-video-handoff.md`(7차) ← `2026-09-03-act2-video-handoff.md`(5차). 셋 다 유효 |
 | 기획서 | `docs/spec-story-mode-2026-09.md`(Part A~V), `docs/spec-mtt-2026-07-23.md` |
-| 워크트리 | `.worktrees/story-mode`(main과 동일 커밋, `npm ci` 완료) — 스토리 작업은 여기서 브랜치를 따서 진행 |
+| 워크트리 | 완료된 `story-mask-identity`·`story-climax-assets` 작업트리는 병합 후 정리. 다음 구현도 main에서 새 브랜치/worktree를 만들어 진행 |
 
 ## 1. 사용자 방침 (Claude 메모리 `feedback_*`에서 옮김 — 반드시 지킬 것)
 
@@ -75,11 +75,14 @@ Claude가 쓰던 메모리는 평문 마크다운이다. 인덱스 `C:\Users\JEO
 
 ## 7. 다음 순서 (우선순위)
 
-1. **아라 Lv15 「야시장」 CG 보정 — 완료(브랜치 `fix/ara-lv15-skewer` → main)**: 사용자 지적(꼬치를 고기 부분이 아니라 손잡이를 쥐게)으로 gpt-image-2 edit 모드 2라운드(6안) 중 b3 채택 → `public/assets/characters/ara/scene-lv15.webp` 교체 → `H3_SEED_OFFSET=2000 v3`로 영상 재생성·인코딩 → **Fly v82 배포 완료**. 후보 원본은 `poker-doku-art/story-rewards/out/fix/ara-scene-lv15-{a,b}{1,2,3}.png`(다른 안을 원하면 교체).
-2. 사용자 실기기 피드백 반영: 영상 43클립 재생·씬 플레이어 라인 CG 전환·BGM.
-3. CH6 보스 격파 컷인 설계 판단(8차 인계 §2-3 — 프리미엄 3벳 "기회"가 거의 안 와 컷인이 사실상 안 뜬다). 파란띠 승급 연출 실주행(2막 3챕터 완주 프로필 필요).
-4. 3막 데이터(비비안·클로이·엘레나 담당, 가면 봇 identity 분리 선행, 비비안/엘레나 의상·해설 말투), 하드 모드, 실패 씬(`failScene`) 재생, 라이브 리딩 퀴즈·봇 속마음(Ch7). 미구현 목록은 AGENTS.md 「미구현」.
+1. **Ch7 라이브 리딩 퀴즈 설계/구현**: 이번 배치의 `LiveEnterInput.botDisplaysBySeat`와 서버 전용 `revealBotIdentity(profileId, runId, seatIndex)` seam을 실제 챕터 데이터·정답 판정·공개 연출에 연결한다. 클라이언트가 실제 characterId를 제출하거나 공개 전 `personalityId`를 받는 경로는 만들지 않는다.
+2. **사용자 실기기 확인**: 신규 클라이맥스 6장과 49개 영상의 라인 전환·자동재생·루프·모바일 크롭을 확인한다. 서버/DOM 자동 E2E는 이번 배치에서 생략했다.
+3. 3막 데이터(비비안·클로이·엘레나 담당), 비비안/엘레나 의상·해설 말투, 하드 모드, 실패 씬(`failScene`) 재생을 순서대로 확장한다.
+4. 파란띠 승급 연출 실주행(2막 3챕터 완주 프로필 필요)과 기존 1·2막 BGM/CG 피드백을 반영한다.
 5. 스토리 XP로 넘긴 레벨의 카탈로그 아이템 미지급(v13 뷰 확장) — 알려진 범위.
+
+이번 배치의 의도된 최소 검증: identity 관련 4파일 + asset 관련 5파일을 병합 후 합쳐서 실행해 101/101 통과,
+`npx tsc --noEmit` 통과, `npm run build` 통과. 전체 Vitest·lint·브라우저 E2E는 사용자 방침에 따라 반복하지 않았다.
 
 ## 8. 세션 종료 체크리스트
 
