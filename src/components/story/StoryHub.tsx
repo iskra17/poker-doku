@@ -165,7 +165,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         {acts.map(({ act, chapters }) => (
           <div key={act}>
             <h3 className="mb-1.5 text-[11px] font-bold text-mystic">{ACT_TITLE[act]}</h3>
-            <div className="grid gap-2 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               {chapters.map(({ chapter, row, skills, rewardHints }) => (
                 <ChapterCard
                   key={chapter.id}

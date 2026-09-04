@@ -70,7 +70,7 @@ export default function ChapterCard({
   return (
     <article
       aria-label={`챕터 ${number} ${chapter?.title ?? progress.chapterId}`}
-      className={`flex gap-3 rounded-xl border p-3 ${
+      className={`flex min-w-0 gap-3 rounded-xl border p-3 ${
         state === 'in-progress'
           ? 'border-blossom/50 bg-blossom/10'
           : locked
