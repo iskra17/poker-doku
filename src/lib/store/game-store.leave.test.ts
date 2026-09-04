@@ -55,7 +55,8 @@ describe('game store leave acknowledgement', () => {
       gameState: { id: 'room-1' } as never,
       chatMessages: [{
         id: 'chat-1', roomId: 'room-1', playerId: 'profile-1',
-        playerName: '벚꽃 여우', message: '안녕하세요', timestamp: 1, type: 'player',
+        playerName: '벚꽃 여우', characterId: 'sakura',
+        message: '안녕하세요', timestamp: 1, type: 'player',
       }],
       rooms: [{
         id: 'room-1', name: '방', playerCount: 1, maxPlayers: 6,
@@ -115,6 +116,7 @@ describe('game store leave acknowledgement', () => {
         roomId: 'room-1',
         playerId: 'profile-1',
         playerName: '벚꽃 여우',
+        characterId: 'sakura',
         message: '좋은 승부예요!',
         timestamp: 1,
         type: 'player',

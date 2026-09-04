@@ -16,7 +16,10 @@ export default function ChatBubble({ message }: ChatBubbleProps) {
     );
   }
 
-  const character = message.type === 'bot' ? getCharacterById(message.playerId.split('-')[1] || '') : null;
+  // 색·이모지는 발화 당시 스냅샷에서만 — id를 파싱하면 가면 공개 후 지난 말풍선까지 정체가 샌다
+  const character = message.characterId
+    ? getCharacterById(message.characterId)
+    : undefined;
   const nameColor = character?.color || '#A78BFA';
 
   return (

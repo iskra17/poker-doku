@@ -310,6 +310,8 @@ export interface ChatMessage {
   roomId: string;
   playerId: string;
   playerName: string;
+  /** 발화 시점의 표시 캐릭터 — 가면 봇 공개 후에도 지난 말풍선은 당시 얼굴을 유지한다 */
+  characterId: string | null;
   message: string;
   timestamp: number;
   type: 'player' | 'bot' | 'system';

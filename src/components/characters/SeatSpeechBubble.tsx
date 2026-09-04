@@ -40,14 +40,17 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
       const player = state.gameState?.players.find(candidate => candidate.id === last.playerId);
       if (!player) return; // 딜러 멘트는 DealerCorner 담당
 
-      // 봇·휴먼 모두 공개 좌석 아바타로 캐릭터 색을 찾는다 (없으면 기본색)
-      const character = getCharacterById(player.avatar || '');
+      // 이름·색은 발화 당시 채팅 스냅샷이 정본 — 좌석 조회는 말풍선 위치 계산에만 쓴다
+      // (가면 봇이 공개돼도 이미 뜬 대사가 실제 캐릭터로 소급 변신하지 않는다)
+      const character = last.characterId
+        ? getCharacterById(last.characterId)
+        : undefined;
       const mySeat = state.gameState?.players
         .find(candidate => candidate.id === state.myPlayerId)?.seatIndex ?? -1;
       setBubble({
         id: last.id,
         displaySeatIndex: toDisplayIndex(player.seatIndex, mySeat),
-        name: player.name,
+        name: last.playerName,
         message: last.message,
         color: character?.color || '#A78BFA',
       });

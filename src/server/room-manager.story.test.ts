@@ -6,7 +6,7 @@ import {
   type StoryRoomHooks,
 } from './room-manager';
 import type { RoomProgressionHooks } from './progression-runtime';
-import type { Player, RoomConfig } from '../lib/poker/types';
+import type { ChatMessage, Player, RoomConfig } from '../lib/poker/types';
 import type { PokerEngine } from '../lib/poker/engine';
 import { createBotWithCharacter } from '../lib/bot/bot-manager';
 import { RiggedDeck, cards } from '../lib/poker/test-helpers';
@@ -141,6 +141,8 @@ interface PumpOptions {
 }
 type SeatReclaimedSpy = ReturnType<typeof vi.fn<SeatReclaimedFn>>;
 type RoomDisposedSpy = ReturnType<typeof vi.fn<RoomDisposedFn>>;
+type RoomUpdateFn = (roomId: string, engine: PokerEngine) => void;
+type RoomChatFn = (roomId: string, message: ChatMessage) => void;
 
 describe('RoomManager 수련 스토리 훅 (1b.0)', () => {
   let manager: RoomManager;
@@ -156,9 +158,13 @@ describe('RoomManager 수련 스토리 훅 (1b.0)', () => {
   let recordCompletedHand: ReturnType<typeof vi.fn>;
   let onSeatReclaimed: SeatReclaimedSpy;
   let onRoomDisposed: RoomDisposedSpy;
+  let onUpdate: ReturnType<typeof vi.fn<RoomUpdateFn>>;
+  let onChat: ReturnType<typeof vi.fn<RoomChatFn>>;
 
   beforeEach(() => {
     vi.useFakeTimers();
+    onUpdate = vi.fn<RoomUpdateFn>();
+    onChat = vi.fn<RoomChatFn>();
     story = makeStoryHooks();
     progression = {
       captureHandStart: vi.fn(),
@@ -171,7 +177,7 @@ describe('RoomManager 수련 스토리 훅 (1b.0)', () => {
     recordCompletedHand = vi.fn();
     onSeatReclaimed = vi.fn<SeatReclaimedFn>();
     onRoomDisposed = vi.fn<RoomDisposedFn>();
-    manager = new RoomManager(() => {}, () => {}, undefined, {
+    manager = new RoomManager(onUpdate, onChat, undefined, {
       progression: progression as unknown as RoomProgressionHooks,
       handHistory: { recordCompletedHand } as unknown as RoomHandHistoryHooks,
       onSeatReclaimed,
@@ -191,6 +197,7 @@ describe('RoomManager 수련 스토리 훅 (1b.0)', () => {
     expect(stats.finishedRoomTimers).toBe(0);
     expect(stats.deadlines).toBe(0);
     vi.clearAllTimers();
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -822,5 +829,68 @@ describe('RoomManager 수련 스토리 훅 (1b.0)', () => {
     expect(stateOf(roomId)!.handNumber).toBeGreaterThanOrEqual(2);
     expect(hero(roomId, heroId)!.bustReclaimDeadline).toBeDefined();
     expect(manager.getRuntimeStats().sitOutTimers).toBe(1);
+  });
+  it('스토리 봇 공개는 name/avatar만 바꾸고 한 번 브로드캐스트한다', () => {
+    const roomId = manager.createRoom(storyConfig());
+    const bot = createBotWithCharacter(1, 2_000, 'sakura', 'easy', {
+      name: '수상한 도전자', characterId: 'story-mask',
+    })!;
+    expect(manager.joinRoom(roomId, makeHero())).toBe(true);
+    expect(manager.joinRoom(roomId, bot)).toBe(true);
+    const before = { id: bot.id, personalityId: bot.personalityId };
+    onUpdate.mockClear();
+
+    expect(manager.updateStoryBotDisplayIdentity(roomId, bot.id, {
+      name: '사쿠라', characterId: 'sakura',
+    })).toBe(true);
+
+    expect(bot).toMatchObject({
+      ...before,
+      name: '사쿠라',
+      avatar: 'sakura',
+    });
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('가면 봇은 실제 캐릭터 AI를 호출하지 않고 채팅의 당시 표시 identity를 보존한다', async () => {
+    // 채팅만 보는 테스트 — 어댑터 hold로 핸드 시작(딜러 멘트)이 마지막 메시지를 덮지 않게 한다
+    story.state.held = true;
+    const roomId = manager.createRoom(storyConfig());
+    const bot = createBotWithCharacter(1, 2_000, 'sakura', 'easy', {
+      name: '수상한 도전자', characterId: 'story-mask',
+    })!;
+    expect(manager.joinRoom(roomId, makeHero())).toBe(true);
+    expect(manager.joinRoom(roomId, bot)).toBe(true);
+    const dialogue = (manager as unknown as {
+      dialogue: { getLine: (...args: string[]) => Promise<string | null> };
+    }).dialogue;
+    const getLine = vi.spyOn(dialogue, 'getLine').mockResolvedValue('사쿠라 전용 대사');
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+
+    manager.reactToThrowableHit(roomId, bot.id, '히어로', '종이비행기');
+    await tick(1_000);
+
+    expect(getLine).not.toHaveBeenCalled();
+    expect(manager.getChatHistory(roomId).at(-1)).toMatchObject({
+      playerId: bot.id,
+      playerName: '수상한 도전자',
+      characterId: 'story-mask',
+      type: 'bot',
+    });
+    const maskedMessage = manager.getChatHistory(roomId).at(-1)!;
+
+    expect(manager.updateStoryBotDisplayIdentity(roomId, bot.id, {
+      name: '사쿠라', characterId: 'sakura',
+    })).toBe(true);
+    manager.reactToThrowableHit(roomId, bot.id, '히어로', '종이비행기');
+    await tick(1_000);
+
+    expect(getLine).toHaveBeenCalledWith(roomId, 'sakura', 'throwable-hit', expect.any(String));
+    expect(maskedMessage).toMatchObject({
+      playerName: '수상한 도전자', characterId: 'story-mask',
+    });
+    expect(manager.getChatHistory(roomId).at(-1)).toMatchObject({
+      playerName: '사쿠라', characterId: 'sakura',
+    });
   });
 });

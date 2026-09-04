@@ -16,9 +16,10 @@ import {
 } from '../lib/poker/types';
 import type { CompletedHandRecord, StoryHandTag } from '../lib/poker/hand-history';
 import { createBotWithCharacter, fillEmptySeats, processBotTurn } from '../lib/bot/bot-manager';
+import type { BotDisplayIdentity } from '../lib/bot/bot-manager';
 import type { BotDecision } from '../lib/bot/bot-ai';
 import { AggroTracker } from '../lib/bot/aggro-tracker';
-import { getCharacterById } from '../lib/characters';
+import { getCharacterById, MASKED_BOT_CHARACTER } from '../lib/characters';
 import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
 import { shouldRemoveForMissedBlinds } from './sitout';
 import { THROW_FLIGHT_MS } from '../lib/throwables/catalog';
@@ -390,6 +391,36 @@ export class RoomManager {
   /** 수련 스토리 라이브 스텝 방 — 수명주기·hold·목표 판정이 LiveTableAdapter 소유인 방 */
   private isStoryRoom(room: { config: RoomConfig }): boolean {
     return !!room.config.storyChapterId;
+  }
+
+  /**
+   * 스토리 봇의 표시 identity 갱신 (가면 벗기기) — 얼굴(name/avatar)만 바꾸고
+   * 행동 축(personalityId)·좌석·칩·액션 상태는 건드리지 않는다. 스토리 방 전용이며
+   * 성공했을 때만 스냅샷을 한 번 브로드캐스트한다.
+   */
+  updateStoryBotDisplayIdentity(
+    roomId: string,
+    botId: string,
+    display: BotDisplayIdentity,
+  ): boolean {
+    const room = this.rooms.get(roomId);
+    const bot = room?.engine.state.players.find(player => (
+      player.id === botId
+      && player.type === 'bot'
+      && !player.pendingRemoval
+    ));
+    if (
+      !room
+      || !this.isStoryRoom(room)
+      || !bot
+      || !display.name.trim()
+      || !getCharacterById(display.characterId)
+    ) return false;
+
+    bot.name = display.name.trim();
+    bot.avatar = display.characterId;
+    this.onUpdate(roomId, room.engine);
+    return true;
   }
 
   /** 외부 오케스트레이터(MTT 매니저 ∨ 스토리 어댑터)가 다음 핸드 시작을 보류 중인지 */
@@ -2120,7 +2151,7 @@ export class RoomManager {
 
     const dealer = getCharacterById('dealer');
     if (dealer) {
-      this.sendBotChat(roomId, 'dealer', dealer.name, dealer.chatMessages[0]);
+      this.sendBotChat(roomId, 'dealer', dealer.name, 'dealer', dealer.chatMessages[0]);
     }
 
     // 타이머를 먼저 시작해야 스냅샷에 turnTimeRemaining이 실린다
@@ -2873,7 +2904,9 @@ export class RoomManager {
           this.storyHooks?.onBotActed(roomId, activePlayer.id, action, explanation);
         }
         // Bot chat based on action — 올인은 극적인 순간이라 AI 대사 시도, 나머지는 스크립트
-        const character = getCharacterById(activePlayer.personalityId || '');
+        const character = this.isMaskedBot(activePlayer)
+          ? MASKED_BOT_CHARACTER
+          : getCharacterById(activePlayer.avatar);
         if (character && action.action === 'all-in') {
           const situation = `방금 남은 칩 전부를 걸고 올인을 선언했다 (${room.engine.state.street} 단계). 긴장감 있는 한마디.`;
           void this.botQuip(roomId, activePlayer, 'all-in', situation, Math.random() < 0.4 ? character.bluffQuote : null);
@@ -2884,7 +2917,7 @@ export class RoomManager {
             case 'raise': msg = character.bluffQuote; break;
             default: msg = character.chatMessages[Math.floor(Math.random() * character.chatMessages.length)];
           }
-          if (msg) this.sendBotChat(roomId, activePlayer.id, activePlayer.name, msg);
+          if (msg) this.sendBotChat(roomId, activePlayer.id, activePlayer.name, activePlayer.avatar, msg);
         }
 
         if (!room.engine.state.isHandInProgress) {
@@ -3498,11 +3531,36 @@ export class RoomManager {
     situation: string,
     fallback: string | null,
   ): Promise<void> {
+    // 가면 봇은 정체가 대사로 새면 안 된다 — AI/캐시 경로 진입 전에 공용 문장으로 끝낸다
+    if (this.isMaskedBot(player)) {
+      const text = this.maskedBotLine(player, situationKey);
+      if (text) this.sendBotChat(roomId, player.id, player.name, player.avatar, text);
+      return;
+    }
+
     const line = await this.dialogue.getLine(roomId, player.personalityId || '', situationKey, situation);
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.players.some(p => p.id === player.id)) return;
     const text = line ?? fallback;
-    if (text) this.sendBotChat(roomId, player.id, player.name, text);
+    if (text) this.sendBotChat(roomId, player.id, player.name, player.avatar, text);
+  }
+
+  /** 표시 얼굴이 행동 캐릭터와 다른 봇 = 가면 상태 (공개되면 avatar === personalityId) */
+  private isMaskedBot(player: Player): boolean {
+    return player.type === 'bot'
+      && !!player.personalityId
+      && player.avatar !== player.personalityId;
+  }
+
+  /** 가면 상태의 상황 대사 — 실제 캐릭터 말투 대신 공용 가면 프로필에서만 고른다 */
+  private maskedBotLine(player: Player, situationKey: string): string | null {
+    if (situationKey === 'all-in') return MASKED_BOT_CHARACTER.bluffQuote;
+    if (situationKey === 'bigpot-win' || situationKey === 'sng-champ') {
+      return MASKED_BOT_CHARACTER.winQuote;
+    }
+    if (situationKey.startsWith('sng-bust')) return MASKED_BOT_CHARACTER.loseQuote;
+    if (situationKey === 'throwable-hit') return MASKED_BOT_CHARACTER.chatMessages[0] ?? null;
+    return MASKED_BOT_CHARACTER.chatMessages[0] ?? null;
   }
 
   private announceWinner(
@@ -3546,7 +3604,9 @@ export class RoomManager {
 
       // Winner character quote — 큰 팟이면 AI 상황 대사 시도, 아니면/실패 시 스크립트
       if (player.type === 'bot') {
-        const character = getCharacterById(player.personalityId || '');
+        const character = this.isMaskedBot(player)
+          ? MASKED_BOT_CHARACTER
+          : getCharacterById(player.avatar);
         if (character) {
           const bigPot = winner.amount >= bb * 15;
           if (bigPot) {
@@ -3554,7 +3614,7 @@ export class RoomManager {
               + (winner.hand ? ` (핸드: ${winner.hand.description})` : ' (상대가 모두 폴드)') + '. 승리 한마디.';
             void this.botQuip(roomId, player, 'bigpot-win', situation, character.winQuote);
           } else {
-            this.sendBotChat(roomId, player.id, player.name, character.winQuote);
+            this.sendBotChat(roomId, player.id, player.name, player.avatar, character.winQuote);
           }
         }
       }
@@ -3568,7 +3628,16 @@ export class RoomManager {
     message: string,
     type: ChatMessage['type'] = 'player',
   ): void {
-    this.appendChatMessage({ roomId, playerId, playerName, message, type });
+    // 좌석이 있으면 서버 상태의 표시 identity가 정본 — 전달된 이름을 그대로 믿지 않는다
+    const player = this.rooms.get(roomId)?.engine.state.players.find(candidate => candidate.id === playerId);
+    this.appendChatMessage({
+      roomId,
+      playerId,
+      playerName: player?.name ?? playerName,
+      characterId: type === 'system' ? null : player?.avatar ?? null,
+      message,
+      type,
+    });
   }
 
   private appendChatMessage(input: Omit<ChatMessage, 'id' | 'timestamp'>): void {
@@ -3589,16 +3658,24 @@ export class RoomManager {
       roomId,
       playerId: 'system',
       playerName: 'System',
+      characterId: null,
       message,
       type: 'system',
     });
   }
 
-  private sendBotChat(roomId: string, botId: string, botName: string, message: string): void {
+  private sendBotChat(
+    roomId: string,
+    botId: string,
+    botName: string,
+    characterId: string,
+    message: string,
+  ): void {
     this.appendChatMessage({
       roomId,
       playerId: botId,
       playerName: botName,
+      characterId,
       message,
       type: 'bot',
     });
