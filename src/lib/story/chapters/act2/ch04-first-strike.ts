@@ -272,6 +272,7 @@ export const CH04: Chapter = {
                 speaker: 'ara',
                 text: '반 왔네. 스틸은 몇 번 했어? 림프는 안 했지? …그래, 그거면 됐어. 계속 먼저 쳐.',
                 expression: 'happy',
+                cg: 'act2-ch04-climax',
               },
             ],
           },

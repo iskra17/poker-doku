@@ -17,8 +17,8 @@ export function sceneCgVideoId(sceneCgId: string): string {
 }
 
 /**
- * 실제로 배치된 클립 id — 2026-09-03 파일럿 3클립 + 2026-09-04 2차 배치(보상 CG·비비안 Lv5) + 3차 배치(인연 씬 22·씬 CG 12).
- * 43클립 = 보상 CG 7종 · 인연 씬 6명×4레벨 · 챕터 프롤로그/에필로그 씬 CG 12장 전부.
+ * 실제로 배치된 클립 id — 2026-09-03 파일럿 3클립 + 2026-09-04 2~4차 배치(보상 CG·인연 씬·씬 CG 18).
+ * 49클립 = 보상 CG 7종 · 인연 씬 6명×4레벨 · 챕터 프롤로그/클라이맥스/에필로그 씬 CG 18장 전부.
  */
 const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   // 보상 CG (카탈로그 아이템 id)
@@ -37,12 +37,12 @@ const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   'vivian-scene-lv5', 'vivian-scene-lv10', 'vivian-scene-lv15', 'vivian-scene-lv20',
   'elena-scene-lv5', 'elena-scene-lv10', 'elena-scene-lv15', 'elena-scene-lv20',
   // 챕터 씬 CG (scene-<SceneCgId>)
-  'scene-act1-ch01-prologue', 'scene-act1-ch01-epilogue',
-  'scene-act1-ch02-prologue', 'scene-act1-ch02-epilogue',
-  'scene-act1-ch03-prologue', 'scene-act1-ch03-epilogue',
-  'scene-act2-ch04-prologue', 'scene-act2-ch04-epilogue',
-  'scene-act2-ch05-prologue', 'scene-act2-ch05-epilogue',
-  'scene-act2-ch06-prologue', 'scene-act2-ch06-epilogue',
+  'scene-act1-ch01-prologue', 'scene-act1-ch01-climax', 'scene-act1-ch01-epilogue',
+  'scene-act1-ch02-prologue', 'scene-act1-ch02-climax', 'scene-act1-ch02-epilogue',
+  'scene-act1-ch03-prologue', 'scene-act1-ch03-climax', 'scene-act1-ch03-epilogue',
+  'scene-act2-ch04-prologue', 'scene-act2-ch04-climax', 'scene-act2-ch04-epilogue',
+  'scene-act2-ch05-prologue', 'scene-act2-ch05-climax', 'scene-act2-ch05-epilogue',
+  'scene-act2-ch06-prologue', 'scene-act2-ch06-climax', 'scene-act2-ch06-epilogue',
 ]);
 
 export function hasStoryVideo(cgId: string | null | undefined): boolean {

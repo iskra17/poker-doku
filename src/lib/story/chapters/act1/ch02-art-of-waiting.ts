@@ -258,6 +258,7 @@ export const CH02: Chapter = {
                 speaker: 'sakura',
                 text: '반이 지났어요. 계속 폴드하고 있어도… 괘, 괜찮아요. 저도 한 바퀴에 한두 번밖에 안 들어가요.',
                 expression: 'happy',
+                cg: 'act1-ch02-climax',
               },
             ],
           },

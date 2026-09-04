@@ -37,7 +37,7 @@ describe('story-cgs 매니페스트', () => {
   });
 
   it('미배치 id는 null·프리로드 목록에서 제외 — 코드는 아트를 기다리지 않는다', () => {
-    expect(SCENE_CG_IDS.length).toBe(12);
+    expect(SCENE_CG_IDS.length).toBe(18);
     expect(getSceneCg('nope')).toBeNull();
     expect(getSceneCg(undefined)).toBeNull();
     // 배치 여부와 무관하게 경로 규약은 고정
