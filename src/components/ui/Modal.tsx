@@ -3,7 +3,7 @@
 import { useEffect, useId, useRef, useSyncExternalStore } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { focusTrapTarget, isModalDismissKey } from './modal-a11y';
+import { containModalFocus, focusModalStart, focusTrapTarget, isModalDismissKey, modalFocusableElements } from './modal-a11y';
 
 /**
  * 화면 레이어 계약 (z-index):
@@ -27,36 +27,38 @@ interface ModalProps {
   children: React.ReactNode;
   /** 패널 최대 폭 클래스 (기본 max-w-md) — 넓은 콘텐츠(핸드 히스토리 컬럼 뷰 등)용 */
   maxWidthClass?: string;
+  dismissible?: boolean;
+  /** Reset focus and internal scroll when the displayed question/content changes. */
+  contentKey?: string;
 }
 
-export default function Modal({ isOpen, onClose, title, children, maxWidthClass = 'max-w-md' }: ModalProps) {
+export default function Modal({ isOpen, onClose, title, children, maxWidthClass = 'max-w-md', dismissible = true, contentKey }: ModalProps) {
   const titleId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
+  const isClient = useIsClient();
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !isClient) return;
     const previouslyFocused = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
-    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent): void => {
-      if (isModalDismissKey(event.key)) {
+      if (event.key === 'Escape') {
         event.preventDefault();
-        onCloseRef.current();
+        event.stopPropagation();
+        if (isModalDismissKey(event.key, dismissible)) onCloseRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
       const dialog = dialogRef.current;
       if (!dialog) return;
-      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      )).filter(element => element.getAttribute('aria-hidden') !== 'true');
+      const focusable = modalFocusableElements(dialog);
       if (focusable.length === 0) {
         event.preventDefault();
         dialog.focus();
@@ -71,15 +73,32 @@ export default function Modal({ isOpen, onClose, title, children, maxWidthClass 
       event.preventDefault();
       focusable[targetIndex]?.focus();
     };
+    const repairFocus = () => {
+      if (dialogRef.current) containModalFocus(dialogRef.current, document.activeElement);
+    };
+    // Non-dismissible quiz controls can all become disabled while a reply is pending.
+    const observer = !dismissible ? new MutationObserver(repairFocus) : null;
+    if (observer && dialogRef.current) {
+      observer.observe(dialogRef.current, { subtree: true, childList: true, attributes: true, attributeFilter: ['disabled', 'hidden', 'tabindex'] });
+      document.addEventListener('focusin', repairFocus);
+    }
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      window.cancelAnimationFrame(focusFrame);
+      observer?.disconnect();
+      document.removeEventListener('focusin', repairFocus);
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus();
     };
-  }, [isOpen]);
+  }, [isOpen, isClient, dismissible]);
 
-  const isClient = useIsClient();
+  useEffect(() => {
+    if (!isOpen || !isClient) return;
+    const focusFrame = window.requestAnimationFrame(() => {
+      if (dialogRef.current) focusModalStart(dialogRef.current, contentRef.current);
+    });
+    return () => window.cancelAnimationFrame(focusFrame);
+  }, [isOpen, isClient, contentKey]);
+
   if (!isClient) return null;
 
   return createPortal(
@@ -91,7 +110,7 @@ export default function Modal({ isOpen, onClose, title, children, maxWidthClass 
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100]"
-            onClick={onClose}
+            onClick={dismissible ? onClose : undefined}
             aria-hidden="true"
           />
           {/* flex 센터링 래퍼 — 패널에 transform 클래스를 쓰지 않아 framer 애니메이션과 충돌 없음 */}
@@ -116,17 +135,16 @@ export default function Modal({ isOpen, onClose, title, children, maxWidthClass 
                   >
                     {title}
                   </h2>
-                  <button
-                    ref={closeButtonRef}
+                  {dismissible && <button
                     type="button"
                     onClick={onClose}
                     aria-label={`${title} 닫기`}
                     className="text-ink-dim hover:text-ink text-2xl leading-none"
                   >
                     &times;
-                  </button>
+                  </button>}
                 </div>
-                <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin -mr-2 pr-2">
+                <div ref={contentRef} className="flex-1 min-h-0 overflow-y-auto overscroll-contain scrollbar-thin -mr-2 pr-2">
                   {children}
                 </div>
               </div>

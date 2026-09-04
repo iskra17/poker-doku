@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import Modal from '@/components/ui/Modal';
 import { getCharacterById } from '@/lib/characters';
 import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -22,11 +23,12 @@ export default function MasqueradePanel({ live }: { live: StoryLiveView }) {
     {mask.notes.map((note, i) => <p key={note.seatIndex}>가면 {String.fromCharCode(65 + i)} · {note.hands}핸드 / 참여 {note.entered} / 레이즈 {note.raised} / 콜 {note.called}</p>)}
   </div>;
   if (!holding) return <details className="pointer-events-auto rounded-xl border border-mystic/30 bg-panel/95 p-2 text-xs text-ink"><summary>가면 관찰 노트 {mask.phase === 'observing' ? `${live.handsPlayed}/12` : '· 정체 공개'}</summary>{notes}</details>;
-  return <section role="dialog" aria-modal="true" aria-label="가면 퀴즈" className="pointer-events-auto w-full max-w-md max-h-[70dvh] overflow-y-auto rounded-2xl border border-mystic/40 bg-panel p-4 text-ink shadow-xl">
-    <h3 className="font-bold">{mask.phase === 'feedback' ? '네 가면의 정체' : '가면 퀴즈'}</h3>
+  return <Modal isOpen onClose={() => {}} dismissible={false}
+    contentKey={quiz?.quizId ?? `${mask.phase}:${mask.answered}`}
+    title={mask.phase === 'feedback' ? '네 가면의 정체' : '가면 퀴즈'}>
     {notes}
     {quiz ? <div key={quiz.quizId} className="mt-3 space-y-2">
-      <p className="text-xs text-gilded">{quiz.number}/{quiz.required} · {Math.max(0, Math.ceil((quiz.expiresAt - now) / 1000))}초</p>
+      <p className="text-xs text-gilded">{quiz.number}/{quiz.required} · {Math.min(30, Math.max(0, Math.ceil((quiz.expiresAt - now) / 1000)))}초</p>
       <p className="text-sm font-bold">{quiz.prompt}</p>
       {quiz.options.map((option, index) => <button key={option} type="button" disabled={pending || !online || now >= quiz.expiresAt} onClick={() => void answer(quiz.quizId, index)} className="w-full rounded-xl border border-mystic/30 px-3 py-2.5 text-left text-sm disabled:opacity-50">{index + 1}. {option}</button>)}
       <p className="text-xs text-ink-dim">네 답이 확정된 뒤 정답을 함께 공개해요. 시간이 지나면 무응답으로 기록돼요.</p>
@@ -40,5 +42,5 @@ export default function MasqueradePanel({ live }: { live: StoryLiveView }) {
     {!quiz && <button type="button" disabled={pending || !online} onClick={() => void resume()} className="mt-3 w-full rounded-xl bg-mystic py-2.5 text-sm font-bold text-white disabled:opacity-50">{mask.feedback ? '계속 · 상대에게 맞춰 대결' : '계속 · 다음 질문'}</button>}
     {!online && <p role="status" className="mt-2 text-xs text-blossom">연결이 끊겼어요. 현재 질문의 제한 시간은 계속 흘러요.</p>}
     {error && <p role="alert" className="mt-2 text-xs text-blossom">{error}</p>}
-  </section>;
+  </Modal>;
 }
