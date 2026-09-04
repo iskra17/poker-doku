@@ -27,3 +27,34 @@ Use the portable Python and commands in `scripts/art/library/README.md`: first `
 Verify twelve distinct attempt IDs/prompt IDs, twelve decoded PNGs with matching embedded intent/attempt/recipe metadata, no extra submissions, and no duplicate prior-four outputs. Per-intent submitted graphs and completed Comfy history snapshots are saved in `requests/` and `history/`. Generate `sheet`, inspect canonical comparisons/full PNGs, and record each exact output hash with the CLI review command only after explicit visual approval.
 
 Actual GPU validation, eight accepted distinct scenes and game integration/export are **not complete at this handoff**. Video queue contracts are CPU tested, but H3 needs a separately reviewed metadata-preserving recipe binding and actual video validation before use. No H3/extra artwork is authorized by the twelve-image manifest.
+
+## Actual GPU validation completed after ownership handover
+
+The root operator reviewed commit `25fb002` and handed over the idle Comfy service. The approved twelve jobs completed with the same full per-job hash verification; no retry, extra job, model change, service change or export occurred.
+
+| Measurement | Result |
+|---|---:|
+| First process, `run --limit 4` | exit0, 92.189 seconds |
+| Second process, `run --limit 8`, PID52448 | exit0, 178.171 seconds |
+| Sum of process wall times | 270.359 seconds |
+| Twelve preflights total / median | 217.415 / 18.048 seconds |
+| Preflight min / max | 15.745 / 20.452 seconds |
+| Submit-to-result-registration total / median | 51.889 / 4.164 seconds |
+| Submit-to-registration min / max | 4.061 / 6.074 seconds |
+| Observed total GPU memory peak, 68 samples during second process | 31,469 MiB |
+
+Registration times include polling and decoding; they are not pure kernel execution durations. GPU sampling began after the second process started and is an observed peak, not an exhaustive maximum. Full model checks dominate this batch's wall time. A separately scoped A2.1 can consider a nonpersistent per-process model hash cache with dev/ino/size/mtime_ns/ctime_ns invalidation and mutation tests; this batch did not relax verification.
+
+Actual recipe hash: `2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3`.
+
+The completed audit verifies twelve distinct intents, twelve distinct prompt IDs, twelve PNGs, attempt1 for every job, and twelve `generated` rows. Every image fully decodes at 832x1248 with matching embedded intent/attempt/recipe hash and output SHA256. Every corresponding Comfy history entry matches the same metadata. The first process's four intent IDs, prompt IDs and output hashes remain unchanged after the second process. No duplicate attempt or output appeared. Reviews=0, exports=0.
+
+Evidence under `D:/AI-Image-Video/output/poker-doku-library/a1c2-20260905`:
+
+- `audit-first4.json` and `audit-complete.json`: per-output hashes/IDs/timings and empty queue snapshots.
+- `run-first4.json`, `run-next8.json`, stdout/stderr logs; the first stderr log includes PowerShell's native stderr formatting, while exit0 and the independent audit confirm normal completion.
+- `run-next8.gpu.json`: 68 timestamped memory/utilization observations.
+- `requests/`, `history/`, `results/`: per-intent graph, Comfy history and immutable PNG.
+- `review/contact-001.jpg`, `review/index.html`: twelve-candidate contact sheet and full output links.
+
+Both worker processes and the GPU monitor exited. Comfy running/pending queues were empty at the final audit and GPU ownership was returned to the root operator. **A2 infrastructure's actual image queue/restart validation is complete.** Full-resolution quality approval, eight accepted distinct scenes and game export/integration remain the root operator's next steps; no quality approval is inferred from successful generation. The initial sheet suggests checking garden-walk q1's turn/gaze, rain-veranda's left/right direction and railing hand contact carefully.
