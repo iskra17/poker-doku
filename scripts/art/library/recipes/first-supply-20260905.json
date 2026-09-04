@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "date": "2026-09-05",
+  "reviewer": "Astra root",
+  "approval_document": "docs/superpowers/plans/2026-09-05-art-first-supply.md",
+  "converter_sha256": "5ee14cecf9fd4c7261dc7dc8ade188f9a401b1dc8ffca47e6784ab9a9ebc596e",
+  "width": 768,
+  "height": 1152,
+  "exports": [
+    {
+      "scene_cg_id": "act1-ch02-garden-walk",
+      "job_id": "sakura-garden-walk-q2",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-garden-walk-q2--86c3a6e9ae024f499dba7d5679c0c644--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "843d88fd31aa6f7d8651314fbb19bae5b9dc492593d34c8a93e84b34242e9196",
+      "target": "public/assets/story/cg/scene-act1-ch02-garden-walk.webp",
+      "output_sha256": "4cddcc51917357d430e79e838fe6f3c79a91178012396f2a02089b5a53a8640f",
+      "bytes": 136382
+    },
+    {
+      "scene_cg_id": "act1-ch02-victory",
+      "job_id": "sakura-victory-q1",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-victory-q1--00a71a51d9a34109b9e06e7489654736--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "3f679b88915226226934cad27a793d34c6cc362936a03afbff0a515577e88aec",
+      "target": "public/assets/story/cg/scene-act1-ch02-victory.webp",
+      "output_sha256": "910724e0f441abed8083d65033329de280208044b6549f6aca53744fd933d2ee",
+      "bytes": 65544
+    },
+    {
+      "scene_cg_id": "act1-ch02-rain-veranda",
+      "job_id": "sakura-rain-veranda-q1",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-rain-veranda-q1--181db36bcbc44620b8cbcbb3843f0436--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "a1820ee603acb89bf1e582416e9aa54c02f1fbd92464583fe8786811b5198c3b",
+      "target": "public/assets/story/cg/scene-act1-ch02-rain-veranda.webp",
+      "output_sha256": "385798c135762ff34c69b3a0ea46c7cfa459294a2cec036cef06c48e7431b889",
+      "bytes": 78678
+    },
+    {
+      "scene_cg_id": "act1-ch02-library",
+      "job_id": "sakura-library-q1",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-library-q1--906cd0c13c7e4df9bee0a364be964f6b--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "a046e47963f8fd40e6663e41c4079116d18176f395adbba7ffeff32f0f8f5a55",
+      "target": "public/assets/story/cg/scene-act1-ch02-library.webp",
+      "output_sha256": "ec1da5adb775f73c4e7816966275defb8f8d5e6375a9b404c529d768803b48d6",
+      "bytes": 53490
+    },
+    {
+      "scene_cg_id": "act3-ch09-lesson",
+      "job_id": "elena-lesson-q1",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\elena-lesson-q1--85da5210653b4e1380c115fc0a5090b4--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "933ea84ca8d88ff273faff50b53febf28fac0ef9eeb1af7db9ed2b5e375724ae",
+      "target": "public/assets/story/cg/scene-act3-ch09-lesson.webp",
+      "output_sha256": "277423bdc35f6ef4e160bb8ca149dc8e81f2d029eabb3148dc7c71880161b340",
+      "bytes": 61846
+    },
+    {
+      "scene_cg_id": "act3-ch09-river-walk",
+      "job_id": "elena-river-walk-q2",
+      "route": "a2-durable-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\elena-river-walk-q2--2b34c8e19914464f8efcf998008e5571--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+      "source_sha256": "3aacb804f22946485d40c80308bbde0435275e29a7917d9f64fbdd2a9a3a961d",
+      "target": "public/assets/story/cg/scene-act3-ch09-river-walk.webp",
+      "output_sha256": "3ec84df203fe76a850665d6d6724c800fc85c399f3fb965b439cf0bcc723cf17",
+      "bytes": 52864
+    },
+    {
+      "scene_cg_id": "act3-ch09-snow-window",
+      "job_id": "elena-snow-window-q1",
+      "route": "a1c-reviewed-manual-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c-20260905\\elena-snow-window-q1_00001_.png",
+      "source_sha256": "d2c391a11e1259b4b357d66351868e75496b461716ed36cb85cdedf09b4932ff",
+      "target": "public/assets/story/cg/scene-act3-ch09-snow-window.webp",
+      "output_sha256": "c98043322eac10ff6706aa12c524ca991a49621ac2cb50ee9e4868024cd18355",
+      "bytes": 67408
+    },
+    {
+      "scene_cg_id": "act3-ch09-analysis",
+      "job_id": "elena-analysis-q1",
+      "route": "a1c-reviewed-manual-export",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c-20260905\\elena-analysis-q1_00001_.png",
+      "source_sha256": "db9e614ac5209c3600776238f41077c466da42060089534884b2bd5d119d7130",
+      "target": "public/assets/story/cg/scene-act3-ch09-analysis.webp",
+      "output_sha256": "d5c30b1d25a85421e984b08ee352cb41e91553d17eedb23586d3c60f8c71b372",
+      "bytes": 56250
+    }
+  ]
+}
