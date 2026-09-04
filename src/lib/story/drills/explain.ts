@@ -38,7 +38,33 @@ const breakevenCore: CoreBuilder = f => [
   `상대가 그보다 자주 폴드하면 이 블러프는 카드와 상관없이 이득이에요.`,
 ];
 
+const comboCore: CoreBuilder = f => [
+  `레인지 ${v(f, 'range')}는 알려진 카드를 빼기 전 ${v(f, 'total')}콤보예요.`,
+  `내 카드 ${v(f, 'hero')}와 보드 ${v(f, 'board')}를 포함한 ${v(f, 'removed')}콤보를 제외하면 ${v(f, 'remaining')}콤보가 남아요.`,
+  '같은 레인지 토큰이 반복돼도 실제 두 장 조합은 한 번만 세요.',
+];
+const readingCore: CoreBuilder = f => [
+  `이 문제는 실제 상대 카드가 아니라, 명시된 레인지 ${v(f, 'range')}와 액션 가정에 대한 계산이에요.`,
+  `전체 ${v(f, 'total')}콤보에서 내 카드 ${v(f, 'hero')}와 보드 ${v(f, 'board')}가 막는 ${v(f, 'removed')}콤보를 빼면 ${v(f, 'remaining')}콤보예요.`,
+  `밸류 ${v(f, 'valueRange')}는 ${v(f, 'valueCombos')}콤보, 블러프 ${v(f, 'bluffRange')}는 ${v(f, 'bluffCombos')}콤보라서 ${v(f, 'actionName')}하는 조합은 ${v(f, 'actionRemaining')}콤보예요.`,
+  `나머지 ${v(f, 'actionRemoved')}콤보는 ${v(f, 'otherAction')}한다는 가정으로 제외돼요. 그래서 ${v(f, 'focus')} 답은 ${v(f, 'answer')}콤보예요.`,
+  '다른 상대에게도 이 액션 가정이 항상 맞는 것은 아니에요.',
+];
+const exactNutsCore: CoreBuilder = f => [
+  `보드 ${v(f, 'board')}와 내 카드 ${v(f, 'hero')}를 제외한 상대 홀카드 ${v(f, 'combos')}조합을 전부 비교해요.`,
+  `최고값을 만드는 유일한 두 장은 ${v(f, 'nuts')}, 족보는 ${v(f, 'hand')}예요.`,
+  '이 두 장이 실제 상대 카드라는 뜻은 아니에요. 알려진 카드로 가능한 최강 조합을 찾은 거예요.',
+];
+
 const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
+  'combo-count': comboCore,
+  'combo-blockers': comboCore,
+  'combo-paired-board': comboCore,
+  'read-value-combos': readingCore,
+  'read-bluff-combos': readingCore,
+  'read-removed-combos': readingCore,
+  'nuts-unique-combo': exactNutsCore,
+  'nuts-blocked-combo': exactNutsCore,
   'rank-who-wins': f => [
     `보드는 ${v(f, 'board')}이고, 각자 홀카드 두 장을 더해 가장 좋은 다섯 장을 만들어요.`,
     `내 최고 조합은 ${v(f, 'heroHand')}, ${v(f, 'villain1Name')}의 최고 조합은 ${v(f, 'villain1Hand')}, ` +
@@ -126,6 +152,9 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
 
 /** 템플릿별 필수 facts — 하나라도 없으면 숫자가 '?'로 새므로 일반 문장으로 물러선다. */
 const REQUIRED_FACTS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  ...Object.fromEntries(['combo-count', 'combo-blockers', 'combo-paired-board'].map(id => [id, ['range', 'hero', 'board', 'total', 'removed', 'remaining']])),
+  ...Object.fromEntries(['read-value-combos', 'read-bluff-combos', 'read-removed-combos'].map(id => [id, ['actionName', 'otherAction', 'range', 'valueRange', 'bluffRange', 'hero', 'board', 'total', 'removed', 'remaining', 'valueCombos', 'bluffCombos', 'actionRemaining', 'actionRemoved', 'answer', 'focus']])),
+  ...Object.fromEntries(['nuts-unique-combo', 'nuts-blocked-combo'].map(id => [id, ['hero', 'board', 'nuts', 'hand', 'combos']])),
   'rank-who-wins': ['board', 'heroHand', 'villain1Name', 'villain1Hand', 'villain2Name', 'villain2Hand', 'winner'],
   'rank-best-hand': ['hero', 'board', 'hand'],
   'rank-nuts': ['board', 'combos', 'nuts'],

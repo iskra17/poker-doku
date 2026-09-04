@@ -18,6 +18,9 @@ import type { StoryTeacherId } from '../types';
 import { buildExplanation, fillFacts } from './explain';
 import { AUTHORED_DRILL_TEMPLATES } from './templates/authored';
 import { BREAKEVEN_TEMPLATES } from './templates/breakeven';
+import { COMBO_TEMPLATES } from './templates/combos';
+import { HAND_READING_TEMPLATES } from './templates/hand-reading';
+import { NUTS_TEMPLATES } from './templates/nuts';
 import { CALL_DECISION_TEMPLATES } from './templates/call-decision';
 import { EQUITY_TEMPLATES } from './templates/equity';
 import { HAND_RANKING_TEMPLATES } from './templates/hand-ranking';
@@ -75,6 +78,9 @@ const GENERATED_DEFINITIONS: readonly GeneratedDrillDefinition[] = [
   ...BREAKEVEN_TEMPLATES,
   ...SIZING_TEMPLATES,
   ...OPPONENT_TYPE_TEMPLATES,
+  ...COMBO_TEMPLATES,
+  ...HAND_READING_TEMPLATES,
+  ...NUTS_TEMPLATES,
 ];
 
 const TEMPLATE_BY_ID = new Map<string, DrillTemplate>();

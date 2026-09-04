@@ -69,13 +69,19 @@ export function gradeLocally(spec: DrillAnswerSpec, answer: DrillAnswer): boolea
   }
 }
 
+const NUMERIC_UNIT_LABELS: Readonly<Record<string, string>> = Object.freeze({ combos: '콤보', outs: '아우츠', chips: '칩', bb: 'BB', x: '배' });
+
+export function numericUnitLabel(unit: string): string {
+  return NUMERIC_UNIT_LABELS[unit] ?? unit;
+}
+
 /** 정답 사양을 사람이 읽는 문장으로 (결과 카드의 '정답' 줄) */
 export function describeCorrectAnswer(spec: DrillAnswerSpec): string {
   switch (spec.kind) {
     case 'multiple-choice':
       return spec.options[spec.correctIndex] ?? '';
     case 'numeric':
-      return spec.tolerance > 0 ? `${spec.correct}${spec.unit} (±${spec.tolerance})` : `${spec.correct}${spec.unit}`;
+      return spec.tolerance > 0 ? `${spec.correct}${numericUnitLabel(spec.unit)} (±${spec.tolerance})` : `${spec.correct}${numericUnitLabel(spec.unit)}`;
     case 'card-pick':
       return spec.correct.map(formatCard).join(' ');
     case 'action-pick': {

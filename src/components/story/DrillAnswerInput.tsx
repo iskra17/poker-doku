@@ -4,7 +4,7 @@ import { useState } from 'react';
 import CardComponent from '@/components/table/Card';
 import VerticalSlider from '@/components/ui/VerticalSlider';
 import { formatCard, sameCard } from '@/lib/poker/card-notation';
-import { actionLabel, clampNumeric, toggleCard, toggleIndex } from '@/lib/story/drill-input';
+import { actionLabel, clampNumeric, numericUnitLabel, toggleCard, toggleIndex } from '@/lib/story/drill-input';
 import type { DrillAnswer, DrillAnswerSpec, DrillAnswerSpecPublic } from '@/lib/story/drills/types';
 
 interface DrillAnswerInputProps {
@@ -134,7 +134,7 @@ function NumericInput({ spec, value, onChange, disabled }: {
       <div className="flex-1">
         <div className="mb-2 flex items-baseline justify-between rounded-xl border border-mystic/30 bg-abyss/60 px-3 py-2">
           <span className="text-2xl font-black tabular-nums text-ink" aria-live="polite">{text === '' ? '—' : text}</span>
-          <span className="text-xs text-ink-dim">{spec.unit}</span>
+          <span className="text-xs text-ink-dim">{numericUnitLabel(spec.unit)}</span>
         </div>
         <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="숫자 키패드">
           {KEYPAD.map(key => (
@@ -154,7 +154,7 @@ function NumericInput({ spec, value, onChange, disabled }: {
           ))}
         </div>
       </div>
-      <div className="flex w-12 flex-col items-center" aria-label={`${spec.unit} 슬라이더`}>
+      <div className="flex w-12 flex-col items-center" aria-label={`${numericUnitLabel(spec.unit)} 슬라이더`}>
         <VerticalSlider
           value={value ?? spec.min}
           min={spec.min}

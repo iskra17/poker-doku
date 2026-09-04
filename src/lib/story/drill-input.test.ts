@@ -53,8 +53,9 @@ describe('drill-input helpers', () => {
   });
 
   it('describeCorrectAnswer and actionLabel', () => {
+    expect(describeCorrectAnswer({ kind: 'numeric', correct: 6, tolerance: 0, unit: 'combos', min: 0, max: 1326 })).toBe('6콤보');
     expect(describeCorrectAnswer({ kind: 'numeric', correct: 25, tolerance: 2, unit: '%', min: 0, max: 100 })).toBe('25% (±2)');
-    expect(describeCorrectAnswer({ kind: 'numeric', correct: 9, tolerance: 0, unit: 'outs', min: 0, max: 21 })).toBe('9outs');
+    expect(describeCorrectAnswer({ kind: 'numeric', correct: 9, tolerance: 0, unit: 'outs', min: 0, max: 21 })).toBe('9아우츠');
     expect(describeCorrectAnswer({ kind: 'multiple-choice', options: ['콜', '폴드'], correctIndex: 1 })).toBe('폴드');
     expect(describeCorrectAnswer({ kind: 'card-pick', candidates: [], correct: cards('Ah Kh'), pickCount: 2 })).toBe('Ah Kh');
     expect(describeCorrectAnswer({ kind: 'action-pick', options: ['fold', 'raise'], correct: ['raise'], sizingBB: { min: 2, max: 3 } })).toBe('레이즈 (2~3BB)');

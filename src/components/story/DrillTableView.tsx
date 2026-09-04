@@ -42,7 +42,7 @@ export default function DrillTableView({ situation }: DrillTableViewProps) {
                     <span className="ml-1 rounded bg-mystic/20 px-1 text-[9px] text-mystic">{villain.position}</span>
                     {villain.rangeTag && <span className="ml-1 rounded bg-gilded/20 px-1 text-[9px] text-gilded">{villain.rangeTag}</span>}
                   </span>
-                  <span className="block text-[10px] text-ink-dim">{formatChips(villain.stackChips)}{villain.range ? ` · ${villain.range}` : ''}</span>
+                  <span className="block text-[10px] text-ink-dim">{formatChips(villain.stackChips)}{villain.range ? ` · 가정 레인지: ${villain.range}` : ''}</span>
                 </span>
                 {villain.holeCards && (
                   <span className="ml-1 flex gap-0.5">
