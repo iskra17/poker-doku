@@ -6,7 +6,7 @@
  * 표기를 검사한다 — chapters.test.ts가 레지스트리 전체에 대해 실행한다.
  */
 import { isSceneCgId } from '@/lib/assets/story-cgs';
-import { getCharacterById } from '@/lib/characters';
+import { BOT_CHARACTERS, getCharacterById } from '@/lib/characters';
 import { findDuplicateCard, tryParseCards } from '@/lib/poker/card-notation';
 import { CH01 } from './act1/ch01-dojo-gate';
 import { CH02 } from './act1/ch02-art-of-waiting';
@@ -218,10 +218,9 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
     if (seat.seatIndex < 0 || seat.seatIndex >= MAX_SEATS) errors.push(`${at}: seat ${seat.seatIndex} out of range`);
     if (characters.has(seat.characterId)) errors.push(`${at}: duplicate character ${seat.characterId}`);
     characters.add(seat.characterId);
-    // 라인업은 전원 착석이 전제(어댑터가 한 좌석이라도 못 앉히면 방을 열지 않는다) — 로스터 봇만 허용, 딜러 불가
-    if (seat.characterId !== 'partner') {
-      const character = getCharacterById(seat.characterId);
-      if (!character || character.id === 'dealer') errors.push(`${at}: seat ${seat.seatIndex} character ${seat.characterId} is not a playable bot`);
+    // 라인업은 전원 착석이 전제(어댑터가 한 좌석이라도 못 앉히면 방을 열지 않는다) — BOT_CHARACTERS 로스터만 허용(딜러·가면 등 비로스터 캐릭터 불가)
+    if (seat.characterId !== 'partner' && !BOT_CHARACTERS.some(c => c.id === seat.characterId)) {
+      errors.push(`${at}: seat ${seat.seatIndex} character ${seat.characterId} is not a playable bot`);
     }
     if (!(seat.stackBB > 0)) errors.push(`${at}: seat ${seat.seatIndex} stackBB must be > 0`);
   }

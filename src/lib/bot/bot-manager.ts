@@ -1,28 +1,43 @@
+import { randomUUID } from 'node:crypto';
 import { GameState, Player, RoomDifficulty } from '../poker/types';
 import { PokerEngine } from '../poker/engine';
 import { BotDecision, decideBotAction } from './bot-ai';
 import { BotExplanation, explainBotDecision, explainForcedAction } from './bot-explain';
 import type { OpponentAggro } from './aggro-tracker';
 import {
+  MASKED_BOT_CHARACTER,
   getCharacterById,
   getRandomBotCharacter,
   type CharacterProfile,
 } from '../characters';
 
-let botIdCounter = 0;
+/**
+ * 봇의 **표시 identity** — 좌석에 보이는 이름/캐릭터.
+ * 실제 행동을 결정하는 성향(`personalityId`)과 분리돼 있어, 정체를 숨긴 가면 봇은
+ * 같은 표시 identity를 쓰면서도 서로 다른 성향으로 플레이한다.
+ */
+export interface BotDisplayIdentity {
+  name: string;
+  characterId: string;
+}
 
 function buildBot(
   character: CharacterProfile,
   seatIndex: number,
   buyIn: number,
   skill?: RoomDifficulty,
+  displayIdentity?: BotDisplayIdentity,
 ): Player {
-  botIdCounter++;
-  return {
-    id: `bot-${character.id}-${botIdCounter}`,
+  const display = displayIdentity ?? {
     name: character.name,
+    characterId: character.id,
+  };
+  return {
+    // 성향을 id에 박지 않는다 — 클라이언트가 공개 id에서 가면 봇의 정체를 역산할 수 있다.
+    id: `bot-${randomUUID()}`,
+    name: display.name.trim(),
     type: 'bot',
-    avatar: character.id,
+    avatar: display.characterId,
     chips: buyIn,
     seatIndex,
     holeCards: [],
@@ -44,16 +59,28 @@ export function createBot(
   return buildBot(getRandomBotCharacter(excludeCharacterIds), seatIndex, buyIn, skill);
 }
 
-/** 특정 캐릭터로 봇 생성 — 파트너 우선 착석용. 로스터에 없거나 딜러면 null */
+/**
+ * 특정 캐릭터로 봇 생성 — 파트너 우선 착석용. 로스터에 없거나 딜러/표시 전용 가면이면 null.
+ * `displayIdentity`를 주면 실제 성향(`characterId`)은 그대로 두고 좌석 표시만 바꾼다.
+ */
 export function createBotWithCharacter(
   seatIndex: number,
   buyIn: number,
   characterId: string,
   skill?: RoomDifficulty,
+  displayIdentity?: BotDisplayIdentity,
 ): Player | null {
   const character = getCharacterById(characterId);
-  if (!character || character.id === 'dealer') return null;
-  return buildBot(character, seatIndex, buyIn, skill);
+  // 가면은 얼굴일 뿐 성향이 없다 — 행동 캐릭터로 쓰면 BOT_PERSONALITIES 폴백으로 조용히 흘러간다.
+  const playable = character
+    && character.id !== 'dealer'
+    && character.id !== MASKED_BOT_CHARACTER.id;
+  if (!playable) return null;
+  if (displayIdentity && (
+    !displayIdentity.name.trim()
+    || !getCharacterById(displayIdentity.characterId)
+  )) return null;
+  return buildBot(character, seatIndex, buyIn, skill, displayIdentity);
 }
 
 export function getUsedCharacterIds(engine: PokerEngine): string[] {

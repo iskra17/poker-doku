@@ -176,6 +176,9 @@ describe('validateChapters', () => {
     expect(validateChapters([patchTable({
       lineup: [1, 2, 3, 4, 5, 6].map(seatIndex => ({ seatIndex, characterId: `c${seatIndex}`, stackBB: 100 })),
     })]).some(e => e.includes('lineup must have 1..5 seats'))).toBe(true);
+    expect(validateChapters([patchTable({
+      lineup: [{ seatIndex: 1, characterId: 'story-mask', stackBB: 100 }],
+    })]).some(e => e.includes('character story-mask is not a playable bot'))).toBe(true);
   });
 
   it('validates objectives and scenes', () => {

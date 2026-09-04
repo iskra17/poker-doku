@@ -3,6 +3,7 @@ import { evaluateHand, compareHands } from './evaluator';
 import {
   GameState, Player, PlayerAction, ActionType,
   Pot, WinResult, Card, RoomConfig,
+  type PublicGameState,
 } from './types';
 import {
   positionLabels,
@@ -1299,7 +1300,7 @@ export class PokerEngine {
     }
   }
 
-  getPublicState(forPlayerId?: string): GameState {
+  getPublicState(forPlayerId?: string): PublicGameState {
     // 쇼다운 '경합'(생존자 2인 이상)일 때만 공개 대상이다. endHand는 전원 폴드 승리에도
     // street='showdown'을 세팅하므로 생존자 수로 실제 쇼다운 여부를 구분해야 한다 —
     // 안 그러면 상대가 다 폴드했는데 승자 홀카드가 노출된다 (표준 룰: 쇼다운 없으면 머킹).
@@ -1309,17 +1310,21 @@ export class PokerEngine {
     const showdownContested = this.state.street === 'showdown' && survivors >= 2;
     return {
       ...this.state,
+      communityCards: this.state.communityCards.map(card => ({ ...card })),
       players: this.state.players.map(p => {
+        // 봇의 실제 성향은 서버 전용이다 — 구조 분해로 제외한다 (내부 객체에서 delete 금지).
+        const { personalityId: _personalityId, ...publicPlayer } = p;
         // 쇼다운 경합 생존자(active/all-in)만 공개. 폴드한 플레이어·폴드 승자는 머킹(비공개).
         // 올인 런아웃 중에는 표준 룰대로 남은 핸드를 미리 공개한다 (베팅이 이미 닫혔으므로 안전).
         const revealed =
           (showdownContested || !!this.state.allInRunout) &&
           (p.status === 'active' || p.status === 'all-in');
         return {
-          ...p,
+          ...publicPlayer,
           revealed,
+          // 카드도 깊이 복제 — 스냅샷 수신 측 변형이 엔진 내부 상태로 새지 않게 한다.
           holeCards: p.id === forPlayerId || revealed
-            ? p.holeCards
+            ? p.holeCards.map(card => ({ ...card }))
             : p.holeCards.map(() => ({ suit: 'spades', rank: '2' } as Card)), // hidden cards
         };
       }),

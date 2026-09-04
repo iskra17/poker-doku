@@ -150,6 +150,18 @@ export interface GameState {
   hostId?: string; // 방 생성자 playerId — Sit & Go 봇 채우기 권한 판단용
 }
 
+/**
+ * 클라이언트로 나가는 좌석 — 실제 봇 성향(`personalityId`)은 서버 전용이다.
+ * optional이어도 명시적으로 omit해야 가면 봇의 정체가 스냅샷으로 새지 않는다
+ * (표시 identity는 `avatar`/`name`만 본다).
+ */
+export type PublicPlayer = Omit<Player, 'personalityId'>;
+
+/** getPublicState가 내보내는 스냅샷 — 내부 GameState와 달리 성향이 제거돼 있다. */
+export type PublicGameState = Omit<GameState, 'players'> & {
+  players: PublicPlayer[];
+};
+
 export type TournamentStage =
   | 'multi-table'
   | 'final-forming'

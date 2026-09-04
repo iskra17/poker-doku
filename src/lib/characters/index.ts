@@ -53,6 +53,36 @@ export const DEALER_CHARACTER: CharacterProfile = {
   ],
 };
 
+/**
+ * 표시 전용 가면 프로필 — 정체를 숨긴 봇의 공용 얼굴/이름.
+ * BOT_CHARACTERS에는 넣지 않는다 (랜덤 충원 후보가 되면 실전 방에도 가면이 앉는다).
+ * 실제 행동은 별도의 성향 캐릭터가 담당하므로 이 id로는 봇을 만들 수 없다.
+ */
+export const MASKED_BOT_CHARACTER: CharacterProfile = {
+  id: 'story-mask',
+  name: '수상한 도전자',
+  nameNative: '???',
+  nationality: '비공개',
+  age: 0,
+  color: '#7C6F9F',
+  colorSecondary: '#332B49',
+  emoji: '🎭',
+  personality: 'masked',
+  backstory: '정체를 숨긴 채 수련 테이블에 나타난 도전자.',
+  styleSummary: '정체와 무관한 공용 가면 프로필.',
+  greeting: '상대가 누구인지는 중요하지 않아. 카드를 보자.',
+  winQuote: '이번 승부는 내가 가져갈게.',
+  loseQuote: '좋은 승부였어. 다음 판을 보자.',
+  bluffQuote: '결정할 시간이야.',
+  foldQuote: '이번 패는 여기까지.',
+  thinkingQuote: '잠깐 생각해 보지.',
+  chatMessages: [
+    '카드에 집중하자.',
+    '아직 승부는 끝나지 않았어.',
+    '좋은 선택인지 지켜보지.',
+  ],
+};
+
 export const BOT_CHARACTERS: CharacterProfile[] = [
   {
     id: 'sakura',
@@ -522,7 +552,8 @@ export const BOT_CHARACTERS: CharacterProfile[] = [
 ];
 
 export function getCharacterById(id: string): CharacterProfile | undefined {
-  if (id === 'dealer') return DEALER_CHARACTER;
+  if (id === DEALER_CHARACTER.id) return DEALER_CHARACTER;
+  if (id === MASKED_BOT_CHARACTER.id) return MASKED_BOT_CHARACTER;
   return BOT_CHARACTERS.find(c => c.id === id);
 }
 
