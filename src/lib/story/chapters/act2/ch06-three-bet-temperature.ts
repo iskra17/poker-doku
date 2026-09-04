@@ -231,7 +231,7 @@ export const CH06: Chapter = {
           { id: 'act2-ch06:no-4bet', kind: 'no-junk-4bet', label: '하위 4벳 0', maxCount: 0 },
         ],
         bonus: [
-          { id: 'act2-ch06:chips', kind: 'net-chips', label: '팽팽보다 많은 칩으로 끝내기', params: { minBB: 0 } },
+          { id: 'act2-ch06:chips', kind: 'net-chips', label: '시작 스택 이상으로 끝내기', params: { minBB: 0 } },
           { id: 'act2-ch06:survive', kind: 'survive', label: '파산 없이 끝내기' },
         ],
       },
@@ -365,7 +365,7 @@ export const CH06: Chapter = {
       {
         kind: 'say',
         speaker: 'ara',
-        text: '오늘은 온도가 좀 어긋났네. 3벳 맞고 콜한 하위 핸드가 있었어. …괜찮아, 팽팽은 도망 안 가.',
+        text: '오늘은 여기까지네. 어떤 선택이 아쉬웠는지 같이 돌아보자. …괜찮아, 팽팽은 도망 안 가.',
         expression: 'neutral',
         bg: 'dojo-study',
       },

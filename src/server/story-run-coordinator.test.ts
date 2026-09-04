@@ -712,8 +712,8 @@ function liveSummary(overrides: Partial<LiveStepSummary> = {}): LiveStepSummary 
 }
 
 /** 드릴 세트까지 전부 정답으로 통과해 첫 라이브 스텝 앞에 세운다 */
-function driveToLive(ctx: ReturnType<typeof setup>) {
-  const started = ctx.coordinator.start(PROFILE, 'act1-ch01');
+function driveToLive(ctx: ReturnType<typeof setup>, chapterId = 'act1-ch01') {
+  const started = ctx.coordinator.start(PROFILE, chapterId);
   expect(started.ok).toBe(true);
   for (let guard = 0; guard < 12; guard++) {
     const view = ctx.latest();
@@ -920,6 +920,43 @@ describe('failure scene and sparring retry', () => {
     expect(ctx.coordinator.advance(PROFILE, next).ok).toBe(false);
     expect(ctx.rewards.chapters).toHaveLength(0);
     expect(ctx.coordinator.resend(PROFILE)).toBe(true);
+  });
+  it.each([false,true])('shows only unowned next rewards on failure, already owned: %s', owned => {
+    const chapter = makeChapter({ id:'act2-ch06',act:2,requires:[],failScene:makeScene('failure') });
+    const ctx = setup([chapter]);
+    if (owned) {
+      ctx.repository.recordCompletion(PROFILE,chapter.id,'S',NOW);
+      ctx.rewards.granted.add('story-cg-act2-paeng-boss');
+      ctx.rewards.granted.add('story-cg-act2-ara-victory');
+    }
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    driveToLive(ctx,chapter.id);
+    fake.finish(liveSummary({tag:'연습',primaryObjectivesMet:null}));
+    const before = ctx.rewards.reconciles.length;
+    fake.finish(liveSummary({primaryObjectivesMet:false,handsPlayed:2}));
+    const result = ctx.latest().result!;
+    expect(result.passed).toBe(false);
+    expect(result.rewards).toMatchObject({items:[],chips:0,cutscene:null,unlockedScenes:[]});
+    if (owned) {
+      expect(result.rewards.next?.map(item => item.id)).not.toEqual(expect.arrayContaining([
+        'story-cg-act2-paeng-boss','story-cg-act2-ara-victory',
+      ]));
+      expect(result.rewards.next?.every(item => !ctx.rewards.granted.has(item.id))).toBe(true);
+      expect(result.rewards.next?.length).toBeGreaterThan(0);
+    } else expect(result.rewards.next?.some(item => item.id === 'story-cg-act2-paeng-boss')).toBe(true);
+    expect(ctx.rewards.reconciles).toHaveLength(before);
+    expect(ctx.rewards.chapters).toHaveLength(0);
+  });
+
+  it('reports an expiry view emitted during resend without emitting it twice', () => {
+    const ctx = failed();
+    ctx.tick(10 * 60_000);
+    const count = ctx.emitted.length;
+    expect(ctx.coordinator.resend(PROFILE)).toBe(true);
+    expect(ctx.emitted).toHaveLength(count+1);
+    expect(ctx.latest()).toMatchObject({phase:'ended',result:{sparringRetry:null}});
+    expect(ctx.coordinator.resend(PROFILE)).toBe(false);
   });
   it('copies completed drill and earlier live results into an idempotent new run', () => {
     const ctx = failed();

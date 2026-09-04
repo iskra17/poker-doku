@@ -202,7 +202,15 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ProgressionSummary />
             <PartnerReactions />
-            <Coachmarks />
+            <Coachmarks chipMessage={inStoryRoom
+              ? '수련용 칩으로 플레이해요. 테이블의 칩은 지갑 잔액과 별개예요.'
+              : gameState?.economyMode === 'practice'
+                ? '연습용 칩으로 플레이해요. 연습 칩은 지갑으로 정산되지 않아요.'
+                : gameState?.economyMode === 'arena'
+                  ? '아레나 경기용 칩으로 플레이해요. 경기 칩은 지갑으로 정산되지 않아요.'
+                  : gameState?.tournament
+                    ? '토너먼트 칩으로 플레이해요. 나갈 때 남은 칩을 지갑으로 바꿀 수는 없어요.'
+                    : '테이블을 떠나면 남은 칩은 지갑으로 돌아가요.'} />
             <BondSceneUnlockWatcher />
             <SngWaitingOverlay />
             <EliminationNotice onLeave={onLeave} />

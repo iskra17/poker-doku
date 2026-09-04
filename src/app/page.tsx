@@ -27,6 +27,7 @@ import StoryStage from '@/components/story/StoryStage';
 import GalleryModal from '@/components/gallery/GalleryModal';
 import { useArenaStore } from '@/lib/store/arena-store';
 import { useStoryStore } from '@/lib/store/story-store';
+import { subscribeStoryWalletRefresh } from '@/lib/store/story-wallet-refresh';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
   backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
@@ -65,6 +66,8 @@ export default function Home() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => subscribeStoryWalletRefresh(useStoryStore, useProfileStore), []);
 
   useEffect(() => {
     const handleVisibility = () => {

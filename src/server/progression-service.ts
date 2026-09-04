@@ -936,7 +936,7 @@ export class ProgressionService {
     assertBoundedId(profileId);
     assertTimestamp(at);
     return this.database.transaction(() => {
-      this.repository.getSnapshotInTransaction(profileId);
+      this.repository.assertProgressionProfileInTransaction(profileId);
       return this.repository.grantLevelRewardsInTransaction(
         profileId, this.repository.getMissingLevelRewardsInTransaction(profileId),
         { reason: 'reconcile-v34', sourceEventId: null }, at,

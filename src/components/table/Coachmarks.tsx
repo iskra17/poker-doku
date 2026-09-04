@@ -20,7 +20,7 @@ function alreadySeen(): boolean {
  * 탭 한 번으로 닫히면 다시는 안 나온다 (localStorage 1회). 내 턴이 시작되면 마킹 없이
  * 자동으로 비켜서고(첫 턴 타임아웃 방지), 이 경우 다음 입장 때 다시 보여준다.
  */
-export default function Coachmarks() {
+export default function Coachmarks({ chipMessage }: { chipMessage: string }) {
   const [visible, setVisible] = useState(() =>
     typeof window !== 'undefined' && !alreadySeen(),
   );
@@ -73,7 +73,7 @@ export default function Coachmarks() {
               <li className="rounded-xl border border-blossom/40 bg-panel/90 p-3">
                 <p className="text-xs font-bold text-blossom">③ 칩은 안전해요</p>
                 <p className="mt-0.5 text-[11px] leading-relaxed text-ink">
-                  테이블을 떠나면 남은 칩은 지갑으로 돌아가요. 상대 중 BOT 뱃지는 연습을 도와주는 AI예요.
+                  {chipMessage} 상대 중 BOT 뱃지는 연습을 도와주는 AI예요.
                 </p>
               </li>
             </ul>

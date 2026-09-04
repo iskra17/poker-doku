@@ -319,6 +319,57 @@ describe('anonymous profile store', () => {
     expect(realtime).toEqual({ currentRoomId: 'room-1', gameState: { id: 'room-1' } });
   });
 
+  it('refreshes after an older in-flight request once when a reward is confirmed', async () => {
+    const old = deferred<Response>();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({state:'ready',profile:PROFILE,economy:ECONOMY}))
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce(jsonResponse({state:'ready',profile:{...PROFILE,wallet:{balance:10800,activeEscrow:0}},economy:ECONOMY}));
+    const {store} = setup(fetchImpl);
+    await store.getState().bootstrap();
+    const first = store.getState().refresh();
+    expect(store.getState().refresh()).toBe(first);
+    const settled = store.getState().refresh({afterCurrent:true});
+    expect(store.getState().refresh({afterCurrent:true})).toBe(settled);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    old.resolve(jsonResponse({state:'ready',profile:PROFILE,economy:ECONOMY}));
+    await settled;
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(store.getState().profile?.wallet.balance).toBe(10800);
+  });
+
+  it('cancels a queued reward refresh when an identity operation supersedes it', async () => {
+    const old = deferred<Response>();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({state:'ready',profile:PROFILE,economy:ECONOMY}))
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce(jsonResponse({profile:{...PROFILE,id:'profile-2'},economy:ECONOMY,recoveryWords:NEW_WORDS}));
+    const {store} = setup(fetchImpl);
+    await store.getState().bootstrap();
+    void store.getState().refresh();
+    const settled = store.getState().refresh({afterCurrent:true});
+    await store.getState().recover(WORDS);
+    old.resolve(jsonResponse({state:'ready',profile:PROFILE,economy:ECONOMY}));
+    await settled;
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect(store.getState().profile?.id).toBe('profile-2');
+  });
+
+  it('cancels a queued reward refresh when the current session becomes anonymous', async () => {
+    const old = deferred<Response>();
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({state:'ready',profile:PROFILE,economy:ECONOMY}))
+      .mockReturnValueOnce(old.promise);
+    const {store} = setup(fetchImpl);
+    await store.getState().bootstrap();
+    void store.getState().refresh();
+    const settled = store.getState().refresh({afterCurrent:true});
+    old.resolve(jsonResponse({state:'anonymous'}));
+    await settled;
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(store.getState()).toMatchObject({phase:'anonymous',profile:null});
+  });
+
   it('clears realtime identity when a refresh confirms an anonymous session', async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({ state: 'ready', profile: PROFILE, economy: ECONOMY }))

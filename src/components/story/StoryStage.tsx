@@ -125,7 +125,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                   ⏭ 스킵
                 </button>
               )}
-              {run.phase !== 'ended' && (
+              {run.phase !== 'ended' && run.phase !== 'failure-scene' && (
                 <button
                   type="button"
                   onClick={() => void abandon()}

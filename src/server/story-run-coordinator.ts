@@ -391,7 +391,8 @@ export class StoryRunCoordinator {
     return { ok: true, value: { runId: run.runId } };
   }
 
-  sweepExpired(): void {
+  sweepExpired(): ReadonlySet<string> {
+    const emitted = new Set<string>();
     for (const [profileId, checkpoint] of this.retries) {
       // A consumed checkpoint is the retry command receipt until that active run ends.
       if (checkpoint.consumedByRunId && this.runs.get(profileId)?.runId === checkpoint.consumedByRunId) continue;
@@ -401,9 +402,11 @@ export class StoryRunCoordinator {
         if (run.result) run.result.sparringRetry = null;
         this.endRun(run);
         this.deps.emit(profileId, this.buildView(run));
+        emitted.add(profileId);
       }
       this.clearRetry(profileId);
     }
+    return emitted;
   }
 
   dispose(): void {
@@ -480,7 +483,7 @@ export class StoryRunCoordinator {
 
   /** 재접속: 진행 중 런이 있으면 현재 뷰를 다시 보내고 true */
   resend(profileId: string): boolean {
-    this.sweepExpired();
+    if (this.sweepExpired().has(profileId)) return true;
     const run = this.runs.get(profileId) ?? this.terminals.get(profileId);
     if (!run) return false;
     this.deps.emit(profileId, this.buildView(run));
@@ -1276,6 +1279,15 @@ export class StoryRunCoordinator {
           // 카탈로그 보상은 방금 영속된 completions/best_grade/플래그에서 reconcile — XP 트랜잭션과 분리·각자 멱등
           extra = this.reconcileRewards(run.profileId, run.chapter.id, transitions, now);
         }
+      }
+      if (!passed) {
+        // 실패는 지급/자기 치유를 실행하지 않고 실제 보유만 읽는다.
+        const granted = new Set((this.deps.rewards?.preview?.(run.profileId) ?? [])
+          .filter(item => item.granted).map(item => item.id));
+        extra = {
+          items: [], chips: 0, cutscene: null, unlockedScenes: [],
+          next: nextStoryRewards(this.chapters, granted, run.chapter.id),
+        };
       }
       const completed = this.completedSet(this.deps.repository.listProgress(run.profileId));
       // 띠는 막 완주에서 파생되므로 순서와 무관하게 "이 완주로 올랐는가"만 본다 — 결산이 승급을 알린다

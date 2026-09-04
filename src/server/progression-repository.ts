@@ -1694,6 +1694,15 @@ export class ProgressionRepository {
     }
   }
 
+  assertProgressionProfileInTransaction(profileId: string): void {
+    this.assertTransaction();
+    assertProfileId(profileId);
+    const row = this.database.db.prepare(
+      'SELECT 1 FROM progression_profiles WHERE profile_id = ?',
+    ).get(profileId);
+    if (!row) throw new ProgressionPersistenceError('PROGRESSION_PROFILE_NOT_FOUND');
+  }
+
   getMissingLevelRewardsInTransaction(profileId: string): LevelRewardCandidate[] {
     this.assertTransaction();
     assertProfileId(profileId);

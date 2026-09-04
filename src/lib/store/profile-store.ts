@@ -55,7 +55,8 @@ export interface ProfileStoreState {
   recoveryWarning: boolean;
   error: string | null;
   bootstrap(): Promise<void>;
-  refresh(): Promise<void>;
+  /** afterCurrent requests a new snapshot after any read begun before a reward settled. */
+  refresh(options?: { afterCurrent?: boolean }): Promise<void>;
   create(avatarId: string): Promise<void>;
   recover(recoveryWords: string): Promise<void>;
   acknowledgeRecovery(): void;
@@ -226,6 +227,7 @@ export function createProfileStore(
   let requestVersion = 0;
   let bootstrapPromise: Promise<void> | null = null;
   let refreshPromise: Promise<void> | null = null;
+  let trailingRefresh: { after: Promise<void>; promise: Promise<void> } | null = null;
   let identityOperationPromise: Promise<void> | null = null;
   let connectedProfileId: string | null = null;
   const startIdentityOperation = (work: () => Promise<void>): Promise<void> => {
@@ -447,9 +449,25 @@ export function createProfileStore(
         return pending;
       },
 
-      refresh: () => {
+      refresh: options => {
         if (get().phase !== 'ready' || get().action !== null) return Promise.resolve();
-        if (refreshPromise) return refreshPromise;
+        if (refreshPromise) {
+          if (!options?.afterCurrent) return refreshPromise;
+          if (trailingRefresh?.after === refreshPromise) return trailingRefresh.promise;
+          const after = refreshPromise;
+          const version = requestVersion;
+          const profileId = get().profile?.id;
+          const pending = after.then(() => {
+            // A completion must not reuse a request started before the reward committed.
+            // Identity operations invalidate this trailing request just like ordinary responses.
+            if (version !== requestVersion || get().profile?.id !== profileId) return;
+            return get().refresh();
+          }).finally(() => {
+            if (trailingRefresh?.promise === pending) trailingRefresh = null;
+          });
+          trailingRefresh = { after, promise: pending };
+          return pending;
+        }
         const version = ++requestVersion;
         set({ error: null });
         const work = (async () => {

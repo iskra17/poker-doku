@@ -50,6 +50,20 @@ describe('authoritative progression level rewards', () => {
   }
   function rows(table: string) { return database.db.prepare(`SELECT * FROM ${table}`).all(); }
 
+  it.each([1,2])('does not read unrelated streak state when reconciling dojo level %i', level => {
+    seed();
+    database.db.prepare('UPDATE progression_profiles SET dojo_level=?').run(level);
+    database.db.exec('DELETE FROM streak_state');
+    expect(service.reconcileLevelRewards('profile-a',AT))
+      .toEqual(level === 2 ? ['dojo-title-sprout-challenger'] : []);
+    expect(rows('streak_state')).toEqual([]);
+  });
+
+  it('keeps the missing progression profile error during reconciliation', () => {
+    expect(() => service.reconcileLevelRewards('missing-profile',AT))
+      .toThrow('PROGRESSION_PROFILE_NOT_FOUND');
+  });
+
   it.each([0,1])('awards exact dojo and second heroine boundaries for %i milli', milli => {
     seed(); nearBoundary();
     const result = service.recordStoryChapterComplete(story(milli));

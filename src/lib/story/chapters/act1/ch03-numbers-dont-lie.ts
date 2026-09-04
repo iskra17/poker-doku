@@ -223,7 +223,7 @@ export const CH03: Chapter = {
           { id: 'act1-ch03:odds', kind: 'correct-pot-odds-call', label: '오즈 위반 ⚠ 1회 이하', maxCount: 1 },
         ],
         bonus: [
-          { id: 'act1-ch03:chips', kind: 'net-chips', label: '드라코보다 많은 칩으로 끝내기', params: { minBB: 0 } },
+          { id: 'act1-ch03:chips', kind: 'net-chips', label: '시작 스택 이상으로 끝내기', params: { minBB: 0 } },
           { id: 'act1-ch03:survive', kind: 'survive', label: '파산 없이 끝내기' },
         ],
       },
