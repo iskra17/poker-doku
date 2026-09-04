@@ -40,22 +40,22 @@ export default function LoserCutIn({ isMobile }: { isMobile: boolean }) {
       const winnerIds = new Set(event.winners.map(w => w.playerId));
       // 쇼다운 생존자 중 승자가 아닌 봇 — 가장 많이 잃은(기여금 큰) 쪽이 주인공
       const losers = event.players.filter(
-        p => !winnerIds.has(p.id)
-          && (p.status === 'active' || p.status === 'all-in')
-          && p.type === 'bot' && p.personalityId,
+        player => !winnerIds.has(player.id)
+          && (player.status === 'active' || player.status === 'all-in')
+          && player.type === 'bot',
       );
       if (losers.length === 0) return;
       const loser = losers.reduce((a, b) => (b.totalContributed > a.totalContributed ? b : a));
       if (loser.totalContributed <= 0) return;
 
-      const character = getCharacterById(loser.personalityId!);
-      if (!character) return;
+      // 표시 identity는 공개 avatar/name만 — 미등록 avatar도 기본 문구로 컷인을 낸다
+      const character = getCharacterById(loser.avatar);
 
       const cutIn: CutInData = {
-        characterId: character.id,
-        name: character.name,
-        quote: character.loseQuote,
-        color: character.color,
+        characterId: loser.avatar || 'player',
+        name: loser.name,
+        quote: character?.loseQuote ?? '이번 판은 아쉽네. 다음 승부를 보자.',
+        color: character?.color ?? '#A78BFA',
         amount: loser.totalContributed,
       };
 

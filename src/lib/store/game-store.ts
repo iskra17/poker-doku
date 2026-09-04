@@ -2,7 +2,7 @@
 
 import { create } from 'zustand';
 import { io } from 'socket.io-client';
-import type { ActionType, ChatMessage, GameState } from '../poker/types';
+import type { ActionType, ChatMessage, PublicGameState } from '../poker/types';
 import type {
   CreatePersistentTournamentRequest,
   PokerClientSocket,
@@ -104,7 +104,7 @@ interface GameStore {
   joinErrorCode: string | null;
   tableNotice: string | null;
 
-  gameState: GameState | null;
+  gameState: PublicGameState | null;
   chatMessages: ChatMessage[];
   rooms: RoomInfo[];
   tournaments: TournamentSummary[];

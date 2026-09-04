@@ -29,10 +29,12 @@ export default function PartnerReactions() {
     const partnerAtTable = (): string | null => {
       const partnerId = useProgressionStore.getState().snapshot?.profile.selectedCharacterId;
       if (!partnerId) return null;
-      const seated = useGameStore.getState().gameState?.players.some(
-        p => p.type === 'bot' && (p.personalityId || p.avatar) === partnerId && !p.pendingRemoval,
-      );
-      return seated ? partnerId : null;
+      const partnerSeated = useGameStore.getState().gameState?.players.some(
+        player => player.type === 'bot'
+          && player.avatar === partnerId
+          && !player.pendingRemoval,
+      ) ?? false;
+      return partnerSeated ? partnerId : null;
     };
 
     const speak = (moment: PartnerMoment, mood: 'happy' | 'sad', ms = 4_500) => {

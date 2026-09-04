@@ -37,14 +37,13 @@ export default function SeatSpeechBubbles({ isMobile }: SeatSpeechBubblesProps) 
       if (!last || (last.type !== 'bot' && last.type !== 'player') || last.id === lastIdRef.current) return;
       lastIdRef.current = last.id;
 
-      const player = state.gameState?.players.find(p => p.id === last.playerId);
+      const player = state.gameState?.players.find(candidate => candidate.id === last.playerId);
       if (!player) return; // 딜러 멘트는 DealerCorner 담당
 
-      // 봇은 성향 id, 휴먼은 프로필 아바타로 캐릭터 색을 찾는다 (없으면 기본색)
-      const character = getCharacterById(
-        (player.type === 'bot' ? player.personalityId : player.avatar) || '',
-      );
-      const mySeat = state.gameState?.players.find(p => p.id === state.myPlayerId)?.seatIndex ?? -1;
+      // 봇·휴먼 모두 공개 좌석 아바타로 캐릭터 색을 찾는다 (없으면 기본색)
+      const character = getCharacterById(player.avatar || '');
+      const mySeat = state.gameState?.players
+        .find(candidate => candidate.id === state.myPlayerId)?.seatIndex ?? -1;
       setBubble({
         id: last.id,
         displaySeatIndex: toDisplayIndex(player.seatIndex, mySeat),

@@ -1,9 +1,9 @@
-import type { Player } from '@/lib/poker/types';
+import type { PublicPlayer } from '@/lib/poker/types';
 
 export type SeatVisualState = 'normal' | 'folded' | 'away' | 'busted';
 
 type SeatVisualPlayer = Pick<
-  Player,
+  PublicPlayer,
   'status' | 'chips' | 'sitOutNext' | 'sitOutAuto'
 >;
 

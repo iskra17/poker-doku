@@ -51,14 +51,14 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
       if (!player) return;
 
       let cutIn: CutInData;
-      if (player.type === 'bot' && player.personalityId) {
-        const character = getCharacterById(player.personalityId);
-        if (!character) return;
+      if (player.type === 'bot') {
+        // 표시 identity는 공개 avatar/name만 — 미등록 avatar도 기본 문구로 컷인을 낸다
+        const character = getCharacterById(player.avatar);
         cutIn = {
-          characterId: character.id,
-          name: character.name,
-          quote: character.winQuote,
-          color: character.color,
+          characterId: player.avatar || 'player',
+          name: player.name,
+          quote: character?.winQuote ?? '이번 승부는 내가 가져갈게.',
+          color: character?.color ?? '#A78BFA',
           amount: top.amount,
           cutinId: null,
         };

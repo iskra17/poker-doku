@@ -3,7 +3,7 @@ import type {
   ActionType,
   ChatMessage,
   FinalTableTheme,
-  GameState,
+  PublicGameState,
   TournamentHoldReason,
   TournamentStage,
 } from '../poker/types';
@@ -145,7 +145,7 @@ export interface PlayerActionRequest {
 
 export interface GameUpdatePayload {
   roomId: string;
-  state: GameState;
+  state: PublicGameState;
 }
 
 /** throw-item 요청 payload — 서버가 itemId를 THROWABLE_MAP으로 재검증한다 */
@@ -172,7 +172,7 @@ export interface ThrowableThrownPayload {
 
 export interface RoomJoinedPayload {
   roomId: string;
-  gameState: GameState;
+  gameState: PublicGameState;
   chatHistory: ChatMessage[];
 }
 
@@ -460,7 +460,7 @@ export type RegisterTournamentResult =
 export interface TournamentSeatAssigned {
   tournamentId: string;
   roomId: string;
-  state: GameState;
+  state: PublicGameState;
   chat: ChatMessage[];
 }
 
@@ -483,7 +483,7 @@ export interface TableMovePayload {
   tournamentId: string;
   fromRoomId: string;
   roomId: string;
-  gameState: GameState;
+  gameState: PublicGameState;
   chatHistory: ChatMessage[];
 }
 

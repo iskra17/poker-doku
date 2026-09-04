@@ -1,6 +1,13 @@
 'use client';
 
-import { Card, GameState, ActionType, Street, WinResult, Player } from '../poker/types';
+import type {
+  ActionType,
+  Card,
+  PublicGameState,
+  PublicPlayer,
+  Street,
+  WinResult,
+} from '../poker/types';
 
 /**
  * 클라이언트 이벤트 파생 레이어.
@@ -23,12 +30,12 @@ export type GameEvent =
   | {
       type: 'winners';
       winners: WinResult[];
-      players: Player[];
+      players: PublicPlayer[];
       potTotal: number;
       bigWin: boolean;
       handNumber: number;
       handRake: number;
-      economyMode: GameState['economyMode'];
+      economyMode: PublicGameState['economyMode'];
     }
   | { type: 'hand-end' }
   | {
@@ -65,8 +72,8 @@ export function emitGameEvent(event: GameEvent): void {
 }
 
 export function diffGameState(
-  prev: GameState | null,
-  next: GameState,
+  prev: PublicGameState | null,
+  next: PublicGameState,
   myPlayerId: string | null,
 ): GameEvent[] {
   const events: GameEvent[] = [];

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Player } from '@/lib/poker/types';
+import type { PublicPlayer } from '@/lib/poker/types';
 import { SeatAction } from '@/lib/hooks/use-seat-actions';
 import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
 import { useSettingsStore } from '@/lib/store/settings-store';
@@ -19,7 +19,7 @@ import {
 } from './player-seat-visual';
 
 interface PlayerSeatProps {
-  player: Player | null;
+  player: PublicPlayer | null;
   isCurrentPlayer: boolean;
   isActive: boolean;
   position: { x: string; y: string };
@@ -126,6 +126,8 @@ export default function PlayerSeat({
   const isSittingOut = seatVisualState === 'away';
   const isBusted = player.chips <= 0 && !isAllIn;
   const avatarSize = compact ? 'lg' : 'xl';
+  // 표시 identity는 공개 avatar만 본다 — 가면 봇의 실제 성향은 클라이언트에 오지 않는다.
+  const characterId = player.avatar || 'player';
   // 히어로는 폴드해도 자기 카드를 계속 확인할 수 있어야 한다 — 상대 폴드 카드만 숨김
   const showCards = player.holeCards.length > 0 && (isCurrentPlayer || !isFolded);
   const revealed = !isCurrentPlayer && !!player.revealed;
@@ -174,7 +176,7 @@ export default function PlayerSeat({
           <SeatEmote playerId={player.id} />
           <div className={`transition-[filter,opacity] ${visualClasses.portrait}`}>
             <CharacterAvatar
-              characterId={player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player')}
+              characterId={characterId}
               size={avatarSize}
               isActive={isActive}
               expression={isBusted ? 'sad' : isAllIn ? 'confident' : expression}
@@ -282,9 +284,7 @@ export default function PlayerSeat({
 
       {/* 캐릭터 쇼케이스 — 포탈 렌더라 transform 조상(framer) 영향 없음 */}
       <CharacterShowcaseModal
-        characterId={showcaseOpen
-          ? (player.type === 'bot' ? (player.personalityId || player.avatar) : (player.avatar || 'player'))
-          : null}
+        characterId={showcaseOpen ? characterId : null}
         onClose={() => setShowcaseOpen(false)}
       />
     </motion.div>
