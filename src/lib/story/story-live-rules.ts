@@ -10,7 +10,7 @@
  *   클라가 첫 내 턴에 스스로 재생하는 `first-my-turn`. 둘을 섞으면 서버 hold가 없는데 resume을
  *   보내거나(스텝 진행 어긋남) 턴 중에 두 번 뜬다.
  */
-import type { HintLevel, Interrupt, Step } from './types';
+import type { HintLevel, Interrupt, ObjectiveKind, Step } from './types';
 import type {
   DecisionMark,
   ObjectiveProgressView,
@@ -75,6 +75,12 @@ export interface ObjectiveHudLine {
   /** 아직 판정 불가(기회 0 등)면 null */
   achieved: boolean | null;
   primary: boolean;
+  /**
+   * 체크리스트 블록에만 실린다 — 부모는 `kind: 'any-k-of'`(진행 표기를 상한으로 자르지 않는다),
+   * 항목은 `group: 'checklist'`(부모 아래 들여쓰기). 그 밖의 목표 줄은 필드 자체가 없다.
+   */
+  kind?: ObjectiveKind;
+  group?: 'checklist';
 }
 
 function toHudLine(objective: ObjectiveProgressView): ObjectiveHudLine {
@@ -85,6 +91,8 @@ function toHudLine(objective: ObjectiveProgressView): ObjectiveHudLine {
     target: objective.target,
     achieved: objective.achieved,
     primary: objective.primary,
+    ...(objective.kind === 'any-k-of' ? { kind: objective.kind } : {}),
+    ...(objective.group ? { group: objective.group } : {}),
   };
 }
 
@@ -93,7 +101,9 @@ function toHudLine(objective: ObjectiveProgressView): ObjectiveHudLine {
  * 횟수 목표는 "1/2"로 그린다. 비율은 target·progress 중 하나라도 정수가 아니면 판정한다(minRatio 0.7 등).
  * 2026-09-04 CH6 실주행에서 하위 폴드 1/1이 "0.7/0.7"로 보이던 오독을 고친 규약.
  */
-export function formatObjectiveProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target'>): string | null {
+export function formatObjectiveProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target' | 'kind'>): string | null {
+  // 체크리스트 부모는 "몇 개 달성/몇 개 필요"라 상한으로 자르면 5개 달성이 3으로 보인다
+  if (line.kind === 'any-k-of') return line.target === null ? null : `${line.progress}/${line.target} 달성`;
   if (line.target === null || line.target <= 0) return null;
   const ratio = !Number.isInteger(line.target) || !Number.isInteger(line.progress);
   if (ratio) return `${Math.round(line.progress * 100)}%/${Math.round(line.target * 100)}%`;
@@ -101,7 +111,8 @@ export function formatObjectiveProgress(line: Pick<ObjectiveHudLine, 'progress' 
 }
 
 /** 상세 화면은 0회 상한·초과 위반 횟수까지 서버 원값을 보여 준다. */
-export function formatObjectiveDetailProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target'>): string | null {
+export function formatObjectiveDetailProgress(line: Pick<ObjectiveHudLine, 'progress' | 'target' | 'kind'>): string | null {
+  if (line.kind === 'any-k-of') return line.target === null ? null : `${line.progress}개 달성 · 기준 ${line.target}개`;
   if (line.target === null) return null;
   const ratio = !Number.isInteger(line.target) || !Number.isInteger(line.progress);
   if (ratio) return `현재 ${Math.round(line.progress * 100)}% · 기준 ${Math.round(line.target * 100)}%`;
@@ -111,12 +122,18 @@ export function formatObjectiveDetailProgress(line: Pick<ObjectiveHudLine, 'prog
 /**
  * HUD 표시 순서 — **primary(통과 조건) 먼저**, 그 안에서는 서버 순서를 그대로 둔다.
  * 보너스 목표가 통과 조건보다 위에 뜨면 "저것만 하면 되나" 오독이 난다.
+ * 체크리스트는 **한 덩어리** — primary 재정렬에도 항목이 부모 바로 아래에 붙어 있어야 한다.
  */
 export function objectiveHudLines(view: StoryLiveView | null): ObjectiveHudLine[] {
   const objectives = view?.objectives ?? [];
+  const children = objectives.filter(objective => objective.group === 'checklist');
+  const blocks = objectives.filter(objective => objective.group !== 'checklist');
+  const expand = (objective: ObjectiveProgressView): ObjectiveHudLine[] => (
+    objective.kind === 'any-k-of' ? [toHudLine(objective), ...children.map(toHudLine)] : [toHudLine(objective)]
+  );
   return [
-    ...objectives.filter(objective => objective.primary).map(toHudLine),
-    ...objectives.filter(objective => !objective.primary).map(toHudLine),
+    ...blocks.filter(objective => objective.primary).flatMap(expand),
+    ...blocks.filter(objective => !objective.primary).flatMap(expand),
   ];
 }
 

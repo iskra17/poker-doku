@@ -155,8 +155,8 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
         {result.live && (
           <ul className="mt-2 space-y-1 text-[11px]" aria-label="목표">
             {result.live.objectives.map(objective => (
-              <li key={objective.id} className="flex items-center justify-between rounded-lg border border-mystic/15 px-2 py-1">
-                <span className="text-ink">{objective.primary ? '★ ' : '☆ '}{objective.label}</span>
+              <li key={objective.id} className={`flex items-center justify-between rounded-lg border border-mystic/15 px-2 py-1${objective.group === 'checklist' ? ' ml-3' : ''}`}>
+                <span className="text-ink">{objective.group === 'checklist' ? '└ ' : objective.primary ? '★ ' : '☆ '}{objective.label}</span>
                 <span className={objective.achieved === null ? 'text-ink-dim' : objective.achieved ? 'text-cyber' : 'text-blossom'}>
                   {objective.achieved === null ? '해당 없음' : objective.achieved ? '달성' : '미달'}
                 </span>

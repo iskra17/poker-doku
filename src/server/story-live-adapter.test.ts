@@ -7,7 +7,7 @@ import { CH07 } from '../lib/story/chapters/act3/ch07-masquerade';
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Player, RoomConfig } from '../lib/poker/types';
-import type { Step } from '../lib/story/types';
+import { STORY_HEROINE_IDS, type Step } from '../lib/story/types';
 import { CH01 } from '../lib/story/chapters/act1/ch01-dojo-gate';
 import { RoomManager } from './room-manager';
 import { LiveTableAdapter, type LiveEnterInput, type LiveStepSummary } from './story-live-adapter';
@@ -639,6 +639,68 @@ describe('LiveTableAdapter', () => {
     expect(bots).toHaveLength(2);
     expect(bots).toContain('sakura');
     expect(new Set(bots).size).toBe(2);
+  });
+
+  it("'heroine-fill' 좌석은 파트너·명시 히로인을 예약 제외하고 서로 다른 히로인으로 채운다", () => {
+    const step = sparringStep();
+    step.table.lineup = [
+      { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
+      { seatIndex: 2, characterId: 'heroine-fill', stackBB: 100 },
+      { seatIndex: 3, characterId: 'heroine-fill', stackBB: 100 },
+      { seatIndex: 4, characterId: 'heroine-fill', stackBB: 100 },
+      { seatIndex: 5, characterId: 'heroine-fill', stackBB: 100 },
+    ];
+    const roomId = enter(step, 'sakura');
+    const bots = stateOf(roomId)!.players.filter(p => p.type === 'bot').map(p => p.personalityId);
+    expect(bots).toHaveLength(5);
+    expect(bots[0]).toBe('sakura');
+    expect(new Set(bots).size).toBe(5);
+    expect(bots.every(id => STORY_HEROINE_IDS.includes(id as (typeof STORY_HEROINE_IDS)[number]))).toBe(true);
+  });
+
+  it("'heroine-fill'은 뒤 좌석의 명시 히로인을 먼저 먹지 않고, 파트너가 없으면 첫 미사용 히로인이다", () => {
+    const step = sparringStep();
+    step.table.lineup = [
+      { seatIndex: 1, characterId: 'heroine-fill', stackBB: 100 },
+      { seatIndex: 2, characterId: 'heroine-fill', stackBB: 100 },
+      { seatIndex: 3, characterId: 'sakura', stackBB: 100 },
+    ];
+    const roomId = enter(step, null);
+    const bots = stateOf(roomId)!.players.filter(p => p.type === 'bot').map(p => p.personalityId);
+    expect(bots).toHaveLength(3);
+    expect(bots).toContain('sakura');
+    expect(new Set(bots).size).toBe(3);
+    expect(bots).not.toContain('miyako');
+  });
+
+  it('체크리스트는 부모(any-k-of)와 항목 view를 함께 싣고 강제 완료는 부모를 다시 계산한다', () => {
+    const step = sparringStep();
+    step.objectives = { primary: [], bonus: [] };
+    step.checklist = {
+      id: 'list', label: '체크리스트 3/5', k: 3,
+      items: [
+        { id: 'i1', kind: 'no-junk-entry', label: '하위 레인지 참여 없음', maxCount: 0 },
+        { id: 'i2', kind: 'no-limp', label: '림프 없음', maxCount: 0 },
+        { id: 'i3', kind: 'cbet-when-aggressor', label: 'c벳', minRatio: 0.67 },
+        { id: 'i4', kind: 'value-bet-river', label: '리버 밸류', minRatio: 0.67 },
+        { id: 'i5', kind: 'correct-pot-odds-call', label: '가격 결정', maxCount: 2 },
+      ],
+    };
+    enter(step);
+    const objectives = adapter.view(PROFILE)!.objectives;
+    const parent = objectives.find(objective => objective.kind === 'any-k-of')!;
+    expect(parent).toMatchObject({ id: 'list', primary: true });
+    const items = objectives.filter(objective => objective.group === 'checklist');
+    expect(items.map(item => item.id)).toEqual(['i1', 'i2', 'i3', 'i4', 'i5']);
+    expect(items.every(item => item.primary === false)).toBe(true);
+
+    expect(adapter.forceFinish(PROFILE)).toBe('finished');
+    const summary = onStepFinished.mock.calls.at(-1)![2];
+    const forcedParent = summary.objectives.find(objective => objective.kind === 'any-k-of')!;
+    // 자식을 전부 성공으로 바꾼 뒤 부모를 재계산한다 (3으로 남거나 0으로 남으면 안 된다)
+    expect(forcedParent).toMatchObject({ progress: 5, target: 3, achieved: true });
+    expect(summary.primaryObjectivesMet).toBe(true);
+    expect(summary.liveScore).toBe(1);
   });
 
   it('스토리 방 생성은 훅 없이는 fail-closed', () => {

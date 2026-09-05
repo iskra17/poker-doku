@@ -3,7 +3,7 @@
  */
 import { getDrillTemplate } from './drills/generator';
 import type { DrillCategory } from './drills/types';
-import type { Chapter, StoryAct, StoryBelt } from './types';
+import { REVIEW_SLOT_TEMPLATE_ID, type Chapter, type StoryAct, type StoryBelt } from './types';
 import { sortChapters } from './unlocks';
 import type { StoryChapterProgressView, StoryProgressView } from './views';
 
@@ -115,14 +115,20 @@ export const DRILL_CATEGORY_LABEL: Readonly<Record<string, string>> = Object.fre
   'sng-math': 'SnG 산술',
 });
 
-/** 챕터가 다루는 드릴 카테고리 — 드릴 세트 슬롯의 템플릿에서 파생(중복 제거, 등장 순). 별도 데이터 없음. */
+/**
+ * 챕터가 다루는 드릴 카테고리 — 드릴 세트 슬롯의 템플릿에서 파생(중복 제거, 등장 순). 별도 데이터 없음.
+ * 동적 복습 슬롯(`*review`)은 진입 시점에야 정해지므로 후보(`reviewPool`)의 카테고리를 대신 센다.
+ */
 export function chapterSkillCategories(chapter: Chapter): DrillCategory[] {
   const seen = new Set<DrillCategory>();
   const out: DrillCategory[] = [];
   for (const step of chapter.steps) {
     if (step.kind !== 'drill-set') continue;
-    for (const slot of step.drills) {
-      const category = getDrillTemplate(slot.templateId)?.category;
+    const templateIds = step.drills.flatMap(slot => (
+      slot.templateId === REVIEW_SLOT_TEMPLATE_ID ? [...(step.reviewPool ?? [])] : [slot.templateId]
+    ));
+    for (const templateId of templateIds) {
+      const category = getDrillTemplate(templateId)?.category;
       if (category && !seen.has(category)) {
         seen.add(category);
         out.push(category);

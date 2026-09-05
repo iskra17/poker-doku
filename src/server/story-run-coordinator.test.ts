@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
+import { hashSeed } from '@/lib/poker/seeded-rng';
 import { makeChapter, makeChapterChain, makeScene, curriculumFor } from '@/lib/story/test-fixtures';
-import type { Chapter, StoryTeacherId } from '@/lib/story/types';
+import { REVIEW_SLOT_TEMPLATE_ID, type Chapter, type StoryTeacherId } from '@/lib/story/types';
 import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
 import type { StoryRewardItemView, StoryRunView } from '@/lib/story/views';
 import type { LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
@@ -95,6 +96,11 @@ class FakeRepository implements StoryRepositoryPort {
 
   listDue(_profileId: string, now: number, limit: number): StoryReviewNoteRecord[] {
     return [...this.notes.values()].filter(note => note.dueAt <= now).slice(0, limit);
+  }
+
+  listAll(): StoryReviewNoteRecord[] {
+    return [...this.notes.values()].sort((left, right) => left.dueAt - right.dueAt
+      || (left.templateId < right.templateId ? -1 : left.templateId > right.templateId ? 1 : left.seed - right.seed));
   }
 
   countNotes(): number {
@@ -1082,4 +1088,113 @@ it('rejects authored choices in failure scenes', () => {
   const choiceScene = makeScene('failure');
   choiceScene.lines = [{ kind: 'choice', choice: { id: 'bad', prompt: 'bad', options: [{ id: 'yes', label: 'yes' }] } } as unknown as typeof choiceScene.lines[number]];
   expect(() => setup([makeChapter({ failScene: choiceScene })])).toThrow('failure scene');
+});
+
+
+// ---------------------------------------------------------------------------
+// 동적 복습 슬롯 (`*review`) — Ch11 종합 세트의 계약
+
+/** 전부 등록된 **생성** 템플릿 (수기 문항은 seed를 바꿔도 같은 문제라 후보가 아니다) */
+const REVIEW_POOL = ['rank-who-wins', 'pos-name', 'pos-first-to-act', 'rank-nuts', 'outs-count'];
+const REVIEW_SET_ID = 'act1-ch01:review';
+
+function reviewChapter(slots = 4): Chapter {
+  return makeChapter({
+    steps: [
+      {
+        kind: 'drill-set',
+        id: REVIEW_SET_ID,
+        title: '종합 수련',
+        teacher: 'miyako',
+        drills: Array.from({ length: slots }, () => ({ templateId: REVIEW_SLOT_TEMPLATE_ID, seedPolicy: 'per-run' as const })),
+        reviewPool: REVIEW_POOL,
+        hintPenalty: 0.5,
+      },
+      { kind: 'result', id: 'act1-ch01:result' },
+    ],
+  });
+}
+
+/** 드릴 세트를 전부 정답으로 풀며 실제 출제된 (templateId, seed)를 모은다 */
+function collectServed(ctx: ReturnType<typeof setup>, mode: 'full' | 'exam' = 'full'): Array<{ templateId: string; seed: number }> {
+  const served: Array<{ templateId: string; seed: number }> = [];
+  expect(ctx.coordinator.start(PROFILE, 'act1-ch01', mode).ok).toBe(true);
+  for (let guard = 0; guard < 20; guard++) {
+    const view = ctx.latest();
+    if (view.phase !== 'drill' || !view.drill) break;
+    served.push({ templateId: view.drill.instance.templateId, seed: view.drill.instance.seed });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
+  }
+  return served;
+}
+
+function note(templateId: string, seed: number, dueAt: number): StoryReviewNoteRecord {
+  return { templateId, seed, box: 1, dueAt };
+}
+
+describe('동적 복습 슬롯', () => {
+  it('복습 노트를 dueAt 순으로 먼저 채우고 부족분만 reviewPool에서 고른다', () => {
+    const ctx = setup([reviewChapter()]);
+    ctx.repository.notes.set('a', note('outs-count', 11, NOW - 3_000));
+    ctx.repository.notes.set('b', note('rank-nuts', 12, NOW - 2_000));
+    ctx.repository.notes.set('c', note('rank-nuts', 13, NOW - 1_000)); // 같은 템플릿 중복은 한 번만
+    ctx.repository.notes.set('d', note('pos-name', 14, NOW));
+    // 수기 문항 노트는 후보가 아니다 (seed를 바꿔도 같은 문제)
+    ctx.repository.notes.set('e', note('act-ch02-open-btn', 15, NOW - 9_000));
+
+    const served = collectServed(ctx);
+    expect(served).toHaveLength(4);
+    expect(served.slice(0, 3).map(entry => entry.templateId)).toEqual(['outs-count', 'rank-nuts', 'pos-name']);
+    expect(REVIEW_POOL).toContain(served[3].templateId);
+    expect(new Set(served.map(entry => entry.templateId)).size).toBe(4);
+    // sentinel은 클라이언트 DTO에 절대 나가지 않는다
+    expect(served.every(entry => entry.templateId !== REVIEW_SLOT_TEMPLATE_ID)).toBe(true);
+  });
+
+  it('노트가 없으면 전부 풀에서 중복 없이 채우고 같은 runId면 결정론이다', () => {
+    const first = collectServed(setup([reviewChapter()]));
+    expect(first).toHaveLength(4);
+    expect(first.every(entry => REVIEW_POOL.includes(entry.templateId))).toBe(true);
+    expect(new Set(first.map(entry => entry.templateId)).size).toBe(4);
+    const second = collectServed(setup([reviewChapter()]));
+    expect(second).toEqual(first);
+  });
+
+  it('노트의 seed는 재사용하지 않는다 — 충돌하면 결정론적으로 +1', () => {
+    const ctx = setup([reviewChapter()]);
+    const collision = hashSeed('run-1', REVIEW_SET_ID, 0);
+    ctx.repository.notes.set('a', note('outs-count', collision, NOW - 1_000));
+    const served = collectServed(ctx);
+    expect(served[0].templateId).toBe('outs-count');
+    expect(served[0].seed).toBe((collision + 1) >>> 0);
+  });
+
+  it('원본 노트는 새 seed 정답으로 승급·삭제되지 않고, 새 오답만 새 노트를 만든다', () => {
+    const ctx = setup([reviewChapter(1)]);
+    ctx.repository.notes.set('a', note('outs-count', 4_242, NOW - 1_000));
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    const view = ctx.latest();
+    expect(view.drill!.instance.templateId).toBe('outs-count');
+    expect(view.drill!.instance.seed).not.toBe(4_242);
+    expect(answerCurrent(ctx, false).ok).toBe(true);
+    // 원본 노트는 그대로 남고, 새 seed의 오답 노트가 따로 생긴다
+    expect(ctx.repository.notes.get('a')).toEqual(note('outs-count', 4_242, NOW - 1_000));
+    expect(ctx.repository.notes.has(`outs-count:${view.drill!.instance.seed}`)).toBe(true);
+    expect(ctx.repository.attempts.at(-1)).toMatchObject({ templateId: 'outs-count', category: 'outs', context: 'chapter' });
+  });
+
+  it('실력 확인(exam)도 같은 경로로 해석한다', () => {
+    const exam = collectServed(setup([reviewChapter()]), 'exam');
+    expect(exam).toHaveLength(4);
+    expect(exam.every(entry => REVIEW_POOL.includes(entry.templateId))).toBe(true);
+    expect(exam).toEqual(collectServed(setup([reviewChapter()])));
+  });
+
+  it('오늘의 수련 출제 풀은 sentinel 대신 reviewPool을 센다', () => {
+    const ctx = setup([reviewChapter()]);
+    ctx.repository.complete(PROFILE, 'act1-ch01');
+    expect(ctx.coordinator.startDaily(PROFILE).ok).toBe(true);
+    expect(REVIEW_POOL).toContain(ctx.latest().drill!.instance.templateId);
+  });
 });

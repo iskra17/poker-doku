@@ -28,7 +28,7 @@ import type {
   StoryHeroineId,
   StoryTeacherId,
 } from '../lib/story/types';
-import { isStoryHeroineId } from '../lib/story/types';
+import { isStoryHeroineId, REVIEW_SLOT_TEMPLATE_ID } from '../lib/story/types';
 import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
 import { nextStoryRewards, pickStoryCutscene } from '../lib/story/rewards/catalog';
@@ -126,6 +126,8 @@ export interface StoryRepositoryPort {
   markWrong(profileId: string, templateId: string, seed: number, now: number): unknown;
   markCorrect(profileId: string, templateId: string, seed: number, now: number): unknown;
   listDue(profileId: string, now: number, limit: number): StoryReviewNoteRecord[];
+  /** 기한과 무관한 전체 복습 노트 (dueAt 오름차순) — 동적 복습 슬롯(`*review`)의 1순위 후보 */
+  listAll(profileId: string): StoryReviewNoteRecord[];
   countNotes(profileId: string): number;
   countAttemptsBetween(
     profileId: string,
@@ -1040,12 +1042,21 @@ export class StoryRunCoordinator {
   private enterDrillSet(run: StoryRun, step: Extract<Step, { kind: 'drill-set' }>): boolean {
     const teacher = this.resolveTeacherRef(run, step.teacher);
     const day = kstDay(this.now());
-    const queue: DrillServe[] = step.drills.map((slot, slotIndex) => ({
-      slotIndex,
-      templateId: slot.templateId,
-      seed: this.slotSeed(run, step.id, slot, slotIndex, day.date),
-      attempt: 0,
-    })).filter(serve => getDrillTemplate(serve.templateId) !== undefined);
+    const review = this.resolveReviewSlots(run, step);
+    let reviewCursor = 0;
+    const queue: DrillServe[] = [];
+    step.drills.forEach((slot, slotIndex) => {
+      const isReview = slot.templateId === REVIEW_SLOT_TEMPLATE_ID;
+      const templateId = isReview ? review.templateIds[reviewCursor++] : slot.templateId;
+      if (!templateId || getDrillTemplate(templateId) === undefined) return;
+      let seed = this.slotSeed(run, step.id, slot, slotIndex, day.date);
+      // 복습 슬롯은 노트의 seed를 재사용하지 않는다 (같은 문제 암기 방지) — 충돌하면 결정론적으로 +1
+      if (isReview) {
+        const taken = review.noteSeeds.get(templateId);
+        for (let guard = 0; taken?.has(seed) && guard < 64; guard++) seed = (seed + 1) >>> 0;
+      }
+      queue.push({ slotIndex, templateId, seed, attempt: 0 });
+    });
     if (queue.length === 0) return false;
     const drill: DrillSetState = {
       setId: step.id,
@@ -1072,6 +1083,50 @@ export class StoryRunCoordinator {
     run.phase = 'drill';
     this.serveCurrent(drill, queue[0]);
     return true;
+  }
+
+  /** 등록된 **생성** 템플릿만 복습 후보다 — 수기 문항은 seed를 바꿔도 같은 문제라 복습이 되지 않는다. */
+  private isGeneratedTemplate(templateId: string): boolean {
+    return getDrillTemplate(templateId)?.source.kind === 'generated';
+  }
+
+  /**
+   * 동적 복습 슬롯(`*review`) 해석 — ①복습 노트의 템플릿(dueAt 오름차순·중복 제거) ②부족분은 `reviewPool`에서
+   * `hashSeed(runId, setId, 'pool', i)`로 고른다(풀이 슬롯보다 많으면 세트 안 중복 없음). 결정론이라 exam도 같다.
+   */
+  private resolveReviewSlots(
+    run: StoryRun,
+    step: Extract<Step, { kind: 'drill-set' }>,
+  ): { templateIds: string[]; noteSeeds: Map<string, Set<number>> } {
+    const slots = step.drills.filter(slot => slot.templateId === REVIEW_SLOT_TEMPLATE_ID).length;
+    const noteSeeds = new Map<string, Set<number>>();
+    if (slots === 0) return { templateIds: [], noteSeeds };
+
+    const templateIds: string[] = [];
+    const picked = new Set<string>();
+    for (const note of this.deps.repository.listAll(run.profileId)) {
+      if (!this.isGeneratedTemplate(note.templateId)) continue;
+      const seeds = noteSeeds.get(note.templateId) ?? new Set<number>();
+      seeds.add(note.seed);
+      noteSeeds.set(note.templateId, seeds);
+      if (templateIds.length >= slots || picked.has(note.templateId)) continue;
+      picked.add(note.templateId);
+      templateIds.push(note.templateId);
+    }
+
+    const pool = (step.reviewPool ?? []).filter(templateId => this.isGeneratedTemplate(templateId));
+    const limit = pool.length * 4 + slots * 4;
+    for (let index = 0; templateIds.length < slots && pool.length > 0 && index < limit; index++) {
+      const candidate = pool[hashSeed(run.runId, step.id, 'pool', index) % pool.length];
+      if (picked.has(candidate)) continue;
+      picked.add(candidate);
+      templateIds.push(candidate);
+    }
+    // 풀보다 슬롯이 많으면(설정 오류) 남은 슬롯은 순서대로 채운다 — 슬롯을 조용히 버리지 않는다
+    for (let index = 0; templateIds.length < slots && pool.length > 0; index++) {
+      templateIds.push(pool[index % pool.length]);
+    }
+    return { templateIds, noteSeeds };
   }
 
   private slotSeed(run: StoryRun, setId: string, slot: DrillSlot, slotIndex: number, kstDate: string): number {
@@ -1393,10 +1448,14 @@ export class StoryRunCoordinator {
       if (!completed.has(chapter.id)) continue;
       for (const step of chapter.steps) {
         if (step.kind !== 'drill-set') continue;
-        for (const slot of step.drills) {
-          if (seen.has(slot.templateId) || !getDrillTemplate(slot.templateId)) continue;
-          seen.add(slot.templateId);
-          pool.push({ templateId: slot.templateId, teacher: chapter.teacher });
+        // 동적 복습 슬롯은 진입 시점에야 정해지므로 풀에는 후보(reviewPool) 자체를 넣는다
+        const templateIds = step.drills.flatMap(slot => (
+          slot.templateId === REVIEW_SLOT_TEMPLATE_ID ? [...(step.reviewPool ?? [])] : [slot.templateId]
+        ));
+        for (const templateId of templateIds) {
+          if (seen.has(templateId) || !getDrillTemplate(templateId)) continue;
+          seen.add(templateId);
+          pool.push({ templateId, teacher: chapter.teacher });
         }
       }
     }

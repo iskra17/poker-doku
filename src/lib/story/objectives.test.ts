@@ -15,13 +15,14 @@ import {
   emptyTally,
   evaluateObjective,
   evaluateObjectives,
+  heroMadeWithHole,
   isTopPairOrBetter,
   liveScore,
   primaryObjectivesAllAchieved,
   primaryObjectivesMet,
   type ObjectiveTally,
 } from './objectives';
-import type { Objective, ObjectiveKind } from './types';
+import type { Objective, ObjectiveChecklist, ObjectiveKind } from './types';
 import type { ObjectiveProgressView } from './views';
 
 // ---------------------------------------------------------------------------
@@ -976,4 +977,363 @@ it('mandatory quiz requires all four issued and answered, while random response 
   expect(evaluateObjective(quiz, emptyTally(), true, { quiz: { issued: 1, answered: 1, correct: 1, required: 4 } }).achieved).toBe(false);
   expect(evaluateObjective(quiz, emptyTally(), true, { quiz: { issued: 4, answered: 4, correct: 3, required: 4 } }).achieved).toBe(true);
   expect(evaluateObjective(objective('opponent-response', { minRatio: 0.5 }), emptyTally(), true).achieved).toBeNull();
+});
+
+
+// ---------------------------------------------------------------------------
+// 4막 (Ch10~11) — 콜다운 · 에어 리레이즈 · 오버벳 대면 · executed-any · 체크리스트
+// 전부 공개 replay + 히어로 카드에서만 파생한다(상대 홀카드 미사용).
+
+interface RiverSpotInput {
+  hero: string;
+  board: string;
+  /** 플랍 배럴 — 값을 주면 상대가 벳하고 히어로가 콜한다(콜다운 기회의 '이미 콜한 배럴') */
+  flopBet?: number;
+  /** 리버 벳 (벳 전 팟 대비 크기가 콜다운/오버벳을 가른다) */
+  riverBet: number;
+  heroAction: 'call' | 'fold' | 'raise';
+  heroRaiseTo?: number;
+  heroChips?: number;
+  /** 세 번째 좌석을 리버까지 남겨 멀티웨이로 만든다 */
+  multiway?: boolean;
+  handNumber?: number;
+}
+
+/** 프리플랍 콜 → (옵션) 플랍 배럴 콜 → 턴 체크 → 리버 벳 대면 픽스처. */
+function riverFacedHand(input: RiverSpotInput): CompletedHandRecord {
+  const seats: SeatInput[] = [
+    { id: 'hero', hole: input.hero, startingChips: input.heroChips ?? 2_000, position: 'BTN' },
+    { id: 'villain', startingChips: 5_000, position: 'BB' },
+  ];
+  if (input.multiway) seats.push({ id: 'third', startingChips: 5_000, position: 'CO' });
+
+  const flop: ActionTuple[] = input.flopBet
+    ? [
+        ['flop', 'villain', 'raise', input.flopBet],
+        ['flop', 'hero', 'call', input.flopBet],
+        ...(input.multiway ? ([['flop', 'third', 'call', input.flopBet]] as ActionTuple[]) : []),
+      ]
+    : [
+        ['flop', 'villain', 'check', 0],
+        ['flop', 'hero', 'check', 0],
+        ...(input.multiway ? ([['flop', 'third', 'check', 0]] as ActionTuple[]) : []),
+      ];
+  const heroRiver: ActionTuple = input.heroAction === 'raise'
+    ? ['river', 'hero', 'raise', input.heroRaiseTo ?? input.riverBet * 3]
+    : ['river', 'hero', input.heroAction, input.heroAction === 'call' ? input.riverBet : 0];
+
+  return makeRecord({
+    handNumber: input.handNumber ?? 1,
+    seats,
+    board: input.board,
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ...(input.multiway ? ([['preflop', 'third', 'call', 50]] as ActionTuple[]) : []),
+      ['preflop', 'hero', 'call', 25],
+      ['preflop', 'villain', 'check', 0],
+      ...flop,
+      ['turn', 'villain', 'check', 0],
+      ['turn', 'hero', 'check', 0],
+      ...(input.multiway ? ([['turn', 'third', 'check', 0]] as ActionTuple[]) : []),
+      ['river', 'villain', 'raise', input.riverBet],
+      heroRiver,
+    ],
+    winners: [{ playerId: input.heroAction === 'fold' ? 'villain' : 'hero', amount: 200 }],
+  });
+}
+
+/** 톱페어(K) + Q 키커 — 콜다운 기회의 기본 픽스처. */
+const CALLDOWN_HERO = 'Kh Qs';
+const CALLDOWN_BOARD = 'Kc 9d 7s 4h 2c';
+
+describe('heroMadeWithHole — 키커 개선은 관여가 아니다', () => {
+  it('보드만 투페어에 키커만 얹은 핸드는 false, 페어에 관여하면 true', () => {
+    expect(heroMadeWithHole(cards('Ac Qd'), cards('Ks Kd 7h 7c 2s'))).toBe(false);
+    expect(heroMadeWithHole(cards('7d 5c'), cards('Ks Kd 7h 7c 2s'))).toBe(true);
+    expect(heroMadeWithHole(cards('Ah 9s'), cards('Kc 9d 4s 2h 7c'))).toBe(true);
+  });
+
+  it('스트레이트 계열은 최고 5장에 홀카드가 들어갈 때만 true', () => {
+    expect(heroMadeWithHole(cards('Th 2c'), cards('9d 8s 7h 6c 5d'))).toBe(true);
+    expect(heroMadeWithHole(cards('Ac Kd'), cards('9d 8s 7h 6c 5d'))).toBe(false);
+  });
+
+  it('보드가 5장이 아니면 판정하지 않는다', () => {
+    expect(heroMadeWithHole(cards('Ah 9s'), cards('Kc 9d 4s'))).toBe(false);
+  });
+});
+
+describe('4막 콜다운 · 오버벳 사실', () => {
+  it('팟 이하 벳 + 헤즈업 + 앞 스트리트 콜 + 홀카드 관여 톱페어면 콜다운 기회다', () => {
+    const facts = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 150, heroAction: 'call',
+    }), 'hero');
+    expect(facts.calldownOpportunity).toBe(true);
+    expect(facts.calldown).toBe(true);
+    expect(facts.overbetOpportunity).toBe(false);
+
+    const folded = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 150, heroAction: 'fold',
+    }), 'hero');
+    expect(folded.calldownOpportunity).toBe(true);
+    expect(folded.calldown).toBe(false);
+  });
+
+  it('벳 = 벳 전 팟 100%는 콜다운, 101%부터 오버벳이다', () => {
+    const exact = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 300, heroAction: 'call',
+    }), 'hero');
+    expect([exact.calldownOpportunity, exact.overbetOpportunity]).toEqual([true, false]);
+
+    const over = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 303, heroAction: 'call',
+    }), 'hero');
+    expect([over.calldownOpportunity, over.overbetOpportunity]).toEqual([false, true]);
+    // 톱페어(투페어 미만)로 오버벳에 콜하면 폴라라이즈 가정의 오답
+    expect(over.overbetCorrect).toBe(false);
+    expect(over.overbetActionIndex).not.toBeNull();
+  });
+
+  it('플랍·턴 콜 없이 리버만 맞으면 콜다운 기회가 아니다', () => {
+    const facts = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, riverBet: 50, heroAction: 'call',
+    }), 'hero');
+    expect(facts.calldownOpportunity).toBe(false);
+  });
+
+  it('멀티웨이 리버 벳은 콜다운도 오버벳도 아니다', () => {
+    const facts = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 150, heroAction: 'call', multiway: true,
+    }), 'hero');
+    expect([facts.calldownOpportunity, facts.overbetOpportunity]).toEqual([false, false]);
+  });
+
+  it('스택 ≤ 콜(사실상 올인 대면)이면 기회에서 뺀다 — 히어로 조건이다', () => {
+    const facts = deriveHeroHandFacts(riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 150, heroAction: 'call', heroChips: 300,
+    }), 'hero');
+    expect(facts.calldownOpportunity).toBe(false);
+  });
+
+  it('보드만 투페어(홀카드 미관여)로 오버벳을 맞으면 폴드가 정답이다', () => {
+    const board = 'Ks Kd 7h 7c 2s';
+    const called = deriveHeroHandFacts(riverFacedHand({
+      hero: 'Ac Qd', board, flopBet: 100, riverBet: 600, heroAction: 'call',
+    }), 'hero');
+    expect(called.overbetOpportunity).toBe(true);
+    expect(called.overbetCorrect).toBe(false);
+
+    const folded = deriveHeroHandFacts(riverFacedHand({
+      hero: 'Ac Qd', board, flopBet: 100, riverBet: 600, heroAction: 'fold',
+    }), 'hero');
+    expect(folded.overbetCorrect).toBe(true);
+  });
+
+  it('홀카드 관여 투페어+는 오버벳에 콜/레이즈가 정답이고 콜다운 실행에도 들어간다', () => {
+    const board = 'Ks Kd 7h 7c 2s';
+    const strongCall = deriveHeroHandFacts(riverFacedHand({
+      hero: '7d 5c', board, flopBet: 100, riverBet: 600, heroAction: 'call',
+    }), 'hero');
+    expect(strongCall.overbetCorrect).toBe(true);
+    const strongFold = deriveHeroHandFacts(riverFacedHand({
+      hero: '7d 5c', board, flopBet: 100, riverBet: 600, heroAction: 'fold',
+    }), 'hero');
+    expect(strongFold.overbetCorrect).toBe(false);
+
+    const raised = deriveHeroHandFacts(riverFacedHand({
+      hero: '7d 5c', board, flopBet: 100, riverBet: 150, heroAction: 'raise', heroRaiseTo: 600,
+    }), 'hero');
+    expect(raised.calldownOpportunity).toBe(true);
+    expect(raised.calldown).toBe(true);
+  });
+
+  it('topair-calldown 목표는 최종 결산에서 실제 기회까지 target을 낮춘다', () => {
+    const tally = tallyOf({ record: riverFacedHand({
+      hero: CALLDOWN_HERO, board: CALLDOWN_BOARD, flopBet: 100, riverBet: 150, heroAction: 'call',
+    }) });
+    const objective2: Objective = { id: 'calldown', kind: 'topair-calldown', label: '콜다운 2회', target: 2, finalOpportunityCap: true };
+    expect(evaluateObjective(objective2, tally, true).achieved).toBe(false);
+    expect(evaluateObjective(objective2, tally, true, { final: true })).toMatchObject({ progress: 1, target: 1, achieved: true });
+    expect(evaluateObjective(objective2, emptyTally(), true, { final: true }).achieved).toBeNull();
+  });
+
+  it('overbet-decision은 기회 중 정답 비율, 기회 0이면 미측정', () => {
+    const objective2: Objective = { id: 'ob', kind: 'overbet-decision', label: '오버벳 대응', minRatio: 0.5 };
+    const good = tallyOf({ record: riverFacedHand({ hero: 'Ac Qd', board: 'Ks Kd 7h 7c 2s', flopBet: 100, riverBet: 600, heroAction: 'fold' }) });
+    expect(evaluateObjective(objective2, good, true).achieved).toBe(true);
+    const bad = tallyOf({ record: riverFacedHand({ hero: 'Ac Qd', board: 'Ks Kd 7h 7c 2s', flopBet: 100, riverBet: 600, heroAction: 'call' }) });
+    expect(evaluateObjective(objective2, bad, true).achieved).toBe(false);
+    expect(evaluateObjective(objective2, emptyTally(), true).achieved).toBeNull();
+  });
+});
+
+describe('4막 에어 리레이즈', () => {
+  /** 플랍에서 벳을 맞고 레이즈한다. */
+  function flopReraiseHand(hero: string, board: string): CompletedHandRecord {
+    return makeRecord({
+      seats: [{ id: 'hero', hole: hero, startingChips: 2_000 }, { id: 'villain', startingChips: 2_000 }],
+      board,
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'raise', 100],
+        ['flop', 'hero', 'raise', 300],
+        ['flop', 'villain', 'fold', 0],
+        ['flop', 'hero', 'uncalled-return', 200],
+      ],
+      winners: [{ playerId: 'hero', amount: 300 }],
+    });
+  }
+
+  it('톱페어·스트레이트 미만이고 아우츠 8장 미만인 리레이즈만 위반이다', () => {
+    const air = deriveHeroHandFacts(flopReraiseHand('Qh Js', 'Kc 9d 2s'), 'hero');
+    expect(air.airReraise).toBe(1);
+
+    const draw = deriveHeroHandFacts(flopReraiseHand('8h 7h', '9c 6d 2s'), 'hero');
+    expect(draw.airReraise).toBe(0);
+
+    const made = deriveHeroHandFacts(flopReraiseHand('Kh Qs', 'Kc 9d 2s'), 'hero');
+    expect(made.airReraise).toBe(0);
+  });
+
+  it('벳을 맞지 않은 자유 벳(riverAirBet)과는 별개 사실이다', () => {
+    const facts = deriveHeroHandFacts(riverFacedHand({
+      hero: 'Qh Js', board: 'Kc 9d 7s 4h 2c', flopBet: 100, riverBet: 150, heroAction: 'raise', heroRaiseTo: 600,
+    }), 'hero');
+    expect(facts.airReraise).toBe(1);
+    expect(facts.riverAirBet).toBe(false);
+
+    const objective2: Objective = { id: 'air', kind: 'no-air-reraise', label: '에어 리레이즈 0', maxCount: 0 };
+    expect(evaluateObjective(objective2, tallyOf({ record: flopReraiseHand('Qh Js', 'Kc 9d 2s') }), true).achieved).toBe(false);
+    expect(evaluateObjective(objective2, tallyOf({ record: flopReraiseHand('8h 7h', '9c 6d 2s') }), true).achieved).toBe(true);
+    expect(evaluateObjective(objective2, emptyTally(), true).achieved).toBe(true);
+  });
+});
+
+describe('executed-any', () => {
+  const executed: Objective = { id: 'exec', kind: 'executed-any', label: '한 번 이상 실행', target: 1 };
+
+  /** 언오픈 팟에서 강한 핸드로 첫 결정을 맞고 폴드한다 — 기회는 있고 실행은 없다. */
+  function openFoldHand(handNumber: number): CompletedHandRecord {
+    return makeRecord({
+      handNumber,
+      seats: [{ id: 'hero', hole: 'Ad Kc' }, { id: 'villain', hole: '9s 9c' }],
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'hero', 'fold', 0],
+        ['preflop', 'villain', 'uncalled-return', 25],
+      ],
+      winners: [{ playerId: 'villain', amount: 50 }],
+    });
+  }
+
+  it('오픈 기회를 전부 놓치면 false, 기회가 하나도 없으면 미측정', () => {
+    const missed = tallyOf(
+      { record: openFoldHand(1) }, { record: openFoldHand(2) }, { record: openFoldHand(3) },
+    );
+    expect(evaluateObjective(executed, missed, true)).toMatchObject({ progress: 0, target: 1, achieved: false });
+    expect(evaluateObjective(executed, tallyOf({ record: junkFoldHand(9) }), true).achieved).toBeNull();
+  });
+
+  it('오픈 레이즈 한 번이면 달성이고, c벳도 같은 분자에 들어간다', () => {
+    expect(evaluateObjective(executed, tallyOf({ record: openRaiseHand(1, 'raise') }), true).achieved).toBe(true);
+    expect(evaluateObjective(executed, tallyOf({ record: cbetHand(2, 'raise') }), true).achieved).toBe(true);
+  });
+
+  it('리버 밸류 기회는 체크 뒤 폴드로 지워지지 않는다', () => {
+    // 톱페어로 리버 첫 자유 액션을 체크한 뒤 상대 벳에 폴드한다
+    const record = makeRecord({
+      seats: [{ id: 'hero', hole: 'Kh Qs', startingChips: 2_000 }, { id: 'villain', startingChips: 2_000 }],
+      board: CALLDOWN_BOARD,
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'check', 0],
+        ['flop', 'hero', 'check', 0],
+        ['turn', 'villain', 'check', 0],
+        ['turn', 'hero', 'check', 0],
+        ['river', 'hero', 'check', 0],
+        ['river', 'villain', 'raise', 400],
+        ['river', 'hero', 'fold', 0],
+        ['river', 'villain', 'uncalled-return', 400],
+      ],
+      winners: [{ playerId: 'villain', amount: 100 }],
+    });
+    const facts = deriveHeroHandFacts(record, 'hero');
+    expect(facts.riverValueBetOpportunity).toBe(false); // 기존 사실은 불변
+    expect(facts.execValueOpportunity).toBe(true);
+    expect(facts.execValue).toBe(false);
+    expect(evaluateObjective(executed, tallyOf({ record }), true).achieved).toBe(false);
+  });
+});
+
+describe('체크리스트(any-k-of)', () => {
+  const item = (id: string, kind: ObjectiveKind, extra: Partial<Objective> = {}): Objective =>
+    ({ id, kind, label: id, ...extra });
+
+  function checklistOf(items: Objective[], k = 3): ObjectiveChecklist {
+    return { id: 'list', label: '체크리스트', k, items };
+  }
+
+  it('요구치는 min(k, 판정 가능 항목 수)이고 판정 가능 0이면 미측정', () => {
+    const tally = tallyOf({ record: cbetHand(1) });
+    // 상한형 5개 — 기회가 없어도 전부 판정 가능하다
+    const five = checklistOf([
+      item('a', 'no-junk-entry', { maxCount: 0 }),
+      item('b', 'no-limp', { maxCount: 0 }),
+      item('c', 'no-air-river-bet', { maxCount: 0 }),
+      item('d', 'no-junk-4bet', { maxCount: 0 }),
+      item('e', 'no-air-reraise', { maxCount: 0 }),
+    ]);
+    const views = evaluateObjectives({ primary: [], bonus: [] }, tally, undefined, five);
+    const parent = views.find(view => view.kind === 'any-k-of')!;
+    expect(parent).toMatchObject({ id: 'list', primary: true, progress: 5, target: 3, achieved: true });
+    expect(views.filter(view => view.group === 'checklist')).toHaveLength(5);
+    expect(views.filter(view => view.group === 'checklist').every(view => view.primary === false)).toBe(true);
+
+    // 판정 가능 항목이 2개뿐이면 요구치도 2로 내려간다
+    const two = checklistOf([
+      item('a', 'no-junk-entry', { maxCount: 0 }),
+      item('b', 'no-limp', { maxCount: 0 }),
+      item('c', 'premium-3bet', { minRatio: 1 }),
+    ]);
+    const twoViews = evaluateObjectives({ primary: [], bonus: [] }, tally, undefined, two);
+    expect(twoViews.find(view => view.kind === 'any-k-of')).toMatchObject({ progress: 2, target: 2, achieved: true });
+
+    // 전부 기회 0(비율형)이면 부모도 판정 불가
+    const none = checklistOf([
+      item('a', 'fold-vs-3bet-junk', { minRatio: 1 }),
+      item('b', 'premium-3bet', { minRatio: 1 }),
+    ]);
+    expect(evaluateObjectives({ primary: [], bonus: [] }, tally, undefined, none)
+      .find(view => view.kind === 'any-k-of')).toMatchObject({ target: 0, achieved: null });
+  });
+
+  it('통과·조기 종료·라이브 점수는 부모만 보고 항목은 제외한다', () => {
+    const views = evaluateObjectives(
+      { primary: [], bonus: [] },
+      tallyOf({ record: junkCallHand(1) }),
+      undefined,
+      checklistOf([
+        item('a', 'no-junk-entry', { maxCount: 0 }),
+        item('b', 'no-air-river-bet', { maxCount: 0 }),
+        item('c', 'no-junk-4bet', { maxCount: 0 }),
+      ], 2),
+    );
+    // junkCallHand는 하위 레인지로 들어가 no-junk-entry만 실패 — 2/3이라 부모는 달성
+    expect(views.find(view => view.id === 'a')?.achieved).toBe(false);
+    expect(primaryObjectivesMet(views)).toBe(true);
+    expect(primaryObjectivesAllAchieved(views)).toBe(true);
+    expect(liveScore(views)).toBe(1);
+  });
+
+  it('evaluateObjective 단독 호출의 any-k-of는 언제나 판정 불가', () => {
+    expect(evaluateObjective({ id: 'p', kind: 'any-k-of', label: 'p' }, emptyTally(), true).achieved).toBeNull();
+  });
 });

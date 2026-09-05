@@ -129,3 +129,17 @@ describe('story hub rules', () => {
     expect(accuracyPercent(8, 6)).toBe(75);
   });
 });
+
+
+describe('동적 복습 슬롯의 스킬 칩', () => {
+  it('sentinel 대신 reviewPool 카테고리를 센다', () => {
+    const chapter = makeChapterChain()[0];
+    const withReview = {
+      ...chapter,
+      steps: chapter.steps.map(step => (step.kind === 'drill-set'
+        ? { ...step, drills: [{ templateId: '*review', seedPolicy: 'per-run' as const }], reviewPool: ['outs-count', 'odds-required-equity'] }
+        : step)),
+    };
+    expect(chapterSkillCategories(withReview)).toEqual(['outs', 'pot-odds']);
+  });
+});

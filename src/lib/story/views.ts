@@ -47,6 +47,8 @@ export interface ObjectiveProgressView {
   target: number | null;
   /** 아직 판정 불가(기회 0 등)면 null */
   achieved: boolean | null;
+  /** 체크리스트(any-k-of) 항목 — 통과·라이브 점수 집계에서 빠지고 부모 아래에 들여쓴다 */
+  group?: 'checklist';
 }
 
 export type DecisionMark = 'good' | 'hmm' | 'warn';

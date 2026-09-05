@@ -26,6 +26,16 @@ export const DEFAULT_MAX_VERDICTS = 4;
 /** 잘라낼 때의 우선순위 — 고칠 게 있는 것부터 남긴다. */
 const MARK_PRIORITY: Readonly<Record<DecisionMark, number>> = { warn: 0, hmm: 1, good: 2 };
 
+/**
+ * 리버 오버벳(팟 초과) 대면의 폴라라이즈 문구 — 4막 Ch10 전용 정책(`overbetPolarized`).
+ * 기본 가격 리뷰는 톱페어 에퀴티를 50%로 잡아 2배 팟 오버벳 폴드에 ⚠를 주므로, 목표와 어긋나지 않도록
+ * 같은 규칙(홀카드 관여 투페어+만 콜)으로 다시 판정한다. 정책이 없는 챕터의 리뷰는 불변이다.
+ */
+const OVERBET_REASON: Readonly<Record<'good' | 'warn', string>> = {
+  good: '팟을 넘는 오버벳 대면이에요. 이 챕터의 폴라라이즈 가정에 맞는 결정이에요.',
+  warn: '팟을 넘는 오버벳 대면이에요. 폴라라이즈 가정에서는 홀카드가 관여한 투페어 이상만 콜하고, 그 아래는 폴드예요.',
+};
+
 function pct(value: number): number {
   return Math.round(value * 100);
 }
@@ -119,7 +129,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
 export function reviewHand(
   record: CompletedHandRecord,
   heroId: string,
-  opts?: { maxVerdicts?: number },
+  opts?: { maxVerdicts?: number; overbetPolarized?: boolean },
 ): DecisionReview | null {
   const facts = deriveHeroHandFacts(record, heroId);
   if (!facts.dealtIn || facts.voluntaryActions === 0) return null;
@@ -153,6 +163,15 @@ export function reviewHand(
         facts: { potOdds: fact.potOdds, equity: fact.equity, ...(fact.outs !== null ? { outs: fact.outs } : {}) },
       },
     });
+  }
+
+  // 오버벳 정책: 같은 액션 인덱스의 가격 판정을 목표(`overbet-decision`)와 같은 규칙으로 덮어쓴다
+  if (opts?.overbetPolarized && facts.overbetOpportunity && facts.overbetActionIndex !== null) {
+    const mark: DecisionMark = facts.overbetCorrect ? 'good' : 'warn';
+    for (const entry of entries) {
+      if (entry.order !== facts.overbetActionIndex) continue;
+      entry.verdict = { ...entry.verdict, mark, reason: OVERBET_REASON[mark] };
+    }
   }
 
   const max = Math.max(0, opts?.maxVerdicts ?? DEFAULT_MAX_VERDICTS);

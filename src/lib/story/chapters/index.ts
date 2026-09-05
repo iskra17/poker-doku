@@ -20,14 +20,18 @@ import { CH06 } from './act2/ch06-three-bet-temperature';
 import { mergeGuidedSituation } from './helpers';
 import type { Card } from '@/lib/poker/types';
 import {
+  HEROINE_FILL_SEAT,
   isSceneEffect,
   isStoryHeroineId,
   isStoryTeacherRef,
   OBJECTIVE_KINDS,
+  REVIEW_SLOT_TEMPLATE_ID,
   STORY_BELTS,
+  STORY_HEROINE_IDS,
   type Chapter,
   type ChapterId,
   type DealScript,
+  type Objective,
   type Scene,
   type SceneSayLine,
   type Step,
@@ -49,6 +53,17 @@ export interface ValidateChaptersOptions {
 
 const CHAPTER_ID_PATTERN = /^act[1-4]-ch\d{2}$/;
 const OBJECTIVE_KIND_SET: ReadonlySet<string> = new Set(OBJECTIVE_KINDS);
+/** 최종 기회로 target을 한정할 수 있는 kind — 새 기회형 횟수 목표만 opt-in한다. */
+const FINAL_CAP_KINDS: readonly string[] = ['gumi-river-call', 'honest-river-fold', 'luna-checkraise-fold', 'topair-calldown'];
+/**
+ * 체크리스트 항목으로 허용하는 kind — 비율형/상한형만. 부모(any-k-of)와 합산형(executed-any) 중첩은 금지한다
+ * (부모를 자식으로 넣으면 "몇 개 달성"의 분모가 재귀로 흐려진다).
+ */
+const CHECKLIST_ITEM_KINDS: ReadonlySet<string> = new Set([
+  'fold-preflop-junk', 'no-junk-entry', 'cbet-when-aggressor', 'correct-pot-odds-call', 'value-bet-river',
+  'open-raise', 'no-limp', 'steal-open', 'no-air-river-bet', 'value-bet-sizing', 'premium-3bet',
+  'fold-vs-3bet-junk', 'no-junk-4bet', 'topair-calldown', 'no-air-reraise', 'overbet-decision',
+]);
 const BELT_SET: ReadonlySet<string> = new Set(STORY_BELTS);
 const MAX_SEATS = 6;
 
@@ -162,8 +177,25 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
         if (!isStoryTeacherRef(step.teacher)) errors.push(`${stepAt}: unknown teacher ${String(step.teacher)}`);
         if (step.drills.length === 0) errors.push(`${stepAt}: drill set is empty`);
         if (!(step.hintPenalty >= 0 && step.hintPenalty <= 1)) errors.push(`${stepAt}: hintPenalty must be within 0..1`);
+        {
+          // 동적 복습 슬롯: sentinel이 있어야 reviewPool을 둘 수 있고, sentinel만 있고 풀이 비면 낼 문제가 없다
+          const sentinels = step.drills.filter(slot => slot.templateId === REVIEW_SLOT_TEMPLATE_ID).length;
+          if (sentinels > 0) {
+            if (!step.reviewPool || step.reviewPool.length === 0) {
+              errors.push(`${stepAt}: review slots require a non-empty reviewPool`);
+            }
+            for (const templateId of step.reviewPool ?? []) {
+              if (options.templateIds && !options.templateIds.has(templateId)) {
+                errors.push(`${stepAt}: unknown reviewPool template ${templateId}`);
+              }
+            }
+          } else if (step.reviewPool !== undefined) {
+            errors.push(`${stepAt}: reviewPool requires at least one '${REVIEW_SLOT_TEMPLATE_ID}' slot`);
+          }
+        }
         for (const slot of step.drills) {
-          if (options.templateIds && !options.templateIds.has(slot.templateId)) {
+          // sentinel은 런타임(코디네이터)이 실제 템플릿으로 해석하므로 레지스트리 검사 대상이 아니다
+          if (slot.templateId !== REVIEW_SLOT_TEMPLATE_ID && options.templateIds && !options.templateIds.has(slot.templateId)) {
             errors.push(`${stepAt}: unknown drill template ${slot.templateId}`);
           }
           if (slot.seedPolicy === 'fixed' && !Number.isInteger(slot.fixedSeed)) {
@@ -185,15 +217,20 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
           errors.push(`${stepAt}: minHands must be an integer within 1..maxHands`);
         }
         for (const objective of [...step.objectives.primary, ...step.objectives.bonus]) {
-          if (!OBJECTIVE_KIND_SET.has(objective.kind)) errors.push(`${stepAt}: unknown objective kind ${String(objective.kind)}`);
-          if (objective.finalOpportunityCap && (!['gumi-river-call', 'honest-river-fold', 'luna-checkraise-fold'].includes(objective.kind)
-            || objective.target === undefined || objective.target < 1 || !Number.isInteger(objective.target))) errors.push(`${at}: invalid final opportunity cap`);
-          if (objective.target !== undefined && objective.minRatio !== undefined) errors.push(`${at}: target and minRatio cannot be combined`);
-          if (objective.minRatio !== undefined && !(objective.minRatio > 0 && objective.minRatio <= 1)) {
-            errors.push(`${stepAt}: objective ${objective.id} minRatio must be within (0, 1]`);
+          validateObjective(objective, at, stepAt, objectiveIds, errors);
+        }
+        if (step.checklist) {
+          const checklist = step.checklist;
+          if (!Number.isInteger(checklist.k) || checklist.k < 1) errors.push(`${stepAt}: checklist k must be a positive integer`);
+          if (checklist.items.length === 0) errors.push(`${stepAt}: checklist has no items`);
+          if (!checklist.label.trim()) errors.push(`${stepAt}: checklist label required`);
+          // 부모 id도 챕터 전역 유일 — 결산이 목표 id를 키로 합치기 때문
+          if (objectiveIds.has(checklist.id)) errors.push(`${stepAt}: duplicate objective id ${checklist.id} (chapter-wide unique)`);
+          objectiveIds.add(checklist.id);
+          for (const item of checklist.items) {
+            if (!CHECKLIST_ITEM_KINDS.has(item.kind)) errors.push(`${stepAt}: checklist item ${item.id} kind ${String(item.kind)} is not allowed`);
+            validateObjective(item, at, stepAt, objectiveIds, errors);
           }
-          if (objectiveIds.has(objective.id)) errors.push(`${stepAt}: duplicate objective id ${objective.id} (chapter-wide unique)`);
-          objectiveIds.add(objective.id);
         }
         for (const interrupt of step.interrupts) {
           if (interruptIds.has(interrupt.id)) errors.push(`${stepAt}: duplicate interrupt id ${interrupt.id} (chapter-wide unique)`);
@@ -208,6 +245,19 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
   }
   if (resultCount !== 1) errors.push(`${at}: exactly one result step required (found ${resultCount})`);
   if (chapter.steps[chapter.steps.length - 1]?.kind !== 'result') errors.push(`${at}: result step must be last`);
+}
+
+/** 목표 하나의 스키마 — primary/bonus와 체크리스트 항목이 같은 규칙을 쓴다. */
+function validateObjective(objective: Objective, at: string, stepAt: string, objectiveIds: Set<string>, errors: string[]): void {
+  if (!OBJECTIVE_KIND_SET.has(objective.kind)) errors.push(`${stepAt}: unknown objective kind ${String(objective.kind)}`);
+  if (objective.finalOpportunityCap && (!FINAL_CAP_KINDS.includes(objective.kind)
+    || objective.target === undefined || objective.target < 1 || !Number.isInteger(objective.target))) errors.push(`${at}: invalid final opportunity cap`);
+  if (objective.target !== undefined && objective.minRatio !== undefined) errors.push(`${at}: target and minRatio cannot be combined`);
+  if (objective.minRatio !== undefined && !(objective.minRatio > 0 && objective.minRatio <= 1)) {
+    errors.push(`${stepAt}: objective ${objective.id} minRatio must be within (0, 1]`);
+  }
+  if (objectiveIds.has(objective.id)) errors.push(`${stepAt}: duplicate objective id ${objective.id} (chapter-wide unique)`);
+  objectiveIds.add(objective.id);
 }
 
 function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring' }>, at: string, errors: string[]): void {
@@ -226,6 +276,7 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
       || !step.objectives.primary.some(objective => objective.kind === 'quiz-accuracy' && objective.params?.required === 4 && objective.minRatio === 0.75)
       || !step.objectives.primary.some(objective => objective.kind === 'opponent-response' && objective.minRatio === 0.5)) errors.push(`${at}: invalid masquerade policy`);
   }
+  if (table.reviewPolicy !== undefined && table.reviewPolicy !== 'act4-overbet-v1') errors.push(`${at}: invalid review policy`);
   if (table.lineup.length === 0 || table.lineup.length >= MAX_SEATS) errors.push(`${at}: lineup must have 1..${MAX_SEATS - 1} seats`);
   const seats = new Set<number>([table.heroSeat]);
   const characters = new Set<string>();
@@ -233,13 +284,22 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
     if (seats.has(seat.seatIndex)) errors.push(`${at}: duplicate seat ${seat.seatIndex}`);
     seats.add(seat.seatIndex);
     if (seat.seatIndex < 0 || seat.seatIndex >= MAX_SEATS) errors.push(`${at}: seat ${seat.seatIndex} out of range`);
-    if (characters.has(seat.characterId) && !(table.masquerade && seat.characterId === 'story-mask')) errors.push(`${at}: duplicate character ${seat.characterId}`);
+    // 'heroine-fill'은 좌석마다 다른 히로인으로 풀리므로 중복 캐릭터 검사에서 예외다
+    const fill = seat.characterId === HEROINE_FILL_SEAT;
+    if (!fill && characters.has(seat.characterId) && !(table.masquerade && seat.characterId === 'story-mask')) errors.push(`${at}: duplicate character ${seat.characterId}`);
     characters.add(seat.characterId);
+    if (fill && step.kind !== 'sparring') errors.push(`${at}: '${HEROINE_FILL_SEAT}' seats are allowed in sparring only`);
     // 라인업은 전원 착석이 전제(어댑터가 한 좌석이라도 못 앉히면 방을 열지 않는다) — BOT_CHARACTERS 로스터만 허용(딜러·가면 등 비로스터 캐릭터 불가)
-    if (seat.characterId !== 'partner' && !(table.masquerade && seat.characterId === 'story-mask') && !BOT_CHARACTERS.some(c => c.id === seat.characterId)) {
+    if (!fill && seat.characterId !== 'partner' && !(table.masquerade && seat.characterId === 'story-mask') && !BOT_CHARACTERS.some(c => c.id === seat.characterId)) {
       errors.push(`${at}: seat ${seat.seatIndex} character ${seat.characterId} is not a playable bot`);
     }
     if (!(seat.stackBB > 0)) errors.push(`${at}: seat ${seat.seatIndex} stackBB must be > 0`);
+  }
+  // 파트너 + fill + 명시 히로인이 로스터보다 많으면 채울 히로인이 모자란다(어댑터가 방을 열지 못한다)
+  const heroineSeats = table.lineup.filter(seat => seat.characterId === 'partner'
+    || seat.characterId === HEROINE_FILL_SEAT || isStoryHeroineId(seat.characterId)).length;
+  if (heroineSeats > STORY_HEROINE_IDS.length) {
+    errors.push(`${at}: heroine seats exceed the roster (${heroineSeats} > ${STORY_HEROINE_IDS.length})`);
   }
   if (!(table.turnTimeSec >= 5)) errors.push(`${at}: turnTimeSec must be >= 5`);
   if (!(table.botThinkScale > 0)) errors.push(`${at}: botThinkScale must be > 0`);

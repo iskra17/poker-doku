@@ -6,6 +6,18 @@ import { findRequiresCycle, getChapter, STORY_CHAPTERS, validateChapters } from 
 
 const TEMPLATE_IDS = new Set(['rank-who-wins', 'pos-name']);
 
+function sparringOf(chapter: Chapter): Extract<Step, { kind: 'sparring' }> {
+  const step = chapter.steps.find(candidate => candidate.kind === 'sparring');
+  if (step?.kind !== 'sparring') throw new Error('fixture');
+  return step;
+}
+
+function drillSetOf(chapter: Chapter): Extract<Step, { kind: 'drill-set' }> {
+  const step = chapter.steps.find(candidate => candidate.kind === 'drill-set');
+  if (step?.kind !== 'drill-set') throw new Error('fixture');
+  return step;
+}
+
 function withStep(chapter: Chapter, mutate: (steps: Step[]) => Step[]): Chapter {
   return { ...chapter, steps: mutate([...chapter.steps]) };
 }
@@ -227,5 +239,105 @@ describe('validateChapters', () => {
 
     const okScene = makeScene('ok');
     expect(validateChapters([withStep(base, steps => [{ kind: 'scene', id: 'ok', scene: okScene }, ...steps])])).toEqual([]);
+  });
+});
+
+
+describe('4막 공유 계약 검증 (체크리스트 · 동적 복습 슬롯 · heroine-fill)', () => {
+  const patchSparring = (mutate: (step: Extract<Step, { kind: 'sparring' }>) => Step): Chapter => {
+    const base = makeChapter();
+    return withStep(base, steps => steps.map(step => (step.kind === 'sparring' ? mutate(sparringOf(base)) : step)));
+  };
+  const patchDrills = (mutate: (step: Extract<Step, { kind: 'drill-set' }>) => Step): Chapter => {
+    const base = makeChapter();
+    return withStep(base, steps => steps.map(step => (step.kind === 'drill-set' ? mutate(drillSetOf(base)) : step)));
+  };
+
+  it('체크리스트는 부모 id 전역 유일 · k 양의 정수 · 항목 kind 제한을 지킨다', () => {
+    const ok = patchSparring(step => ({
+      ...step,
+      checklist: {
+        id: 'list', label: '체크리스트 2/3', k: 2,
+        items: [
+          { id: 'i1', kind: 'no-limp', label: '림프 없음', maxCount: 0 },
+          { id: 'i2', kind: 'cbet-when-aggressor', label: 'c벳', minRatio: 0.5 },
+          { id: 'i3', kind: 'correct-pot-odds-call', label: '가격', maxCount: 2 },
+        ],
+      },
+    }));
+    expect(validateChapters([ok], { templateIds: TEMPLATE_IDS })).toEqual([]);
+
+    const badK = patchSparring(step => ({ ...step, checklist: { id: 'list', label: 'x', k: 0, items: [{ id: 'i1', kind: 'no-limp', label: 'x', maxCount: 0 }] } }));
+    expect(validateChapters([badK]).some(e => e.includes('checklist k must be a positive integer'))).toBe(true);
+
+    const empty = patchSparring(step => ({ ...step, checklist: { id: 'list', label: 'x', k: 1, items: [] } }));
+    expect(validateChapters([empty]).some(e => e.includes('checklist has no items'))).toBe(true);
+
+    const nested = patchSparring(step => ({ ...step, checklist: { id: 'list', label: 'x', k: 1, items: [{ id: 'i1', kind: 'executed-any', label: 'x', target: 1 }] } }));
+    expect(validateChapters([nested]).some(e => e.includes('is not allowed'))).toBe(true);
+
+    const duplicate = patchSparring(step => ({ ...step, checklist: { id: step.objectives.primary[0].id, label: 'x', k: 1, items: [{ id: 'i1', kind: 'no-limp', label: 'x', maxCount: 0 }] } }));
+    expect(validateChapters([duplicate]).some(e => e.includes('duplicate objective id'))).toBe(true);
+  });
+
+  it('topair-calldown만 새로 finalOpportunityCap을 쓸 수 있다', () => {
+    const capped = patchSparring(step => ({
+      ...step,
+      objectives: { ...step.objectives, primary: [{ id: 'cd', kind: 'topair-calldown', label: '콜다운', target: 2, finalOpportunityCap: true }] },
+    }));
+    expect(validateChapters([capped], { templateIds: TEMPLATE_IDS })).toEqual([]);
+    const wrong = patchSparring(step => ({
+      ...step,
+      objectives: { ...step.objectives, primary: [{ id: 'cd', kind: 'no-air-reraise', label: '에어', target: 2, finalOpportunityCap: true }] },
+    }));
+    expect(validateChapters([wrong]).some(e => e.includes('invalid final opportunity cap'))).toBe(true);
+  });
+
+  it('동적 복습 슬롯은 reviewPool과 짝을 이뤄야 하고 sentinel 자체는 레지스트리 검사 대상이 아니다', () => {
+    const ok = patchDrills(step => ({
+      ...step,
+      drills: [...step.drills, { templateId: '*review', seedPolicy: 'per-run' }],
+      reviewPool: ['rank-who-wins'],
+    }));
+    expect(validateChapters([ok], { templateIds: TEMPLATE_IDS })).toEqual([]);
+
+    const noPool = patchDrills(step => ({ ...step, drills: [{ templateId: '*review', seedPolicy: 'per-run' }] }));
+    expect(validateChapters([noPool], { templateIds: TEMPLATE_IDS }).some(e => e.includes('review slots require a non-empty reviewPool'))).toBe(true);
+
+    const strayPool = patchDrills(step => ({ ...step, reviewPool: ['rank-who-wins'] }));
+    expect(validateChapters([strayPool], { templateIds: TEMPLATE_IDS }).some(e => e.includes("reviewPool requires at least one '*review' slot"))).toBe(true);
+
+    const unknownPool = patchDrills(step => ({
+      ...step,
+      drills: [{ templateId: '*review', seedPolicy: 'per-run' }],
+      reviewPool: ['nope'],
+    }));
+    expect(validateChapters([unknownPool], { templateIds: TEMPLATE_IDS }).some(e => e.includes('unknown reviewPool template nope'))).toBe(true);
+  });
+
+  it("'heroine-fill'은 스파링에서만 허용하고 반복 토큰은 중복 캐릭터가 아니다", () => {
+    const ok = patchSparring(step => ({
+      ...step,
+      table: makeTable({
+        lineup: [
+          { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
+          { seatIndex: 2, characterId: 'heroine-fill', stackBB: 100 },
+          { seatIndex: 3, characterId: 'heroine-fill', stackBB: 100 },
+        ],
+      }),
+    }));
+    expect(validateChapters([ok], { templateIds: TEMPLATE_IDS })).toEqual([]);
+
+    const inPractice = withStep(makeChapter(), steps => steps.map(step => (step.kind === 'practice-table'
+      ? { ...step, table: makeTable({ lineup: [{ seatIndex: 2, characterId: 'heroine-fill', stackBB: 100 }] }), scripts: [{ hero: 'As Ks', board: 'Ah Kd 7c' }] }
+      : step)));
+    expect(validateChapters([inPractice], { templateIds: TEMPLATE_IDS }).some(e => e.includes("'heroine-fill' seats are allowed in sparring only"))).toBe(true);
+  });
+
+  it('reviewPolicy는 알려진 값만 받는다', () => {
+    const ok = patchSparring(step => ({ ...step, table: makeTable({ reviewPolicy: 'act4-overbet-v1' }) }));
+    expect(validateChapters([ok], { templateIds: TEMPLATE_IDS })).toEqual([]);
+    const bad = patchSparring(step => ({ ...step, table: makeTable({ reviewPolicy: 'nope' as never }) }));
+    expect(validateChapters([bad]).some(e => e.includes('invalid review policy'))).toBe(true);
   });
 });

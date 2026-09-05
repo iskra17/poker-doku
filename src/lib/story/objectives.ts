@@ -32,7 +32,7 @@ import {
   OPEN_THRESHOLDS,
   THREE_BET_THRESHOLD,
 } from './open-thresholds';
-import type { Objective } from './types';
+import type { Objective, ObjectiveChecklist } from './types';
 import type { DecisionMark, ObjectiveProgressView } from './views';
 
 // ---------------------------------------------------------------------------
@@ -108,6 +108,54 @@ export function isTopPairOrBetter(hole: readonly Card[], board: readonly Card[])
     .filter(value => boardValues.includes(value));
   if (matched.length === 0) return false;
   return Math.max(...matched) >= topBoard;
+}
+
+/** 페어 계열 — 홀카드 랭크가 페어/트립스/쿼드를 이룰 때만 '관여'로 본다(키커 개선은 제외). */
+const PAIRED_RANKS: ReadonlySet<HandRank> = new Set<HandRank>([
+  'one-pair', 'two-pair', 'three-of-a-kind', 'full-house', 'four-of-a-kind',
+]);
+/** 스트레이트/플러시 계열 — 최고 5장에 홀카드가 들어가면 '관여'다. */
+const RUN_RANKS: ReadonlySet<HandRank> = new Set<HandRank>([
+  'straight', 'flush', 'straight-flush', 'royal-flush',
+]);
+
+/**
+ * **홀카드가 실제로 메이드에 관여했는가** (4막 콜다운·오버벳 판정의 기준, 리버 전용).
+ *
+ * `isTopPairOrBetter`는 보드만 투페어여도 true를 주고, `evaluateHand(hole,board).value > evaluateHand([],board).value`는
+ * **키커 개선만으로도** 통과한다(보드 KK772에 AQ → 보드보다 점수가 높지만 페어에 관여하지 않는다).
+ * 그래서 두 방식 모두 4막의 "내 카드로 만든 강한 핸드"를 가르지 못한다 — 이 함수가 단일 소스다.
+ *
+ * ① 히어로 카테고리가 보드만 카테고리보다 높으면 관여.
+ * ② 같은 카테고리면 페어 계열은 홀카드 랭크가 최고 5장에서 2장 이상 반복될 때만, 스트레이트/플러시 계열은
+ *    최고 5장에 홀카드가 들어갈 때만 관여. 하이카드는 언제나 키커일 뿐이라 false.
+ */
+export function heroMadeWithHole(hole: readonly Card[], board: readonly Card[]): boolean {
+  if (hole.length !== 2 || board.length < 5) return false;
+  const heroEvaluated = evaluateHand([...hole], [...board]);
+  const boardEvaluated = evaluateHand([], [...board]);
+  const heroOrder = handRankOrder(heroEvaluated.rank);
+  const boardOrder = handRankOrder(boardEvaluated.rank);
+  if (heroOrder > boardOrder) return true;
+  if (heroOrder < boardOrder) return false;
+
+  const key = (card: Card): string => `${card.rank}${card.suit}`;
+  const best = heroEvaluated.cards;
+  const inBest = new Set(best.map(key));
+  const used = hole.filter(card => inBest.has(key(card)));
+  if (used.length === 0) return false;
+  if (RUN_RANKS.has(heroEvaluated.rank)) return true;
+  if (!PAIRED_RANKS.has(heroEvaluated.rank)) return false;
+  const counts = new Map<string, number>();
+  for (const card of best) counts.set(card.rank, (counts.get(card.rank) ?? 0) + 1);
+  return used.some(card => (counts.get(card.rank) ?? 0) >= 2);
+}
+
+/** 홀카드가 관여한 투페어 이상 — 오버벳 대면의 '콜해도 되는 핸드' 기준. */
+function strongMadeWithHole(hole: readonly Card[], board: readonly Card[]): boolean {
+  if (hole.length !== 2 || board.length < 5) return false;
+  return handRankOrder(evaluateHand([...hole], [...board]).rank) >= handRankOrder('two-pair')
+    && heroMadeWithHole(hole, board);
 }
 
 function madeEquity(hole: readonly Card[], board: readonly Card[]): number {
@@ -293,6 +341,34 @@ export interface HeroHandFacts {
   foldedVsThreeBet: boolean;
   /** 4벳 구간(상위 FOUR_BET_THRESHOLD%) 밖 핸드로 4벳했는가 — 위반 단위. */
   junkFourBet: boolean;
+
+  // ── 4막 (Ch10~11). 전부 공개 replay + 히어로 카드에서만 파생한다(상대 홀카드 미사용).
+  /**
+   * 리버 콜다운 기회 — 리버에서 **처음** 벳을 맞았고(재레이즈 재대면은 제외) ①그 시점 폴드하지 않은
+   * 상대가 1명(올인 상대 포함) ②히어로 스택 > 콜(올인 아님) ③벳 ≤ 벳 전 팟 100% ④홀카드 관여 톱페어+
+   * ⑤같은 핸드의 플랍 또는 턴에서 이미 벳을 콜했다.
+   */
+  calldownOpportunity: boolean;
+  /** 그 기회에 콜(홀카드 관여 투페어+면 레이즈·올인도)했는가. */
+  calldown: boolean;
+  /** 벳을 맞고 레이즈(또는 벳을 넘기는 올인)했는데 톱페어·스트레이트 미만이고 아우츠 8장 미만이었던 횟수. */
+  airReraise: number;
+  /** 리버 오버벳 기회 — 콜다운과 같은 조건에 벳 > 벳 전 팟 100%. */
+  overbetOpportunity: boolean;
+  /** 폴라라이즈 가정의 정답 — 홀카드 관여 투페어+면 콜/레이즈, 아니면 폴드. */
+  overbetCorrect: boolean;
+  /** 그 오버벳 대면 액션의 `record.actions` 인덱스 — 리뷰 정책이 같은 결정을 찾는 키. */
+  overbetActionIndex: number | null;
+  /**
+   * `executed-any` 전용 기회/실행 — 기존 사실을 바꾸지 않고 **액션 직전 prefix에서 확정**한다.
+   * 오픈 실행은 실질 콜 올인을 빼기 위해 `amount > maxBet`을 요구하고, 밸류 기회는 이후 폴드로 지워지지 않는다.
+   */
+  execOpenOpportunity: boolean;
+  execOpen: boolean;
+  execCbetOpportunity: boolean;
+  execCbet: boolean;
+  execValueOpportunity: boolean;
+  execValue: boolean;
 }
 
 function emptyFacts(handNumber: number): HeroHandFacts {
@@ -331,6 +407,18 @@ function emptyFacts(handNumber: number): HeroHandFacts {
     junkVsThreeBet: false,
     foldedVsThreeBet: false,
     junkFourBet: false,
+    calldownOpportunity: false,
+    calldown: false,
+    airReraise: 0,
+    overbetOpportunity: false,
+    overbetCorrect: false,
+    overbetActionIndex: null,
+    execOpenOpportunity: false,
+    execOpen: false,
+    execCbetOpportunity: false,
+    execCbet: false,
+    execValueOpportunity: false,
+    execValue: false,
   };
 }
 
@@ -349,6 +437,27 @@ function boardForStreet(board: readonly Card[], street: PlayStreet): Card[] | nu
 
 function maxStreetBet(state: ReplayContributionState): number {
   return Math.max(0, ...Array.from(state.streetBets.values()));
+}
+
+/** 이 액션이 히어로 누적 기여금에 더하는 값 (applyReplayContribution의 팟 증분과 같은 규칙). */
+function heroContribution(
+  state: ReplayContributionState,
+  action: { kind: HandHistoryActionKind; playerId: string; amount: number },
+): number {
+  switch (action.kind) {
+    case 'post-ante':
+    case 'post-sb':
+    case 'post-bb':
+    case 'call':
+      return action.amount;
+    case 'raise':
+    case 'all-in':
+      return action.amount - (state.streetBets.get(action.playerId) ?? 0);
+    case 'uncalled-return':
+      return -action.amount;
+    default:
+      return 0;
+  }
 }
 
 /**
@@ -387,17 +496,32 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
   let heroOpened = false;
   let raisesAfterHeroOpen = 0;
   const pct = facts.heroHandPercentile === null ? null : facts.heroHandPercentile * 100;
+  // 4막 트래커 — 전부 "그 액션 직전"의 공개 prefix에서만 읽는다.
+  /** 지금까지 폴드한 좌석 — 헤즈업 판정(폴드하지 않은 상대 수 1)의 분모. */
+  const foldedIds = new Set<string>();
+  /** 히어로 누적 기여금 — 스택 = 시작 스택 − 이 값. */
+  let heroContributed = 0;
+  /** 현 스트리트의 마지막 공격 액션(액션 직전 팟 P와 그 좌석의 증분 벳 B). 스트리트마다 초기화. */
+  let lastAggression: { potBefore: number; bet: number } | null = null;
+  /** 플랍 또는 턴에서 벳을 콜한 적이 있는가 — 콜다운 기회의 '이미 콜한 배럴' 조건. */
+  let calledBarrel = false;
+  /** 리버에서 이미 벳을 한 번 맞았는가 — 재레이즈 재대면은 집계하지 않는다. */
+  let riverFaced = false;
 
   record.actions.forEach((action, actionIndex) => {
     if (action.street !== street && action.street !== 'showdown') {
       street = action.street as PlayStreet;
       state = { ...state, streetBets: new Map<string, number>() };
+      lastAggression = null;
     }
     const maxBet = maxStreetBet(state);
     const heroBet = state.streetBets.get(heroId) ?? 0;
     const toCall = Math.max(0, maxBet - heroBet);
     const isHero = action.playerId === heroId;
     const aggressive = (action.kind === 'raise' || action.kind === 'all-in') && action.amount > maxBet;
+    const liveOpponents = record.players
+      .filter(player => player.id !== heroId && !foldedIds.has(player.id)).length;
+    const heroStack = hero.startingChips - heroContributed;
 
     if (aggressive && action.street === 'preflop') {
       preflopAggressorId = action.playerId;
@@ -423,6 +547,9 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
           if (unopened && threshold !== undefined && pct !== null && pct < threshold) {
             facts.openRaiseOpportunity = true;
             facts.openRaise = raised;
+            // executed-any 전용: 실행은 테이블 벳을 넘기는 레이즈/올인만 (실질 콜 올인 제외)
+            facts.execOpenOpportunity = true;
+            facts.execOpen = aggressive;
             if (STEAL_POSITIONS.has(hero.position)) {
               facts.stealOpportunity = true;
               facts.stealOpen = raised;
@@ -455,9 +582,49 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
         if (street === 'river' && riverFirstFree === null && toCall === 0) {
           riverFirstFree = action.kind;
           if (action.kind === 'raise' || action.kind === 'all-in') riverBet.current = { amount: action.amount, potBefore: state.pot };
+          // executed-any 전용: 기회는 이 시점에 확정하고 이후 폴드로 지우지 않는다
+          const riverBoard = hole ? boardForStreet(record.board, 'river') : null;
+          if (riverBoard && hole && isTopPairOrBetter(hole, riverBoard)) {
+            facts.execValueOpportunity = true;
+            facts.execValue = action.kind === 'raise' || action.kind === 'all-in';
+          }
         }
 
         const streetBoard = hole ? boardForStreet(record.board, street) : null;
+        if ((street === 'flop' || street === 'turn') && toCall > 0 && action.kind === 'call') calledBarrel = true;
+
+        // 4막 (1) 에어 리레이즈 — 벳을 맞고 레이즈(벳을 넘기는 올인 포함)했는데 만든 것도 드로우도 없다
+        if (hole && streetBoard && toCall > 0 && aggressive) {
+          const order = handRankOrder(evaluateHand([...hole], [...streetBoard]).rank);
+          if (!isTopPairOrBetter(hole, streetBoard)
+            && order < handRankOrder('straight')
+            && countHeroOuts(hole, streetBoard) < 8) {
+            facts.airReraise += 1;
+          }
+        }
+
+        // 4막 (2) 리버에서 처음 맞은 벳 — 크기로 콜다운/오버벳을 가른다
+        if (street === 'river' && toCall > 0 && !riverFaced) {
+          riverFaced = true;
+          const river = hole ? boardForStreet(record.board, 'river') : null;
+          const potBefore = lastAggression?.potBefore ?? 0;
+          const betToPot = lastAggression && potBefore > 0 ? lastAggression.bet / potBefore : null;
+          if (river && hole && liveOpponents === 1 && heroStack > toCall && betToPot !== null) {
+            const strong = strongMadeWithHole(hole, river);
+            const raisedHere = action.kind === 'raise' || action.kind === 'all-in';
+            if (betToPot > 1) {
+              facts.overbetOpportunity = true;
+              facts.overbetActionIndex = actionIndex;
+              facts.overbetCorrect = strong
+                ? action.kind === 'call' || raisedHere
+                : action.kind === 'fold';
+            } else if (calledBarrel && isTopPairOrBetter(hole, river) && heroMadeWithHole(hole, river)) {
+              facts.calldownOpportunity = true;
+              facts.calldown = action.kind === 'call' || (strong && raisedHere);
+            }
+          }
+        }
+
         // 콜 = 'call' 또는 콜 금액에 못 미치는 'all-in'(실질 콜). 벳을 넘기는 올인은 레이즈라 제외.
         const called = action.kind === 'call' || (action.kind === 'all-in' && action.amount <= maxBet);
         const folded = action.kind === 'fold';
@@ -488,6 +655,12 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
 
     // 상대의 프리플랍 레이즈도 세야 "오픈을 맞았다"가 성립한다 (히어로 분기 안에서는 히어로 레이즈만 셌다).
     if (!isHero && aggressive && action.street === 'preflop') preflopRaises++;
+    if (action.kind === 'fold') foldedIds.add(action.playerId);
+    if (aggressive) {
+      // amount는 스트리트 총액 — 이 좌석의 이전 스트리트 벳을 빼야 실제 벳 크기가 나온다
+      lastAggression = { potBefore: state.pot, bet: action.amount - (state.streetBets.get(action.playerId) ?? 0) };
+    }
+    if (isHero) heroContributed += heroContribution(state, action);
     state = applyReplayContribution(state, action);
   });
 
@@ -495,6 +668,8 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
   facts.wasAggressorOnFlop = sawFlop && preflopAggressorId === heroId;
   facts.cbetOpportunity = facts.wasAggressorOnFlop && flopFirstFree !== null;
   facts.cbet = facts.cbetOpportunity && (flopFirstFree === 'raise' || flopFirstFree === 'all-in');
+  facts.execCbetOpportunity = facts.cbetOpportunity;
+  facts.execCbet = facts.cbet;
 
   const river = hole && record.board.length === 5 ? record.board.slice(0, 5) : null;
   const strongOnRiver = river !== null && hole !== null && isTopPairOrBetter(hole, river);
@@ -717,6 +892,45 @@ export function evaluateObjective(
       return view(objective, primary, count, maxCount, count <= maxCount);
     }
 
+    // ── 4막
+    case 'topair-calldown': {
+      const opportunities = hands.filter(hand => hand.calldownOpportunity).length;
+      const executed = hands.filter(hand => hand.calldown).length;
+      if (opportunities === 0) return view(objective, primary, 0, objective.target ?? null, null);
+      const capped = objective.finalOpportunityCap && extras?.final && objective.target !== undefined
+        ? { ...objective, target: Math.min(objective.target, opportunities) } : objective;
+      return ratioView(capped, primary, opportunities, executed);
+    }
+
+    case 'no-air-reraise': {
+      const count = hands.reduce((sum, hand) => sum + hand.airReraise, 0);
+      const maxCount = objective.maxCount ?? 0;
+      return view(objective, primary, count, maxCount, count <= maxCount);
+    }
+
+    case 'overbet-decision': {
+      const opportunities = hands.filter(hand => hand.overbetOpportunity).length;
+      const executed = hands.filter(hand => hand.overbetOpportunity && hand.overbetCorrect).length;
+      return ratioView(objective, primary, opportunities, executed);
+    }
+
+    case 'executed-any': {
+      // 기회·실행은 executed-any 전용 사실만 본다 (이후 폴드로 지워지지 않고, 실질 콜 올인은 실행이 아니다)
+      const opportunities = hands.reduce((sum, hand) => sum
+        + (hand.execOpenOpportunity ? 1 : 0)
+        + (hand.execCbetOpportunity ? 1 : 0)
+        + (hand.execValueOpportunity ? 1 : 0), 0);
+      const executed = hands.reduce((sum, hand) => sum
+        + (hand.execOpen ? 1 : 0)
+        + (hand.execCbet ? 1 : 0)
+        + (hand.execValue ? 1 : 0), 0);
+      return ratioView(objective, primary, opportunities, executed);
+    }
+
+    case 'any-k-of':
+      // 부모는 항목 판정에서만 나온다 — 단독 호출(evaluateObjective)은 언제나 판정 불가
+      return view(objective, primary, 0, null, null);
+
     case 'gumi-river-call':
     case 'honest-river-fold':
     case 'luna-checkraise-fold': {
@@ -752,15 +966,46 @@ export function evaluateObjective(
   }
 }
 
+/**
+ * 스텝 목표 전체 판정. `checklist`를 주면 **부모(any-k-of, primary) + 항목(group 'checklist')**을 뒤에 이어 붙인다.
+ * - 요구치 R = min(k, 판정 가능 항목 수) · 진행 A = 달성 항목 수 · 달성 = 판정 가능 0이면 null, 아니면 A ≥ R.
+ * - 항목은 `primary: false` + `group: 'checklist'`라 통과 판정·라이브 점수에서 빠지고 부모만 남는다.
+ */
 export function evaluateObjectives(
   objectives: { primary: Objective[]; bonus: Objective[] },
   tally: ObjectiveTally,
   extras?: ObjectiveExtras,
+  checklist?: ObjectiveChecklist,
 ): ObjectiveProgressView[] {
-  return [
+  const views = [
     ...objectives.primary.map(objective => evaluateObjective(objective, tally, true, extras)),
     ...objectives.bonus.map(objective => evaluateObjective(objective, tally, false, extras)),
   ];
+  if (!checklist) return views;
+  const items: ObjectiveProgressView[] = checklist.items.map(objective => ({
+    ...evaluateObjective(objective, tally, false, extras),
+    group: 'checklist' as const,
+  }));
+  return [...views, checklistParentView(checklist, items), ...items];
+}
+
+/** 체크리스트 부모 view — 항목 판정 결과에서만 파생한다(강제 완료 경로도 이 함수를 쓴다). */
+export function checklistParentView(
+  checklist: ObjectiveChecklist,
+  items: readonly ObjectiveProgressView[],
+): ObjectiveProgressView {
+  const determinable = items.filter(item => item.achieved !== null).length;
+  const achievedCount = items.filter(item => item.achieved === true).length;
+  const required = Math.min(checklist.k, determinable);
+  return {
+    id: checklist.id,
+    kind: 'any-k-of',
+    label: checklist.label,
+    primary: true,
+    progress: achievedCount,
+    target: required,
+    achieved: determinable === 0 ? null : achievedCount >= required,
+  };
 }
 
 /**
@@ -771,7 +1016,7 @@ export function evaluateObjectives(
  * - 그 밖엔 `true`.
  */
 export function primaryObjectivesMet(views: readonly ObjectiveProgressView[]): boolean | null {
-  const primaries = views.filter(item => item.primary);
+  const primaries = views.filter(item => item.primary && item.group !== 'checklist');
   if (primaries.some(item => item.achieved === false)) return false;
   const determinable = primaries.filter(item => item.achieved !== null);
   if (determinable.length === 0) return null;
@@ -784,19 +1029,20 @@ export function primaryObjectivesMet(views: readonly ObjectiveProgressView[]): b
  * 상한형(maxCount) 목표는 위반 전엔 항상 달성이라, 미션형 스텝은 횟수형 primary를 하나 이상 둬야 한다.
  */
 export function primaryObjectivesAllAchieved(views: readonly ObjectiveProgressView[]): boolean {
-  const primaries = views.filter(item => item.primary);
+  const primaries = views.filter(item => item.primary && item.group !== 'checklist');
   return primaries.length > 0 && primaries.every(item => item.achieved === true);
 }
 
 /**
  * 라이브 점수 0~1 (`gradeChapter`의 `liveScore`).
  * 목표별 배점은 이진(달성 1 / 미달 0) — 결산 성적표의 ✓/✗ 표기와 같은 기준이다.
- * 판정 불가(achieved === null) 목표는 자기 버킷에서 빠지고, 버킷이 통째로 비면 남은 쪽이 100%를 갖는다.
+ * 판정 불가(achieved === null) 목표와 체크리스트 항목(group 'checklist' — 부모만 센다)은 자기 버킷에서 빠지고,
+ * 버킷이 통째로 비면 남은 쪽이 100%를 갖는다.
  * 양쪽 다 비면 0을 반환하므로, 호출부는 그런 런에서 `gradeChapter`에 null을 넘겨야 한다.
  */
 export function liveScore(views: readonly ObjectiveProgressView[]): number {
   const bucket = (primary: boolean): number | null => {
-    const items = views.filter(item => item.primary === primary && item.achieved !== null);
+    const items = views.filter(item => item.primary === primary && item.group !== 'checklist' && item.achieved !== null);
     if (items.length === 0) return null;
     return items.filter(item => item.achieved).length / items.length;
   };

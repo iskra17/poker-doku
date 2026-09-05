@@ -28,15 +28,17 @@ function ObjectiveRow({ line, onOpen }: { line: ObjectiveHudLine; onOpen: () => 
   const achieved = line.achieved === true;
   const hasTarget = line.target !== null && line.target > 0;
   const ratio = hasTarget ? Math.min(1, line.progress / (line.target as number)) : achieved ? 1 : 0;
+  // 체크리스트 항목은 부모(any-k-of) 바로 아래에 들여쓴다 — 각각이 통과 조건으로 읽히면 안 된다
+  const child = line.group === 'checklist';
   return (
-    <li>
+    <li className={child ? 'pl-3' : undefined}>
       <button type="button" onClick={onOpen} aria-label={`${line.label} — 미션 자세히 보기`}
         className="flex min-h-8 w-full items-center gap-1.5 rounded text-left hover:bg-mystic/10 focus-visible:outline-2 focus-visible:outline-cyber">
         <span
           className={`w-3 shrink-0 text-center text-[10px] ${achieved ? 'text-cyber' : 'text-ink-dim/60'}`}
           aria-hidden
         >
-          {achieved ? '✓' : line.primary ? '•' : '·'}
+          {achieved ? '✓' : child ? '└' : line.primary ? '•' : '·'}
         </span>
         <span className={`min-w-0 flex-1 truncate text-[10px] ${achieved ? 'text-cyber' : 'text-ink'}`}>
           {line.label}
@@ -110,9 +112,11 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
         {finishHint && <p className="mt-2 text-sm leading-relaxed text-ink">{finishHint}</p>}
         <ul className="mt-4 space-y-3">
           {lines.map(line => (
-            <li key={line.id} className="rounded-xl border border-mystic/25 bg-mystic/5 p-3">
+            <li key={line.id} className={`rounded-xl border border-mystic/25 bg-mystic/5 p-3${line.group === 'checklist' ? ' ml-4' : ''}`}>
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                <span className={line.primary ? 'font-bold text-blossom' : 'text-mystic'}>{line.primary ? '통과 조건' : '보너스'}</span>
+                <span className={line.group === 'checklist' ? 'text-mystic' : line.primary ? 'font-bold text-blossom' : 'text-mystic'}>
+                  {line.group === 'checklist' ? '체크리스트' : line.primary ? '통과 조건' : '보너스'}
+                </span>
                 <span className={line.achieved ? 'text-cyber' : 'text-ink-dim'}>
                   {line.achieved === true ? '✓ 달성' : line.achieved === null ? '아직 판정할 기회 없음' : '미달성'}
                 </span>

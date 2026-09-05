@@ -260,3 +260,39 @@ describe('formatObjectiveProgress', () => {
     expect(formatObjectiveProgress({ progress: 0, target: null })).toBeNull();
   });
 });
+
+
+describe('체크리스트 블록 (any-k-of)', () => {
+  const parent: ObjectiveProgressView = {
+    id: 'list', kind: 'any-k-of', label: '체크리스트 3/5', primary: true, progress: 5, target: 3, achieved: true,
+  };
+  const child = (id: string): ObjectiveProgressView => ({
+    id, kind: 'no-limp', label: id, primary: false, progress: 0, target: 0, achieved: true, group: 'checklist',
+  });
+
+  it('primary 재정렬에도 항목이 부모 바로 아래에 붙어 있다', () => {
+    const live = liveFixture({
+      objectives: [
+        objective({ id: 'bonus', primary: false }),
+        objective({ id: 'primary', primary: true }),
+        parent,
+        child('c1'),
+        child('c2'),
+      ],
+    });
+    expect(objectiveHudLines(live).map(line => line.id)).toEqual(['primary', 'list', 'c1', 'c2', 'bonus']);
+    const lines = objectiveHudLines(live);
+    expect(lines.find(line => line.id === 'c1')?.group).toBe('checklist');
+    expect(lines.find(line => line.id === 'list')?.kind).toBe('any-k-of');
+    // 체크리스트가 아닌 줄에는 새 필드가 실리지 않는다
+    expect(lines.find(line => line.id === 'primary')).not.toHaveProperty('group');
+    expect(lines.find(line => line.id === 'primary')).not.toHaveProperty('kind');
+  });
+
+  it('부모 진행 표기는 요구치로 자르지 않는다', () => {
+    expect(formatObjectiveProgress({ progress: 5, target: 3, kind: 'any-k-of' })).toBe('5/3 달성');
+    expect(formatObjectiveDetailProgress({ progress: 5, target: 3, kind: 'any-k-of' })).toBe('5개 달성 · 기준 3개');
+    // 요구치 0(판정 가능 항목 없음)도 그대로 보여 준다
+    expect(formatObjectiveProgress({ progress: 0, target: 0, kind: 'any-k-of' })).toBe('0/0 달성');
+  });
+});

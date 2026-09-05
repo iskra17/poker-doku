@@ -134,6 +134,13 @@ export type LessonBlock =
 
 export type DrillSeedPolicy = 'fixed' | 'per-run' | 'daily';
 
+/**
+ * 동적 복습 슬롯 sentinel — 챕터 데이터가 이 id를 쓰면 코디네이터가 진입 시점에
+ * 복습 노트(dueAt 오름차순) → 스텝 `reviewPool` 순으로 **실제 생성 템플릿**으로 해석한다.
+ * seed는 언제나 런 seed(`hashSeed(runId, setId, slotIndex)`)라 노트의 문제를 그대로 다시 내지 않는다.
+ */
+export const REVIEW_SLOT_TEMPLATE_ID = '*review';
+
 export interface DrillSlot {
   templateId: string;
   seedPolicy: DrillSeedPolicy;
@@ -145,9 +152,15 @@ export interface DrillSlot {
 
 export type HintLevel = 0 | 1 | 2 | 3 | 4;
 
+/**
+ * 라인업 좌석 토큰 — "아직 쓰이지 않은 히로인"으로 채운다(파트너·라인업에 명시된 히로인은 예약 제외).
+ * 스파링 라인업에서만 쓰고, 같은 라인업에 여러 번 넣을 수 있다.
+ */
+export const HEROINE_FILL_SEAT = 'heroine-fill';
+
 export interface LineupSeat {
   seatIndex: number;
-  /** 캐릭터 id 또는 'partner'(선택 파트너) */
+  /** 캐릭터 id 또는 'partner'(선택 파트너) 또는 `HEROINE_FILL_SEAT` */
   characterId: string;
   stackBB: number;
   role?: 'teacher' | 'boss' | 'partner' | 'neighbor';
@@ -164,6 +177,11 @@ export interface LiveTableSpec {
   reading?: { id: 'river-reading-v1'; maxQuestions: 2 };
   readingReview?: { id: 'act3-response-v1' };
   masquerade?: MasqueradePolicy;
+  /**
+   * 결정 리뷰 정책 — 'act4-overbet-v1'은 리버 헤즈업 오버벳(>100% 팟) 대면을
+   * 폴라라이즈 가정(홀카드 관여 투페어+만 콜)으로 판정한다. 미지정 챕터의 리뷰는 불변.
+   */
+  reviewPolicy?: 'act4-overbet-v1';
   blinds: { small: number; big: number };
   heroSeat: number;
   heroStackBB: number;
@@ -209,6 +227,12 @@ export const OBJECTIVE_KINDS = [
   'premium-3bet',
   'fold-vs-3bet-junk',
   'no-junk-4bet',
+  // 4막 (2026-09-06) — 콜다운·에어 리레이즈·오버벳 대면·실행 합산·체크리스트 부모
+  'topair-calldown',
+  'no-air-reraise',
+  'overbet-decision',
+  'executed-any',
+  'any-k-of',
 ] as const;
 export type ObjectiveKind = typeof OBJECTIVE_KINDS[number];
 
@@ -229,6 +253,19 @@ export interface Objective {
   /** 기회 중 실행 비율 (0~1) */
   minRatio?: number;
   params?: Record<string, number | string>;
+}
+
+/**
+ * 체크리스트(any-k-of) — 항목 중 **k개 이상** 달성하면 부모 목표(primary)가 달성된다.
+ * 판정 가능한 항목이 k보다 적으면 요구치를 그 수까지 낮추고, 하나도 판정할 수 없으면 부모도 판정 불가(null)다.
+ * 항목 자체는 `group: 'checklist'`로 표시되고 통과·라이브 점수에는 부모만 들어간다.
+ */
+export interface ObjectiveChecklist {
+  id: string;
+  label: string;
+  /** 달성 요구치 (양의 정수) */
+  k: number;
+  items: Objective[];
 }
 
 export type InterruptTrigger =
@@ -255,6 +292,11 @@ export type Step =
       title: string;
       teacher: StoryTeacherRef;
       drills: DrillSlot[];
+      /**
+       * `REVIEW_SLOT_TEMPLATE_ID` 슬롯이 있을 때 부족분을 채우는 후보 — 등록된 **생성** 템플릿 id만.
+       * sentinel이 없는 스텝에는 둘 수 없다(검증기가 잡는다).
+       */
+      reviewPool?: readonly string[];
       // (2026-09-03) `passRule.minCorrect`는 삭제 — 어디서도 통과·지급에 쓰이지 않던 죽은 데이터였다.
       // 드릴 품질은 등급(S/A/B)·「퍼펙트」 플래그·실력 확인 0.85 게이트로만 표현한다.
       /** 힌트 사용 문항의 점수 배율 (기본 0.5) */
@@ -280,6 +322,8 @@ export type Step =
        */
       minHands?: number;
       objectives: { primary: Objective[]; bonus: Objective[] };
+      /** 「k개 이상 달성」 체크리스트 — 부모는 primary 목표 하나로 취급한다 */
+      checklist?: ObjectiveChecklist;
       interrupts: Interrupt[];
     }
   | { kind: 'result'; id: string };

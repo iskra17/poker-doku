@@ -32,6 +32,7 @@ import {
   addHand,
   deriveHeroHandFacts,
   emptyTally,
+  checklistParentView,
   evaluateObjectives,
   liveScore,
   primaryObjectivesAllAchieved,
@@ -39,7 +40,7 @@ import {
   type ObjectiveTally,
 } from '../lib/story/objectives';
 import { reviewHand } from '../lib/story/review';
-import { STORY_HEROINE_IDS, type Interrupt, type Step, type StoryHeroineId } from '../lib/story/types';
+import { HEROINE_FILL_SEAT, STORY_HEROINE_IDS, type Interrupt, type Step, type StoryHeroineId } from '../lib/story/types';
 import type { BotThought, DecisionReview, ObjectiveProgressView, StoryHoldReason, StoryLiveView, StoryQuizRequest, StoryQuizReceipt, ObservationNote } from '../lib/story/views';
 import { eventLog } from './event-log';
 import type { RoomDisposeReason, RoomManager, StoryRoomHooks } from './room-manager';
@@ -679,7 +680,9 @@ export class LiveTableAdapter implements StoryRoomHooks {
           session.scriptCursor = Math.min(session.step.scripts.length, session.scriptCursor + 1);
         } else {
           session.tally = addHand(session.tally, facts);
-          session.lastReview = reviewHand(record, session.profileId);
+          session.lastReview = reviewHand(record, session.profileId, {
+            overbetPolarized: session.step.table.reviewPolicy === 'act4-overbet-v1',
+          });
           if (session.step.table.readingReview) {
             const responses = reviewReadingResponses(record, session.profileId, session.botIdentities ?? []);
             for (const { kind, verdict } of responses) {
@@ -972,16 +975,21 @@ export class LiveTableAdapter implements StoryRoomHooks {
     return plan;
   }
 
-  /** 'partner' → 선택 파트너(없거나 라인업에 이미 있으면 다른 히로인), 그 외는 캐릭터 id 그대로 */
+  /**
+   * 'partner' → 선택 파트너(없거나 라인업에 이미 있으면 다른 히로인),
+   * 'heroine-fill' → 아직 쓰이지 않은 첫 히로인, 그 외는 캐릭터 id 그대로.
+   * 두 토큰 모두 **라인업에 명시된 히로인을 예약 제외**한다 — 안 그러면 뒤 좌석의 명시 히로인을 먼저 먹는다.
+   */
   private resolveLineupCharacter(
     ref: string,
     partnerId: StoryHeroineId | null,
     lineupRefs: readonly string[],
     used: ReadonlySet<string>,
   ): string | null {
-    if (ref !== 'partner') return used.has(ref) ? null : ref;
-    const taken = new Set([...lineupRefs.filter(r => r !== 'partner'), ...used]);
-    if (partnerId && !taken.has(partnerId)) return partnerId;
+    if (ref !== 'partner' && ref !== HEROINE_FILL_SEAT) return used.has(ref) ? null : ref;
+    const explicit = lineupRefs.filter(candidate => candidate !== 'partner' && candidate !== HEROINE_FILL_SEAT);
+    const taken = new Set([...explicit, ...used]);
+    if (ref === 'partner' && partnerId && !taken.has(partnerId)) return partnerId;
     return STORY_HEROINE_IDS.find(id => !taken.has(id)) ?? null;
   }
 
@@ -1088,7 +1096,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
     return evaluateObjectives(session.step.objectives, session.tally, session.masquerade ? {
       quiz: counts ? { ...counts, correct: counts.answered === 4 ? counts.correct : 0 } : { issued: 0, answered: 0, correct: 0, required: 4 },
       opponentResponse: session.masquerade.responses,
-    } : { final, quiz: session.reading?.counts(), readingResponses: session.readingResponses });
+    } : { final, quiz: session.reading?.counts(), readingResponses: session.readingResponses }, session.step.checklist);
   }
 
   private maxHands(session: LiveSession): number {
@@ -1167,11 +1175,18 @@ export class LiveTableAdapter implements StoryRoomHooks {
   private summarizeForced(session: LiveSession): LiveStepSummary {
     const base = this.summarize(session, 'done');
     if (session.step.kind === 'practice-table' || session.masquerade) return base;
-    const objectives = base.objectives.map(objective => ({
+    const checklist = session.step.checklist;
+    const forced = base.objectives.map(objective => ({
       ...objective,
       progress: objective.target ?? Math.max(objective.progress, 1),
       achieved: true,
     }));
+    // 자식을 전부 성공으로 바꾼 **뒤** 부모를 다시 계산한다 — 안 그러면 5개 달성인데 부모 진행이 3/0으로 남는다
+    const objectives = checklist
+      ? forced.map(objective => (objective.kind === 'any-k-of'
+        ? checklistParentView(checklist, forced.filter(item => item.group === 'checklist'))
+        : objective))
+      : forced;
     return { ...base, objectives, primaryObjectivesMet: true, liveScore: 1 };
   }
 

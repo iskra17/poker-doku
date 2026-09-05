@@ -341,3 +341,78 @@ describe('reviewHand — 판정 수 상한', () => {
     expect(reviewHand(record, 'hero', { maxVerdicts: 0 })?.verdicts).toEqual([]);
   });
 });
+
+
+// ---------------------------------------------------------------------------
+// 4막 Ch10 — 오버벳 폴라라이즈 정책 (`table.reviewPolicy: 'act4-overbet-v1'`)
+
+/** 리버에서 팟을 넘는 오버벳을 맞는다. 프리플랍 콜 → 플랍 배럴 콜 → 턴 체크 → 리버 2배 팟. */
+function overbetFacedHand(hero: string, action: 'call' | 'fold'): CompletedHandRecord {
+  return makeRecord({
+    seats: [{ id: 'hero', hole: hero, startingChips: 3_000 }, { id: 'villain', startingChips: 5_000 }],
+    board: 'Kc 9d 4s 2h 7c',
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ['preflop', 'hero', 'call', 25],
+      ['preflop', 'villain', 'check', 0],
+      ['flop', 'villain', 'raise', 100],
+      ['flop', 'hero', 'call', 100],
+      ['turn', 'villain', 'check', 0],
+      ['turn', 'hero', 'check', 0],
+      ['river', 'villain', 'raise', 600],
+      ['river', 'hero', action, action === 'call' ? 600 : 0],
+    ],
+    winners: [{ playerId: action === 'call' ? 'hero' : 'villain', amount: 300 }],
+  });
+}
+
+describe('reviewHand — 오버벳 폴라라이즈 정책', () => {
+  it('정책이 없으면 기존 가격 판정 그대로다 — 톱페어 폴드가 ⚠로 목표와 어긋난다', () => {
+    const review = reviewHand(overbetFacedHand('Kh Qs', 'fold'), 'hero');
+    const river = review!.verdicts.find(verdict => verdict.street === 'river')!;
+    // 톱페어 근사 에퀴티(50%)가 필요 승률 40%를 넘어 기존 규칙은 폴드에 ⚠를 준다
+    expect(river.mark).toBe('warn');
+  });
+
+  it('정책을 켜면 원페어 폴드가 👍, 콜이 ⚠ — 목표와 같은 규칙', () => {
+    const folded = reviewHand(overbetFacedHand('Kh Qs', 'fold'), 'hero', { overbetPolarized: true });
+    const foldVerdict = folded!.verdicts.find(verdict => verdict.street === 'river')!;
+    expect(foldVerdict.mark).toBe('good');
+    expect(foldVerdict.reason).toContain('오버벳');
+
+    const called = reviewHand(overbetFacedHand('Ah 9s', 'call'), 'hero', { overbetPolarized: true });
+    const callVerdict = called!.verdicts.find(verdict => verdict.street === 'river')!;
+    expect(callVerdict.mark).toBe('warn');
+    expect(callVerdict.reason).toContain('투페어');
+  });
+
+  it('홀카드 관여 투페어+는 반대로 콜이 👍', () => {
+    const called = reviewHand(overbetFacedHand('9h 4d', 'call'), 'hero', { overbetPolarized: true });
+    expect(called!.verdicts.find(verdict => verdict.street === 'river')!.mark).toBe('good');
+    const folded = reviewHand(overbetFacedHand('9h 4d', 'fold'), 'hero', { overbetPolarized: true });
+    expect(folded!.verdicts.find(verdict => verdict.street === 'river')!.mark).toBe('warn');
+  });
+
+  it('오버벳이 아닌 대면은 정책을 켜도 건드리지 않는다', () => {
+    const record = makeRecord({
+      seats: [{ id: 'hero', hole: 'Ah Kh', startingChips: 3_000 }, { id: 'villain', startingChips: 5_000 }],
+      board: 'Qh 7h 2s 3d 4c',
+      actions: [
+        ['preflop', 'hero', 'post-sb', 25],
+        ['preflop', 'villain', 'post-bb', 50],
+        ['preflop', 'hero', 'call', 25],
+        ['preflop', 'villain', 'check', 0],
+        ['flop', 'villain', 'raise', 50],
+        ['flop', 'hero', 'call', 50],
+        ['turn', 'villain', 'check', 0],
+        ['turn', 'hero', 'check', 0],
+        ['river', 'villain', 'check', 0],
+        ['river', 'hero', 'check', 0],
+      ],
+      winners: [{ playerId: 'villain', amount: 200 }],
+      showdown: true,
+    });
+    expect(reviewHand(record, 'hero', { overbetPolarized: true })).toEqual(reviewHand(record, 'hero'));
+  });
+});
