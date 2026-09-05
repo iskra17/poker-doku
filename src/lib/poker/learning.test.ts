@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { formatCard, formatCards } from './card-notation';
 import {
   allCards,
+  computeMdf,
   computePotOdds,
   countOutsToRank,
   countOutsVsHand,
@@ -61,6 +62,46 @@ describe('computePotOdds', () => {
     expect(() => computePotOdds(50, -100)).toThrow();
     expect(() => computePotOdds(Number.NaN, 100)).toThrow();
     expect(() => computePotOdds(50, Number.POSITIVE_INFINITY)).toThrow();
+  });
+});
+
+describe('computeMdf', () => {
+  // (벳 전 팟 P, 벳 B) → [MDF, 콜 필요 승률, 상대 블러프 손익분기] — 전부 퍼센트(0~100).
+  const GOLDEN: Array<[number, number, [number, number, number]]> = [
+    [100, 50, [66.67, 25, 33.33]],
+    [100, 200, [33.33, 40, 66.67]],
+    [300, 100, [75, 20, 25]],
+  ];
+
+  it.each(GOLDEN)('골든: 팟 %i에 %i 벳', (pot, bet, [mdf, callEquity, villainBreakeven]) => {
+    const result = computeMdf(pot, bet);
+    expect(result.mdf).toBeCloseTo(mdf, 2);
+    expect(result.callEquity).toBeCloseTo(callEquity, 2);
+    expect(result.villainBreakeven).toBeCloseTo(villainBreakeven, 2);
+  });
+
+  it('콜 필요 승률은 벳 포함 팟의 팟오즈와 같은 값 — 단위만 퍼센트다', () => {
+    for (const [pot, bet] of GOLDEN) {
+      // computePotOdds.requiredEquity는 0~1, computeMdf.callEquity는 0~100.
+      expect(computeMdf(pot, bet).callEquity).toBeCloseTo(computePotOdds(bet, pot + bet).pct, 10);
+      expect(computeMdf(pot, bet).callEquity).toBeCloseTo(computePotOdds(bet, pot + bet).requiredEquity * 100, 10);
+    }
+  });
+
+  it('MDF와 상대 블러프 손익분기는 합이 100%다', () => {
+    for (const [pot, bet] of GOLDEN) {
+      const result = computeMdf(pot, bet);
+      expect(result.mdf + result.villainBreakeven).toBeCloseTo(100, 10);
+    }
+  });
+
+  it('0/음수/비유한 입력은 throw', () => {
+    expect(() => computeMdf(0, 50)).toThrow();
+    expect(() => computeMdf(-1, 50)).toThrow();
+    expect(() => computeMdf(100, 0)).toThrow();
+    expect(() => computeMdf(100, -50)).toThrow();
+    expect(() => computeMdf(Number.NaN, 50)).toThrow();
+    expect(() => computeMdf(100, Number.POSITIVE_INFINITY)).toThrow();
   });
 });
 

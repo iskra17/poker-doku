@@ -56,6 +56,32 @@ const exactNutsCore: CoreBuilder = f => [
   '이 두 장이 실제 상대 카드라는 뜻은 아니에요. 알려진 카드로 가능한 최강 조합을 찾은 거예요.',
 ];
 
+/** 앤티 없는 변형에서 "앤티 0×5" 같은 문장이 나오지 않게 항을 통째로 생략한다. */
+function anteTerm(facts: DrillFacts): string {
+  return Number(facts.ante) > 0 ? ` + 앤티 ${v(facts, 'ante')}×${v(facts, 'players')}` : '';
+}
+
+/**
+ * D-MDF 공용 — 세 숫자가 **서로 다르다**는 걸 한 번에 보여 준다.
+ * 숫자는 전부 facts에서만 온다(여기서 다시 계산하지 않는다).
+ */
+const mdfCore: CoreBuilder = f => [
+  `팟 ${v(f, 'potBeforeBet')}은 벳을 넣기 전 금액이에요. ${v(f, 'villainName')}가 ${v(f, 'betChips')}을 벳해서 지금 중앙은 ${v(f, 'potChips')}이고요.`,
+  `MDF = ${v(f, 'potBeforeBet')} ÷ ${v(f, 'potChips')} = ${v(f, 'mdf')}% — 내 레인지 전체가 이만큼 방어하지 않으면 상대가 아무 카드로 벳해도 이익인 구간이에요.`,
+  `콜 필요 승률은 ${v(f, 'betChips')} ÷ (${v(f, 'potChips')} + ${v(f, 'betChips')}) = ${v(f, 'callEquity')}%로 다른 숫자예요. `
+    + `상대 블러프의 손익분기 필요 폴드율 ${v(f, 'villainBreakeven')}%는 또 다른 숫자고요.`,
+  'MDF는 이 핸드의 의무 콜이 아니라 레인지 전체의 기준이에요. 상대가 실제로 블러프를 덜 하면 그만큼 덜 방어해도 되는 값이고요.',
+];
+
+/** 짝 문항 전용 — "어느 숫자가 어느 자리인지"가 핵심이라 분모부터 갈라 준다. */
+const mdfPairCore: CoreBuilder = f => [
+  `두 숫자는 분모가 서로 다른 계산이에요. MDF는 ${v(f, 'potBeforeBet')} ÷ ${v(f, 'potChips')} = ${v(f, 'mdf')}%, `
+    + `콜 필요 승률은 ${v(f, 'betChips')} ÷ (${v(f, 'potChips')} + ${v(f, 'betChips')}) = ${v(f, 'callEquity')}%예요.`,
+  `그래서 올바른 짝은 「MDF ${v(f, 'mdf')}% · 필요 승률 ${v(f, 'callEquity')}%」예요.`,
+  `${v(f, 'villainBreakeven')}%는 상대 블러프의 손익분기 필요 폴드율이라 이 짝에 들어갈 자리가 없는 숫자예요.`,
+  'MDF는 내 레인지가 지켜야 할 최소 빈도, 필요 승률은 이 한 핸드로 콜할 기준이에요.',
+];
+
 const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
   'combo-count': comboCore,
   'combo-blockers': comboCore,
@@ -149,6 +175,46 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
     `내 오픈이 3벳을 맞으면 상위 ${v(f, 'fourBet')}% 안이면 4벳, ${v(f, 'callLine')}%까지는 콜, 그 밖은 폴드예요.`,
     `그래서 ${v(f, 'raiserName')}의 3벳에는 ${v(f, 'decision')}이에요.`,
   ],
+  // ── 4막 (Ch10~12): MDF · SnG 산술
+  'mdf-defend-pct': mdfCore,
+  'mdf-choice': mdfCore,
+  'mdf-vs-call-equity': mdfPairCore,
+  'sng-stack-bb': f => [
+    `스택 ${v(f, 'heroStack')}을 지금 레벨의 BB ${v(f, 'bigBlind')}으로 나눈 값이 ${v(f, 'stackBb')}BB예요.`,
+    'SnG의 기준은 칩 액수가 아니라 BB 배수예요. 같은 칩이라도 블라인드가 오르면 더 얇은 스택이 되고요.',
+    '언제든 100BB로 되돌릴 수 있는 캐시 게임과 달리, SnG는 시간이 갈수록 자동으로 얕아지는 구조예요.',
+  ],
+  'sng-m-ratio': f => [
+    `한 오르빗에 자동으로 나가는 돈은 SB ${v(f, 'smallBlind')} + BB ${v(f, 'bigBlind')}${anteTerm(f)} = ${v(f, 'orbitCost')}이에요.`,
+    `M = ${v(f, 'heroStack')} ÷ ${v(f, 'orbitCost')} = ${v(f, 'm')} — 아무것도 하지 않고 버틸 수 있는 오르빗 수예요.`,
+    '블라인드와 인원이 그대로 고정되고 다른 손익이 전혀 없다고 볼 때의 근사예요. 레벨이 계속 오르는 실제 생존 시간은 이보다 짧고요.',
+    'M이 줄면 기다릴 시간이 없다는 뜻일 뿐, 다음 액션까지 정해 주는 숫자는 아니고요.',
+  ],
+  'sng-next-level-bb': f => [
+    `지금은 레벨 ${v(f, 'level')} (${v(f, 'smallBlind')}/${v(f, 'bigBlind')}), 다음은 레벨 ${v(f, 'nextLevel')} (${v(f, 'nextSmallBlind')}/${v(f, 'nextBigBlind')})이에요.`,
+    `스택 ${v(f, 'heroStack')}은 지금 ${v(f, 'currentBb')}BB인데, 다음 레벨 BB ${v(f, 'nextBigBlind')}으로 나누면 ${v(f, 'nextBbExact')}BB — 칩은 그대로인데 ${v(f, 'dropBb')}BB가 줄어드는 셈이에요.`,
+    '블라인드 인상은 아무 액션 없이도 스택을 깎고요. 그래서 SnG는 칩을 늘릴 시점을 미리 정해 둬야 하는 구조예요.',
+  ],
+  'sng-orbit-cost': f => [
+    `남은 인원이 ${v(f, 'players')}명이니까 한 오르빗은 ${v(f, 'players')}핸드예요.`,
+    `그동안 SB ${v(f, 'smallBlind')} 한 번 + BB ${v(f, 'bigBlind')} 한 번${anteTerm(f)} = ${v(f, 'orbitCost')}을 내는 거예요.`,
+    '상황 카드의 팟과 같은 금액인데, 한 핸드의 데드머니와 한 오르빗 비용이 원래 같은 값이기 때문이에요.',
+    '이건 아무 핸드도 하지 않아도 자동으로 나가는 비용이에요. 블라인드가 오르면 이 금액도 같이 커지고요.',
+  ],
+  'sng-itm-distance': f => [
+    `상금은 ${v(f, 'paidPlaces')}위까지고, 지금 남은 인원은 ${v(f, 'players')}명이에요.`,
+    Number(f.toBust) <= 0
+      ? `남은 인원이 곧 상금 인원이라 더 기다릴 자리가 없어요. 답은 「${v(f, 'answer')}」이에요.`
+      : `${v(f, 'players')} − ${v(f, 'paidPlaces')} = ${v(f, 'toBust')}명이 더 탈락하면 상금권이에요. 답은 「${v(f, 'answer')}」이에요.`,
+    '버블에 가까울수록 살아남는 것 자체에 값이 붙지만, 그게 무조건 폴드하라는 뜻은 아니고요. 판단 기준일 뿐이에요.',
+    '상금 구간이 아예 없는 캐시 게임과 다른 지점이에요.',
+  ],
+  'sng-stack-zone': f => [
+    `스택 ${v(f, 'heroStack')} ÷ BB ${v(f, 'bigBlind')} = ${v(f, 'stackBb')}BB예요.`,
+    `${v(f, 'pushFoldMax')}BB 이하는 푸시/폴드, ${v(f, 'shortMax')}BB 이하까지는 숏스택, 그 위는 여유예요. 그래서 「${v(f, 'zone')}」이에요.`,
+    '구간은 판단 기준이지 자동 액션이 아니고요. 같은 BB라도 포지션과 앞 액션에 따라 답이 달라지는 자리예요.',
+    '캐시 게임은 언제든 리바이로 100BB로 돌아가지만, SnG는 이 구간들을 차례로 지나가는 구조예요.',
+  ],
 });
 
 /** 템플릿별 필수 facts — 하나라도 없으면 숫자가 '?'로 새므로 일반 문장으로 물러선다. */
@@ -177,6 +243,16 @@ const REQUIRED_FACTS: Readonly<Record<string, readonly string[]>> = Object.freez
   'type-exploit': ['villainName', 'type', 'vpip', 'pfr', 'exploit'],
   'range-3bet-decision': ['hand', 'pct', 'threeBet', 'callLine', 'openerName', 'decision'],
   'range-vs-3bet': ['hand', 'pct', 'fourBet', 'callLine', 'raiserName', 'decision'],
+  ...Object.fromEntries(['mdf-defend-pct', 'mdf-choice', 'mdf-vs-call-equity'].map(id => [
+    id,
+    ['potBeforeBet', 'betChips', 'potChips', 'mdf', 'callEquity', 'villainBreakeven', 'villainName'],
+  ])),
+  'sng-stack-bb': ['heroStack', 'bigBlind', 'stackBb'],
+  'sng-m-ratio': ['smallBlind', 'bigBlind', 'players', 'orbitCost', 'heroStack', 'm'],
+  'sng-next-level-bb': ['level', 'smallBlind', 'bigBlind', 'nextLevel', 'nextSmallBlind', 'nextBigBlind', 'heroStack', 'currentBb', 'nextBbExact', 'dropBb'],
+  'sng-orbit-cost': ['players', 'smallBlind', 'bigBlind', 'orbitCost'],
+  'sng-itm-distance': ['paidPlaces', 'players', 'answer'],
+  'sng-stack-zone': ['heroStack', 'bigBlind', 'stackBb', 'zone', 'pushFoldMax', 'shortMax'],
 });
 
 function genericCore(facts: DrillFacts): string[] {
@@ -198,6 +274,8 @@ function genericCore(facts: DrillFacts): string[] {
  * - 하나  : 분석가 존댓말, 건조한 정리 + 호칭 '당신'
  * - 아라  : LAG 츤데레 반말, 호칭 '너' (2막 Ch4·Ch6)
  * - 클로이: 밝은 스트리머체 반말, 영어 한 스푼, 호칭 '너' (2막 Ch5)
+ * - 비비안: 무대 은유(무대·막·관객) 반말, 어미 「~지」「~군」, 호칭 '너', 마무리 「브라보」 (4막 Ch10)
+ * - 엘레나: 짧고 건조한 반말, 문장 앞 「…」, 마무리 「…패는 거짓말을 안 해. 숫자도.」 (3·4막)
  */
 /**
  * 존댓말 풀이 본문을 반말로 — 아라·클로이(2막)는 반말 캐릭터라 공용 core 문장의 어미만 바꾼다.
@@ -221,8 +299,11 @@ export function toCasual(text: string): string {
   return out;
 }
 
+/** 반말 캐릭터 — 공용 core 문장의 존댓말 어미를 `toCasual`로 바꿔서 읽는다. */
+const CASUAL_TEACHERS: ReadonlySet<StoryTeacherId> = new Set<StoryTeacherId>(['ara', 'chloe', 'vivian', 'elena']);
+
 function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
-  const body = teacher === 'ara' || teacher === 'chloe' ? toCasual(sentences.join(' ')) : sentences.join(' ');
+  const body = CASUAL_TEACHERS.has(teacher) ? toCasual(sentences.join(' ')) : sentences.join(' ');
   switch (teacher) {
     case 'miyako':
       return `${body} 이렇게 하나씩 짚어 보면 어렵지 않답니다♪`;
@@ -234,8 +315,12 @@ function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
       return `잘 들어. ${body} …흥, 이 정도는 기본이야. 다음엔 더 빨리 답해.`;
     case 'chloe':
       return `오케이~ 정리해 볼게! ${body} 이거 완전 꿀팁이지? Let's go~!`;
+    case 'vivian':
+      return `막을 올리기 전에 대본부터 읽지. ${body} 이 계산을 아는 배우는 관객을 지루하게 하지 않는 법이군. 너도 곧 그런 무대에 서겠지 — 브라보.`;
+    case 'elena':
+      return `…간단해. ${body} …패는 거짓말을 안 해. 숫자도.`;
     default:
-      // vivian / elena — 3막에서 캐릭터별로 확장한다.
+      // 남은 교사가 생기면 여기서 캐릭터별로 확장한다 (폴백도 반드시 존댓말 유지).
       return `${body} 여기까지가 이 문제의 풀이예요.`;
   }
 }

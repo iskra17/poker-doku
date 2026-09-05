@@ -69,14 +69,27 @@ describe('buildExplanation — teacher voices', () => {
     }
   });
 
-  it('나머지 히로인은 중립 존댓말 폴백 (3막 확장 대상)', () => {
+  it('비비안: 무대 은유 반말, 엘레나: 짧고 건조한 반말 (4막)', () => {
+    const vivian = buildExplanation('outs-count', OUTS_FACTS, 'vivian');
+    expect(vivian.speaker).toBe('vivian');
+    expect(vivian.text).toContain('막');
+    expect(vivian.text).toContain('관객');
+    expect(vivian.text).toContain('너');
+    expect(vivian.text).toContain('브라보');
+    expect(vivian.text).not.toContain('♪');
+
+    const elena = buildExplanation('outs-count', OUTS_FACTS, 'elena');
+    expect(elena.speaker).toBe('elena');
+    expect(elena.text.startsWith('…간단해.')).toBe(true);
+    expect(elena.text).toContain('패는 거짓말을 안 해');
+    expect(elena.text).not.toContain('♪');
+
+    // 공용 풀이 본문의 존댓말 어미가 반말로 바뀐다 (아라/클로이와 같은 규칙).
     for (const teacher of ['vivian', 'elena'] as const) {
-      const explanation = buildExplanation('outs-count', OUTS_FACTS, teacher);
-      expect(explanation.speaker).toBe(teacher);
-      expect(explanation.text).toContain('풀이예요');
-      // 폴백도 반말로 새면 안 된다.
-      expect(explanation.text.endsWith('예요.')).toBe(true);
-      expect(explanation.text).not.toContain('♪');
+      for (const templateId of ['odds-required-equity', 'call-decision'] as const) {
+        const facts = templateId === 'call-decision' ? { toCallChips: 50, potChips: 150, requiredEquity: 25, outs: 9, equity: 20, decision: '폴드' } : ODDS_FACTS;
+        expect(buildExplanation(templateId, facts, teacher).text).not.toMatch(/(이에요|예요|고요|어요|아요|해요|돼요)[.?!,\s]/);
+      }
     }
   });
 });

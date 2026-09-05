@@ -25,12 +25,14 @@ import { NUTS_TEMPLATES } from './templates/nuts';
 import { CALL_DECISION_TEMPLATES } from './templates/call-decision';
 import { EQUITY_TEMPLATES } from './templates/equity';
 import { HAND_RANKING_TEMPLATES } from './templates/hand-ranking';
+import { MDF_TEMPLATES } from './templates/mdf';
 import { OPPONENT_TYPE_TEMPLATES } from './templates/opponent-type';
 import { OUTS_TEMPLATES } from './templates/outs';
 import { POSITION_TEMPLATES } from './templates/position';
 import { POT_ODDS_TEMPLATES } from './templates/pot-odds';
 import { RANGE_TEMPLATES } from './templates/range';
 import { SIZING_TEMPLATES } from './templates/sizing';
+import { SNG_TEMPLATES } from './templates/sng';
 import type { DrillBuilder, DrillDraft, DrillFacts, GeneratedDrillDefinition } from './templates/kit';
 import type {
   DrillAnswer,
@@ -83,6 +85,9 @@ const GENERATED_DEFINITIONS: readonly GeneratedDrillDefinition[] = [
   ...COMBO_TEMPLATES,
   ...HAND_READING_TEMPLATES,
   ...NUTS_TEMPLATES,
+  // 4막 (Ch10~12): MDF · SnG 산술
+  ...MDF_TEMPLATES,
+  ...SNG_TEMPLATES,
 ];
 
 const TEMPLATE_BY_ID = new Map<string, DrillTemplate>();

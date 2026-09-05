@@ -95,6 +95,42 @@ export function computePotOdds(toCall: number, potTotal: number): PotOdds {
 }
 
 // ---------------------------------------------------------------------------
+// MDF (최소 방어 빈도)
+// ---------------------------------------------------------------------------
+
+/** 세 값 모두 **퍼센트**(0~100)다 — `PotOdds.requiredEquity`(0~1)와 단위가 다르니 섞지 말 것. */
+export interface MdfResult {
+  /** 최소 방어 빈도 % = P / (P + B). 레인지가 이만큼 콜/레이즈해야 0에퀴티 블러프가 자동 이익을 못 본다. */
+  mdf: number;
+  /** 이 벳에 콜할 때 필요한 승률 % = B / (P + 2B) (= `computePotOdds(B, P + B).pct`). */
+  callEquity: number;
+  /** 상대 블러프의 손익분기 필요 폴드율 % = B / (P + B). */
+  villainBreakeven: number;
+}
+
+/**
+ * MDF·콜 필요 승률·상대 블러프 손익분기를 **한 스팟에서 함께** 낸다.
+ *
+ * `potBeforeBet`(P)은 상대가 벳을 넣기 **전** 중앙 총액이고, `bet`(B)은 그 벳이다
+ * (드릴 상황 카드의 `potChips`는 D-ODDS 정의대로 `P + B`, `toCallChips`는 `B`).
+ * 세 값은 서로 **다른 숫자**이며 혼동이 이 카테고리의 핵심 오답이라 한 함수가 함께 돌려준다.
+ */
+export function computeMdf(potBeforeBet: number, bet: number): MdfResult {
+  if (!Number.isFinite(potBeforeBet) || potBeforeBet <= 0) {
+    throw new Error(`computeMdf: potBeforeBet must be positive (got ${potBeforeBet})`);
+  }
+  if (!Number.isFinite(bet) || bet <= 0) {
+    throw new Error(`computeMdf: bet must be positive (got ${bet})`);
+  }
+  const potAfterBet = potBeforeBet + bet;
+  return {
+    mdf: (potBeforeBet / potAfterBet) * 100,
+    callEquity: (bet / (potAfterBet + bet)) * 100,
+    villainBreakeven: (bet / potAfterBet) * 100,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 아우츠 / 드로우 확률
 // ---------------------------------------------------------------------------
 
