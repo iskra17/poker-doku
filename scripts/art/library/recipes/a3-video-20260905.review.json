@@ -18,6 +18,22 @@
       "decision": "rejected",
       "sha256": "1617a62ed4640eda4e9d0ebe54a95e3d37bee5b03f3cf645a7514cf98bb0787c",
       "reason": "All 107 frames decoded; 12 temporal samples visually reviewed. Frame29 at1.208s opens mouth despite static-expression requirement. Second same failure: stop rain animation series, keep both rejected originals, use static CG."
+    },
+    {
+      "job_id": "sakura-victory-video-v1",
+      "decision": "approved",
+      "sha256": "1de205f3aba53951a17037e7e71accada48b686a33dfa42a7a44052e42ca661e",
+      "reason": "All 107 frames decoded. Reviewed 12 temporal samples across the whole clip plus original-resolution frame48 against approved parent. Adult identity, closed joyful eyes, gentle laughing smile variation, lap hands, outfit and table objects remain coherent. Natural small motion follows the pre-approved victory intent; no new people or dialogue acting. Final browser playback/loop check still required after paired export."
     }
-  ]
+  ],
+  "additional_original_resolution_review": {
+    "elena-river-walk-video-v1": {
+      "frame": 58,
+      "result": "Mature identity, river gaze, fingers and railing contact confirmed."
+    },
+    "sakura-victory-video-v1": {
+      "frame": 48,
+      "result": "Identity, relaxed smile, both lap hands and fixed table props confirmed."
+    }
+  }
 }
