@@ -1171,6 +1171,27 @@ describe('동적 복습 슬롯', () => {
     expect(served[0].seed).toBe((collision + 1) >>> 0);
   });
 
+  it('연속 충돌에도 미사용 seed를 찾을 때까지 올려 기존 노트를 건드리지 않는다', () => {
+    const ctx = setup([reviewChapter(1)]);
+    const base = hashSeed('run-1', REVIEW_SET_ID, 0);
+    // base..base+64가 전부 기존 노트 seed — 상한을 두면 마지막 충돌 seed가 그대로 출제된다
+    for (let offset = 0; offset <= 64; offset++) {
+      const seed = (base + offset) >>> 0;
+      ctx.repository.notes.set(`outs-count:${seed}`, { templateId: 'outs-count', seed, box: 3, dueAt: NOW - 1_000 - offset });
+    }
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    const instance = ctx.latest().drill!.instance;
+    expect(instance.templateId).toBe('outs-count');
+    expect(ctx.repository.notes.has(`outs-count:${instance.seed}`)).toBe(false);
+    expect(instance.seed).toBe((base + 65) >>> 0);
+
+    const before = ctx.repository.notes.size;
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    // 정답이 기존 노트를 졸업·삭제하면 안 된다
+    expect(ctx.repository.notes.size).toBe(before);
+    expect(ctx.repository.notes.has(`outs-count:${base}`)).toBe(true);
+  });
+
   it('원본 노트는 새 seed 정답으로 승급·삭제되지 않고, 새 오답만 새 노트를 만든다', () => {
     const ctx = setup([reviewChapter(1)]);
     ctx.repository.notes.set('a', note('outs-count', 4_242, NOW - 1_000));

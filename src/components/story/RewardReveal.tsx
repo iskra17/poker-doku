@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { playEffect } from '@/lib/sound/effects';
 import { playStinger } from '@/lib/sound/stingers';
+import { formatObjectiveProgress } from '@/lib/story/story-live-rules';
 import { STAGE_TIMING_MS, buildRewardRevealPlan, stageAutoAdvanceMs, type RevealStage } from '@/lib/story/reward-view';
 import type { ChapterResultView } from '@/lib/story/views';
 import { usePresentationStore } from '@/lib/store/presentation-store';
@@ -158,7 +159,10 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
               <li key={objective.id} className={`flex items-center justify-between rounded-lg border border-mystic/15 px-2 py-1${objective.group === 'checklist' ? ' ml-3' : ''}`}>
                 <span className="text-ink">{objective.group === 'checklist' ? '└ ' : objective.primary ? '★ ' : '☆ '}{objective.label}</span>
                 <span className={objective.achieved === null ? 'text-ink-dim' : objective.achieved ? 'text-cyber' : 'text-blossom'}>
-                  {objective.achieved === null ? '해당 없음' : objective.achieved ? '달성' : '미달'}
+                  {/* 체크리스트 부모는 라벨이 고정 문구라 실제 진행값(5/3 달성)을 HUD와 같은 규칙으로 붙인다 */}
+                  {objective.kind === 'any-k-of' && formatObjectiveProgress(objective)
+                    ? formatObjectiveProgress(objective)
+                    : objective.achieved === null ? '해당 없음' : objective.achieved ? '달성' : '미달'}
                 </span>
               </li>
             ))}

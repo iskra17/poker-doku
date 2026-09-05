@@ -1244,6 +1244,56 @@ describe('executed-any', () => {
     expect(evaluateObjective(executed, tallyOf({ record: cbetHand(2, 'raise') }), true).achieved).toBe(true);
   });
 
+  /** 프리플랍 콜 → 플랍·턴 체크 → 리버 첫 자유 액션. 오픈·c벳 기회는 없다. */
+  function riverFirstFreeHand(hero: string, board: string, riverAction: 'raise' | 'check'): CompletedHandRecord {
+    const tail: ActionTuple[] = riverAction === 'raise'
+      ? [
+          ['river', 'hero', 'raise', 400],
+          ['river', 'villain', 'fold', 0],
+          ['river', 'hero', 'uncalled-return', 400],
+        ]
+      : [
+          ['river', 'hero', 'check', 0],
+          ['river', 'villain', 'raise', 400],
+          ['river', 'hero', 'fold', 0],
+          ['river', 'villain', 'uncalled-return', 400],
+        ];
+    return makeRecord({
+      seats: [{ id: 'hero', hole: hero, startingChips: 2_000 }, { id: 'villain', startingChips: 2_000 }],
+      board,
+      actions: [
+        ['preflop', 'villain', 'post-sb', 25],
+        ['preflop', 'hero', 'post-bb', 50],
+        ['preflop', 'villain', 'raise', 150],
+        ['preflop', 'hero', 'call', 100],
+        ['flop', 'villain', 'check', 0],
+        ['flop', 'hero', 'check', 0],
+        ['turn', 'villain', 'check', 0],
+        ['turn', 'hero', 'check', 0],
+        ...tail,
+      ],
+      winners: [{ playerId: riverAction === 'raise' ? 'hero' : 'villain', amount: 300 }],
+    });
+  }
+
+  it('보드만 만든 투페어의 리버 벳은 밸류 실행이 아니고 기회도 아니다', () => {
+    const board = 'Ks Kd 7h 7c 2s';
+    const bet = deriveHeroHandFacts(riverFirstFreeHand('Ac Qd', board, 'raise'), 'hero');
+    expect(bet.execValueOpportunity).toBe(false);
+    expect(bet.execValue).toBe(false);
+    expect(evaluateObjective(executed, tallyOf({ record: riverFirstFreeHand('Ac Qd', board, 'raise') }), true).achieved).toBeNull();
+    // 같은 보드에서 체크 → 폴드도 "없는 기회"라 미측정이어야 한다 (false가 아니다)
+    expect(deriveHeroHandFacts(riverFirstFreeHand('Ac Qd', board, 'check'), 'hero').execValueOpportunity).toBe(false);
+    expect(evaluateObjective(executed, tallyOf({ record: riverFirstFreeHand('Ac Qd', board, 'check') }), true).achieved).toBeNull();
+
+    // 홀카드가 페어에 관여하면 그대로 기회·실행이다
+    const involved = deriveHeroHandFacts(riverFirstFreeHand('7d 5c', board, 'raise'), 'hero');
+    expect([involved.execValueOpportunity, involved.execValue]).toEqual([true, true]);
+    // 기존 사실은 불변 — riverValueBet*는 여전히 isTopPairOrBetter 기준이다
+    expect(bet.riverValueBetOpportunity).toBe(true);
+    expect(bet.riverValueBet).toBe(true);
+  });
+
   it('리버 밸류 기회는 체크 뒤 폴드로 지워지지 않는다', () => {
     // 톱페어로 리버 첫 자유 액션을 체크한 뒤 상대 벳에 폴드한다
     const record = makeRecord({

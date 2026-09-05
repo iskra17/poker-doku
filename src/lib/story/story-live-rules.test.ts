@@ -294,5 +294,7 @@ describe('체크리스트 블록 (any-k-of)', () => {
     expect(formatObjectiveDetailProgress({ progress: 5, target: 3, kind: 'any-k-of' })).toBe('5개 달성 · 기준 3개');
     // 요구치 0(판정 가능 항목 없음)도 그대로 보여 준다
     expect(formatObjectiveProgress({ progress: 0, target: 0, kind: 'any-k-of' })).toBe('0/0 달성');
+    // 판정 불가(target null)면 표기 없음 — 결산·HUD가 같은 규칙을 쓴다
+    expect(formatObjectiveProgress({ progress: 0, target: null, kind: 'any-k-of' })).toBeNull();
   });
 });

@@ -51,6 +51,12 @@ export function getChapter(id: ChapterId): Chapter | undefined {
 export interface ValidateChaptersOptions {
   /** 존재하는 드릴 템플릿 id 집합 — 없으면 templateId 존재 검사를 건너뛴다 */
   templateIds?: ReadonlySet<string>;
+  /**
+   * **생성** 드릴 템플릿 id 집합 — 주면 `reviewPool` 항목이 생성 템플릿인지까지 검사한다.
+   * 수기 문항은 seed를 바꿔도 같은 문제라 복습 후보가 될 수 없고, 런타임 필터가 전부 걸러
+   * 드릴 세트가 통째로 건너뛰어진다(조용한 콘텐츠 누락).
+   */
+  generatedTemplateIds?: ReadonlySet<string>;
 }
 
 const CHAPTER_ID_PATTERN = /^act[1-4]-ch\d{2}$/;
@@ -189,6 +195,8 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
             for (const templateId of step.reviewPool ?? []) {
               if (options.templateIds && !options.templateIds.has(templateId)) {
                 errors.push(`${stepAt}: unknown reviewPool template ${templateId}`);
+              } else if (options.generatedTemplateIds && !options.generatedTemplateIds.has(templateId)) {
+                errors.push(`${stepAt}: reviewPool template ${templateId} is not a generated template`);
               }
             }
           } else if (step.reviewPool !== undefined) {

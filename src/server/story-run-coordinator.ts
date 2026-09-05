@@ -1050,10 +1050,12 @@ export class StoryRunCoordinator {
       const templateId = isReview ? review.templateIds[reviewCursor++] : slot.templateId;
       if (!templateId || getDrillTemplate(templateId) === undefined) return;
       let seed = this.slotSeed(run, step.id, slot, slotIndex, day.date);
-      // 복습 슬롯은 노트의 seed를 재사용하지 않는다 (같은 문제 암기 방지) — 충돌하면 결정론적으로 +1
+      // 복습 슬롯은 노트의 seed를 **절대** 재사용하지 않는다 (같은 문제 암기 방지 + 정답 처리가
+      // 그 노트를 졸업·삭제해 버리는 사고 방지) — 미사용 seed를 찾을 때까지 결정론적으로 +1.
+      // 노트 집합은 유한하므로 반드시 끝난다(상한을 두면 상한만큼 연속 충돌한 seed가 그대로 나간다).
       if (isReview) {
         const taken = review.noteSeeds.get(templateId);
-        for (let guard = 0; taken?.has(seed) && guard < 64; guard++) seed = (seed + 1) >>> 0;
+        while (taken?.has(seed)) seed = (seed + 1) >>> 0;
       }
       queue.push({ slotIndex, templateId, seed, attempt: 0 });
     });

@@ -367,6 +367,7 @@ export interface HeroHandFacts {
   execOpen: boolean;
   execCbetOpportunity: boolean;
   execCbet: boolean;
+  /** 리버 첫 자유 액션 시점의 **홀카드 관여** 톱페어+ (보드만 만든 메이드는 제외) */
   execValueOpportunity: boolean;
   execValue: boolean;
 }
@@ -582,9 +583,11 @@ export function deriveHeroHandFacts(record: CompletedHandRecord, heroId: string)
         if (street === 'river' && riverFirstFree === null && toCall === 0) {
           riverFirstFree = action.kind;
           if (action.kind === 'raise' || action.kind === 'all-in') riverBet.current = { amount: action.amount, potBefore: state.pot };
-          // executed-any 전용: 기회는 이 시점에 확정하고 이후 폴드로 지우지 않는다
+          // executed-any 전용: 기회는 이 시점에 확정하고 이후 폴드로 지우지 않는다.
+          // **홀카드 관여까지 요구한다** — 보드만 만든 투페어(KK772에 AQ)로 리버에 벳하면
+          // 밸류가 아니라 블러프라, 기회로도 실행으로도 세면 안 된다.
           const riverBoard = hole ? boardForStreet(record.board, 'river') : null;
-          if (riverBoard && hole && isTopPairOrBetter(hole, riverBoard)) {
+          if (riverBoard && hole && isTopPairOrBetter(hole, riverBoard) && heroMadeWithHole(hole, riverBoard)) {
             facts.execValueOpportunity = true;
             facts.execValue = action.kind === 'raise' || action.kind === 'all-in';
           }

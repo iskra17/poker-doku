@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCards } from '@/lib/poker/card-notation';
 import { makeChapter, makeChapterChain, makeScene, makeTable } from '../test-fixtures';
 import type { Chapter, LessonBlock, Scene, SceneSayLine, Step } from '../types';
+import { DRILL_TEMPLATE_IDS, GENERATED_DRILL_DEFINITIONS } from '../drills/generator';
 import { findRequiresCycle, getChapter, STORY_CHAPTERS, validateChapters } from './index';
 
 const TEMPLATE_IDS = new Set(['rank-who-wins', 'pos-name']);
@@ -313,6 +314,26 @@ describe('4막 공유 계약 검증 (체크리스트 · 동적 복습 슬롯 · 
       reviewPool: ['nope'],
     }));
     expect(validateChapters([unknownPool], { templateIds: TEMPLATE_IDS }).some(e => e.includes('unknown reviewPool template nope'))).toBe(true);
+  });
+
+  it('수기 전용 reviewPool은 거절한다 — 런타임이 전부 걸러 세트가 통째로 건너뛰어진다', () => {
+    const generatedIds = new Set(GENERATED_DRILL_DEFINITIONS.map(definition => definition.template.id));
+    const authoredPool = patchDrills(step => ({
+      ...step,
+      drills: [{ templateId: '*review', seedPolicy: 'per-run' }],
+      reviewPool: ['act-ch10-overbet-fold'],
+    }));
+    const errors = validateChapters([authoredPool], { templateIds: DRILL_TEMPLATE_IDS, generatedTemplateIds: generatedIds });
+    expect(errors.some(e => e.includes('reviewPool template act-ch10-overbet-fold is not a generated template'))).toBe(true);
+    // generatedTemplateIds를 주지 않으면 기존처럼 존재 검사만 한다
+    expect(validateChapters([authoredPool], { templateIds: DRILL_TEMPLATE_IDS })).toEqual([]);
+  });
+
+  it('레지스트리 전체가 생성 템플릿 집합 검사까지 통과한다', () => {
+    expect(validateChapters(STORY_CHAPTERS, {
+      templateIds: DRILL_TEMPLATE_IDS,
+      generatedTemplateIds: new Set(GENERATED_DRILL_DEFINITIONS.map(definition => definition.template.id)),
+    })).toEqual([]);
   });
 
   it("'heroine-fill'은 스파링에서만 허용하고 반복 토큰은 중복 캐릭터가 아니다", () => {
