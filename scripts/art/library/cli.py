@@ -9,6 +9,7 @@ from .recipe import import_manifest
 from .worker import Worker
 from .review import decide,export,sheet
 from .video_pair import export_video_pair
+from .external_image import import_external_image
 
 def parser():
     p=argparse.ArgumentParser(description='Local general-art durable queue; no automatic retry, approval or export')
@@ -16,6 +17,7 @@ def parser():
     commands=p.add_subparsers(dest='command',required=True)
     init=commands.add_parser('init'); init.add_argument('--target-root',required=True); init.add_argument('--input-root',default='D:/AI-Image-Video/input'); init.add_argument('--output-root',default='D:/AI-Image-Video/output')
     commands.add_parser('import').add_argument('manifest')
+    commands.add_parser('import-external-image').add_argument('manifest')
     commands.add_parser('status'); commands.add_parser('pause'); commands.add_parser('resume'); commands.add_parser('sheet')
     run=commands.add_parser('run'); run.add_argument('--limit',type=int); run.add_argument('--watch',action='store_true'); run.add_argument('--max-wait',type=float,default=900)
     reconcile=commands.add_parser('reconcile'); action=reconcile.add_mutually_exclusive_group(); action.add_argument('--mark-failed',metavar='INTENT'); action.add_argument('--retry',metavar='JOB'); reconcile.add_argument('--reason')
@@ -33,6 +35,7 @@ def main(argv=None):
         store=Store(args.root)
         try:
             if args.command=='import': result=import_manifest(store,args.manifest)
+            elif args.command=='import-external-image': result=import_external_image(store,args.manifest)
             elif args.command=='status':
                 result=dict(config=store.config,paused=store.paused(),jobs=store.rows('SELECT id,kind,character,scene,seed,state,attempt,prompt_id,output,output_hash,media,error FROM jobs ORDER BY created,id'),attempts=store.rows('SELECT * FROM attempts ORDER BY started'))
             elif args.command in ('pause','resume'): store.pause(args.command=='pause'); result={'paused':store.paused()}

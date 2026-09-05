@@ -104,9 +104,12 @@ def approved_parent(store,parent):
     review=store.rows('SELECT * FROM reviews WHERE job_id=? ORDER BY id DESC LIMIT 1',(parent['id'],))
     if not review or review[0]['decision']!='approved' or review[0]['output_hash']!=parent['output_hash'] or sha(parent['output'])!=parent['output_hash']:
         raise ValueError('Video parent approval is stale')
+    from .external_image import check_external_receipt
+    check_external_receipt(store,parent)
 
 def prepare_graph(store,job,attempt,model_cache=None):
     recipe=store.recipe(job['recipe_hash'])
+    if recipe.get('source_type')=='external-image': raise ValueError('External images are non-executable source receipts')
     if fingerprint(recipe)!=job['recipe_hash']: raise ValueError('Recipe ledger hash mismatch')
     verify_file(recipe['workflow'])
     for asset in recipe.get('models',[]):

@@ -78,3 +78,42 @@ The command never edits `VIDEO_AVAILABLE`. Root must wait for the returned `stat
 ```
 
 Tests launch only a local CPU fake Comfy HTTP process on a random port. They use temporary databases, references, locks and game-export roots, including fixture approvals. Process death is injected only by a test child script. Production CLI has no lock override or crash injection. The fake queue/history layout and PNG metadata mirror installed Comfy source. Real GPU completion and eight accepted distinct scenes are separate handoff gates.
+
+
+## External GPT Image 2 source receipts
+
+Use `import-external-image` for an already produced, fully clothed adult general-art PNG. This command does not generate images, contact Comfy, create a generation attempt, or approve the result. It records an explicit `external-image` recipe/spec with provider `gpt-image-2`, preserves the PNG bytes and provenance document in immutable copies under the job root, and starts at `generated` with no reviews. The legacy job seed column contains zero only because it is NOT NULL; the receipt records `seed: null` and `seed_status: not-applicable`.
+
+Create one JSON document per approved scene intent (paths resolve relative to this document):
+
+```json
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "sakura-library-v2",
+  "character": "sakura",
+  "scene": "library",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {"path": "source.png", "sha256": "<exact lowercase SHA256>"},
+  "provenance": {"path": "provenance.md", "sha256": "<exact lowercase SHA256>"},
+  "prompt": "The actual approved general scene generation prompt",
+  "angle": "profile",
+  "gaze": "book",
+  "expression": "happy",
+  "outfit": "cream cardigan"
+}
+```
+
+The provenance document should contain the generation tool/provider, actual prompt, reference paths/hashes and tool/output identifiers available to the operator. Import validates the supplied provider declaration and exact document bytes; it does not independently attest the provider. Keep that document and the source PNG unchanged and available: review, repeated import and video-parent checks verify both originals and their copies. No PNG metadata is added or rewritten. The immutable spec and `external-images/<id>--<spec_hash>/receipt.json` are the source receipt, distinct from Comfy intent metadata.
+
+```powershell
+& $artPython -B scripts/art/library-worker.py --root $artRoot import-external-image '<external-source.json>'
+# Existing exact-byte review is still mandatory after inspecting the complete PNG:
+& $artPython -B scripts/art/library-worker.py --root $artRoot review 'sakura-library-v2' approved --sha256 '<source SHA256>' --reason 'Full-resolution scene, identity and anatomy review'
+```
+
+Use that job ID as `parent_job` in the existing approved H3 video manifest. Its parent input must use the returned `output` path and `output_hash`. Video import/preflight still requires the latest approved review and unchanged parent/provenance bytes. Video recipe, model verification, metadata and export rules are unchanged. An external source cannot execute as a Comfy recipe, including if mistakenly put in pending state. Reimport of the identical receipt is idempotent and preserves any review; a changed ID specification, source, provenance, target root or copied artifact is rejected. Imported files are never game exports.
+
+Registration holds a separate per-ledger CPU lock and uses a short SQLite transaction after copy/decode verification. Existing staging is never overwritten. If a process stops after copying but before committing its job, the next registration reports an unrecorded staging collision; investigate that exact folder before any cleanup. Registration does not adopt or remove unrecorded files automatically.

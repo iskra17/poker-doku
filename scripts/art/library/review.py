@@ -18,6 +18,8 @@ def pending_path(root,path):
     return path
 
 def checked_output(store, job):
+    from .external_image import check_external_receipt
+    check_external_receipt(store,job)
     if not job['output'] or not job['output_hash']: raise ValueError('Job has no generated result')
     path=confined(store.root,job['output'])
     if sha(path)!=job['output_hash']: raise ValueError('Result changed since generation; previous review is invalid')
