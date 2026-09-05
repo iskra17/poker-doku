@@ -131,6 +131,16 @@ export function sceneCgChapterId(id: SceneCgId): string {
   return SCENE_CG_CHAPTER[id];
 }
 
+/** Logical IDs remain stable; replacement artwork and its video pair share a versioned stem. */
+export const EVENT_CG_V2_IDS: readonly SceneCgId[] = [
+  'act1-ch02-garden-walk', 'act1-ch02-victory', 'act1-ch02-rain-veranda', 'act1-ch02-library',
+  'act3-ch09-lesson', 'act3-ch09-river-walk', 'act3-ch09-snow-window', 'act3-ch09-analysis',
+];
+
+export function sceneCgAssetStem(id: SceneCgId): string {
+  return `scene-${id}${EVENT_CG_V2_IDS.includes(id) ? '-v2' : ''}`;
+}
+
 export interface SceneCg {
   id: SceneCgId;
   src: string;
@@ -140,7 +150,7 @@ export interface SceneCg {
 /** 배치된 CG만 — 미등록·미배치면 null */
 export function getSceneCg(id: string | null | undefined): SceneCg | null {
   if (!isSceneCgId(id) || !AVAILABLE.has(id)) return null;
-  return { id, src: `/assets/story/cg/scene-${id}.webp`, title: SCENE_CG_TITLE[id] };
+  return { id, src: `/assets/story/cg/${sceneCgAssetStem(id)}.webp`, title: SCENE_CG_TITLE[id] };
 }
 
 /** 챕터 시작 프리로드용 */

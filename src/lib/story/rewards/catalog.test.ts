@@ -23,6 +23,8 @@ function state(overrides: Partial<StoryRewardState> = {}): StoryRewardState {
 
 describe('story reward catalog', () => {
   it('Ch9 보상 CG는 아트 담당이 등록한 실제 씬 경로를 재사용한다', () => {
+    expect(getSceneCg('act3-ch09-analysis')?.src).toBe('/assets/story/cg/scene-act3-ch09-analysis-v2.webp');
+    expect(getSceneCg('act3-ch09-snow-window')?.src).toBe('/assets/story/cg/scene-act3-ch09-snow-window-v2.webp');
     expect(getStoryRewardDefinition('story-cg-act3-luna-analysis')?.art).toBe(getSceneCg('act3-ch09-analysis')?.src);
     expect(getStoryRewardDefinition('story-cg-act3-elena-snow')?.art).toBe(getSceneCg('act3-ch09-snow-window')?.src);
   });

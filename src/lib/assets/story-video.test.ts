@@ -11,16 +11,15 @@ describe('story-video 매니페스트', () => {
     for (const [index, id] of ['scene-act1-ch02-victory', 'scene-act3-ch09-river-walk'].entries()) {
       const pair = supply.pairs.find((entry: { job_id: string }) => entry.job_id === jobs[index]);
       expect(pair.state).toBe('complete');
-      const media = getStoryVideo(id)!;
       for (const format of ['mp4', 'webm'] as const) {
-        const path = resolve(`public${media[format]}`);
+        const path = resolve(`public/assets/story/video/${id}.${format}`);
         expect(existsSync(path)).toBe(true);
         expect(statSync(path).size).toBeLessThanOrEqual(2_500_000);
         expect(createHash('sha256').update(readFileSync(path)).digest('hex')).toBe(pair.definition.parts[format].media.sha256);
         expect(pair.definition.parts[format].media.frames).toBe(106);
       }
     }
-    expect(hasStoryVideo('scene-act1-ch02-rain-veranda')).toBe(false);
+
   });
   it('미등록 id는 null — 뷰어는 정지 CG로 폴백', () => {
     expect(getStoryVideo('scene-act9-ch99-prologue')).toBeNull();
@@ -58,12 +57,44 @@ describe('story-video 매니페스트', () => {
       }
     }
     for (const chapter of ['act1-ch01', 'act1-ch02', 'act1-ch03', 'act2-ch04', 'act2-ch05', 'act2-ch06']) {
-      for (const part of ['prologue', 'epilogue']) {
+      for (const part of ['prologue', 'climax', 'epilogue']) {
         expect(getStoryVideo(sceneCgVideoId(`${chapter}-${part}`))).toEqual({
           webm: `/assets/story/video/scene-${chapter}-${part}.webm`,
           mp4: `/assets/story/video/scene-${chapter}-${part}.mp4`,
         });
       }
+    }
+  });
+});
+
+
+describe('event CG v2 routing', () => {
+  it('preserves the exact unversioned paths of all 49 original videos', () => {
+    const ids = [
+      'story-cg-act1-belt-white', 'story-cg-act1-belt-yellow', 'story-cg-act1-draco-boss', 'story-cg-act1-sakura-garden',
+      'story-cg-act2-paeng-boss', 'story-cg-act2-ara-victory', 'story-cg-act2-belt-blue',
+      ...['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'].flatMap(character => [5, 10, 15, 20].map(level => `${character}-scene-lv${level}`)),
+      ...['act1-ch01', 'act1-ch02', 'act1-ch03', 'act2-ch04', 'act2-ch05', 'act2-ch06'].flatMap(chapter => ['prologue', 'climax', 'epilogue'].map(part => `scene-${chapter}-${part}`)),
+    ];
+    expect(new Set(ids).size).toBe(49);
+    for (const id of ids) {
+      expect(hasStoryVideo(id)).toBe(true);
+      expect(getStoryVideo(id)).toEqual({ webm: `/assets/story/video/${id}.webm`, mp4: `/assets/story/video/${id}.mp4` });
+    }
+  });
+
+  it('routes exactly the eight logical scene IDs to matching versioned video pairs', () => {
+    const ids = ['act1-ch02-garden-walk', 'act1-ch02-victory', 'act1-ch02-rain-veranda', 'act1-ch02-library', 'act3-ch09-lesson', 'act3-ch09-river-walk', 'act3-ch09-snow-window', 'act3-ch09-analysis'];
+    for (const id of ids) {
+      expect(hasStoryVideo(sceneCgVideoId(id))).toBe(true);
+      expect(getStoryVideo(sceneCgVideoId(id))).toEqual({ webm: `/assets/story/video/scene-${id}-v2.webm`, mp4: `/assets/story/video/scene-${id}-v2.mp4` });
+    }
+  });
+  it('reuses scene videos for both Ch9 reward IDs without changing reward identity', () => {
+    for (const [reward, scene] of [['story-cg-act3-luna-analysis', 'act3-ch09-analysis'], ['story-cg-act3-elena-snow', 'act3-ch09-snow-window']]) {
+      expect(hasStoryVideo(reward)).toBe(true);
+      expect(getStoryVideo(reward)).toEqual(getStoryVideo(sceneCgVideoId(scene)));
+      expect(getStoryVideo(reward)?.mp4).toBe(`/assets/story/video/scene-${scene}-v2.mp4`);
     }
   });
 });

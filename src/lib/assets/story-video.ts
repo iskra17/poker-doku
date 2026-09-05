@@ -1,3 +1,5 @@
+import { EVENT_CG_V2_IDS, sceneCgAssetStem } from './story-cgs';
+
 /**
  * 컷신 영상 매니페스트 — CG id → 짧은 앰비언트 루프(약 4.4초·24fps·768×1152, 첫 프레임 = 끝 프레임 = CG라 이음새 없이 반복).
  * 생성은 RTX 5090 로컬 ComfyUI의 MiniMax H3 fl2va(first_frame=last_frame=CG, turbo 8-step LoRA) — 절차·프롬프트는
@@ -43,15 +45,31 @@ const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   'scene-act2-ch04-prologue', 'scene-act2-ch04-climax', 'scene-act2-ch04-epilogue',
   'scene-act2-ch05-prologue', 'scene-act2-ch05-climax', 'scene-act2-ch05-epilogue',
   'scene-act2-ch06-prologue', 'scene-act2-ch06-climax', 'scene-act2-ch06-epilogue',
-  // 2026-09-05: exact-byte reviewed H3 pairs, both formats fully exported.
-  'scene-act1-ch02-victory', 'scene-act3-ch09-river-walk',
+  // Event CG replacements ship with matching v2 video pairs.
+  ...EVENT_CG_V2_IDS.map(sceneCgVideoId),
 ]);
 
+const VIDEO_ALIASES: ReadonlyMap<string, string> = new Map([
+  ['story-cg-act3-luna-analysis', sceneCgVideoId('act3-ch09-analysis')],
+  ['story-cg-act3-elena-snow', sceneCgVideoId('act3-ch09-snow-window')],
+]);
+const VERSIONED_VIDEO_STEMS: ReadonlyMap<string, string> = new Map(
+  EVENT_CG_V2_IDS.map(id => [sceneCgVideoId(id), sceneCgAssetStem(id)]),
+);
+
+function resolveVideoStem(cgId: string | null | undefined): string | null {
+  if (!cgId) return null;
+  const id = VIDEO_ALIASES.get(cgId) ?? cgId;
+  if (!VIDEO_AVAILABLE.has(id)) return null;
+  return VERSIONED_VIDEO_STEMS.get(id) ?? id;
+}
+
 export function hasStoryVideo(cgId: string | null | undefined): boolean {
-  return !!cgId && VIDEO_AVAILABLE.has(cgId);
+  return resolveVideoStem(cgId) !== null;
 }
 
 export function getStoryVideo(cgId: string | null | undefined): StoryVideo | null {
-  if (!hasStoryVideo(cgId)) return null;
-  return { webm: `/assets/story/video/${cgId}.webm`, mp4: `/assets/story/video/${cgId}.mp4` };
+  const stem = resolveVideoStem(cgId);
+  if (!stem) return null;
+  return { webm: `/assets/story/video/${stem}.webm`, mp4: `/assets/story/video/${stem}.mp4` };
 }

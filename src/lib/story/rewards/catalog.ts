@@ -1,3 +1,4 @@
+import { getSceneCg } from '@/lib/assets/story-cgs';
 import type { StoryCurriculum } from '../curriculum';
 /**
  * 수련 스토리 보상 카탈로그 — **단일 소스**(서버 reconcile 지급·허브 미리보기·갤러리·결산 폴백이 함께 쓴다).
@@ -129,8 +130,8 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   def({ id: 'story-chips-act3-ch08-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '궁금하면 콜 S등급 연습 칩 300.', trigger: gradeS('act3-ch08') }),
   def({ id: 'story-title-shadow-reader', kind: 'title', equipSlot: 'title', name: '그림자 읽는 사람', description: '액션의 순서와 남은 조합으로 함정을 읽는다.', trigger: first('act3-ch09') }),
   def({ id: 'story-chips-act3-ch09-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '함정 돌파 상금', description: '그림자와 함정 첫 완주 연습 칩 500.', trigger: first('act3-ch09') }),
-  def({ id: 'story-cg-act3-luna-analysis', kind: 'cg', equipSlot: null, characterId: 'elena', name: '칩 앞의 침묵', description: '루나와의 결정들을 엘레나와 다시 놓아 보는 시간.', trigger: first('act3-ch09'), art: '/assets/story/cg/scene-act3-ch09-analysis.webp', cutscene: { kind: 'boss-win', characterId: 'elena', title: '함정 뒤의 이유', caption: '…결과를 지우면 네 선택이 보여. 오늘은 그 이유가 들렸어.' } }),
-  def({ id: 'story-cg-act3-elena-snow', kind: 'cg', equipSlot: null, characterId: 'elena', name: '창밖의 흰 여백', description: '계절이 바뀐 도장의 창가, 엘레나와 첫눈을 바라본다.', trigger: gradeS('act3-ch09'), art: '/assets/story/cg/scene-act3-ch09-snow-window.webp', cutscene: { kind: 'event-cg', characterId: 'elena', title: '창밖의 흰 여백', caption: '…다음 패가 없어도 조금 더 앉아 있고 싶었어.' } }),
+  def({ id: 'story-cg-act3-luna-analysis', kind: 'cg', equipSlot: null, characterId: 'elena', name: '칩 앞의 침묵', description: '루나와의 결정들을 엘레나와 다시 놓아 보는 시간.', trigger: first('act3-ch09'), art: getSceneCg('act3-ch09-analysis')?.src, cutscene: { kind: 'boss-win', characterId: 'elena', title: '함정 뒤의 이유', caption: '…결과를 지우면 네 선택이 보여. 오늘은 그 이유가 들렸어.' } }),
+  def({ id: 'story-cg-act3-elena-snow', kind: 'cg', equipSlot: null, characterId: 'elena', name: '창밖의 흰 여백', description: '계절이 바뀐 도장의 창가, 엘레나와 첫눈을 바라본다.', trigger: gradeS('act3-ch09'), art: getSceneCg('act3-ch09-snow-window')?.src, cutscene: { kind: 'event-cg', characterId: 'elena', title: '창밖의 흰 여백', caption: '…다음 패가 없어도 조금 더 앉아 있고 싶었어.' } }),
   def({ id: 'story-chips-act3-ch09-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '그림자와 함정 S등급 연습 칩 300.', trigger: gradeS('act3-ch09') }),
   def({ id: 'story-felt-brown-belt', kind: 'felt', equipSlot: 'felt', name: '갈색띠 도장 펠트', description: '3막 읽기 수련을 마친 갈색띠 테이블 펠트.', trigger: act(3) }),
   def({ id: 'story-chips-act3-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '3막 수료금', description: '3막 세 수업 완주 연습 칩 1,000.', trigger: act(3) }),

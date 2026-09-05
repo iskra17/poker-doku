@@ -19,6 +19,8 @@ function allSayLines(chapter: Chapter): SceneSayLine[] {
   return out;
 }
 
+const v2Ids = ['act1-ch02-garden-walk', 'act1-ch02-victory', 'act1-ch02-rain-veranda', 'act1-ch02-library', 'act3-ch09-lesson', 'act3-ch09-river-walk', 'act3-ch09-snow-window', 'act3-ch09-analysis'];
+
 describe('story-cgs 매니페스트', () => {
   it('챕터 데이터가 쓰는 cg id는 전부 등록된 유니온이고, 챕터 id와 맞는다', () => {
     for (const chapter of STORY_CHAPTERS) {
@@ -45,19 +47,20 @@ describe('story-cgs 매니페스트', () => {
     // 배치 여부와 무관하게 경로 규약은 고정
     for (const id of SCENE_CG_IDS) {
       const cg = getSceneCg(id);
-      if (cg) expect(cg.src).toBe(`/assets/story/cg/scene-${id}.webp`);
+      expect(cg?.src).toBe(`/assets/story/cg/scene-${id}${v2Ids.includes(id) ? '-v2' : ''}.webp`);
     }
     expect(listSceneCgSources(['nope', undefined])).toEqual([]);
+    expect(listSceneCgSources(['act1-ch02-library', 'act1-ch02-library'])).toEqual(['/assets/story/cg/scene-act1-ch02-library-v2.webp']);
   });
   it('등록 ID·실제 파일·첫 공급 해시·명시 챕터 맵이 일치한다', () => {
-    const files = readdirSync('public/assets/story/cg').filter(name => name.startsWith('scene-') && name.endsWith('.webp'));
+    const files = readdirSync('public/assets/story/cg').filter(name => name.startsWith('scene-') && name.endsWith('.webp') && !name.endsWith('-v2.webp'));
     expect(files.sort()).toEqual(SCENE_CG_IDS.map(id => `scene-${id}.webp`).sort());
     expect(Object.keys(SCENE_CG_CHAPTER).sort()).toEqual([...SCENE_CG_IDS].sort());
     const supply = JSON.parse(readFileSync('scripts/art/library/recipes/first-supply-20260905.json', 'utf8')) as { exports: { scene_cg_id: string; target: string; output_sha256: string }[] };
     expect(supply.exports).toHaveLength(8);
     for (const asset of supply.exports) {
       expect(isSceneCgId(asset.scene_cg_id)).toBe(true);
-      expect(getSceneCg(asset.scene_cg_id)?.src).toBe(asset.target.replace('public', ''));
+      expect(asset.target).toBe(`public/assets/story/cg/scene-${asset.scene_cg_id}.webp`);
       expect(createHash('sha256').update(readFileSync(asset.target)).digest('hex')).toBe(asset.output_sha256);
       expect(sceneCgChapterId(asset.scene_cg_id as never)).toBe(asset.scene_cg_id.startsWith('act1-') ? 'act1-ch02' : 'act3-ch09');
     }
