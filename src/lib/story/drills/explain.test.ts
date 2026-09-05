@@ -69,12 +69,14 @@ describe('buildExplanation — teacher voices', () => {
     }
   });
 
-  it('비비안: 무대 은유 반말, 엘레나: 짧고 건조한 반말 (4막)', () => {
+  it('비비안: 무대 은유 존댓말·「자기」, 엘레나: 짧고 건조한 반말 (4막)', () => {
     const vivian = buildExplanation('outs-count', OUTS_FACTS, 'vivian');
     expect(vivian.speaker).toBe('vivian');
     expect(vivian.text).toContain('막');
     expect(vivian.text).toContain('관객');
-    expect(vivian.text).toContain('너');
+    // Ch7·Ch10 씬과 수기 문항이 전부 존댓말 「자기」라 생성 해설도 같은 말투다
+    expect(vivian.text).toContain('자기');
+    expect(vivian.text).not.toContain('너');
     expect(vivian.text).toContain('브라보');
     expect(vivian.text).not.toContain('♪');
 
@@ -84,12 +86,12 @@ describe('buildExplanation — teacher voices', () => {
     expect(elena.text).toContain('패는 거짓말을 안 해');
     expect(elena.text).not.toContain('♪');
 
-    // 공용 풀이 본문의 존댓말 어미가 반말로 바뀐다 (아라/클로이와 같은 규칙).
-    for (const teacher of ['vivian', 'elena'] as const) {
-      for (const templateId of ['odds-required-equity', 'call-decision'] as const) {
-        const facts = templateId === 'call-decision' ? { toCallChips: 50, potChips: 150, requiredEquity: 25, outs: 9, equity: 20, decision: '폴드' } : ODDS_FACTS;
-        expect(buildExplanation(templateId, facts, teacher).text).not.toMatch(/(이에요|예요|고요|어요|아요|해요|돼요)[.?!,\s]/);
-      }
+    for (const templateId of ['odds-required-equity', 'call-decision'] as const) {
+      const facts = templateId === 'call-decision' ? { toCallChips: 50, potChips: 150, requiredEquity: 25, outs: 9, equity: 20, decision: '폴드' } : ODDS_FACTS;
+      // 엘레나만 공용 풀이 본문의 존댓말 어미가 반말로 바뀐다 (아라/클로이와 같은 규칙).
+      expect(buildExplanation(templateId, facts, 'elena').text).not.toMatch(/(이에요|예요|고요|어요|아요|해요|돼요)[.?!,\s]/);
+      // 비비안은 그 반대 — 존댓말 어미가 그대로 남아야 한다.
+      expect(buildExplanation(templateId, facts, 'vivian').text).toMatch(/(이에요|예요|고요|어요|아요|해요|돼요)[.?!,\s]/);
     }
   });
 });

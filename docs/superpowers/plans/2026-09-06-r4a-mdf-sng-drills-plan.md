@@ -86,6 +86,8 @@ facts(`pFoldAll`, `equityIfCalled`, `evPush`, `range`)는 `estimateEquity(hero, 
 - 엘레나: 반말, 문장 앞 「…」, 짧고 건조, 마무리 「…패는 거짓말을 안 해. 숫자도.」 계열. 본문 `toCasual` 적용.
 `explain.test.ts`의 "나머지 히로인 폴백" 단언을 두 캐릭터의 반말 누출 없음(아라/클로이와 같은 정규식) 단언으로 교체. 미야코/사쿠라/하나/아라/클로이 불변.
 
+총괄 정정(2026-09-06): 비비안은 Ch7/Ch10 정본과 같은 존댓말 「자기」로 통일 — `toCasual` 미적용, 무대 은유·「브라보」는 유지. 엘레나 반말은 그대로.
+
 ## 6. 등록·테스트
 
 - `generator.ts` `GENERATED_DEFINITIONS`에 `MDF_TEMPLATES`·`SNG_TEMPLATES` 추가, `authored/index.ts`에 `ACT4_AUTHORED_DRILLS`.

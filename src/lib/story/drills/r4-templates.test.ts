@@ -312,17 +312,21 @@ it('recreates instances deterministically without Math.random and keeps hub labe
   }
 });
 
-it('renders the Act 4 teacher voices without leaking polite endings', () => {
-  for (const teacher of ['vivian', 'elena'] as const) {
-    for (const id of GENERATED_IDS) {
-      for (const seed of [1, 42]) {
-        const text = generateDrill(id, seed, { teacher }).explanation.text;
-        // 반말 화자의 본문에 존댓말 어미(문장 끝 '…요')가 남으면 안 된다.
-        expect(text, `${teacher}/${id}#${seed}`).not.toMatch(/[가-힣]요[.?!,]|[가-힣]요$/);
-      }
+it('renders the Act 4 teacher voices: Elena casual, Vivian polite', () => {
+  for (const id of GENERATED_IDS) {
+    for (const seed of [1, 42]) {
+      // 엘레나는 반말 화자 — 본문에 존댓말 어미(문장 끝 '…요')가 남으면 안 된다.
+      expect(generateDrill(id, seed, { teacher: 'elena' }).explanation.text, `elena/${id}#${seed}`)
+        .not.toMatch(/[가-힣]요[.?!,]|[가-힣]요$/);
+      // 비비안은 Ch7·Ch10 정본과 같은 존댓말 — 같은 정규식이 매치되어야 한다.
+      expect(generateDrill(id, seed, { teacher: 'vivian' }).explanation.text, `vivian/${id}#${seed}`)
+        .toMatch(/[가-힣]요[.?!,]|[가-힣]요$/);
     }
   }
-  expect(generateDrill('mdf-defend-pct', 3, { teacher: 'vivian' }).explanation.text).toContain('브라보');
+  const vivian = generateDrill('mdf-defend-pct', 3, { teacher: 'vivian' }).explanation.text;
+  expect(vivian).toContain('브라보');
+  expect(vivian).toContain('자기');
+  expect(vivian).not.toContain('너');
   expect(generateDrill('mdf-defend-pct', 3, { teacher: 'elena' }).explanation.text).toContain('패는 거짓말을 안 해');
 });
 

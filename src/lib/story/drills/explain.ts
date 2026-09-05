@@ -292,8 +292,12 @@ export function toCasual(text: string): string {
   return out;
 }
 
-/** 반말 캐릭터 — 공용 core 문장의 존댓말 어미를 `toCasual`로 바꿔서 읽는다. */
-const CASUAL_TEACHERS: ReadonlySet<StoryTeacherId> = new Set<StoryTeacherId>(['ara', 'chloe', 'vivian', 'elena']);
+/**
+ * 반말 캐릭터 — 공용 core 문장의 존댓말 어미를 `toCasual`로 바꿔서 읽는다.
+ * **비비안은 여기 넣지 말 것**: Ch7·Ch10 씬과 수기 문항 해설이 전부 존댓말·「자기」라
+ * 같은 드릴 세트 안에서 생성 문항만 반말이 되면 한 사람이 두 말투로 말한다.
+ */
+const CASUAL_TEACHERS: ReadonlySet<StoryTeacherId> = new Set<StoryTeacherId>(['ara', 'chloe', 'elena']);
 
 function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
   const body = CASUAL_TEACHERS.has(teacher) ? toCasual(sentences.join(' ')) : sentences.join(' ');
@@ -309,7 +313,7 @@ function speak(teacher: StoryTeacherId, sentences: readonly string[]): string {
     case 'chloe':
       return `오케이~ 정리해 볼게! ${body} 이거 완전 꿀팁이지? Let's go~!`;
     case 'vivian':
-      return `막을 올리기 전에 대본부터 읽지. ${body} 이 계산을 아는 배우는 관객을 지루하게 하지 않는 법이군. 너도 곧 그런 무대에 서겠지 — 브라보.`;
+      return `막을 올리기 전에 대본부터 읽어요, 자기. ${body} 이 계산을 아는 배우는 관객을 지루하게 하지 않죠. 자기도 곧 그런 무대에 서게 될 거예요 — 브라보.`;
     case 'elena':
       return `…간단해. ${body} …패는 거짓말을 안 해. 숫자도.`;
     default:
