@@ -20,7 +20,8 @@ import type { BotDisplayIdentity } from '../lib/bot/bot-manager';
 import type { BotDecision } from '../lib/bot/bot-ai';
 import { AggroTracker } from '../lib/bot/aggro-tracker';
 import { getCharacterById, MASKED_BOT_CHARACTER } from '../lib/characters';
-import { SNG_BLIND_SCHEDULE, SNG_LEVEL_DURATION_MS, levelIndexAt } from '../lib/poker/blind-schedule';
+import { SNG_BLIND_SCHEDULE, levelIndexAtWith } from '../lib/poker/blind-schedule';
+import { isSngStructureId, resolveSngStructure, type SngStructure } from './sng-structures';
 import { shouldRemoveForMissedBlinds } from './sitout';
 import { THROW_FLIGHT_MS } from '../lib/throwables/catalog';
 import { AIDialogue } from './ai-dialogue';
@@ -298,6 +299,8 @@ export class RoomManager {
     createdAt: number;
     runId: string;
     persistent?: boolean;
+    /** 이 방의 Sit & Go 구조 (시작 스택·레벨 길이·블라인드 표) — 캐시 방도 'standard'로 채운다 */
+    sngStructure: SngStructure;
   }> = new Map();
   private chatHistory: Map<string, ChatMessage[]> = new Map();
   private botIntervals: Map<string, NodeJS.Timeout> = new Map();
@@ -472,6 +475,15 @@ export class RoomManager {
       // 스토리 전용 필드는 storyChapterId 없이는 무효 — 비스토리 방 실행 경로 불변 보장
       throw new Error('Story-only room config fields require storyChapterId');
     }
+    if (config.sngStructureId !== undefined) {
+      if (!isSngStructureId(config.sngStructureId)) {
+        throw new Error('Unknown Sit & Go structure');
+      }
+      // 'graduation'은 수련 스토리 방 전용 — 일반 방은 항상 표준 구조(1,500/3분)로 돈다
+      if (config.sngStructureId !== 'standard' && !config.storyChapterId) {
+        throw new Error('Non-standard Sit & Go structure requires a story room');
+      }
+    }
     const normalizedConfig: RoomConfig = config.competitionMode
       ? {
           ...config,
@@ -517,6 +529,8 @@ export class RoomManager {
       createdAt: Date.now(),
       runId,
       persistent,
+      // 아레나는 표준 구조를 강제한다(normalizedConfig가 sngStructureId를 넘기지 않는다)
+      sngStructure: resolveSngStructure(normalizedConfig.sngStructureId),
     });
     this.chatHistory.set(id, []);
     // 스토리 방은 초대 코드를 발급하지 않는다 — 히어로 전용이라 코드로 방 id가 드러나면 안 된다
@@ -911,6 +925,8 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return false;
     if (this.isWalletSng(room)) return false;
+    // 스토리 방 라인업은 어댑터가 고정한다 — 방장 봇 충원은 좌석/성향 계획을 깨뜨린다
+    if (this.isStoryRoom(room)) return false;
     const tournament = room.engine.state.tournament;
     if (!tournament || tournament.entrants > 0 || tournament.finished) return false;
 
@@ -924,7 +940,12 @@ export class RoomManager {
     );
     if (host && host.id !== requesterId) return false;
 
-    fillEmptySeats(room.engine, room.config.maxPlayers, room.config.startingStack, room.config.difficulty);
+    fillEmptySeats(
+      room.engine,
+      room.config.maxPlayers,
+      room.config.startingStack ?? room.sngStructure.startingStack,
+      room.config.difficulty,
+    );
     this.sendSystemChat(roomId, '남는 자리를 봇으로 채웠어요 — 곧 시작합니다!');
     this.tryStartGame(roomId);
     return true;
@@ -1985,10 +2006,11 @@ export class RoomManager {
           }
         }
         const startedAt = Date.now();
-        const next = SNG_BLIND_SCHEDULE[1] ?? null;
+        const structure = room.sngStructure;
+        const next = structure.levels[1] ?? null;
         try {
           room.engine.startTournament(
-            startedAt + SNG_LEVEL_DURATION_MS,
+            startedAt + structure.levelMs,
             next?.smallBlind ?? null,
             next?.bigBlind ?? null,
           );
@@ -2033,7 +2055,7 @@ export class RoomManager {
         });
         this.sendSystemChat(
           roomId,
-          `Sit & Go 시작! ${room.engine.state.players.length}인 · 블라인드 ${SNG_LEVEL_DURATION_MS / 60000}분마다 인상 · 1~3위 시상`,
+          `Sit & Go 시작! ${room.engine.state.players.length}인 · 블라인드 ${Math.round(room.sngStructure.levelMs / 60000)}분마다 인상 · 1~3위 시상`,
         );
       } else {
         this.applyBlindLevel(roomId);
@@ -2342,13 +2364,15 @@ export class RoomManager {
   toggleSitOut(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
-    // 스토리 방은 자리비움 개념이 없다 — 이탈은 abandon-story, 부재는 beforeHand hold 계약
-    if (this.isStoryRoom(room)) return false;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return false;
 
     const isSng = this.isTournamentRoom(room); // SnG/MTT 공통: 딜인 유지 + away 자동 폴드
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';
+    // 스토리 방은 자리비움을 **시작**할 수 없다 — 이탈은 abandon-story, 부재는 beforeHand hold 계약.
+    // 다만 졸업 SnG는 부재 중에도 딜인·블라인드가 계속 나가므로 [게임 복귀]만은 열어 둔다
+    // (진행 중 active/all-in 상태는 아래 복귀 분기가 그대로 보존한다).
+    if (this.isStoryRoom(room) && !sittingOut) return false;
     if (sittingOut) {
       // --- 게임 복귀 ---
       player.sitOutNext = false;
@@ -2980,20 +3004,21 @@ export class RoomManager {
     const tournament = room?.engine.state.tournament;
     if (!room || !clock || !tournament) return;
 
-    const idx = levelIndexAt(clock.startedAt, Date.now());
+    const structure = room.sngStructure;
+    const idx = levelIndexAtWith(clock.startedAt, Date.now(), structure.levelMs, structure.levels.length);
     const level = idx + 1;
     if (level === tournament.level) return;
 
-    const cur = SNG_BLIND_SCHEDULE[idx];
-    const next = SNG_BLIND_SCHEDULE[idx + 1] ?? null;
-    const isLast = idx >= SNG_BLIND_SCHEDULE.length - 1;
+    const cur = structure.levels[idx];
+    const next = structure.levels[idx + 1] ?? null;
+    const isLast = idx >= structure.levels.length - 1;
     room.engine.setTournamentLevel(
       level,
       cur.smallBlind,
       cur.bigBlind,
       next?.smallBlind ?? null,
       next?.bigBlind ?? null,
-      isLast ? 0 : clock.startedAt + (idx + 1) * SNG_LEVEL_DURATION_MS,
+      isLast ? 0 : clock.startedAt + (idx + 1) * structure.levelMs,
     );
     this.sendSystemChat(roomId, `블라인드 인상 — 레벨 ${level}: ${cur.smallBlind}/${cur.bigBlind}`);
   }
@@ -3294,6 +3319,9 @@ export class RoomManager {
     const tournament = room?.engine.state.tournament;
     if (!room || !tournament?.finished) return;
     if (room.config.competitionMode) return;
+    // 수련 스토리 졸업 SnG는 일반 SnG 진행도(XP·스트릭·일일 미션)에 적립하지 않는다 —
+    // 보상은 스토리 결산(코디네이터)이 단독으로 소유한다
+    if (this.isStoryRoom(room)) return;
     this.options.progression?.completeSng({
       roomId,
       roomRunId: room.runId,

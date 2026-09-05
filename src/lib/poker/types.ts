@@ -266,6 +266,12 @@ export interface RoomConfig {
   gameMode?: GameMode; // 기본 'cash'
   startingStack?: number; // 시트앤고 시작 스택
   /**
+   * Sit & Go 구조 선택 — **서버 전용**(create-room payload는 허용 필드 재구성으로 이 값을 버린다).
+   * 'graduation'(1,000칩·2분)은 수련 스토리 Ch12 졸업 대결 전용이고, 그 외 방은 항상 'standard'다.
+   * 레지스트리는 `src/server/sng-structures.ts`.
+   */
+  sngStructureId?: 'standard' | 'graduation';
+  /**
    * 현재 레벨의 빅블라인드 앤티 (MTT 전용, 0/미설정 = 앤티 없음).
    * BB 좌석 한 명이 테이블 몫을 일괄 납부하는 현대 표준 — setTournamentLevel이 갱신한다.
    */

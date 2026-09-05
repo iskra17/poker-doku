@@ -33,8 +33,22 @@ export const SNG_STARTING_STACK = 1500;
 /** 순위별 상금 배분 (1위부터) — 총 상금 = 참가자 수 × 시작 스택 */
 export const SNG_PRIZE_SPLIT = [0.5, 0.3, 0.2];
 
-/** 경과 시간 → 레벨 인덱스 (0-based, 스케줄 끝에서 고정) */
-export function levelIndexAt(startedAt: number, now: number): number {
+/**
+ * 경과 시간 → 레벨 인덱스 (0-based, 스케줄 끝에서 고정) — 구조(레벨 길이·레벨 수)를 인자로 받는 순수 함수.
+ * 표준 SnG와 수련 졸업 SnG(1,000칩·2분)가 같은 계산을 쓰되 구조만 갈린다 (`src/server/sng-structures.ts`).
+ */
+export function levelIndexAtWith(
+  startedAt: number,
+  now: number,
+  levelMs: number,
+  levelCount: number,
+): number {
   const elapsed = Math.max(0, now - startedAt);
-  return Math.min(Math.floor(elapsed / SNG_LEVEL_DURATION_MS), SNG_BLIND_SCHEDULE.length - 1);
+  const span = levelMs > 0 ? levelMs : 1;
+  return Math.min(Math.floor(elapsed / span), Math.max(0, levelCount - 1));
+}
+
+/** 표준 SnG 구조(3분 · SNG_BLIND_SCHEDULE) 기준 레벨 인덱스 */
+export function levelIndexAt(startedAt: number, now: number): number {
+  return levelIndexAtWith(startedAt, now, SNG_LEVEL_DURATION_MS, SNG_BLIND_SCHEDULE.length);
 }
