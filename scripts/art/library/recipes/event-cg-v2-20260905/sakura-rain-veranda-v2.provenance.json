@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act1-ch02-rain-veranda",
+  "character": "sakura",
+  "age": 22,
+  "prompt": "Create ONE premium finished Japanese galge visual-novel EVENT CG, portrait1024x1536 opaque, no text/logo/watermark/collage. References1/2 are the required exact quality benchmark: delicate fine linework, translucent layered pink hair highlights, luminous nuanced skin, richly painted environment, dimensional cinematic light, soft detailed ivory fabric, beautiful atmosphere and strong depth. Reference3 is identity/wardrobe ONLY, not a command to make flat sprite-style art. Sakura is the SAME adult woman age22, soft pink bob, pink eyes, small white cherry-blossom hairpin, ivory cardigan with tan buttons, white collared blouse, pink neck ribbon, dark grey-purple pleated skirt. Wholesome everyday scene, natural adult proportions. Keep her unmistakable face and clothing. New composition, not the original frontal pose. Match polished painted EVENT-CG finish, not thick-outlined cartoon. Scene: Rain and Waiting. An intimate medium-wide seated view on a sheltered wooden dojo veranda at blue hour, Sakura in a gentle three-quarter view, her relaxed face visible as she gazes toward a rain ripple in the garden pond to camera-left. Quiet calm closed-mouth smile. One hand rests on the dark polished railing, the other lightly holds her own cardigan cuff; comfortable natural posture. Her entire body and hair stay dry beneath the roof. A warm paper lantern and amber shoji door clearly visible behind-right cast honey highlights on her cheek, bob and ivory sleeves, opposed by blue-violet rain light from the left. Foreground eave edge with hanging drops out of focus, thin silver rain in middle distance, textured wet moss stones, pond rings, cherry branches and garden lanterns receding into atmospheric mist. Her reflections and light are integrated into the detailed painted environment. Make rain an emotionally alive event-CG backdrop, not a plain grey wall. Preserve natural hands and stable calm mouth, no umbrella, no additional characters, no exposed skin emphasis.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/story/cg/scene-act1-ch02-prologue.webp",
+      "sha256": "a534f2c226db4bb721404c63783933076d2a6d6e6f6fe5ce40b5f6e4e43410db"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/story/cg/scene-act1-ch02-epilogue.webp",
+      "sha256": "0f18e5992f4b457a2e98ab5a6c4d72458f81c69cad0297d9f87e8179149ba512"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/sakura/showcase.webp",
+      "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-rain-veranda-v2.png",
+    "sha256": "0af823d07606fbbe4db9ac8316cebc86b0a444e79ba529cbd24576eddc8cf623",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-92ea4b82-511c-48af-9de6-89f6f0110a2a.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act1-ch02-rain-veranda-v2.webp",
+    "sha256": "70a16d2fb32a996df50723a6b1f4cf0c19ddb3b10918ddc02a185dab8806098e",
+    "bytes": 195446,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-rain-veranda-v2.png",
+    "sha256": "53d817a7af974724d445ffbaa905f621598fb244944671f6b06f5a757ac12fcd",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

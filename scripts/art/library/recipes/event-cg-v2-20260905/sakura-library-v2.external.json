@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "sakura-library-v2",
+  "character": "sakura",
+  "scene": "act1-ch02-library",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-library-v2.png",
+    "sha256": "3fa53b9895944f47343e12413979fe0f09e9fde6b2bcfd440e85e043b4b7494b"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\sakura-library-v2.provenance.json",
+    "sha256": "4d35228e3e43dd9c4719904b4a852af17fe13421fbcc7eaf2d44e5edabcebbf1"
+  },
+  "prompt": "Create ONE new finished premium Japanese visual-novel EVENT CG, portrait 1024x1536, opaque, no text, no watermark, no collage. This is a new scene, not a copy of the reference composition. Reference images 1 and 2 are the REQUIRED rendering and character quality standard: match their delicate fine lineart, exquisite layered hair highlights, luminous subtle skin, soft detailed fabric, rich painted architecture, cinematic light and depth. Reference 3 is identity/wardrobe only; do NOT simplify into sprite/cel-cartoon rendering. Character Sakura is an adult woman age22, exactly the same soft pink bob, pink eyes, small white five-petal cherry-blossom pin, ivory cardigan with tan buttons over white collared blouse and pink ribbon, dark pleated skirt. Scene title (not printed): A Question from the Bookshelf. Late afternoon inside the traditional wooden dojo library, medium 3/4 side view from slightly below eye level, Sakura at the right half with an open old book held naturally at waist-to-chest height; left hand supports its spine and right index finger lightly marks one line. She is absorbed in the book, eyes actually directed at the page, parted lips of quiet discovery and a tender small blush, not posing toward viewer. The pages have indistinct ink texture only, NO readable letters. An amber window at upper right casts visible slanted sunlight on her cheek, pink hair strands, cardigan knit and cream pages; cool violet shadows give volume. A softly out-of-focus book spine and desk corner occupy the near left foreground; layered shelves and shoji window recede into painterly bokeh behind her. Tiny dust motes in the shaft of light. Give the scene the same rich polished galge rendering as references 1/2, graceful purposeful gesture, beautifully dimensional soft light, restrained pastel pink/cyan accents in deep warm violet environment. Maintain natural adult proportions and immaculate hand anatomy. No rain, no extra people, no extra limbs, no huge empty flat walls, no hard thick black outlines. Do not add playing cards or chips to this library scene.",
+  "angle": "low three-quarter side",
+  "gaze": "down at open book",
+  "expression": "quiet discovery",
+  "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt"
+}

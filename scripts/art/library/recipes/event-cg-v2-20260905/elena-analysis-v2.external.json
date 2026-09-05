@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "elena-analysis-v2",
+  "character": "elena",
+  "scene": "act3-ch09-analysis",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-analysis-v2.png",
+    "sha256": "d52bb058398f05cb666c12af1ec1e97689033756df010f6037acc026eabc8cd1"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\elena-analysis-v2.provenance.json",
+    "sha256": "68e90df144ecc41aeaeaf6c55113510d54aced2309f274de071b2dd725ebd9dc"
+  },
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Slightly elevated three-quarter side view at a teal felt poker table late at night. Elena quietly studies three neatly ordered chip stacks, eyes directed down, brows faintly thoughtful, closed lips, leaning forward just a little. One natural hand rests beside and lightly touches the nearest stack, the other lies relaxed on the felt. No notebook or diagrams. Several blurred foreground chips frame the scene. A brass-shaded table lamp casts shaped amber light across fingers, chip edges, fine silver hair and blazer lapels; cool violet shadows and distant wooden dojo windows create rich depth. Visible hand anatomy is clear and simple, stacks stable. The scene feels like a candid, meaningful private pause after practice, distinct from a teacher pointing at a lesson.",
+  "angle": "slightly elevated three-quarter side",
+  "gaze": "down at three chip stacks",
+  "expression": "private thoughtful",
+  "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers"
+}

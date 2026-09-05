@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act3-ch09-analysis",
+  "character": "elena",
+  "age": 27,
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Slightly elevated three-quarter side view at a teal felt poker table late at night. Elena quietly studies three neatly ordered chip stacks, eyes directed down, brows faintly thoughtful, closed lips, leaning forward just a little. One natural hand rests beside and lightly touches the nearest stack, the other lies relaxed on the felt. No notebook or diagrams. Several blurred foreground chips frame the scene. A brass-shaded table lamp casts shaped amber light across fingers, chip edges, fine silver hair and blazer lapels; cool violet shadows and distant wooden dojo windows create rich depth. Visible hand anatomy is clear and simple, stacks stable. The scene feels like a candid, meaningful private pause after practice, distinct from a teacher pointing at a lesson.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/scene-lv5.webp",
+      "sha256": "2713846b470c8a2445c0bb49da612288e0aaa80b5e964e186aac8d2ed7958f71"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/showcase.webp",
+      "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-analysis-v2.png",
+    "sha256": "061860c3d87636d7267d04a6c8ec1d8fba0e1661457acea8acd5260ea3460247",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-9c7988b4-2ef4-4313-882f-25d6aa828465.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act3-ch09-analysis-v2.webp",
+    "sha256": "b98f49d4f56e8c08b9b08478a306ce8d7cc3efe56bd090391fab791ce1e2d169",
+    "bytes": 122298,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-analysis-v2.png",
+    "sha256": "d52bb058398f05cb666c12af1ec1e97689033756df010f6037acc026eabc8cd1",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

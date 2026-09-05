@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act3-ch09-lesson",
+  "character": "elena",
+  "age": 27,
+  "prompt": "Create ONE new finished premium Japanese visual-novel EVENT CG, portrait 1024x1536 opaque. No text, logos, watermark or collage. Reference1 provides the REQUIRED exquisite rendering quality and Elena's exact face: fine elegant lineart, luminous fine silver hair strands, sophisticated grey-blue eyes, nuanced skin, rich atmospheric painted setting with depth and reflected light. Reference2 is identity and wardrobe only, NOT the flat sprite rendering style. Elena is an adult woman age27, mature elongated face and defined jaw, narrow grey-blue eyes, very long straight silver hair with the same parting, small silver hoop earrings. Wear exactly reference2's tailored black blazer, white collared shirt, pale grey necktie and black trousers. New scene title (not printed): Reading the Shadows. Inside a traditional wooden poker dojo study, seated at a teal felt table in a medium 3/4 composition, seen from the student's side of the table with a slightly elevated camera. Her torso leans forward a little, one index fingertip is clearly planted on one abstract line in an open notebook, the other hand lies naturally beside it. She has just raised her thoughtful narrow eyes from the note toward her student just to camera-left, one eyebrow subtly questioning with a small knowing smile, a moment of engaged teaching rather than a catalogue pose. The notebook contains faint abstract diagram marks, NOT legible words. Two neat small stacks of real poker chips in deep teal and ivory sit nearby; no face-up cards. Place a warm shaded table lamp visible near the rear right, casting believable amber highlights on the silk of her hair, fingers and blazer folds; soft cool daylight enters a shoji window at left to shape the opposite cheek. In near foreground blur one edge of the felt rail and a chip stack, crisp Elena and notebook in middle plane, behind her richly painted wooden beams, curtains and dim shelves receding softly. Blue-violet shadows, silver rim light, restrained golden lamp glow, realistic material richness within gorgeous polished anime galge painting like reference1. Keep silver hair silver (not white plastic), face recognizably the same adult woman. Natural anatomy, purposeful gaze, no extra people, no massive breasts, no erotic framing, no thick comic outlines, no flat generic classroom background.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/scene-lv5.webp",
+      "sha256": "2713846b470c8a2445c0bb49da612288e0aaa80b5e964e186aac8d2ed7958f71"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/showcase.webp",
+      "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-lesson-v2.png",
+    "sha256": "36ba2487413616dd1e923903b59717a51bbffbcd9d964b44c87c97859aa47248",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-12b89469-e7f7-4b85-8749-4f3cf81495ff.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act3-ch09-lesson-v2.webp",
+    "sha256": "c6d917c375c165ce5d48c2e9323e5dfce5188193bd46996bcb1be932786a9fb3",
+    "bytes": 146826,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-lesson-v2.png",
+    "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act1-ch02-victory",
+  "character": "sakura",
+  "age": 22,
+  "prompt": "Create ONE premium finished Japanese galge visual-novel EVENT CG, portrait1024x1536 opaque, no text/logo/watermark/collage. References1/2 are the required exact quality benchmark: delicate fine linework, translucent layered pink hair highlights, luminous nuanced skin, richly painted environment, dimensional cinematic light, soft detailed ivory fabric, beautiful atmosphere and strong depth. Reference3 is identity/wardrobe ONLY, not a command to make flat sprite-style art. Sakura is the SAME adult woman age22, soft pink bob, pink eyes, small white cherry-blossom hairpin, ivory cardigan with tan buttons, white collared blouse, pink neck ribbon, dark grey-purple pleated skirt. Wholesome everyday scene, natural adult proportions. Keep her unmistakable face and clothing. New composition, not the original frontal pose. Match polished painted EVENT-CG finish, not thick-outlined cartoon. Scene: A Small Victory. Medium seated portrait, camera on her left at a gentle high three-quarter angle inside the evening dojo. Sakura has just won a friendly poker practice hand and turns her shoulders toward her companion with eyes happily closed and a soft delighted laugh, genuinely relieved rather than exaggerated cartoon ecstasy. Her left hand cradles exactly two small poker chips together near her chest, while her right hand rests lightly on the table rail. Anatomically clear relaxed fingers. Warm paper lantern visible behind-right makes her cheeks, fine pink hair and cream cardigan glow; cool blue-violet dusk shines through shoji on the other side. In foreground the curved dark wooden rail and teal felt softly frame her; two tidy chip stacks and exactly TWO face-down pink-backed hole cards are resting flat, no face-up board, no illegible playing-card faces. Richly painted wooden beams, layered blurred lanterns and garden blossom bokeh behind. Graceful expression, felt texture, soft fabric folds and nuanced rim lighting at the established old CG quality. Do not make giant smile/chibi, no extra hands, no chips flying, no book.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/story/cg/scene-act1-ch02-prologue.webp",
+      "sha256": "a534f2c226db4bb721404c63783933076d2a6d6e6f6fe5ce40b5f6e4e43410db"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/story/cg/scene-act1-ch02-epilogue.webp",
+      "sha256": "0f18e5992f4b457a2e98ab5a6c4d72458f81c69cad0297d9f87e8179149ba512"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/sakura/showcase.webp",
+      "sha256": "cd660e3b458008810764877fdce61d01b80d671cf4a3ea4ebb68306c7b1cd99b"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-victory-v2.png",
+    "sha256": "41bc7649e2de282736834ff2ba1717ed0a6a6b4398e07ba9240c5c6c0c1fe058",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-9a146996-3bfc-4799-afac-b980157e7cb0.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act1-ch02-victory-v2.webp",
+    "sha256": "7f34f29301314bf8eeb720d3b3e8cc2115a037c8cd226de4d5c4ee63cc372648",
+    "bytes": 148510,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-victory-v2.png",
+    "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

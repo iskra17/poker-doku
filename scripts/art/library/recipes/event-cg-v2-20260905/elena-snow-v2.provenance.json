@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act3-ch09-snow-window",
+  "character": "elena",
+  "age": 27,
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Medium three-quarter seated view inside a refined wooden Japanese poker dojo beside a large garden window on a snowy evening. Elena gazes diagonally outside at distant softly glowing stone lanterns and falling snow, her face thoughtful and softened, not facing the viewer. A porcelain tea cup stands firmly on the window ledge; one hand lightly holds its handle, other hand relaxed on her lap. Subtle steam. Warm interior amber lamp grazes one cheek and silver hair, cool blue snow light caresses the opposite cheek; rich wood grain, subtle window condensation, layered garden silhouettes beyond glass. Stable elegant hands and cup. Black blazer and grey tie remain as reference, no coat. Intimate dimensional cinematic illustration.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/scene-lv5.webp",
+      "sha256": "2713846b470c8a2445c0bb49da612288e0aaa80b5e964e186aac8d2ed7958f71"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/showcase.webp",
+      "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-snow-window-v2.png",
+    "sha256": "49c3c329f47427f445e559ee28581007dafdb01693784a465e65fbde18eea194",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-84b3fc81-f5cf-4089-817a-f1d74270b7fc.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act3-ch09-snow-window-v2.webp",
+    "sha256": "f5d2b70cac6608410b2915c283f9563bae517c9927b88d0261ebe28833fd1fd0",
+    "bytes": 150996,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-snow-window-v2.png",
+    "sha256": "0a2c298a968c05c8508fecb905a0b35384b645bbc1372531df2da56237e9c094",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

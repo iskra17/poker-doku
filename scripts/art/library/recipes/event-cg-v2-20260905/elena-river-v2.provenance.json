@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "image_gen.imagegen",
+  "metadata_evidence": "Original PNG C2PA contains gpt-image version 2.0",
+  "scene": "act3-ch09-river-walk",
+  "character": "elena",
+  "age": 27,
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Wider three-quarter composition at a riverside railing at dusk. Elena leans lightly with one natural hand resting on the railing, the other relaxed nearby; she looks diagonally down towards the water in quiet reflective thought, not at us. Her face remains readable in three-quarter angle. Rich violet-orange sunset, golden street-lamp rim on silver hair and blazer, cool water bounce on her face, delicate distant city light reflections, softly blurred foreground railing, deep river perspective. Gentle air catches a few hair strands. Refined realistic anatomy within anime style. A quiet emotionally specific breath after a challenging poker lesson.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/scene-lv5.webp",
+      "sha256": "2713846b470c8a2445c0bb49da612288e0aaa80b5e964e186aac8d2ed7958f71"
+    },
+    {
+      "path": "C:/code/claude/poker-doku/public/assets/characters/elena/showcase.webp",
+      "sha256": "71e951c68e88495d836d9667b91280130c00d36f08fc1c5d7e5def180bb2f4d3"
+    }
+  ],
+  "original": {
+    "path": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-river-walk-v2.png",
+    "sha256": "696834ade3ef29194344adacaf4930162365ab48e727ab2b01aea9b6cc14046d",
+    "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-df895a38-42cc-4b7f-87ff-1c8e680940ed.png",
+    "width": 1024,
+    "height": 1536
+  },
+  "display": {
+    "path": "public/assets/story/cg/scene-act3-ch09-river-walk-v2.webp",
+    "sha256": "7bb14f087e1d9673793b6762ddb2639eb209002e8a6e41513474e4e778cf9eaf",
+    "bytes": 151820,
+    "width": 768,
+    "height": 1152,
+    "conversion": "sharp resize cover, WebP quality 90"
+  },
+  "video_parent": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-river-walk-v2.png",
+    "sha256": "baf4d42a08ada7957d3573a50b22912a00620e3709df4cf642ca47dd5eb711a9",
+    "conversion": "lossless PNG decode of exact displayed WebP; no image generation or painted edits"
+  },
+  "review": "approved-by-root-after-visual-comparison-to-original-event-CG"
+}

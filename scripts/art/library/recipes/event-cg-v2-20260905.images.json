@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "scope": "general",
+  "images": [
+    {
+      "id": "act1-ch02-library",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-library-v2.png",
+      "source_sha256": "c15ac9b505ab5af9e0b2109d75264b940ff482471ca428fbecde363c4666717e",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-2d311a88-56e6-41cc-b798-227f56d377ba.png",
+      "target": "public/assets/story/cg/scene-act1-ch02-library-v2.webp",
+      "sha256": "c1bef43736640912789f481353ed9a4f7f40ad334e3933473e14accc4acae0fc",
+      "bytes": 132122,
+      "input": "D:/AI-Image-Video/input/pd-scene-act1-ch02-library-v2.png",
+      "input_sha256": "3fa53b9895944f47343e12413979fe0f09e9fde6b2bcfd440e85e043b4b7494b",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "sakura-library-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/sakura-library-v2.provenance.json",
+      "provenance_sha256": "4d35228e3e43dd9c4719904b4a852af17fe13421fbcc7eaf2d44e5edabcebbf1"
+    },
+    {
+      "id": "act3-ch09-lesson",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-lesson-v2.png",
+      "source_sha256": "36ba2487413616dd1e923903b59717a51bbffbcd9d964b44c87c97859aa47248",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-12b89469-e7f7-4b85-8749-4f3cf81495ff.png",
+      "target": "public/assets/story/cg/scene-act3-ch09-lesson-v2.webp",
+      "sha256": "c6d917c375c165ce5d48c2e9323e5dfce5188193bd46996bcb1be932786a9fb3",
+      "bytes": 146826,
+      "input": "D:/AI-Image-Video/input/pd-scene-act3-ch09-lesson-v2.png",
+      "input_sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "elena-lesson-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/elena-lesson-v2.provenance.json",
+      "provenance_sha256": "d823fdbf4c6905eaf72282ed25737a9d2e7f81a928ee7d926d734235f976211d"
+    },
+    {
+      "id": "act1-ch02-garden-walk",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-garden-walk-v2.png",
+      "source_sha256": "75092e95bfacf674f74ab162ade16a09c469cc4a834df4f9536a4a7ff522582f",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-5c16d2d5-f4a7-4711-a280-e77560661e35.png",
+      "target": "public/assets/story/cg/scene-act1-ch02-garden-walk-v2.webp",
+      "sha256": "275b31b21a5b818b3c17bb5a3d8023253ee8a3df26e0bbfd52887527f23d2592",
+      "bytes": 217626,
+      "input": "D:/AI-Image-Video/input/pd-scene-act1-ch02-garden-walk-v2.png",
+      "input_sha256": "e7d82261342cb8294cc966e5a9c919372827a7cc3756494eafcb7941fa7accef",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "sakura-garden-walk-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/sakura-garden-walk-v2.provenance.json",
+      "provenance_sha256": "08c3d0ab68fc8749352afea11049179280bda02abd33758662934e71a35afe53"
+    },
+    {
+      "id": "act1-ch02-victory",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-victory-v2.png",
+      "source_sha256": "41bc7649e2de282736834ff2ba1717ed0a6a6b4398e07ba9240c5c6c0c1fe058",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-9a146996-3bfc-4799-afac-b980157e7cb0.png",
+      "target": "public/assets/story/cg/scene-act1-ch02-victory-v2.webp",
+      "sha256": "7f34f29301314bf8eeb720d3b3e8cc2115a037c8cd226de4d5c4ee63cc372648",
+      "bytes": 148510,
+      "input": "D:/AI-Image-Video/input/pd-scene-act1-ch02-victory-v2.png",
+      "input_sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "sakura-victory-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/sakura-victory-v2.provenance.json",
+      "provenance_sha256": "f14ac58495ad96cc0bbfd899517c721b01f4d8b8d22be12e0c0587002588448d"
+    },
+    {
+      "id": "act1-ch02-rain-veranda",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act1-ch02-rain-veranda-v2.png",
+      "source_sha256": "0af823d07606fbbe4db9ac8316cebc86b0a444e79ba529cbd24576eddc8cf623",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-92ea4b82-511c-48af-9de6-89f6f0110a2a.png",
+      "target": "public/assets/story/cg/scene-act1-ch02-rain-veranda-v2.webp",
+      "sha256": "70a16d2fb32a996df50723a6b1f4cf0c19ddb3b10918ddc02a185dab8806098e",
+      "bytes": 195446,
+      "input": "D:/AI-Image-Video/input/pd-scene-act1-ch02-rain-veranda-v2.png",
+      "input_sha256": "53d817a7af974724d445ffbaa905f621598fb244944671f6b06f5a757ac12fcd",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "sakura-rain-veranda-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/sakura-rain-veranda-v2.provenance.json",
+      "provenance_sha256": "01576812fd14eca8443d6fad293f83aa7c3abc267af6e36c6f3027908413f7a2"
+    },
+    {
+      "id": "act3-ch09-river-walk",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-river-walk-v2.png",
+      "source_sha256": "696834ade3ef29194344adacaf4930162365ab48e727ab2b01aea9b6cc14046d",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-df895a38-42cc-4b7f-87ff-1c8e680940ed.png",
+      "target": "public/assets/story/cg/scene-act3-ch09-river-walk-v2.webp",
+      "sha256": "7bb14f087e1d9673793b6762ddb2639eb209002e8a6e41513474e4e778cf9eaf",
+      "bytes": 151820,
+      "input": "D:/AI-Image-Video/input/pd-scene-act3-ch09-river-walk-v2.png",
+      "input_sha256": "baf4d42a08ada7957d3573a50b22912a00620e3709df4cf642ca47dd5eb711a9",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "elena-river-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/elena-river-v2.provenance.json",
+      "provenance_sha256": "15855afb3c95fe78bf5484214de42b7cb7a054a2d5ac541c0ef4dd841127e49c"
+    },
+    {
+      "id": "act3-ch09-snow-window",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-snow-window-v2.png",
+      "source_sha256": "49c3c329f47427f445e559ee28581007dafdb01693784a465e65fbde18eea194",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-84b3fc81-f5cf-4089-817a-f1d74270b7fc.png",
+      "target": "public/assets/story/cg/scene-act3-ch09-snow-window-v2.webp",
+      "sha256": "f5d2b70cac6608410b2915c283f9563bae517c9927b88d0261ebe28833fd1fd0",
+      "bytes": 150996,
+      "input": "D:/AI-Image-Video/input/pd-scene-act3-ch09-snow-window-v2.png",
+      "input_sha256": "0a2c298a968c05c8508fecb905a0b35384b645bbc1372531df2da56237e9c094",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "elena-snow-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/elena-snow-v2.provenance.json",
+      "provenance_sha256": "0cb495807eaa35e7335d536c21d320d49e9284b1e9b3f755832d610462d518c1"
+    },
+    {
+      "id": "act3-ch09-analysis",
+      "source": "D:\\AI-Image-Video\\output\\poker-doku-quality-review-20260905\\sources\\scene-act3-ch09-analysis-v2.png",
+      "source_sha256": "061860c3d87636d7267d04a6c8ec1d8fba0e1661457acea8acd5260ea3460247",
+      "tool_source": "C:/Users/JEONG JAE HYEON/.codex/generated_images/01a06e54-0e43-7620-84b3-6f74c8279e53/exec-9c7988b4-2ef4-4313-882f-25d6aa828465.png",
+      "target": "public/assets/story/cg/scene-act3-ch09-analysis-v2.webp",
+      "sha256": "b98f49d4f56e8c08b9b08478a306ce8d7cc3efe56bd090391fab791ce1e2d169",
+      "bytes": 122298,
+      "input": "D:/AI-Image-Video/input/pd-scene-act3-ch09-analysis-v2.png",
+      "input_sha256": "d52bb058398f05cb666c12af1ec1e97689033756df010f6037acc026eabc8cd1",
+      "dimensions": [
+        768,
+        1152
+      ],
+      "review": "approved-by-root-after-visual-comparison-to-original-event-CG",
+      "parent_job": "elena-analysis-v2",
+      "provenance": "scripts/art/library/recipes/event-cg-v2-20260905/elena-analysis-v2.provenance.json",
+      "provenance_sha256": "68e90df144ecc41aeaeaf6c55113510d54aced2309f274de071b2dd725ebd9dc"
+    }
+  ]
+}

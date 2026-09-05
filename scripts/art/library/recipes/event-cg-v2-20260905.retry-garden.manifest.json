@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "scope": "general",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "recipe": "h3-fl2v-cg-v2.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/cg-rework-v2-20260905",
+  "approval_document": "docs/superpowers/plans/2026-09-05-event-cg-quality-rework.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "sakura-garden-walk-video-v3",
+      "character": "sakura",
+      "scene": "act1-ch02-garden-walk",
+      "parent_job": "sakura-garden-walk-v2",
+      "seed": 509020265102,
+      "angle": "rear three-quarter turn, fixed camera",
+      "gaze": "toward companion off camera",
+      "expression": "gentle anticipation",
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "prompt": "STATIC FULL-LENGTH PORTRAIT CINEMAGRAPH. The entire woman from head to both shoes remains visible at precisely the same small size and exact coordinates throughout every frame. Fixed wide composition, fixed focal length, locked tripod. The foreground blossom branch, garden lantern, roof and path are perfectly stationary. No camera zoom, no dolly, no push in, no pan, no camera movement, no changing focal length. Sakura, an adult 22-year-old fully clothed woman with short pink hair, keeps the identical full-body rear three-quarter turned pose, looking back gently. Her complete body, face, hands, held book, skirt, legs and shoes remain almost entirely still in the exact same positions. Animate ONLY a few tiny drifting blossom petals, a subtle shimmer in the distant pond, and a very slight movement of the ends of her hair. The camera and character scale NEVER change. Preserve all fine lines, soft shaded skin, cardigan fabric, original lighting and painted spatial detail. No text, no other people, no extra objects. Start and finish with the exact original composition and full-length figure. This is an ambient living painting, not a cinematic camera shot.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-garden-walk-v2--b740ea8a0c1fee175088d81a8a4c2b84e99e4ece449cda80054de65cf1ac5c16\\source.png",
+          "sha256": "e7d82261342cb8294cc966e5a9c919372827a7cc3756494eafcb7941fa7accef"
+        }
+      }
+    }
+  ],
+  "retry_reason": "One additional local video job authorized by root visual rejection of zooming v2, within requested rework scope."
+}

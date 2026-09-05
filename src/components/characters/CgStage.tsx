@@ -136,7 +136,7 @@ export default function CgStage({ scene, onClose, layer = 'stage' }: CgStageProp
                   poster={scene.art}
                   alt={scene.alt}
                   onFallback={onVideoFallback}
-                  className="pointer-events-none block select-none object-cover"
+                  className="pointer-events-none block max-h-[min(66dvh,620px)] max-w-[min(88vw,420px)] select-none object-cover"
                 />
               ) : (
                 <motion.img

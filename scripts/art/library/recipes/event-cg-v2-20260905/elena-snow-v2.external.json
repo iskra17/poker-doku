@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "elena-snow-v2",
+  "character": "elena",
+  "scene": "act3-ch09-snow-window",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-snow-window-v2.png",
+    "sha256": "0a2c298a968c05c8508fecb905a0b35384b645bbc1372531df2da56237e9c094"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\elena-snow-v2.provenance.json",
+    "sha256": "0cb495807eaa35e7335d536c21d320d49e9284b1e9b3f755832d610462d518c1"
+  },
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Medium three-quarter seated view inside a refined wooden Japanese poker dojo beside a large garden window on a snowy evening. Elena gazes diagonally outside at distant softly glowing stone lanterns and falling snow, her face thoughtful and softened, not facing the viewer. A porcelain tea cup stands firmly on the window ledge; one hand lightly holds its handle, other hand relaxed on her lap. Subtle steam. Warm interior amber lamp grazes one cheek and silver hair, cool blue snow light caresses the opposite cheek; rich wood grain, subtle window condensation, layered garden silhouettes beyond glass. Stable elegant hands and cup. Black blazer and grey tie remain as reference, no coat. Intimate dimensional cinematic illustration.",
+  "angle": "seated three-quarter",
+  "gaze": "snowy garden through window",
+  "expression": "soft contemplative",
+  "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers"
+}

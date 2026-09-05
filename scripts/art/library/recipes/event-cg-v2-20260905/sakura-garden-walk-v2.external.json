@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "sakura-garden-walk-v2",
+  "character": "sakura",
+  "scene": "act1-ch02-garden-walk",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-garden-walk-v2.png",
+    "sha256": "e7d82261342cb8294cc966e5a9c919372827a7cc3756494eafcb7941fa7accef"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\sakura-garden-walk-v2.provenance.json",
+    "sha256": "08c3d0ab68fc8749352afea11049179280bda02abd33758662934e71a35afe53"
+  },
+  "prompt": "Create ONE premium finished Japanese galge visual-novel EVENT CG, portrait1024x1536 opaque, no text/logo/watermark/collage. References1/2 are the required exact quality benchmark: delicate fine linework, translucent layered pink hair highlights, luminous nuanced skin, richly painted environment, dimensional cinematic light, soft detailed ivory fabric, beautiful atmosphere and strong depth. Reference3 is identity/wardrobe ONLY, not a command to make flat sprite-style art. Sakura is the SAME adult woman age22, soft pink bob, pink eyes, small white cherry-blossom hairpin, ivory cardigan with tan buttons, white collared blouse, pink neck ribbon, dark grey-purple pleated skirt. Wholesome everyday scene, natural adult proportions. Keep her unmistakable face and clothing. New composition, not the original frontal pose. Match polished painted EVENT-CG finish, not thick-outlined cartoon. Scene: Book and Cherry Blossom Path. A spacious traditional dojo garden in late golden afternoon, wide full-figure 3/4 rear view; Sakura paused on the winding stone path, torso turned gently toward her walking companion behind and just to the left of the camera. One arm holds a small closed dark clothbound book against her ribs, the other hand is open at waist height catching a single falling pale petal. A tender slightly shy smile, eyes toward her companion, NOT a rigid catalogue profile. Show natural hand anatomy and relaxed weight on one foot. Strong warm low sunlight through a near-foreground out-of-focus cherry bough illuminates the edge of her bob, fingers and cardigan folds. Cool lavender reflected pond light fills shadows; pink blossom canopy, carefully painted foliage, mossy stone lantern and wooden veranda in receding planes. Stone path and tiny petals lead into the distance, pond reflections shimmer, soft bokeh behind her. Light must touch the character and place her convincingly in the same environment. Clear purposeful paused gesture. Do not change her outfit, do not make a flat vector garden, no other people visible.",
+  "angle": "rear three-quarter turn",
+  "gaze": "toward companion off camera",
+  "expression": "gentle anticipation",
+  "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt"
+}

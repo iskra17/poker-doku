@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "elena-river-v2",
+  "character": "elena",
+  "scene": "act3-ch09-river-walk",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-river-walk-v2.png",
+    "sha256": "baf4d42a08ada7957d3573a50b22912a00620e3709df4cf642ca47dd5eb711a9"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\elena-river-v2.provenance.json",
+    "sha256": "15855afb3c95fe78bf5484214de42b7cb7a054a2d5ac541c0ef4dd841127e49c"
+  },
+  "prompt": "Create one premium finished Japanese galge EVENT CG, portrait 1024x1536, opaque illustration. Reference 1 anchors the exceptional rendering quality: fine delicate hair strands, nuanced material highlights, cinematic integrated light on the character and richly painted spatial depth. Reference 2 anchors character identity and wardrobe ONLY, never its flat sprite composition. Elena is a clearly adult 27-year-old woman, mature elongated elegant face, narrow grey-blue eyes, long silver hair with the exact familiar parting, small hoop earrings, tailored black blazer, white collared shirt, pale grey necktie, black trousers. Fully clothed everyday contemplative training scene. Preserve identity. Fine clean lines and soft polished cel shading, nuanced warm/cool light, three layers of foreground/middle/background, sophisticated painted atmosphere. Purposeful posture and off-camera gaze; a living moment, not a standing character sprite. No writing, letters, captions, watermark, collage, extra people or strange hands. Wider three-quarter composition at a riverside railing at dusk. Elena leans lightly with one natural hand resting on the railing, the other relaxed nearby; she looks diagonally down towards the water in quiet reflective thought, not at us. Her face remains readable in three-quarter angle. Rich violet-orange sunset, golden street-lamp rim on silver hair and blazer, cool water bounce on her face, delicate distant city light reflections, softly blurred foreground railing, deep river perspective. Gentle air catches a few hair strands. Refined realistic anatomy within anime style. A quiet emotionally specific breath after a challenging poker lesson.",
+  "angle": "standing three-quarter",
+  "gaze": "down toward river",
+  "expression": "quiet reflective",
+  "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers"
+}

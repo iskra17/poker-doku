@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "sakura-victory-v2",
+  "character": "sakura",
+  "scene": "act1-ch02-victory",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-victory-v2.png",
+    "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\sakura-victory-v2.provenance.json",
+    "sha256": "f14ac58495ad96cc0bbfd899517c721b01f4d8b8d22be12e0c0587002588448d"
+  },
+  "prompt": "Create ONE premium finished Japanese galge visual-novel EVENT CG, portrait1024x1536 opaque, no text/logo/watermark/collage. References1/2 are the required exact quality benchmark: delicate fine linework, translucent layered pink hair highlights, luminous nuanced skin, richly painted environment, dimensional cinematic light, soft detailed ivory fabric, beautiful atmosphere and strong depth. Reference3 is identity/wardrobe ONLY, not a command to make flat sprite-style art. Sakura is the SAME adult woman age22, soft pink bob, pink eyes, small white cherry-blossom hairpin, ivory cardigan with tan buttons, white collared blouse, pink neck ribbon, dark grey-purple pleated skirt. Wholesome everyday scene, natural adult proportions. Keep her unmistakable face and clothing. New composition, not the original frontal pose. Match polished painted EVENT-CG finish, not thick-outlined cartoon. Scene: A Small Victory. Medium seated portrait, camera on her left at a gentle high three-quarter angle inside the evening dojo. Sakura has just won a friendly poker practice hand and turns her shoulders toward her companion with eyes happily closed and a soft delighted laugh, genuinely relieved rather than exaggerated cartoon ecstasy. Her left hand cradles exactly two small poker chips together near her chest, while her right hand rests lightly on the table rail. Anatomically clear relaxed fingers. Warm paper lantern visible behind-right makes her cheeks, fine pink hair and cream cardigan glow; cool blue-violet dusk shines through shoji on the other side. In foreground the curved dark wooden rail and teal felt softly frame her; two tidy chip stacks and exactly TWO face-down pink-backed hole cards are resting flat, no face-up board, no illegible playing-card faces. Richly painted wooden beams, layered blurred lanterns and garden blossom bokeh behind. Graceful expression, felt texture, soft fabric folds and nuanced rim lighting at the established old CG quality. Do not make giant smile/chibi, no extra hands, no chips flying, no book.",
+  "angle": "seated three-quarter portrait",
+  "gaze": "eyes softly closed",
+  "expression": "small joyful laugh",
+  "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt"
+}

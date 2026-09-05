@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "scope": "general",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "recipe": "h3-fl2v-cg-v2.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/cg-rework-v2-20260905",
+  "approval_document": "docs/superpowers/plans/2026-09-05-event-cg-quality-rework.md",
+  "authorized_jobs": 8,
+  "jobs": [
+    {
+      "id": "sakura-library-video-v2",
+      "character": "sakura",
+      "scene": "act1-ch02-library",
+      "parent_job": "sakura-library-v2",
+      "seed": 509020265000,
+      "angle": "low three-quarter side, fixed camera",
+      "gaze": "down at open book",
+      "expression": "quiet discovery",
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura reads the same open book quietly. A single slow blink, subtle breathing, very slight hair-tip motion and softly drifting sunlit dust. Both hands, all fingers, book and page markings remain fixed. No page turning. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-library-v2--5f9254515996e2e02dae721197c2e82712ef4c24e5c16c1c62bcb3e3dfa49cdd\\source.png",
+          "sha256": "3fa53b9895944f47343e12413979fe0f09e9fde6b2bcfd440e85e043b4b7494b"
+        }
+      }
+    },
+    {
+      "id": "elena-lesson-video-v2",
+      "character": "elena",
+      "scene": "act3-ch09-lesson",
+      "parent_job": "elena-lesson-v2",
+      "seed": 509020265001,
+      "angle": "seated three-quarter lean, fixed camera",
+      "gaze": "towards student off camera",
+      "expression": "attentive analytical",
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena holds her teaching pose, pointing at the same notebook diagram. One natural slow blink, extremely subtle breathing, a few fine silver hair strands stir. Both hands, fingers, diagram, notebook, chips and cards remain absolutely fixed. No speaking. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-lesson-v2--3de3fdfce820668f54cb7957ef4d14c6224ed1ac36e913b52bf34ceed919e89c\\source.png",
+          "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+        }
+      }
+    },
+    {
+      "id": "sakura-garden-walk-video-v2",
+      "character": "sakura",
+      "scene": "act1-ch02-garden-walk",
+      "parent_job": "sakura-garden-walk-v2",
+      "seed": 509020265002,
+      "angle": "rear three-quarter turn, fixed camera",
+      "gaze": "toward companion off camera",
+      "expression": "gentle anticipation",
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura holds exactly the same turned pose on a cherry blossom path. A soft slow blink, a little hair and cardigan-hem motion, a few petals drift slowly and the distant pond shimmers. Both hands, open palm, arm-held book and feet stay in their exact pose; no walking or camera movement. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-garden-walk-v2--b740ea8a0c1fee175088d81a8a4c2b84e99e4ece449cda80054de65cf1ac5c16\\source.png",
+          "sha256": "e7d82261342cb8294cc966e5a9c919372827a7cc3756494eafcb7941fa7accef"
+        }
+      }
+    },
+    {
+      "id": "sakura-victory-video-v2",
+      "character": "sakura",
+      "scene": "act1-ch02-victory",
+      "parent_job": "sakura-victory-v2",
+      "seed": 509020265003,
+      "angle": "seated three-quarter portrait, fixed camera",
+      "gaze": "eyes softly closed",
+      "expression": "small joyful laugh",
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura keeps her eyes softly closed and her delighted smile, with the tiniest natural joyful shoulder breath and slight pink hair-tip motion. Preserve her mouth shape with no speech or wide mouth change. The two chips held near her chest, fingers and the other hand on the table rail remain absolutely fixed. All cards and table chips stay still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-victory-v2--526b95e9d83eb7ba2624a447a1bb327c24dc0928c832a965fec2218d8e515d08\\source.png",
+          "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+        }
+      }
+    },
+    {
+      "id": "sakura-rain-veranda-video-v2",
+      "character": "sakura",
+      "scene": "act1-ch02-rain-veranda",
+      "parent_job": "sakura-rain-veranda-v2",
+      "seed": 509020265004,
+      "angle": "seated three-quarter side, fixed camera",
+      "gaze": "rainy garden off camera",
+      "expression": "calm expectant",
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura rests under the dry veranda, looking into the rainy blue garden. Fine rain falls only outdoors and tiny ripples spread in the distant pond. One soft blink, subtle breathing and very slight pink hair motion. Keep both hands exactly fixed, one on the bench rail and the other holding her cuff. Keep her closed lips still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-rain-veranda-v2--9b06a3798e3004b2e6179c9b406382e9afe46d94f07ea152e978e3c0067a26e5\\source.png",
+          "sha256": "53d817a7af974724d445ffbaa905f621598fb244944671f6b06f5a757ac12fcd"
+        }
+      }
+    },
+    {
+      "id": "elena-river-video-v2",
+      "character": "elena",
+      "scene": "act3-ch09-river-walk",
+      "parent_job": "elena-river-v2",
+      "seed": 509020265005,
+      "angle": "standing three-quarter, fixed camera",
+      "gaze": "down toward river",
+      "expression": "quiet reflective",
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena rests at the riverside rail, quietly looking toward the water. Her long fine silver hair shifts gently in the evening breeze, a single slow blink and subtle breathing. Water reflections shimmer softly. Her hands and fingers stay exactly fixed on the railing; no walking, mouth movement or body repositioning. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-river-v2--8f38a36b14aaa74da4f982baf936a3fdfc28bed18c0c435fe576ae243356839f\\source.png",
+          "sha256": "baf4d42a08ada7957d3573a50b22912a00620e3709df4cf642ca47dd5eb711a9"
+        }
+      }
+    },
+    {
+      "id": "elena-snow-video-v2",
+      "character": "elena",
+      "scene": "act3-ch09-snow-window",
+      "parent_job": "elena-snow-v2",
+      "seed": 509020265006,
+      "angle": "seated three-quarter, fixed camera",
+      "gaze": "snowy garden through window",
+      "expression": "soft contemplative",
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena quietly looks out of the window. Snowflakes drift outside the glass, delicate steam rises from the cup. One gentle slow blink, slight breathing, barely moving silver hair tips. Both hands, every finger, cup handle, cup and ledge stay absolutely fixed. Closed lips remain still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-snow-v2--870832d4414a83d1b2e5ae4d16e4c5b8ace54737407b685ae1a66ac5b63824d2\\source.png",
+          "sha256": "0a2c298a968c05c8508fecb905a0b35384b645bbc1372531df2da56237e9c094"
+        }
+      }
+    },
+    {
+      "id": "elena-analysis-video-v2",
+      "character": "elena",
+      "scene": "act3-ch09-analysis",
+      "parent_job": "elena-analysis-v2",
+      "seed": 509020265007,
+      "angle": "slightly elevated three-quarter side, fixed camera",
+      "gaze": "down at three chip stacks",
+      "expression": "private thoughtful",
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena quietly studies the same three neat chip stacks. One soft natural blink, tiny breathing motion and a few fine silver hair strands move very slightly. Keep her downwards gaze and closed lips. Both hands and all fingers stay absolutely fixed with the touching hand poised exactly over the same chip stacks. No chip rolling, lifting, shuffling or stack changes. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-analysis-v2--c9a48cd4e8f131450797e925565544f1cd57cacd3a3ab98f1b078f0e7196f7a9\\source.png",
+          "sha256": "d52bb058398f05cb666c12af1ec1e97689033756df010f6037acc026eabc8cd1"
+        }
+      }
+    }
+  ]
+}

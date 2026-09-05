@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "elena-lesson-v2",
+  "character": "elena",
+  "scene": "act3-ch09-lesson",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act3-ch09-lesson-v2.png",
+    "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\elena-lesson-v2.provenance.json",
+    "sha256": "d823fdbf4c6905eaf72282ed25737a9d2e7f81a928ee7d926d734235f976211d"
+  },
+  "prompt": "Create ONE new finished premium Japanese visual-novel EVENT CG, portrait 1024x1536 opaque. No text, logos, watermark or collage. Reference1 provides the REQUIRED exquisite rendering quality and Elena's exact face: fine elegant lineart, luminous fine silver hair strands, sophisticated grey-blue eyes, nuanced skin, rich atmospheric painted setting with depth and reflected light. Reference2 is identity and wardrobe only, NOT the flat sprite rendering style. Elena is an adult woman age27, mature elongated face and defined jaw, narrow grey-blue eyes, very long straight silver hair with the same parting, small silver hoop earrings. Wear exactly reference2's tailored black blazer, white collared shirt, pale grey necktie and black trousers. New scene title (not printed): Reading the Shadows. Inside a traditional wooden poker dojo study, seated at a teal felt table in a medium 3/4 composition, seen from the student's side of the table with a slightly elevated camera. Her torso leans forward a little, one index fingertip is clearly planted on one abstract line in an open notebook, the other hand lies naturally beside it. She has just raised her thoughtful narrow eyes from the note toward her student just to camera-left, one eyebrow subtly questioning with a small knowing smile, a moment of engaged teaching rather than a catalogue pose. The notebook contains faint abstract diagram marks, NOT legible words. Two neat small stacks of real poker chips in deep teal and ivory sit nearby; no face-up cards. Place a warm shaded table lamp visible near the rear right, casting believable amber highlights on the silk of her hair, fingers and blazer folds; soft cool daylight enters a shoji window at left to shape the opposite cheek. In near foreground blur one edge of the felt rail and a chip stack, crisp Elena and notebook in middle plane, behind her richly painted wooden beams, curtains and dim shelves receding softly. Blue-violet shadows, silver rim light, restrained golden lamp glow, realistic material richness within gorgeous polished anime galge painting like reference1. Keep silver hair silver (not white plastic), face recognizably the same adult woman. Natural anatomy, purposeful gaze, no extra people, no massive breasts, no erotic framing, no thick comic outlines, no flat generic classroom background.",
+  "angle": "seated three-quarter lean",
+  "gaze": "towards student off camera",
+  "expression": "attentive analytical",
+  "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "general",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "sakura-rain-veranda-v2",
+  "character": "sakura",
+  "scene": "act1-ch02-rain-veranda",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/story-expansion-control",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-scene-act1-ch02-rain-veranda-v2.png",
+    "sha256": "53d817a7af974724d445ffbaa905f621598fb244944671f6b06f5a757ac12fcd"
+  },
+  "provenance": {
+    "path": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\scripts\\art\\library\\recipes\\event-cg-v2-20260905\\sakura-rain-veranda-v2.provenance.json",
+    "sha256": "01576812fd14eca8443d6fad293f83aa7c3abc267af6e36c6f3027908413f7a2"
+  },
+  "prompt": "Create ONE premium finished Japanese galge visual-novel EVENT CG, portrait1024x1536 opaque, no text/logo/watermark/collage. References1/2 are the required exact quality benchmark: delicate fine linework, translucent layered pink hair highlights, luminous nuanced skin, richly painted environment, dimensional cinematic light, soft detailed ivory fabric, beautiful atmosphere and strong depth. Reference3 is identity/wardrobe ONLY, not a command to make flat sprite-style art. Sakura is the SAME adult woman age22, soft pink bob, pink eyes, small white cherry-blossom hairpin, ivory cardigan with tan buttons, white collared blouse, pink neck ribbon, dark grey-purple pleated skirt. Wholesome everyday scene, natural adult proportions. Keep her unmistakable face and clothing. New composition, not the original frontal pose. Match polished painted EVENT-CG finish, not thick-outlined cartoon. Scene: Rain and Waiting. An intimate medium-wide seated view on a sheltered wooden dojo veranda at blue hour, Sakura in a gentle three-quarter view, her relaxed face visible as she gazes toward a rain ripple in the garden pond to camera-left. Quiet calm closed-mouth smile. One hand rests on the dark polished railing, the other lightly holds her own cardigan cuff; comfortable natural posture. Her entire body and hair stay dry beneath the roof. A warm paper lantern and amber shoji door clearly visible behind-right cast honey highlights on her cheek, bob and ivory sleeves, opposed by blue-violet rain light from the left. Foreground eave edge with hanging drops out of focus, thin silver rain in middle distance, textured wet moss stones, pond rings, cherry branches and garden lanterns receding into atmospheric mist. Her reflections and light are integrated into the detailed painted environment. Make rain an emotionally alive event-CG backdrop, not a plain grey wall. Preserve natural hands and stable calm mouth, no umbrella, no additional characters, no exposed skin emphasis.",
+  "angle": "seated three-quarter side",
+  "gaze": "rainy garden off camera",
+  "expression": "calm expectant",
+  "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt"
+}

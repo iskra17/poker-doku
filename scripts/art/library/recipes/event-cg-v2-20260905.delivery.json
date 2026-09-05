@@ -1,0 +1,825 @@
+{
+  "version": 1,
+  "scope": "general",
+  "ledger": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905",
+  "jobs": [
+    {
+      "angle": "low three-quarter side, fixed camera",
+      "character": "sakura",
+      "expression": "quiet discovery",
+      "gaze": "down at open book",
+      "id": "sakura-library-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-library-v2--5f9254515996e2e02dae721197c2e82712ef4c24e5c16c1c62bcb3e3dfa49cdd\\source.png",
+          "sha256": "3fa53b9895944f47343e12413979fe0f09e9fde6b2bcfd440e85e043b4b7494b"
+        }
+      },
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "parent_job": "sakura-library-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura reads the same open book quietly. A single slow blink, subtle breathing, very slight hair-tip motion and softly drifting sunlit dust. Both hands, all fingers, book and page markings remain fixed. No page turning. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act1-ch02-library",
+      "seed": 509020265000
+    },
+    {
+      "angle": "seated three-quarter lean, fixed camera",
+      "character": "elena",
+      "expression": "attentive analytical",
+      "gaze": "towards student off camera",
+      "id": "elena-lesson-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-lesson-v2--3de3fdfce820668f54cb7957ef4d14c6224ed1ac36e913b52bf34ceed919e89c\\source.png",
+          "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+        }
+      },
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "parent_job": "elena-lesson-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena holds her teaching pose, pointing at the same notebook diagram. One natural slow blink, extremely subtle breathing, a few fine silver hair strands stir. Both hands, fingers, diagram, notebook, chips and cards remain absolutely fixed. No speaking. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act3-ch09-lesson",
+      "seed": 509020265001
+    },
+    {
+      "angle": "seated three-quarter portrait, fixed camera",
+      "character": "sakura",
+      "expression": "small joyful laugh",
+      "gaze": "eyes softly closed",
+      "id": "sakura-victory-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-victory-v2--526b95e9d83eb7ba2624a447a1bb327c24dc0928c832a965fec2218d8e515d08\\source.png",
+          "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+        }
+      },
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "parent_job": "sakura-victory-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura keeps her eyes softly closed and her delighted smile, with the tiniest natural joyful shoulder breath and slight pink hair-tip motion. Preserve her mouth shape with no speech or wide mouth change. The two chips held near her chest, fingers and the other hand on the table rail remain absolutely fixed. All cards and table chips stay still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act1-ch02-victory",
+      "seed": 509020265003
+    },
+    {
+      "angle": "seated three-quarter side, fixed camera",
+      "character": "sakura",
+      "expression": "calm expectant",
+      "gaze": "rainy garden off camera",
+      "id": "sakura-rain-veranda-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-rain-veranda-v2--9b06a3798e3004b2e6179c9b406382e9afe46d94f07ea152e978e3c0067a26e5\\source.png",
+          "sha256": "53d817a7af974724d445ffbaa905f621598fb244944671f6b06f5a757ac12fcd"
+        }
+      },
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "parent_job": "sakura-rain-veranda-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 22-year-old woman. Sakura rests under the dry veranda, looking into the rainy blue garden. Fine rain falls only outdoors and tiny ripples spread in the distant pond. One soft blink, subtle breathing and very slight pink hair motion. Keep both hands exactly fixed, one on the bench rail and the other holding her cuff. Keep her closed lips still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act1-ch02-rain-veranda",
+      "seed": 509020265004
+    },
+    {
+      "angle": "standing three-quarter, fixed camera",
+      "character": "elena",
+      "expression": "quiet reflective",
+      "gaze": "down toward river",
+      "id": "elena-river-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-river-v2--8f38a36b14aaa74da4f982baf936a3fdfc28bed18c0c435fe576ae243356839f\\source.png",
+          "sha256": "baf4d42a08ada7957d3573a50b22912a00620e3709df4cf642ca47dd5eb711a9"
+        }
+      },
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "parent_job": "elena-river-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena rests at the riverside rail, quietly looking toward the water. Her long fine silver hair shifts gently in the evening breeze, a single slow blink and subtle breathing. Water reflections shimmer softly. Her hands and fingers stay exactly fixed on the railing; no walking, mouth movement or body repositioning. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act3-ch09-river-walk",
+      "seed": 509020265005
+    },
+    {
+      "angle": "seated three-quarter, fixed camera",
+      "character": "elena",
+      "expression": "soft contemplative",
+      "gaze": "snowy garden through window",
+      "id": "elena-snow-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-snow-v2--870832d4414a83d1b2e5ae4d16e4c5b8ace54737407b685ae1a66ac5b63824d2\\source.png",
+          "sha256": "0a2c298a968c05c8508fecb905a0b35384b645bbc1372531df2da56237e9c094"
+        }
+      },
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "parent_job": "elena-snow-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena quietly looks out of the window. Snowflakes drift outside the glass, delicate steam rises from the cup. One gentle slow blink, slight breathing, barely moving silver hair tips. Both hands, every finger, cup handle, cup and ledge stay absolutely fixed. Closed lips remain still. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act3-ch09-snow-window",
+      "seed": 509020265006
+    },
+    {
+      "angle": "slightly elevated three-quarter side, fixed camera",
+      "character": "elena",
+      "expression": "private thoughtful",
+      "gaze": "down at three chip stacks",
+      "id": "elena-analysis-video-v2",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\elena-analysis-v2--c9a48cd4e8f131450797e925565544f1cd57cacd3a3ab98f1b078f0e7196f7a9\\source.png",
+          "sha256": "d52bb058398f05cb666c12af1ec1e97689033756df010f6037acc026eabc8cd1"
+        }
+      },
+      "outfit": "black tailored blazer, white collared shirt, pale grey tie, black trousers",
+      "parent_job": "elena-analysis-v2",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One fully clothed adult 27-year-old woman. Elena quietly studies the same three neat chip stacks. One soft natural blink, tiny breathing motion and a few fine silver hair strands move very slightly. Keep her downwards gaze and closed lips. Both hands and all fingers stay absolutely fixed with the touching hand poised exactly over the same chip stacks. No chip rolling, lifting, shuffling or stack changes. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve mature facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "scene": "act3-ch09-analysis",
+      "seed": 509020265007
+    },
+    {
+      "angle": "rear three-quarter turn, fixed camera",
+      "character": "sakura",
+      "expression": "gentle anticipation",
+      "gaze": "toward companion off camera",
+      "id": "sakura-garden-walk-video-v3",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\external-images\\sakura-garden-walk-v2--b740ea8a0c1fee175088d81a8a4c2b84e99e4ece449cda80054de65cf1ac5c16\\source.png",
+          "sha256": "e7d82261342cb8294cc966e5a9c919372827a7cc3756494eafcb7941fa7accef"
+        }
+      },
+      "outfit": "ivory cardigan, white blouse, pink ribbon, dark pleated skirt",
+      "parent_job": "sakura-garden-walk-v2",
+      "prompt": "STATIC FULL-LENGTH PORTRAIT CINEMAGRAPH. The entire woman from head to both shoes remains visible at precisely the same small size and exact coordinates throughout every frame. Fixed wide composition, fixed focal length, locked tripod. The foreground blossom branch, garden lantern, roof and path are perfectly stationary. No camera zoom, no dolly, no push in, no pan, no camera movement, no changing focal length. Sakura, an adult 22-year-old fully clothed woman with short pink hair, keeps the identical full-body rear three-quarter turned pose, looking back gently. Her complete body, face, hands, held book, skirt, legs and shoes remain almost entirely still in the exact same positions. Animate ONLY a few tiny drifting blossom petals, a subtle shimmer in the distant pond, and a very slight movement of the ends of her hair. The camera and character scale NEVER change. Preserve all fine lines, soft shaded skin, cardigan fabric, original lighting and painted spatial detail. No text, no other people, no extra objects. Start and finish with the exact original composition and full-length figure. This is an ambient living painting, not a cinematic camera shot.",
+      "scene": "act1-ch02-garden-walk",
+      "seed": 509020265102
+    }
+  ],
+  "pairs": [
+    {
+      "id": "27a437ff09318482be73f6dd5e273ffa1fa510df0e9a68d9b4586c34bea181de",
+      "job_id": "sakura-library-video-v2",
+      "source_hash": "e4c61a5972899721646af48aab0f7ec8d99586221e02ae65bf4be1e5d490270d",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "27a437ff09318482be73f6dd5e273ffa1fa510df0e9a68d9b4586c34bea181de",
+        "job_id": "sakura-library-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 437527,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "e050ff89ac1b7bad0be3e8ba7ea27b5ee4d707c0eb17a43250618aa7264bf65a",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\27a437ff09318482be73f6dd5e273ffa1fa510df0e9a68d9b4586c34bea181de.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-library-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 602500,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "8d97bbf8a753b2cc5adf767cef00a08a7986f980e6987a415321f361c833638a",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\27a437ff09318482be73f6dd5e273ffa1fa510df0e9a68d9b4586c34bea181de.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-library-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "e4c61a5972899721646af48aab0f7ec8d99586221e02ae65bf4be1e5d490270d"
+      },
+      "state": "complete",
+      "created": 1788571118.8016624
+    },
+    {
+      "id": "c8500a8482681241668164f161a519685823ac2a9a09e0854f148da0ff81d1b1",
+      "job_id": "elena-lesson-video-v2",
+      "source_hash": "57fd3512980d4c8d7c64a73b5ae7395b8de51e14918ba77fd1c4ba83d19eeb87",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "c8500a8482681241668164f161a519685823ac2a9a09e0854f148da0ff81d1b1",
+        "job_id": "elena-lesson-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 480849,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "24ee330988769e1932c0b34baa6bc58e80ca0a2720d33c1b84a1c52a875271b0",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\c8500a8482681241668164f161a519685823ac2a9a09e0854f148da0ff81d1b1.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-lesson-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 744701,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "2870e038e242f84999223d451d14624e6de0f14902eba4fc1168afe3e0fd52c4",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\c8500a8482681241668164f161a519685823ac2a9a09e0854f148da0ff81d1b1.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-lesson-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "57fd3512980d4c8d7c64a73b5ae7395b8de51e14918ba77fd1c4ba83d19eeb87"
+      },
+      "state": "complete",
+      "created": 1788571218.3418689
+    },
+    {
+      "id": "fe1d1b940fa3e7a773eee601aca4c05c885e37a2f5cacfafac55bbd10e013a32",
+      "job_id": "sakura-victory-video-v2",
+      "source_hash": "ff916cff639dfcc128d25928ecbf4a14b2123863368cd32b9db3756636e29deb",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "fe1d1b940fa3e7a773eee601aca4c05c885e37a2f5cacfafac55bbd10e013a32",
+        "job_id": "sakura-victory-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 491506,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "a57ca0c99a8f87663ca298916c6eb3da86fe408c3576a5d5574ae24af440ffe3",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\fe1d1b940fa3e7a773eee601aca4c05c885e37a2f5cacfafac55bbd10e013a32.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-victory-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 744894,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "55b9492518ed4bd64031fc1066f423b4b43fac9e80a1ac359ce240c95a122ae7",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\fe1d1b940fa3e7a773eee601aca4c05c885e37a2f5cacfafac55bbd10e013a32.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-victory-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "ff916cff639dfcc128d25928ecbf4a14b2123863368cd32b9db3756636e29deb"
+      },
+      "state": "complete",
+      "created": 1788571391.106365
+    },
+    {
+      "id": "2c6335b4b814de163c38ae701e61fadba44737a02fe8a460868bc219f32571ff",
+      "job_id": "sakura-rain-veranda-video-v2",
+      "source_hash": "361acedf522b76e6938d180851fa4c6c94c98a57fd20823ae3a87d0780512edd",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "2c6335b4b814de163c38ae701e61fadba44737a02fe8a460868bc219f32571ff",
+        "job_id": "sakura-rain-veranda-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 619192,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "184a58b83def011f32e16828ec6f3d9546a808ad5f72f66795b4ed64318770e2",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\2c6335b4b814de163c38ae701e61fadba44737a02fe8a460868bc219f32571ff.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-rain-veranda-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 897689,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "9fad513e6d0d0880a168d505dd4ec9b9a85f993db654888683b6fc5d234cd4a9",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\2c6335b4b814de163c38ae701e61fadba44737a02fe8a460868bc219f32571ff.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-rain-veranda-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "361acedf522b76e6938d180851fa4c6c94c98a57fd20823ae3a87d0780512edd"
+      },
+      "state": "complete",
+      "created": 1788571510.9928663
+    },
+    {
+      "id": "a74395c31b558ef9804987a6c6e51011f80c20613b6706b20414588ef4d2c972",
+      "job_id": "elena-river-video-v2",
+      "source_hash": "6550e4fa322acd4f24cccf894ade9c1133f0af54ed1cae87e4e537903c5bed43",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "a74395c31b558ef9804987a6c6e51011f80c20613b6706b20414588ef4d2c972",
+        "job_id": "elena-river-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 473860,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "7fcef15f3d416e6f158ecce38b19936a504e468c4627c0b20e5c9255ce9f5eec",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\a74395c31b558ef9804987a6c6e51011f80c20613b6706b20414588ef4d2c972.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-river-walk-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 762298,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "ec24c4742daabc5d285047a0911c3e40c90f2bb0634c2d7a7d986ecc24d8de4a",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\a74395c31b558ef9804987a6c6e51011f80c20613b6706b20414588ef4d2c972.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-river-walk-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "6550e4fa322acd4f24cccf894ade9c1133f0af54ed1cae87e4e537903c5bed43"
+      },
+      "state": "complete",
+      "created": 1788571626.2957337
+    },
+    {
+      "id": "f863cc6c189f7b42b6ee0da448567477792d0c7b0be68a9c440b425bc8206ed1",
+      "job_id": "elena-snow-video-v2",
+      "source_hash": "ac0d76ed179dad888f86ef3fad8514d325dc732ef84aeaa1757fb515ccf727b5",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "f863cc6c189f7b42b6ee0da448567477792d0c7b0be68a9c440b425bc8206ed1",
+        "job_id": "elena-snow-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 479265,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "fa3a4ad89c34fd34126355bc3f83bae9d776739aa2d075c903b43b751019940b",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\f863cc6c189f7b42b6ee0da448567477792d0c7b0be68a9c440b425bc8206ed1.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-snow-window-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 687693,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "efbef251a01c3db5e02e5cd227e407fae5658f841bf6c0f26f66f398f0153baf",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\f863cc6c189f7b42b6ee0da448567477792d0c7b0be68a9c440b425bc8206ed1.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-snow-window-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "ac0d76ed179dad888f86ef3fad8514d325dc732ef84aeaa1757fb515ccf727b5"
+      },
+      "state": "complete",
+      "created": 1788571749.2072706
+    },
+    {
+      "id": "19b5eda98838196f01fb35b2a1322c1df50cd724d99d1630cebe7babaf9afb80",
+      "job_id": "elena-analysis-video-v2",
+      "source_hash": "3aa4ad20b644273abe78f563e24b05479823fe9d1fffdf6b3c95434fb82325b5",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "19b5eda98838196f01fb35b2a1322c1df50cd724d99d1630cebe7babaf9afb80",
+        "job_id": "elena-analysis-video-v2",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 346768,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "5679a7ca0ff2c46fc686da58cb83d4ca133e39d97fad717f737ac029e2cca065",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\19b5eda98838196f01fb35b2a1322c1df50cd724d99d1630cebe7babaf9afb80.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-analysis-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 470607,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "76fc17eefdc8d71b09483f300dce1ce28f069b44e814b1426c2a4075c366deab",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\19b5eda98838196f01fb35b2a1322c1df50cd724d99d1630cebe7babaf9afb80.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act3-ch09-analysis-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "3aa4ad20b644273abe78f563e24b05479823fe9d1fffdf6b3c95434fb82325b5"
+      },
+      "state": "complete",
+      "created": 1788571816.4710433
+    },
+    {
+      "id": "da6b8c07603cc12adb91e91d66ba97c291445bf904e13947d5c0b68b12b1a2fe",
+      "job_id": "sakura-garden-walk-video-v3",
+      "source_hash": "ef4f568af9ecb6a547304026f34780bc123379f05dbe6a8484073b79e5edf192",
+      "settings_hash": "24a1c93feb51abf445332e42a6a4c4850539990ebaef2f3a9be6645736d3da1c",
+      "definition": {
+        "id": "da6b8c07603cc12adb91e91d66ba97c291445bf904e13947d5c0b68b12b1a2fe",
+        "job_id": "sakura-garden-walk-video-v3",
+        "parts": {
+          "mp4": {
+            "media": {
+              "bytes": 441648,
+              "codec": "h264",
+              "duration": 4.416667,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "7f7ce11ed9ec127c60161b625fff4d88b613e1207d9799ab9cafa15477279934",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\da6b8c07603cc12adb91e91d66ba97c291445bf904e13947d5c0b68b12b1a2fe.mp4",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-garden-walk-v2.mp4"
+          },
+          "webm": {
+            "media": {
+              "bytes": 512073,
+              "codec": "vp9",
+              "duration": 4.417,
+              "fps": 24.0,
+              "frames": 106,
+              "height": 1152,
+              "sha256": "20521da01f86bd3aecf99c51bc31f44dd07906c0e7a99f7f8d5d44f674eeb324",
+              "width": 768
+            },
+            "staged": "D:\\AI-Image-Video\\output\\poker-doku-library\\cg-rework-v2-20260905\\exports\\da6b8c07603cc12adb91e91d66ba97c291445bf904e13947d5c0b68b12b1a2fe.webm",
+            "target": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control\\public\\assets\\story\\video\\scene-act1-ch02-garden-walk-v2.webm"
+          }
+        },
+        "settings": {
+          "fps": 24,
+          "frames": 106,
+          "height": 1152,
+          "max_bytes": 2500000,
+          "mp4": {
+            "codec": "libx264",
+            "crf": 26,
+            "preset": "medium"
+          },
+          "pixel_format": "yuv420p",
+          "source_frames": 107,
+          "version": 1,
+          "webm": {
+            "codec": "libvpx-vp9",
+            "cpu_used": 4,
+            "crf": 32
+          },
+          "width": 768
+        },
+        "source_hash": "ef4f568af9ecb6a547304026f34780bc123379f05dbe6a8484073b79e5edf192"
+      },
+      "state": "complete",
+      "created": 1788571940.8770828
+    }
+  ],
+  "reviews": [
+    {
+      "id": 9,
+      "job_id": "sakura-library-video-v2",
+      "output_hash": "e4c61a5972899721646af48aab0f7ec8d99586221e02ae65bf4be1e5d490270d",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: fine rendering and identity preserved, natural blink and gentle page lift, readable fixed hands, no anatomical break, clean loop edge.",
+      "created": 1788571117.7065809
+    },
+    {
+      "id": 10,
+      "job_id": "elena-lesson-video-v2",
+      "output_hash": "57fd3512980d4c8d7c64a73b5ae7395b8de51e14918ba77fd1c4ba83d19eeb87",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: mature face, fine silver hair and integrated light retained; thoughtful slow blink, hands and notebook remain coherent, no chip or anatomy drift, clean loop edge.",
+      "created": 1788571217.1910655
+    },
+    {
+      "id": 11,
+      "job_id": "sakura-garden-walk-video-v2",
+      "output_hash": "de08d124ff7a31dc92d74e522250397768bf7ab25dbb0521b2be3dc82835f70b",
+      "decision": "rejected",
+      "reason": "Root temporal review: severe full-body to close-up zoom and reverse zoom across each loop; violates stable framing and would pulse distractingly. Fine still remains approved. One bounded fixed-camera retry.",
+      "created": 1788571329.0609586
+    },
+    {
+      "id": 12,
+      "job_id": "sakura-victory-video-v2",
+      "output_hash": "ff916cff639dfcc128d25928ecbf4a14b2123863368cd32b9db3756636e29deb",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: warm detailed rendering and closed-eye delight preserved; small smile and hair motion; two held chips, fingers, cards and stacks coherent with stable framing and clean loop.",
+      "created": 1788571389.952245
+    },
+    {
+      "id": 13,
+      "job_id": "sakura-rain-veranda-video-v2",
+      "output_hash": "361acedf522b76e6938d180851fa4c6c94c98a57fd20823ae3a87d0780512edd",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: exterior rain and pond ripples, natural blink, warm face lighting and fine hair retained. Hands, cuff, seated pose and roof stable, no zoom or anatomy break; clean loop edge.",
+      "created": 1788571509.7007265
+    },
+    {
+      "id": 14,
+      "job_id": "elena-river-video-v2",
+      "output_hash": "6550e4fa322acd4f24cccf894ade9c1133f0af54ed1cae87e4e537903c5bed43",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: delicate breeze through silver hair and shimmering water, preserved mature identity and warm-cool lighting, fixed railing hand and framing, no anatomy or costume drift, clean loop edge.",
+      "created": 1788571625.1802607
+    },
+    {
+      "id": 15,
+      "job_id": "elena-snow-video-v2",
+      "output_hash": "ac0d76ed179dad888f86ef3fad8514d325dc732ef84aeaa1757fb515ccf727b5",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: snowfall outside, delicate cup steam and blink are coherent; face, grey tie, cup, fingers and seated posture preserved, lighting and framing stable, clean loop edge.",
+      "created": 1788571748.0471494
+    },
+    {
+      "id": 16,
+      "job_id": "elena-analysis-video-v2",
+      "output_hash": "3aa4ad20b644273abe78f563e24b05479823fe9d1fffdf6b3c95434fb82325b5",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: thoughtful blink and slight natural hand settling; all fingers and three chip stacks remain coherent, no chip teleportation or anatomy break; detailed lamp light, face and framing preserved with clean loop.",
+      "created": 1788571815.4808192
+    },
+    {
+      "id": 17,
+      "job_id": "sakura-garden-walk-video-v3",
+      "output_hash": "ef4f568af9ecb6a547304026f34780bc123379f05dbe6a8484073b79e5edf192",
+      "decision": "approved",
+      "reason": "Root reviewed 12 temporal frames and full-size middle frame: retry fixes the rejected zoom; full-length figure and garden landmarks remain fixed. Gentle petals, pond shimmer and hair retain fine rendering, adult identity, book and natural hand anatomy; clean loop.",
+      "created": 1788571939.700212
+    }
+  ],
+  "attempts": [
+    {
+      "job_id": "sakura-library-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788570948.3952265,
+      "submitted": 1788570948.438151,
+      "finished": 1788571049.7002509,
+      "preflight_seconds": 31.05,
+      "error": null
+    },
+    {
+      "job_id": "elena-lesson-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571049.7533817,
+      "submitted": 1788571049.7709289,
+      "finished": 1788571145.078704,
+      "preflight_seconds": 0.043,
+      "error": null
+    },
+    {
+      "job_id": "sakura-garden-walk-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571145.1298404,
+      "submitted": 1788571145.1480253,
+      "finished": 1788571248.7815013,
+      "preflight_seconds": 0.041,
+      "error": null
+    },
+    {
+      "job_id": "sakura-victory-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571248.8299003,
+      "submitted": 1788571248.8527937,
+      "finished": 1788571358.4129524,
+      "preflight_seconds": 0.038,
+      "error": null
+    },
+    {
+      "job_id": "sakura-rain-veranda-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571358.4782062,
+      "submitted": 1788571358.5269701,
+      "finished": 1788571453.910906,
+      "preflight_seconds": 0.054,
+      "error": null
+    },
+    {
+      "job_id": "elena-river-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571453.953862,
+      "submitted": 1788571453.9718673,
+      "finished": 1788571555.3215818,
+      "preflight_seconds": 0.033,
+      "error": null
+    },
+    {
+      "job_id": "elena-snow-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571555.362616,
+      "submitted": 1788571555.379733,
+      "finished": 1788571648.5270092,
+      "preflight_seconds": 0.04,
+      "error": null
+    },
+    {
+      "job_id": "elena-analysis-video-v2",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571648.5572746,
+      "submitted": 1788571648.5916712,
+      "finished": 1788571739.8396146,
+      "preflight_seconds": 0.029,
+      "error": null
+    },
+    {
+      "job_id": "sakura-garden-walk-video-v3",
+      "number": 1,
+      "state": "generated",
+      "started": 1788571770.621339,
+      "submitted": 1788571770.6494312,
+      "finished": 1788571864.3614862,
+      "preflight_seconds": 30.522,
+      "error": null
+    }
+  ],
+  "review_method": "Root inspected 12 temporal frames and full-size middle frame per clip; ffmpeg full decode and pair verification; browser playback validated separately.",
+  "originals_preserved": true
+}
