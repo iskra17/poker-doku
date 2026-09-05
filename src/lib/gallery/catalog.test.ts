@@ -82,9 +82,19 @@ describe('buildGallery', () => {
     expect(entries.every(entry => !entry.unlocked)).toBe(true);
     const summary = summarizeGallery(entries);
     expect(summary.find(row => row.section === 'bond')).toEqual({ section: 'bond', unlocked: 0, total: 24 });
-    // 보상 CG 7(1막 4 + 2막 3) + 배치된 씬 CG 18(챕터 완주 해금)
-    expect(summary.find(row => row.section === 'cg')?.total).toBe(25);
-    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(18);
+    // 보상 CG 7 + 기존 씬 CG 18 + 첫 공급 씬 CG 8(챕터 완주 해금)
+    expect(summary.find(row => row.section === 'cg')?.total).toBe(33);
+    expect(entries.filter(entry => entry.sceneCg)).toHaveLength(26);
+  });
+  it('새 일반 CG는 해당 챕터 완주로만 해금하며 미완료 Ch9도 잠긴 채 노출한다', () => {
+    const before = buildGallery({ snapshot: snapshot(), progress: progress(['act1-ch02']) });
+    expect(before.find(entry => entry.id === 'scene-cg:act1-ch02-garden-walk')?.unlocked).toBe(true);
+    expect(before.find(entry => entry.id === 'scene-cg:act3-ch09-river-walk')?.unlocked).toBe(false);
+    const completed = progress();
+    completed.chapters = [...completed.chapters.filter(ch => ch.chapterId !== 'act3-ch09'), { chapterId: 'act3-ch09', attempts: 1, completions: 1, bestGrade: null, unlocked: true }];
+    const after = buildGallery({ snapshot: snapshot(), progress: completed });
+    expect(after.find(entry => entry.id === 'scene-cg:act3-ch09-river-walk')?.unlocked).toBe(true);
+    expect(after.find(entry => entry.id === 'scene-cg:act1-ch02-garden-walk')?.unlocked).toBe(false);
   });
 });
 

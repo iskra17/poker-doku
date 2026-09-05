@@ -266,13 +266,42 @@ export const CH02: Chapter = {
       ],
     },
 
-    // ───────────────────────────────────────────── 에필로그 (성장축: 말더듬 감쇠)
+    // 수련 뒤 테이블 정리 → 서재 → 정원 → 비를 피한 툇마루. 기존 밤 에필로그로 이어진다.
     {
       kind: 'scene',
       id: 'act1-ch02:epilogue',
       scene: {
         id: 'act1-ch02:epilogue',
         lines: [
+          {
+            kind: 'say', speaker: 'sakura', expression: 'happy',
+            bg: 'dojo-table', music: 'story-warm', cg: 'act1-ch02-victory',
+            text: '후후… 이제 칩을 정리해도 되겠네요. 오늘은 저도 작은 승리를 한 기분이에요. 끝까지 제 설명을 들어 줘서 고마워요.',
+          },
+          {
+            kind: 'say', speaker: 'sakura', expression: 'neutral',
+            bg: 'dojo-study', cg: 'act1-ch02-library',
+            text: '정리를 마쳤으니 서재에 잠깐 들를까요? 여기, 제가 처음 수련할 때 읽던 책이 있어요. 모르는 부분마다 접어 뒀더니… 거의 모든 장이 접혔네요.',
+          },
+          {
+            kind: 'say', speaker: 'sakura', expression: 'thinking',
+            text: '지금 다시 읽으면 그때 놓쳤던 질문이 보여요. 같은 페이지도 기다렸다가 돌아오면 조금 다르게 읽히더라고요.',
+          },
+          {
+            kind: 'say', speaker: 'sakura', expression: 'happy',
+            bg: 'dojo-gate', cg: 'act1-ch02-garden-walk',
+            text: '책을 빌렸으니 정원 쪽으로 돌아가요. 이 길의 벚꽃은 조금 늦게 피어요. 매일 지나가다 보니, 오늘 핀 가지를 알아볼 수 있게 됐어요.',
+          },
+          {
+            kind: 'say', speaker: 'sakura', expression: 'thinking',
+            cg: 'act1-ch02-rain-veranda',
+            text: '어, 비가 오네요. 이쪽 툇마루에서 잠깐 피해요. 책도 젖지 않게 안쪽에 놓고요. 조금 전까지 맑았는데… 빗소리도 나쁘지 않네요.',
+          },
+          {
+            kind: 'say', speaker: 'sakura', expression: 'neutral',
+            text: '비가 그치기를 기다리는 사이 해가 졌네요. 저기 정원에 불이 들어왔어요. 돌아가기 전에, 오늘 수련 이야기를 조금만 더 나눠도 될까요?',
+          },
+          // 기존 밤 에필로그와 선택 반응을 그대로 이어 붙인다.
           {
             kind: 'say',
             speaker: 'sakura',

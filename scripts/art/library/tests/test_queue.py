@@ -60,6 +60,15 @@ class QueueTests(unittest.TestCase):
         self.assertEqual(self.count(),1); self.assertEqual(self.store.job('one')['state'],'generated')
         self.manifest['jobs'][0]['seed']=2; self.write('manifest.json',self.manifest)
         with self.assertRaises(ValueError): self.load()
+    def test_worker_model_cache_hashes_once_but_workflow_and_inputs_each_job(self):
+        self.load(True)
+        with patch('library.recipe.sha',wraps=sha) as digest:
+            self.worker().run(limit=2)
+        paths=[Path(call.args[0]).name for call in digest.call_args_list]
+        self.assertEqual(paths.count('model.bin'),1)
+        self.assertEqual(paths.count('graph.json'),2)
+        self.assertEqual(paths.count('ref.png'),2)
+        self.assertEqual(self.count(),2)
     def test_crash_before_intent_is_safe_to_submit(self):
         self.load(); self.kill_at('before_intent_commit'); self.assertEqual(self.count(),0)
         self.worker().run(); self.assertEqual(self.count(),1)
@@ -194,8 +203,12 @@ class QueueTests(unittest.TestCase):
         def send(): return export(self.store,'one',self.root/'game','public/assets/story/cg/recovery.webp',convert=convert,lock_path=self.root/'export.lock')
         with patch('library.review.os.link',side_effect=crash):
             with self.assertRaises(RuntimeError): send()
+        unrelated=self.root/'game/public/assets/story/cg/.someone-else.pending'
+        unrelated.write_text('unrelated')
         self.assertEqual(self.store.rows('SELECT state FROM exports')[0]['state'],'pending')
         send(); self.assertEqual(self.store.rows('SELECT state FROM exports')[0]['state'],'complete')
+        self.assertEqual(list(unrelated.parent.glob('*.art-*.pending')),[])
+        self.assertEqual(unrelated.read_text(),'unrelated')
     def test_metadata_disabled_server_rejected_before_post(self):
         self.load()
         with patch.object(self.client,'stats',return_value={'system':{'argv':['--disable-metadata']}}):

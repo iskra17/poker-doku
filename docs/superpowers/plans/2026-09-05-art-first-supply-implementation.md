@@ -1,0 +1,11 @@
+# A2.1 / A3 implementation plan
+
+Approved scope: branch `feat/art-first-supply`, based on control `db9ef5c`. Keep previous art worktree and root-owned manifest unchanged. No GPU, real Comfy, actual D: ledger/export, server, browser or additional agent execution.
+
+1. Reproduce Fable finding5: a recovered single export must remove only its durable receipt's exact pending file. Add unrelated-file preservation assertions, then fix recovery.
+2. Add a Worker-owned process-local model verification cache. Cache key includes resolved path, expected hash and stat dev/ino/size/mtime_ns/ctime_ns. Verify full hash before caching and reject a file changing during verification. Input and workflow verification remain uncached. Test unchanged reuse, new process/cache, expected-hash change, same-size write, replacement, and worker fake call counts.
+3. Add a separate durable video pair receipt and CLI. Require current approved source: 107 decoded frames, 24fps, 768x1152. Trim last frame to 106 and encode CPU H264 MP4 and VP9 WebM. Fully probe/decode both and enforce each <=2,500,000 bytes before publishing either. Reserve both paths, publish without overwrite, verify hashes and current approval on every resume. Recover a crash after one publication; never register VIDEO_AVAILABLE here. Test partial publication, mutation, collisions, rejection and idempotence using temporary roots only.
+4. Register the existing eight first-supply WebPs in scene CG IDs/titles/availability and an explicit chapter map. Verify file/ID/map/source-manifest parity and chapter-complete gallery unlock. Preserve Ch2's old CGs and add context-bearing post-training daily-life dialogue using its four new scenes. Leave Ch9 scene writing and video availability to root/assigned owner.
+5. Run Python CPU tests/compile, related Vitest with maxWorkers2, tsc, changed-file ESLint and diff check. Commit implementation, document exact pair export command/settings and pending root export/browser validation, then return idle.
+
+Dependencies: npm ci uses the requested checkout. Current shell Node22.14 is below package minimum22.16; record installation/check results and use an existing supported Node if available without installing or changing global tools.

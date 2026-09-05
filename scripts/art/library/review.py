@@ -10,6 +10,13 @@ from .media import inspect_media
 
 EXPORT_LOCK=Path('D:/AI-Image-Video/.poker-doku-export.lock')
 
+def pending_path(root,path):
+    """Keep the receipt's lexical name; never unlink a symlink's referent."""
+    path=Path(path)
+    if path.is_symlink(): raise ValueError('Receipt pending path is a symlink')
+    confined(root,path)
+    return path
+
 def checked_output(store, job):
     if not job['output'] or not job['output_hash']: raise ValueError('Job has no generated result')
     path=confined(store.root,job['output'])
@@ -46,6 +53,8 @@ def export(store,job_id,target_root,relative, *, convert=converter, lock_path=EX
         mode='cg' if job['kind']=='image' else 'video-mp4'
         folder=confined(root,'public/assets/story/cg' if mode=='cg' else 'public/assets/story/video')
         target=confined(root,relative); confined(folder,target)
+        from .video_pair import reserved_by_pair
+        if reserved_by_pair(store,target): raise ValueError('Target reserved by a video pair')
         if target.suffix.lower()!=('.webp' if mode=='cg' else '.mp4'): raise ValueError('Wrong export extension')
         tool=confined(root,'scripts/art/convert.mjs')
         tool_hash=sha(tool) if mode=='cg' else 'ffmpeg-h264-crf26-medium-faststart-v1'
@@ -60,6 +69,10 @@ def export(store,job_id,target_root,relative, *, convert=converter, lock_path=EX
                 with store.db:
                     store.db.execute("UPDATE exports SET state='complete' WHERE id=?",(export_id,))
                     store.db.execute("UPDATE jobs SET state='exported' WHERE id=?",(job_id,))
+                temporary=pending_path(root,target.parent/('.'+target.name+'.art-'+export_id+'.pending'))
+                if temporary.exists():
+                    if sha(temporary)!=row['output_hash']: raise ValueError('Receipt pending bytes changed; do not remove')
+                    temporary.unlink()
                 return str(target)
             if row['state']=='complete': raise ValueError('Completed export was removed; explicit investigation required')
             staged=confined(store.root,row['staged'])
@@ -78,7 +91,7 @@ def export(store,job_id,target_root,relative, *, convert=converter, lock_path=EX
                 store.db.execute('INSERT INTO exports VALUES(?,?,?,?,?,?,?,?,?)',(export_id,job_id,job['output_hash'],settings,str(target),info['sha256'],str(staged),'pending',time.time()))
             row=store.rows('SELECT * FROM exports WHERE id=?',(export_id,))[0]
         target.parent.mkdir(parents=True,exist_ok=True)
-        temporary=confined(root,target.parent/('.'+target.name+'.art-'+export_id+'.pending'))
+        temporary=pending_path(root,target.parent/('.'+target.name+'.art-'+export_id+'.pending'))
         # This exact temporary name is owned by the durable pending receipt, never a game file.
         if temporary.exists(): temporary.unlink()
         with staged.open('rb') as src,temporary.open('xb') as dst:

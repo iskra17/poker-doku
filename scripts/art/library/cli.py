@@ -8,6 +8,7 @@ from .store import Store
 from .recipe import import_manifest
 from .worker import Worker
 from .review import decide,export,sheet
+from .video_pair import export_video_pair
 
 def parser():
     p=argparse.ArgumentParser(description='Local general-art durable queue; no automatic retry, approval or export')
@@ -20,6 +21,7 @@ def parser():
     reconcile=commands.add_parser('reconcile'); action=reconcile.add_mutually_exclusive_group(); action.add_argument('--mark-failed',metavar='INTENT'); action.add_argument('--retry',metavar='JOB'); reconcile.add_argument('--reason')
     review=commands.add_parser('review'); review.add_argument('job'); review.add_argument('decision',choices=['approved','rejected']); review.add_argument('--reason',required=True); review.add_argument('--sha256',required=True,help='Exact full-resolution result hash reviewed by operator')
     publish=commands.add_parser('export'); publish.add_argument('job'); publish.add_argument('--target-root',required=True); publish.add_argument('--path',required=True)
+    pair=commands.add_parser('export-video-pair'); pair.add_argument('job'); pair.add_argument('--target-root',required=True); pair.add_argument('--stem',required=True)
     return p
 
 def main(argv=None):
@@ -42,6 +44,7 @@ def main(argv=None):
                 decide(store,args.job,args.decision,args.reason); result=store.job(args.job)
             elif args.command=='sheet': result=sheet(store)
             elif args.command=='export': result=export(store,args.job,args.target_root,args.path)
+            elif args.command=='export-video-pair': result=export_video_pair(store,args.job,args.target_root,args.stem)
         finally: store.close()
     print(json.dumps(result,ensure_ascii=False,indent=2))
     return 0

@@ -13,6 +13,25 @@ def verify_file(asset):
     if not path.is_file() or sha(path)!=asset['sha256']: raise ValueError('Asset hash mismatch: '+str(path))
     return path
 
+class ModelHashCache:
+    """Worker-lifetime model cache. Never serialize; inputs/workflows bypass it."""
+    def __init__(self): self.verified={}
+
+    @staticmethod
+    def signature(path):
+        stat=path.stat()
+        return (stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns)
+
+    def verify(self,asset):
+        path=Path(asset['path']).resolve()
+        before=self.signature(path); key=(str(path),asset['sha256'])
+        if self.verified.get(key)!=before:
+            self.verified.pop(key,None)
+            if not path.is_file() or sha(path)!=asset['sha256']: raise ValueError('Asset hash mismatch: '+str(path))
+            if self.signature(path)!=before: raise ValueError('Model changed during hash verification: '+str(path))
+            self.verified[key]=before
+        return path
+
 def binding(graph, entry, value):
     if not isinstance(entry,list) or len(entry)!=2: raise ValueError('Binding must be [node ID,input name]')
     node,key=entry
@@ -86,10 +105,12 @@ def approved_parent(store,parent):
     if not review or review[0]['decision']!='approved' or review[0]['output_hash']!=parent['output_hash'] or sha(parent['output'])!=parent['output_hash']:
         raise ValueError('Video parent approval is stale')
 
-def prepare_graph(store,job,attempt):
+def prepare_graph(store,job,attempt,model_cache=None):
     recipe=store.recipe(job['recipe_hash'])
     if fingerprint(recipe)!=job['recipe_hash']: raise ValueError('Recipe ledger hash mismatch')
-    for asset in [recipe['workflow'],*recipe.get('models',[])]: verify_file(asset)
+    verify_file(recipe['workflow'])
+    for asset in recipe.get('models',[]):
+        (model_cache.verify if model_cache is not None else verify_file)(asset)
     document=json.loads(job['spec'])
     if fingerprint(document)!=job['spec_hash']: raise ValueError('Job specification hash mismatch')
     spec=document['job']

@@ -7,7 +7,7 @@ import uuid
 from .common import GPU_LOCK, GpuLock, atomic_json, canonical, confined
 from .comfy import metadata, tuple_metadata, queue_items, Rejected
 from .media import inspect_media
-from .recipe import prepare_graph
+from .recipe import prepare_graph, ModelHashCache
 
 class Worker:
     def __init__(self, store, client, *, lock_path=GPU_LOCK, poll=2, checkpoint=None, disk_free=None):
@@ -15,6 +15,7 @@ class Worker:
         # Only Python tests inject these. CLI exposes no lock override or kill switch.
         self.checkpoint=checkpoint or (lambda stage:None)
         self.disk_free=disk_free or (lambda:shutil.disk_usage(store.root).free)
+        self.model_cache=ModelHashCache()
 
     def server_guard(self):
         system=self.client.stats().get('system',{}); argv=system.get('argv')
@@ -99,7 +100,7 @@ class Worker:
         path.parent.mkdir(parents=True,exist_ok=True)
         attempt=dict(intent=intent,job_id=job['id'],number=number,recipe_hash=job['recipe_hash'],prefix=path.relative_to(store.config['output_root']).as_posix(),state='submitting')
         try:
-            graph,recipe=prepare_graph(store,job,attempt)
+            graph,recipe=prepare_graph(store,job,attempt,self.model_cache)
             if list(path.parent.glob(path.name+'*')): raise ValueError('Output prefix already exists')
         except (ValueError,OSError,KeyError) as error:
             store.state(job['id'],'failed','Preflight: '+str(error)); return False

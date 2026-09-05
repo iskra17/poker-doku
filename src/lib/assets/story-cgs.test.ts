@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import type { Chapter, SceneSayLine } from '@/lib/story/types';
-import { getSceneCg, isSceneCgId, listSceneCgSources, SCENE_CG_IDS, sceneCgChapterId } from './story-cgs';
+import { getSceneCg, isSceneCgId, listSceneCgSources, SCENE_CG_IDS, SCENE_CG_CHAPTER, sceneCgChapterId } from './story-cgs';
 
 /** 챕터 데이터 안의 모든 say 라인(씬·인터럽트·선택 반응) */
 function allSayLines(chapter: Chapter): SceneSayLine[] {
@@ -37,7 +39,7 @@ describe('story-cgs 매니페스트', () => {
   });
 
   it('미배치 id는 null·프리로드 목록에서 제외 — 코드는 아트를 기다리지 않는다', () => {
-    expect(SCENE_CG_IDS.length).toBe(18);
+    expect(SCENE_CG_IDS.length).toBe(26);
     expect(getSceneCg('nope')).toBeNull();
     expect(getSceneCg(undefined)).toBeNull();
     // 배치 여부와 무관하게 경로 규약은 고정
@@ -46,5 +48,28 @@ describe('story-cgs 매니페스트', () => {
       if (cg) expect(cg.src).toBe(`/assets/story/cg/scene-${id}.webp`);
     }
     expect(listSceneCgSources(['nope', undefined])).toEqual([]);
+  });
+  it('등록 ID·실제 파일·첫 공급 해시·명시 챕터 맵이 일치한다', () => {
+    const files = readdirSync('public/assets/story/cg').filter(name => name.startsWith('scene-') && name.endsWith('.webp'));
+    expect(files.sort()).toEqual(SCENE_CG_IDS.map(id => `scene-${id}.webp`).sort());
+    expect(Object.keys(SCENE_CG_CHAPTER).sort()).toEqual([...SCENE_CG_IDS].sort());
+    const supply = JSON.parse(readFileSync('scripts/art/library/recipes/first-supply-20260905.json', 'utf8')) as { exports: { scene_cg_id: string; target: string; output_sha256: string }[] };
+    expect(supply.exports).toHaveLength(8);
+    for (const asset of supply.exports) {
+      expect(isSceneCgId(asset.scene_cg_id)).toBe(true);
+      expect(getSceneCg(asset.scene_cg_id)?.src).toBe(asset.target.replace('public', ''));
+      expect(createHash('sha256').update(readFileSync(asset.target)).digest('hex')).toBe(asset.output_sha256);
+      expect(sceneCgChapterId(asset.scene_cg_id as never)).toBe(asset.scene_cg_id.startsWith('act1-') ? 'act1-ch02' : 'act3-ch09');
+    }
+  });
+  it('Ch2 새 일상 씬은 기존 3개 CG를 보존하고 수련 뒤 장소 이동을 설명한다', () => {
+    const chapter = STORY_CHAPTERS.find(entry => entry.id === 'act1-ch02')!;
+    const index = chapter.steps.findIndex(step => step.id === 'act1-ch02:epilogue');
+    expect(index).toBeGreaterThan(chapter.steps.findIndex(step => step.kind === 'sparring'));
+    const lines = allSayLines(chapter);
+    expect(lines.map(line => line.cg)).toEqual(expect.arrayContaining(['act1-ch02-prologue', 'act1-ch02-climax', 'act1-ch02-epilogue', 'act1-ch02-victory', 'act1-ch02-library', 'act1-ch02-garden-walk', 'act1-ch02-rain-veranda']));
+    expect(lines.find(line => line.cg === 'act1-ch02-library')?.text).toContain('서재');
+    expect(lines.find(line => line.cg === 'act1-ch02-garden-walk')?.text).toContain('정원');
+    expect(lines.find(line => line.cg === 'act1-ch02-rain-veranda')?.text).toContain('비');
   });
 });

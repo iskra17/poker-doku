@@ -49,13 +49,27 @@ Approval records bind exact output bytes. Export rechecks the latest approval, s
 
 ## Recipe and recovery contracts
 
-Recipes contain a version, explicit general-art queue approval, SHA256 workflow/models, reviewed node classes, bindings for prompt/seed/input/output, output node/collection, and exact media dimensions. IDs are in the recipe binding map, never the worker. The approved Qwen graph is copied byte-for-byte from the successful A1c graph. Model revisions, canonical references and fixed seeds are in the manifest/recipe. File hashes are checked during import and again before each submit; large model reads therefore add CPU/I/O time between samples. Inputs are copied under content-addressed names without changing their originals.
+Recipes contain a version, explicit general-art queue approval, SHA256 workflow/models, reviewed node classes, bindings for prompt/seed/input/output, output node/collection, and exact media dimensions. IDs are in the recipe binding map, never the worker. The approved Qwen graph is copied byte-for-byte from the successful A1c graph. Model revisions, canonical references and fixed seeds are in the manifest/recipe. Import checks all file hashes. Each worker fully hashes a model on first use and caches only its resolved path, expected SHA and stat dev/ino/size/mtime_ns/ctime_ns signature; a changed signature forces another full hash. This cache is never persisted. Workflows, canonical sources and image inputs are still hashed for every job. Inputs are copied under content-addressed names without changing their originals.
 
 The SQLite transaction commits `submitting` and a unique intent before any POST. Requests carry matching `extra_data.poker_doku_art`, `extra_data.extra_pnginfo.poker_doku_art`, and intent/attempt/full-recipe-hash filename prefixes. Queue/history tuple index3 is extra_data in the installed Comfy source. SaveImage serializes extra_pnginfo into PNG text. Output path, full decode, dimensions, metadata and SHA256 are checked before `generated`. If history disappears, the same checks recover one unambiguous prefixed file. Missing evidence and duplicate intent outputs remain unknown.
 
 `run`/`reconcile` hold the fixed `D:/AI-Image-Video/.poker-doku-gpu.lock` OS lock across all databases and endpoint aliases. Comfy must expose input/output CLI paths matching the initialized ledger and must not disable metadata. An external queue prevents a new submission; this lock cannot prevent unrelated programs from submitting directly. No Comfy node, model, service or configuration is installed or altered by this worker. CPU exports use a separate fixed OS lock. SQLite write transactions never span model hashing, HTTP waits or media conversion.
 
 Video jobs use the same queue and declare `kind: video`, approved image `parent_job`, the parent's exact output hash as an input, dimensions/frame/duration constraints, and a metadata-preserving saver. ffprobe validates stream/frame data and embedded intent tags (or a JSON comment), followed by full ffmpeg decoding. Existing H3 can be bound as a separately reviewed video recipe; no H3 generation or video quality claim is included in this image batch.
+
+## H3 video pair export
+
+The separate pair command preserves the existing single-file export command. Only an exact-byte approved, fully decoded 107-frame / 24fps / 768x1152 video is accepted. It trims the final frame and makes 106 frames (4.4167 seconds), MP4 H264 CRF26 medium / faststart and WebM VP9 CRF32 cpu-used4, both yuv420p. Each file must decode fully, match codec/fps/dimensions/frame count and remain <=2,500,000 bytes. Oversized outputs fail; there is no silent quality reduction or automatic regeneration.
+
+```powershell
+# Only root performs actual exports after integration and full-motion approval.
+& $artPython -B scripts/art/library-worker.py --root '<approved-video-ledger-root>' export-video-pair '<approved-video-job-id>' --target-root 'C:/code/claude/poker-doku/.worktrees/story-expansion-control' --stem 'public/assets/story/video/scene-act1-ch02-victory'
+& $artPython -B scripts/art/library-worker.py --root '<approved-video-ledger-root>' export-video-pair '<approved-elena-video-job-id>' --target-root 'C:/code/claude/poker-doku/.worktrees/story-expansion-control' --stem 'public/assets/story/video/scene-act3-ch09-river-walk'
+```
+
+The first explicit pair export adds two tables to the art ledger: `video_pairs` and `video_pair_targets`. A pair receipt binds job/source hash, settings hash and both target paths before conversion. Both conversions are validated and recorded before either is published. Each publication uses a no-overwrite hard link on the target volume. After a crash, rerun the same command: an already published matching part is preserved, a missing part is published from verified staging, and only that receipt's pending names are cleaned. Changed source, approval/rejection, staging, published bytes or target collisions stop recovery. A preparing receipt owns its exact conversion staging names and may rebuild them if conversion was interrupted. Single-file exports cannot claim paths reserved by a pair.
+
+The command never edits `VIDEO_AVAILABLE`. Root must wait for the returned `state: complete`, inspect both real clips and their full loop, then register those two scene IDs in a separate asset commit. Until then the new CGs remain static. Existing 49 videos are untouched.
 
 ## Tests
 

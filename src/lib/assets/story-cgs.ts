@@ -21,7 +21,15 @@ export type SceneCgId =
   | 'act2-ch05-epilogue'
   | 'act2-ch06-prologue'
   | 'act2-ch06-climax'
-  | 'act2-ch06-epilogue';
+  | 'act2-ch06-epilogue'
+  | 'act1-ch02-garden-walk'
+  | 'act1-ch02-victory'
+  | 'act1-ch02-rain-veranda'
+  | 'act1-ch02-library'
+  | 'act3-ch09-lesson'
+  | 'act3-ch09-river-walk'
+  | 'act3-ch09-snow-window'
+  | 'act3-ch09-analysis';
 
 export const SCENE_CG_IDS: readonly SceneCgId[] = [
   'act1-ch01-prologue',
@@ -42,6 +50,14 @@ export const SCENE_CG_IDS: readonly SceneCgId[] = [
   'act2-ch06-prologue',
   'act2-ch06-climax',
   'act2-ch06-epilogue',
+  'act1-ch02-garden-walk',
+  'act1-ch02-victory',
+  'act1-ch02-rain-veranda',
+  'act1-ch02-library',
+  'act3-ch09-lesson',
+  'act3-ch09-river-walk',
+  'act3-ch09-snow-window',
+  'act3-ch09-analysis',
 ];
 
 export const SCENE_CG_TITLE: Readonly<Record<SceneCgId, string>> = Object.freeze({
@@ -63,10 +79,48 @@ export const SCENE_CG_TITLE: Readonly<Record<SceneCgId, string>> = Object.freeze
   'act2-ch06-prologue': '남극에서 온 손님',
   'act2-ch06-climax': '빙점의 선전포고',
   'act2-ch06-epilogue': '문 앞의 아라',
+  'act1-ch02-garden-walk': '책과 벚꽃길',
+  'act1-ch02-victory': '작은 승리',
+  'act1-ch02-rain-veranda': '빗소리와 기다림',
+  'act1-ch02-library': '책장에서 꺼낸 질문',
+  'act3-ch09-lesson': '그림자 읽기',
+  'act3-ch09-river-walk': '강변의 생각',
+  'act3-ch09-snow-window': '창밖의 흰 여백',
+  'act3-ch09-analysis': '칩 앞의 침묵',
 });
 
-/** 실제로 배치된 이미지 id — 아트 배치 후 여기에 추가한다 (2026-09-04 씬 CG 18장) */
+/** 실제로 배치된 이미지 id — 기존 18장 + 일반 아트 첫 공급 8장. */
 const AVAILABLE: ReadonlySet<string> = new Set<string>(SCENE_CG_IDS);
+
+/** 장면 이름과 독립적인 챕터 소유권. 기록실 해금도 이 맵을 사용한다. */
+export const SCENE_CG_CHAPTER: Readonly<Record<SceneCgId, string>> = Object.freeze({
+  'act1-ch01-prologue': 'act1-ch01',
+  'act1-ch01-climax': 'act1-ch01',
+  'act1-ch01-epilogue': 'act1-ch01',
+  'act1-ch02-prologue': 'act1-ch02',
+  'act1-ch02-climax': 'act1-ch02',
+  'act1-ch02-epilogue': 'act1-ch02',
+  'act1-ch03-prologue': 'act1-ch03',
+  'act1-ch03-climax': 'act1-ch03',
+  'act1-ch03-epilogue': 'act1-ch03',
+  'act2-ch04-prologue': 'act2-ch04',
+  'act2-ch04-climax': 'act2-ch04',
+  'act2-ch04-epilogue': 'act2-ch04',
+  'act2-ch05-prologue': 'act2-ch05',
+  'act2-ch05-climax': 'act2-ch05',
+  'act2-ch05-epilogue': 'act2-ch05',
+  'act2-ch06-prologue': 'act2-ch06',
+  'act2-ch06-climax': 'act2-ch06',
+  'act2-ch06-epilogue': 'act2-ch06',
+  'act1-ch02-garden-walk': 'act1-ch02',
+  'act1-ch02-victory': 'act1-ch02',
+  'act1-ch02-rain-veranda': 'act1-ch02',
+  'act1-ch02-library': 'act1-ch02',
+  'act3-ch09-lesson': 'act3-ch09',
+  'act3-ch09-river-walk': 'act3-ch09',
+  'act3-ch09-snow-window': 'act3-ch09',
+  'act3-ch09-analysis': 'act3-ch09',
+});
 
 export function isSceneCgId(value: unknown): value is SceneCgId {
   return typeof value === 'string' && (SCENE_CG_IDS as readonly string[]).includes(value);
@@ -74,7 +128,7 @@ export function isSceneCgId(value: unknown): value is SceneCgId {
 
 /** 씬 CG가 속한 챕터 id ('act1-ch01-climax' → 'act1-ch01') */
 export function sceneCgChapterId(id: SceneCgId): string {
-  return id.replace(/-(prologue|climax|epilogue)$/, '');
+  return SCENE_CG_CHAPTER[id];
 }
 
 export interface SceneCg {
