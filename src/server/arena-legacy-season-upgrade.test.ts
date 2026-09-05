@@ -154,10 +154,11 @@ describe('legacy Arena season catalog upgrades', () => {
     const path = join(directory, 'poker.sqlite');
     createLegacyV17Season(path, preseason);
     const openedDatabase = openPokerDatabase(path);
+    database = openedDatabase;
     const repository = new ArenaRepository(openedDatabase);
     expect(openedDatabase.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 35 });
+    `).get()).toEqual({ version: Math.max(...migrations.map(migration => migration.version)) });
     expect(repository.listSeasonCatalog(SEASON_ID)).toEqual([]);
     return {
       database: openedDatabase,

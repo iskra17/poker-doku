@@ -281,7 +281,7 @@ export const CH02: Chapter = {
           {
             kind: 'say', speaker: 'sakura', expression: 'neutral',
             bg: 'dojo-study', cg: 'act1-ch02-library',
-            text: '정리를 마쳤으니 서재에 잠깐 들를까요? 여기, 제가 처음 수련할 때 읽던 책이 있어요. 모르는 부분마다 접어 뒀더니… 거의 모든 장이 접혔네요.',
+            text: '정리를 마쳤으니 서재에 잠깐 들를까요? 여기, 제가 처음 수련할 때 읽던 책이 있어요. 모르는 부분마다 표시를 남겨 뒀더니… 거의 모든 장에 흔적이 남았네요.',
           },
           {
             kind: 'say', speaker: 'sakura', expression: 'thinking',

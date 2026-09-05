@@ -176,13 +176,14 @@ describe('generateDrill', () => {
 });
 
 describe('authored templates', () => {
-  it('registers the Act 1·2 authored drills (ids unique, all instantiable)', () => {
+  it('registers the Act 1·2·3 authored drills (ids unique, all instantiable)', () => {
     const ids = AUTHORED_DRILL_TEMPLATES.map(template => template.id);
     expect(ids).toEqual([
       'act-ch02-fold-utg', 'act-ch02-open-btn',
       'act-ch04-steal-btn', 'act-ch04-cbet-dry', 'act-ch04-iso-sb',
       'act-ch05-river-value', 'act-ch05-river-air-check',
       'act-ch06-3bet-aa', 'act-ch06-fold-vs-3bet', 'act-ch06-call-3bet-tt',
+      'act-ch09-checkraise-fold',
     ]);
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of AUTHORED_DRILL_TEMPLATES) {
