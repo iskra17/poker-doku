@@ -139,6 +139,13 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   def({ id: 'story-chips-act3-ch07-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '관찰 수료금', description: '가면무도회 첫 완주 연습 칩 500.', trigger: first('act3-ch07') }),
   def({ id: 'story-outfit-vivian-masquerade', kind: 'outfit', equipSlot: 'outfit', characterId: 'vivian', outfitId: 'masquerade', name: '비비안 · 가면무도회', description: '관찰의 밤을 기념하는 비비안의 무도회 의상.', trigger: gradeS('act3-ch07') }),
   def({ id: 'story-chips-act3-ch07-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '가면무도회 S등급 연습 칩 300.', trigger: gradeS('act3-ch07') }),
+  // ── 4막 Ch10~11 / v37. 새 CG·의상은 아트가 실제로 공급된 뒤에 추가한다(없는 파일 등록 금지).
+  def({ id: 'story-title-storm-caller', kind: 'title', equipSlot: 'title', name: '폭풍의 콜', description: '배럴과 오버벳 앞에서 가격표를 읽는 수련생.', trigger: first('act4-ch10') }),
+  def({ id: 'story-chips-act4-ch10-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '콜다운 수료금', description: '폭풍 속의 콜 첫 완주 연습 칩 500.', trigger: first('act4-ch10') }),
+  def({ id: 'story-chips-act4-ch10-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '폭풍 속의 콜 S등급 연습 칩 300.', trigger: gradeS('act4-ch10') }),
+  def({ id: 'story-title-all-rounder', kind: 'title', equipSlot: 'title', name: '올라운더', description: '배운 것을 한 자리에서 모두 꺼내 쓴 수련생.', trigger: first('act4-ch11') }),
+  def({ id: 'story-chips-act4-ch11-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '종합 수련 수료금', description: '종합 수련 첫 완주 연습 칩 500.', trigger: first('act4-ch11') }),
+  def({ id: 'story-chips-act4-ch11-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '종합 수련 S등급 연습 칩 300.', trigger: gradeS('act4-ch11') }),
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),
   def({ id: 'story-title-empty-note', kind: 'title', equipSlot: 'title', name: '빈 노트', description: '복습 노트를 졸업으로 비웠다.', trigger: { kind: 'flag', key: 'badge:empty-note', label: '복습 노트 비우기' } }),

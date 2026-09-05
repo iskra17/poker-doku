@@ -184,6 +184,7 @@ describe('authored templates', () => {
       'act-ch05-river-value', 'act-ch05-river-air-check',
       'act-ch06-3bet-aa', 'act-ch06-fold-vs-3bet', 'act-ch06-call-3bet-tt',
       'act-ch09-checkraise-fold',
+      'act-ch10-triple-barrel-call', 'act-ch10-overbet-fold',
       'act-ch12-push-btn-8bb', 'act-ch12-fold-utg-8bb',
     ]);
     expect(new Set(ids).size).toBe(ids.length);

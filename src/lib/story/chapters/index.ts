@@ -17,6 +17,8 @@ import { CH03 } from './act1/ch03-numbers-dont-lie';
 import { CH04 } from './act2/ch04-first-strike';
 import { CH05 } from './act2/ch05-take-what-is-yours';
 import { CH06 } from './act2/ch06-three-bet-temperature';
+import { CH10 } from './act4/ch10-storm-call';
+import { CH11 } from './act4/ch11-all-round';
 import { mergeGuidedSituation } from './helpers';
 import type { Card } from '@/lib/poker/types';
 import {
@@ -38,7 +40,7 @@ import {
 } from '../types';
 
 /** 등록된 챕터 — 막·순서 정렬을 유지할 것 (chapters.test.ts가 검증). */
-export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06, CH07, CH08, CH09]);
+export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06, CH07, CH08, CH09, CH10, CH11]);
 
 const CHAPTER_BY_ID: ReadonlyMap<ChapterId, Chapter> = new Map(STORY_CHAPTERS.map(chapter => [chapter.id, chapter]));
 

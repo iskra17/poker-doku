@@ -1,5 +1,5 @@
 /**
- * 4막 수기 문항 (D-SNG) — Ch12 졸업 SnG의 8BB 푸시/폴드 두 문항.
+ * 4막 수기 문항 — Ch10 리버 대면 두 문항(D-ACT)과 Ch12 졸업 SnG의 8BB 푸시/폴드 두 문항(D-SNG).
  *
  * 계약은 1~3막(`act1.ts`·`act2.ts`·`act3.ts`)과 같다: `source.kind: 'authored'`, 시드 무시,
  * 해설·힌트 전부 수기(AI 금지). 화자 tone은 Ch12 진행자 미야코 기준이고, 실행 시 speaker만 교사로 바뀐다.
@@ -23,8 +23,10 @@
  * 같은 방법으로 재계산해 ±2%p·EV 부호·해설 문장의 숫자까지 고정한다.
  */
 import { parseCards } from '@/lib/poker/card-notation';
+import { computePotOdds, estimateEquity } from '@/lib/poker/learning';
 import { rangeCombos, parseRange } from '@/lib/poker/range';
 import { pushFoldEv } from '../../../sng-thresholds';
+import { readRangeFacts } from '../../range-facts';
 import type { DrillTemplate, DrillVillain } from '../../types';
 import { round1 } from '../kit';
 
@@ -116,7 +118,173 @@ function villain(seatIndex: number, characterId: string, position: string, stack
   return { seatIndex, characterId, position, stackChips, ...(range ? { range } : {}) };
 }
 
+// ---------------------------------------------------------------------------
+// Ch10 — 리버 대면 두 문항 (D-ACT)
+//
+// 정답은 "상대의 진짜 패"가 아니라 **문항에 적힌 벳 레인지 가정**에서 나온다.
+// 콤보는 `readRangeFacts`(내 카드·보드만 제거), 승률은 `estimateEquity`가 리버 보드에서
+// 남은 콤보를 **완전 열거**한 값이다(무작위 없음). 필요 승률은 `computePotOdds`와 같은 정의 —
+// 팟은 **상대 벳을 포함한 중앙 총액**이고 필요 승률 = 콜 / (팟 + 콜)이다.
+// `r4-templates.test.ts`가 같은 방법으로 재계산해 아래 숫자와 해설 문장을 고정한다.
+
+export interface RiverRangeInput {
+  templateId: string;
+  hero: string;
+  board: string;
+  /** 벳 레인지 가정 — 밸류와 블러프는 겹치지 않는다(`readRangeFacts`가 검증) */
+  valueRange: string;
+  bluffRange: string;
+  /** 상대 벳을 포함한 리버 중앙 총액 */
+  potChips: number;
+  /** 콜에 내야 하는 금액 */
+  toCallChips: number;
+}
+
+export const ACT4_RIVER_INPUTS: readonly RiverRangeInput[] = Object.freeze<RiverRangeInput[]>([
+  {
+    templateId: 'act-ch10-triple-barrel-call',
+    hero: 'Kh Qs',
+    board: 'Kc 9d 7s 4h 2c',
+    valueRange: 'KJ+, 99, 77, 44',
+    bluffRange: 'QJs, JTs, T8s',
+    potChips: 900,
+    toCallChips: 300,
+  },
+  {
+    templateId: 'act-ch10-overbet-fold',
+    hero: 'Ah 9s',
+    board: 'Kc 9d 4s 2h 7c',
+    valueRange: 'K9s, K9o, K7s, K7o, 99, 77, 44, 22',
+    bluffRange: 'QJs, JTs, T8s',
+    potChips: 1_800,
+    toCallChips: 1_200,
+  },
+]);
+
+export interface RiverRangeFacts {
+  valueCombos: number;
+  bluffCombos: number;
+  /** 밸류 + 블러프 */
+  combos: number;
+  /** 그 레인지 대비 히어로 승률 % */
+  equity: number;
+  /** 콜 필요 승률 % */
+  requiredEquity: number;
+}
+
+export function riverRangeFacts(input: RiverRangeInput): RiverRangeFacts {
+  const hero = parseCards(input.hero);
+  const board = parseCards(input.board);
+  const range = `${input.valueRange}, ${input.bluffRange}`;
+  const counted = readRangeFacts({ range, valueRange: input.valueRange, bluffRange: input.bluffRange, hero, board });
+  const equity = estimateEquity(hero, board, parseRange(range)).equity;
+  return {
+    valueCombos: counted.valueCombos,
+    bluffCombos: counted.bluffCombos,
+    combos: counted.valueCombos + counted.bluffCombos,
+    equity: round1(equity * 100),
+    requiredEquity: round1(computePotOdds(input.toCallChips, input.potChips).pct),
+  };
+}
+
+const CALL_FACTS = riverRangeFacts(ACT4_RIVER_INPUTS[0]);
+const OVERBET_FACTS = riverRangeFacts(ACT4_RIVER_INPUTS[1]);
+
+/** 리버 가정 문구 — 두 문항이 같은 규약을 쓴다(상대의 실제 패는 공개하지 않는다). */
+function riverNote(input: RiverRangeInput, line: string): string {
+  return `${line} 벳 레인지 가정 — 밸류 ${input.valueRange} · 미스 드로우 블러프 ${input.bluffRange}. `
+    + '가정 밖 조합은 없다고 보고 계산해요. 상대의 실제 패는 공개하지 않아요.';
+}
+
+function riverVillain(characterId: string, input: RiverRangeInput): DrillVillain {
+  return { seatIndex: 1, characterId, position: 'BB', stackChips: 4_000, range: `${input.valueRange}, ${input.bluffRange}` };
+}
+
 export const ACT4_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<DrillTemplate[]>([
+  {
+    id: 'act-ch10-triple-barrel-call',
+    category: 'action-judgment',
+    title: '3배럴 끝의 톱페어',
+    difficulty: 3,
+    hints: ['필요 승률을 먼저 구하고, 가정한 레인지에서 내가 이기는 조합을 세어 보아요.'],
+    source: {
+      kind: 'authored',
+      instance: {
+        category: 'action-judgment',
+        situation: {
+          hero: parseCards(ACT4_RIVER_INPUTS[0].hero),
+          board: parseCards(ACT4_RIVER_INPUTS[0].board),
+          potChips: ACT4_RIVER_INPUTS[0].potChips,
+          toCallChips: ACT4_RIVER_INPUTS[0].toCallChips,
+          bigBlind: 20,
+          heroStackChips: 2_400,
+          heroPosition: 'BTN',
+          street: 'river',
+          villains: [riverVillain('ingrid', ACT4_RIVER_INPUTS[0])],
+          note: riverNote(
+            ACT4_RIVER_INPUTS[0],
+            '프리플랍 팟 120에서 잉그리드가 플랍 60(½팟)·턴 180(¾팟)을 벳하고 내가 둘 다 콜했어요. '
+            + '리버 시작 팟 600에 300(½팟) 벳 — 중앙은 900, 콜은 300이에요.',
+          ),
+        },
+        question: '헤즈업 리버, 톱페어로 3배럴의 마지막 벳을 맞았어요. 가정한 레인지와 가격으로만 볼 때 폴드·콜·레이즈 중 무엇일까요?',
+        answerSpec: { kind: 'action-pick', options: ['fold', 'call', 'raise'], correct: ['call'] },
+        hint: '필요 승률을 먼저 구하고, 가정한 레인지에서 내가 이기는 조합을 세어 보아요.',
+        explanation: {
+          text:
+            `필요 승률은 300 ÷ (900 + 300) = ${CALL_FACTS.requiredEquity}%예요. `
+            + `가정한 벳 레인지는 밸류 ${CALL_FACTS.valueCombos}콤보 + 미스 드로우 ${CALL_FACTS.bluffCombos}콤보 = ${CALL_FACTS.combos}콤보죠. `
+            + `K♥Q♠는 블러프를 전부 이기고 KJ에도 앞서며 KQ와는 무승부라 승률이 ${CALL_FACTS.equity}%예요. `
+            + `${CALL_FACTS.requiredEquity}%만 있으면 되는 자리니까 콜이 편하게 맞아요. `
+            + '레이즈는 아니에요 — 톱페어는 밸류로 다시 걸 만큼 세지 않고, 콜해 주는 건 나보다 강한 조합뿐이거든요. '
+            + '벳이 세 번 왔다고 늘 강한 건 아니에요, 자기. 3막을 크게 연기하는 미스 드로우도 레인지에 남아 있답니다.',
+          speaker: 'vivian',
+          facts: { ...CALL_FACTS },
+        },
+      },
+    },
+  },
+  {
+    id: 'act-ch10-overbet-fold',
+    category: 'action-judgment',
+    title: '팟을 넘는 오버벳',
+    difficulty: 3,
+    hints: ['오버벳은 필요 승률을 크게 올려요. 원페어가 이기는 조합이 그만큼 되는지 세어 보아요.'],
+    source: {
+      kind: 'authored',
+      instance: {
+        category: 'action-judgment',
+        situation: {
+          hero: parseCards(ACT4_RIVER_INPUTS[1].hero),
+          board: parseCards(ACT4_RIVER_INPUTS[1].board),
+          potChips: ACT4_RIVER_INPUTS[1].potChips,
+          toCallChips: ACT4_RIVER_INPUTS[1].toCallChips,
+          bigBlind: 20,
+          heroStackChips: 3_000,
+          heroPosition: 'BTN',
+          street: 'river',
+          villains: [riverVillain('draco', ACT4_RIVER_INPUTS[1])],
+          note: riverNote(
+            ACT4_RIVER_INPUTS[1],
+            '리버 시작 팟 600에 드라코가 1,200(2배 팟) 오버벳 — 중앙은 1,800, 콜은 1,200이에요.',
+          ),
+        },
+        question: '헤즈업 리버, 두 번째 페어로 2배 팟 오버벳을 맞았어요. 가정한 레인지와 가격으로만 볼 때 폴드와 콜 중 무엇일까요?',
+        answerSpec: { kind: 'action-pick', options: ['fold', 'call'], correct: ['fold'] },
+        hint: '오버벳은 필요 승률을 크게 올려요. 원페어가 이기는 조합이 그만큼 되는지 세어 보아요.',
+        explanation: {
+          text:
+            `팟을 넘는 벳이라 필요 승률이 1,200 ÷ (1,800 + 1,200) = ${OVERBET_FACTS.requiredEquity}%까지 올라가요. `
+            + `가정한 오버벳 레인지는 투페어+ 밸류 ${OVERBET_FACTS.valueCombos}콤보 + 미스 드로우 ${OVERBET_FACTS.bluffCombos}콤보 = ${OVERBET_FACTS.combos}콤보죠. `
+            + `A♥9♠는 블러프에만 이기니까 승률은 ${OVERBET_FACTS.equity}%뿐 — ${OVERBET_FACTS.requiredEquity}%에 한참 못 미쳐요. 폴드예요. `
+            + '폴라라이즈된 오버벳 앞에서는 원페어를 내려놓고, 홀카드가 관여한 투페어 이상만 콜해요. '
+            + '큰 숫자를 보면 궁금해지죠. 하지만 무대에서 목소리를 키우는 쪽이 늘 강한 건 아니랍니다, 자기.',
+          speaker: 'vivian',
+          facts: { ...OVERBET_FACTS },
+        },
+      },
+    },
+  },
   {
     id: 'act-ch12-push-btn-8bb',
     category: 'sng-math',

@@ -7058,6 +7058,17 @@ export const migrations: readonly Migration[] = [
       ('story-felt-brown-belt', 'felt', 'felt', NULL, NULL),
       ('story-chips-act3-complete', 'chips', NULL, NULL, 1000);`,
   },
+  {
+    version: 37,
+    name: 'story_rewards_act4a',
+    sql: `INSERT INTO story_reward_catalog (item_id, kind, equip_slot, character_id, chip_amount) VALUES
+      ('story-title-storm-caller', 'title', 'title', NULL, NULL),
+      ('story-chips-act4-ch10-first', 'chips', NULL, NULL, 500),
+      ('story-chips-act4-ch10-s', 'chips', NULL, NULL, 300),
+      ('story-title-all-rounder', 'title', 'title', NULL, NULL),
+      ('story-chips-act4-ch11-first', 'chips', NULL, NULL, 500),
+      ('story-chips-act4-ch11-s', 'chips', NULL, NULL, 300);`,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

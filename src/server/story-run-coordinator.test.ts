@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { hashSeed } from '@/lib/poker/seeded-rng';
+import { CH10 } from '@/lib/story/chapters/act4/ch10-storm-call';
 import { makeChapter, makeChapterChain, makeScene, curriculumFor } from '@/lib/story/test-fixtures';
 import { REVIEW_SLOT_TEMPLATE_ID, type Chapter, type StoryTeacherId } from '@/lib/story/types';
 import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
@@ -1196,5 +1197,111 @@ describe('동적 복습 슬롯', () => {
     ctx.repository.complete(PROFILE, 'act1-ch01');
     expect(ctx.coordinator.startDaily(PROFILE).ok).toBe(true);
     expect(REVIEW_POOL).toContain(ctx.latest().drill!.instance.templateId);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Ch10 HU만 재도전 — 기존 checkpoint 계약이 그대로 동작해야 한다(구현 변경 없음)
+
+describe('Ch10 스파링 재도전', () => {
+  /** Ch10 스텝: 0 씬 · 1 레슨 · 2 드릴 · 3·4 연습 · 5 스파링 · 6 씬 · 7 HU 보스 · 8 에필로그 · 9 결산 */
+  const SPARRING_INDEX = 5;
+  const BOSS_INDEX = 7;
+
+  function ch10() {
+    const ctx = setup([CH10], 'sakura');
+    for (const chapterId of ['act3-ch07', 'act3-ch08', 'act3-ch09']) ctx.repository.complete(PROFILE, chapterId);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    return { ...ctx, fake };
+  }
+
+  /** 드릴 8문항을 전부 정답으로 풀고 두 연습을 마친 뒤 첫 스파링 앞에 세운다 */
+  function driveToSparring(ctx: ReturnType<typeof ch10>) {
+    const practice = driveToLive(ctx, 'act4-ch10');
+    expect(practice.stepIndex).toBe(3);
+    expect(ctx.latest().result).toBeNull();
+    ctx.fake.finish(liveSummary({ tag: '연습', primaryObjectivesMet: null, liveScore: null, objectives: [] }));
+    ctx.fake.finish(liveSummary({ tag: '연습', primaryObjectivesMet: null, liveScore: null, objectives: [] }));
+    expect(ctx.latest().stepIndex).toBe(SPARRING_INDEX);
+  }
+
+  function passFirstSparring(ctx: ReturnType<typeof ch10>) {
+    ctx.fake.finish(liveSummary({
+      handsPlayed: 8, netBB: 4,
+      objectives: [{ id: 'ch10-calldown', kind: 'topair-calldown', label: '콜다운', primary: true, progress: 2, target: 2, achieved: true }],
+    }));
+    // 해설 씬(6)을 넘겨 HU 보스로 들어간다
+    expect(ctx.latest().stepIndex).toBe(6);
+    expect(ctx.coordinator.advance(PROFILE, { runId: ctx.latest().runId, expectedStepIndex: 6, target: 'next' }).ok).toBe(true);
+    expect(ctx.latest().stepIndex).toBe(BOSS_INDEX);
+  }
+
+  /** 실패 씬을 마친 뒤에야 재도전을 부를 수 있다(그 전엔 활성 런 때문에 story-busy) */
+  function clearFailureScene(ctx: ReturnType<typeof ch10>, stepIndex: number) {
+    const view = ctx.latest();
+    expect(view).toMatchObject({ phase: 'failure-scene', stepIndex });
+    expect(ctx.coordinator.retrySparring(PROFILE, view.runId).ok).toBe(false);
+    expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: stepIndex, target: 'next' }).ok).toBe(true);
+    return view.runId;
+  }
+
+  it('HU만 실패하면 드릴·연습을 반복하지 않고 HU 스텝으로 재진입한다', () => {
+    const ctx = ch10();
+    driveToSparring(ctx);
+    passFirstSparring(ctx);
+    ctx.fake.finish(liveSummary({ primaryObjectivesMet: false, handsPlayed: 5, netBB: -20, objectives: [] }));
+    const failedRunId = clearFailureScene(ctx, BOSS_INDEX);
+
+    const entersBefore = ctx.fake.enters.length;
+    expect(ctx.coordinator.retrySparring(PROFILE, failedRunId).ok).toBe(true);
+    const run = ctx.coordinator.getActiveRun(PROFILE)!;
+    expect(run.stepIndex).toBe(BOSS_INDEX);
+    expect(ctx.fake.enters).toHaveLength(entersBefore + 1);
+    expect(ctx.fake.enters.at(-1)).toMatchObject({ stepIndex: BOSS_INDEX, chapterId: 'act4-ch10' });
+    // 드릴 8슬롯과 앞선 라이브 요약(연습 2 + 첫 스파링)은 그대로 보존된다
+    expect(run.drillSummary.outcomes).toHaveLength(8);
+    expect(run.liveResults.map(entry => entry.tag)).toEqual(['연습', '연습', '대결']);
+    expect(run.liveResults.at(-1)).toMatchObject({ handsPlayed: 8, primaryObjectivesMet: true });
+    expect(ctx.repository.attemptStarts).toHaveLength(2);
+  });
+
+  it('재도전에서 HU를 통과하면 두 스파링 요약을 합쳐 통과 결산이 된다', () => {
+    const ctx = ch10();
+    driveToSparring(ctx);
+    passFirstSparring(ctx);
+    ctx.fake.finish(liveSummary({ primaryObjectivesMet: false, handsPlayed: 5, netBB: -20, objectives: [] }));
+    const failedRunId = clearFailureScene(ctx, BOSS_INDEX);
+    expect(ctx.coordinator.retrySparring(PROFILE, failedRunId).ok).toBe(true);
+
+    ctx.fake.finish(liveSummary({
+      handsPlayed: 14, netBB: 6.5, liveScore: 1,
+      objectives: [{ id: 'ch10-overbet', kind: 'overbet-decision', label: '오버벳', primary: true, progress: 1, target: 0.5, achieved: true }],
+    }));
+    // 에필로그 씬(8) → 결산(9)
+    expect(ctx.latest().stepIndex).toBe(8);
+    for (const stepIndex of [8, 9]) {
+      expect(ctx.coordinator.advance(PROFILE, { runId: ctx.latest().runId, expectedStepIndex: stepIndex, target: 'next' }).ok).toBe(true);
+    }
+    const result = ctx.latest().result!;
+    expect(result.passed).toBe(true);
+    expect(result.live).toMatchObject({ handsPlayed: 22, netBB: 10.5 });
+    expect(result.live!.objectives.map(objective => objective.id)).toEqual(['ch10-calldown', 'ch10-overbet']);
+    expect(ctx.repository.completions.at(-1)).toEqual({ chapterId: 'act4-ch10', grade: expect.any(String) });
+  });
+
+  it('첫 스파링에서 실패하면 첫 스파링부터 다시 한다', () => {
+    const ctx = ch10();
+    driveToSparring(ctx);
+    ctx.fake.finish(liveSummary({ primaryObjectivesMet: false, handsPlayed: 3, netBB: -30, objectives: [] }));
+    const failedRunId = clearFailureScene(ctx, SPARRING_INDEX);
+    expect(ctx.coordinator.retrySparring(PROFILE, failedRunId).ok).toBe(true);
+    const run = ctx.coordinator.getActiveRun(PROFILE)!;
+    expect(run.stepIndex).toBe(SPARRING_INDEX);
+    expect(ctx.fake.enters.at(-1)).toMatchObject({ stepIndex: SPARRING_INDEX });
+    // 실패한 스파링 요약은 버리고 연습 두 개만 남는다
+    expect(run.liveResults.map(entry => entry.tag)).toEqual(['연습', '연습']);
+    expect(run.drillSummary.outcomes).toHaveLength(8);
   });
 });
