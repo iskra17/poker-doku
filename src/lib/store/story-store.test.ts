@@ -5,6 +5,7 @@ import type { DrillResult } from '@/lib/story/drills/types';
 import type { StoryProgressView, StoryRunView } from '@/lib/story/views';
 import { onGameEvent, type GameEvent } from '@/lib/events/game-events';
 import { createStoryStore, toWireDrillAnswer } from './story-store';
+import { quizRemainingMs } from '../story/quiz-countdown';
 
 type Handler = (...args: unknown[]) => void;
 
@@ -100,6 +101,28 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 describe('story-store', () => {
+  it('anchors received quiz samples once, preserves them offline, and clears on identity changes', () => {
+    let now = 100;
+    const store = createStoryStore({ fetch: vi.fn(), monotonicNow: () => now });
+    store.getState().setProfileIdentity('p1');
+    const fake = makeSocket(); store.getState().bindSocket(fake.socket);
+    const view = runFixture({ drill: null, phase: 'live-hold', live: {
+      roomId: 'room1', tag: '대결', hold: true, holdReason: 'quiz', interruptId: null,
+      objectives: [], handsPlayed: 12, maxHands: 22, minHands: null, lastReview: null, botThoughts: [],
+      pendingQuiz: { quizId: 'q1', number: 1, required: 4, seatIndex: 1, prompt: '?', options: ['a','b','c','d'], expiresAt: 31_000, sampledAt: 1_000, remainingMs: 30_000 },
+    } });
+    fake.fire('story-update', view);
+    const first = store.getState().quizCountdown;
+    now = 5_100; fake.fire('story-update', view);
+    expect(store.getState().quizCountdown).toBe(first);
+    fake.socket.connected = false; now = 10_100;
+    expect(quizRemainingMs(store.getState().quizCountdown, now)).toBe(20_000);
+    fake.socket.connected = true;
+    fake.fire('story-update', { ...view, live: { ...view.live, pendingQuiz: { ...view.live!.pendingQuiz, sampledAt: 11_000, remainingMs: 20_000 } } });
+    expect(quizRemainingMs(store.getState().quizCountdown, now)).toBe(20_000);
+    store.getState().setProfileIdentity('p2');
+    expect(store.getState().quizCountdown).toBeNull();
+  });
   it('load: parses the progress view, maps 401 to unauthorized, ignores stale identities', async () => {
     const fetch = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>();
     const store = createStoryStore({ fetch });

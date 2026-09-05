@@ -25,14 +25,18 @@ export function opponentResponseStrength(hole: readonly Card[], board: readonly 
   if (hole.length !== 2 || board.length !== 5) return {topPairOrBetter:false,strongMade:false};
   const made = evaluateHand([...hole], [...board]);
   const boardHand = evaluateHand([], [...board]);
+  if (made.rank === 'four-of-a-kind' && boardHand.rank === made.rank) return {topPairOrBetter:false,strongMade:false};
   const contributes = made.value > boardHand.value;
   const order = handRankOrder(made.rank);
   const boardOrder = handRankOrder(boardHand.rank);
   const top = Math.max(...board.map(c=>rankValue(c.rank)));
   const pocket = hole[0].rank === hole[1].rank;
   const topPair = pocket ? rankValue(hole[0].rank) > top : hole.some(c=>rankValue(c.rank)===top);
-  // Same-rank board hands can improve only through kickers; exclude those conservatively.
-  const strongerMade = contributes && order > boardOrder && order >= handRankOrder('two-pair');
+  // These five-card ranks have no separate kicker: a higher value improves the made hand.
+  // Same-rank quads/two-pair can merely improve a kicker and remain excluded.
+  const improvedFiveCardHand = order === boardOrder
+    && ['straight', 'flush', 'full-house', 'straight-flush'].includes(made.rank);
+  const strongerMade = contributes && (order > boardOrder || improvedFiveCardHand) && order >= handRankOrder('two-pair');
   const topPairOrBetter = contributes && (topPair || strongerMade);
   return {topPairOrBetter, strongMade: strongerMade && order >= handRankOrder('three-of-a-kind')};
 }

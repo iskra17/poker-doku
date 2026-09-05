@@ -800,4 +800,33 @@ describe('LiveTableAdapter', () => {
     expect(onStepFinished.mock.calls[0][2].objectives.find(o => o.id === 'ch07-quiz')?.achieved).toBe(true);
   });
 
+  it('restores a live pending quiz with successful ack and decreasing time samples, without issuing twice', async () => {
+    const step = structuredClone(CH07.steps.find(step => step.kind === 'sparring')!) as Extract<Step, { kind: 'sparring' }>;
+    const roomId = enter(step);
+    expect(await pumpUntil(() => !!adapter.view(PROFILE)?.pendingQuiz, { maxMs: 500_000 })).toBe(true);
+    const before = adapter.view(PROFILE)!.pendingQuiz!;
+    expect(before.remainingMs).toBe(before.expiresAt - before.sampledAt);
+    await tick(5_000);
+    expect(manager.disposeRoom(roomId, 'idle')).toBe(true);
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    const restored = adapter.view(PROFILE)!.pendingQuiz!;
+    expect(restored).toMatchObject({ quizId: before.quizId, expiresAt: before.expiresAt, number: 1 });
+    expect(restored.remainingMs).toBe(before.remainingMs - 5_000);
+    expect(adapter.view(PROFILE)?.masquerade?.answered).toBe(0);
+    expect(adapter.resume(PROFILE, RUN).ok).toBe(false);
+    expect(adapter.view(PROFILE)?.pendingQuiz?.quizId).toBe(before.quizId);
+    adapter.answerQuiz(PROFILE, { runId: RUN, quizId: before.quizId, optionIndex: 0 });
+    const second = adapter.view(PROFILE)!.pendingQuiz!;
+    expect(second.number).toBe(2);
+    adapter.answerQuiz(PROFILE, { runId: RUN, quizId: before.quizId, optionIndex: 1 });
+    expect(adapter.view(PROFILE)?.pendingQuiz?.quizId).toBe(second.quizId);
+    expect(adapter.view(PROFILE)?.masquerade?.answered).toBe(1);
+    const restoredRoom = adapter.view(PROFILE)!.roomId!;
+    await tick(2_000);
+    expect(manager.disposeRoom(restoredRoom, 'idle')).toBe(true);
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    expect(adapter.view(PROFILE)?.pendingQuiz).toMatchObject({ quizId: second.quizId, expiresAt: second.expiresAt, number: 2 });
+    expect(adapter.view(PROFILE)?.masquerade?.answered).toBe(1);
+  });
+
 });

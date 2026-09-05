@@ -13,7 +13,6 @@ export function reviewOpponentResponses(record: CompletedHandRecord, heroId: str
   let street: Street = 'preflop';
   const verdicts: DecisionVerdict[] = [];
   for (const action of record.actions) {
-    if (action.kind === 'all-in') hasAllIn = true;
     if (action.street !== street) { contribution = { ...contribution, streetBets: new Map() }; street = action.street; }
     if (action.playerId === heroId && street === 'river') {
       const opponents = record.players.filter(p => p.id !== heroId && living.has(p.id));
@@ -31,6 +30,8 @@ export function reviewOpponentResponses(record: CompletedHandRecord, heroId: str
         if (assessment) verdicts.push({ street, action: decision, amount: action.amount, mark: assessment.correct ? 'good' : 'warn', reason: assessment.reason, facts: {} });
       }
     }
+    // The current hero shove is a decision; only earlier all-ins invalidate its price.
+    if (action.kind === 'all-in') hasAllIn = true;
     if (action.kind === 'fold') living.delete(action.playerId);
     contribution = applyReplayContribution(contribution, action);
   }

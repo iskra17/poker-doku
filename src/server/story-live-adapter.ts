@@ -258,6 +258,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       if (!this.openRoom(session)) {
         return { ok: false, code: 'server-error', message: '테이블을 다시 열지 못했어요. 잠시 후 다시 시도해 주세요.' };
       }
+      if (session.masquerade?.quiz?.pending()) return { ok: true };
       if (!session.masquerade || session.masquerade.phase === 'observing' || session.masquerade.phase === 'revealed-play') return { ok: true };
     }
     if (session.masquerade && ['quiz', 'feedback'].includes(session.masquerade.phase)) {
@@ -453,6 +454,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
   view(profileId: string): StoryLiveView | null {
     const session = this.sessions.get(profileId);
     if (!session) return null;
+    const question = session.masquerade?.quiz?.pending();
+    const sampledAt = this.now();
     return {
       roomId: session.roomId,
       tag: session.step.tag,
@@ -465,7 +468,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       minHands: session.step.kind === 'sparring' ? (session.step.minHands ?? null) : null,
       lastReview: session.lastReview,
       botThoughts: this.exposeBotThoughts && !session.masquerade ? [...session.botThoughts] : [],
-      pendingQuiz: session.masquerade?.quiz?.pending() ?? null,
+      pendingQuiz: question ? { ...question, sampledAt, remainingMs: Math.min(30_000, Math.max(0, question.expiresAt - sampledAt)) } : null,
       ...(session.masquerade ? { masquerade: { phase: session.masquerade.phase, notes: session.masquerade.notes.map(n => ({ ...n })),
         feedback: session.masquerade.phase === 'feedback' || session.masquerade.phase === 'revealed-play' ? session.masquerade.quiz?.feedback() ?? null : null,
         answered: session.masquerade.quiz?.counts().answered ?? 0, required: 4 as const } } : {}),

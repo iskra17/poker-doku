@@ -9,23 +9,24 @@ export function shuffledMasqueradePool(): string[] {
   for (let i = pool.length - 1; i > 0; i--) { const j = randomInt(i + 1); [pool[i], pool[j]] = [pool[j], pool[i]]; }
   return pool;
 }
-interface Entry { question: HandReadQuizView; personalityId: string; correctIndex: number; selected: number | null; answered: boolean }
+type QuizQuestion = Omit<HandReadQuizView, 'sampledAt' | 'remainingMs'>;
+interface Entry { question: QuizQuestion; personalityId: string; correctIndex: number; selected: number | null; answered: boolean }
 export class MasqueradeQuiz {
   private entries: Entry[] = [];
   constructor(private identities: readonly { seatIndex: number; personalityId: string }[], private id: () => string = randomUUID) {
     if (identities.length !== 4 || new Set(identities.map(i => i.seatIndex)).size !== 4
       || new Set(identities.map(i => i.personalityId)).size !== 4 || identities.some(i => !(MASQUERADE_POOL as readonly string[]).includes(i.personalityId))) throw new Error('Invalid masquerade identity plan');
   }
-  issue(now: number): HandReadQuizView | null {
+  issue(now: number): QuizQuestion | null {
     if (this.pending()) return this.pending();
     if (this.entries.length >= 4) return null;
     const identity = this.identities[this.entries.length];
-    const question: HandReadQuizView = { quizId: this.id(), seatIndex: identity.seatIndex, number: this.entries.length + 1, required: 4,
+    const question: QuizQuestion = { quizId: this.id(), seatIndex: identity.seatIndex, number: this.entries.length + 1, required: 4,
       prompt: `가면 ${String.fromCharCode(65 + this.entries.length)}의 플레이 유형은 무엇일까요?`, options: [...OPTIONS], expiresAt: now + 30_000 };
     this.entries.push({ question, personalityId: identity.personalityId, correctIndex: (MASQUERADE_POOL as readonly string[]).indexOf(identity.personalityId), selected: null, answered: false });
     return { ...question, options: [...question.options] };
   }
-  pending(): HandReadQuizView | null { const q = this.entries.find(e => !e.answered)?.question; return q ? { ...q, options: [...q.options] } : null; }
+  pending(): QuizQuestion | null { const q = this.entries.find(e => !e.answered)?.question; return q ? { ...q, options: [...q.options] } : null; }
   answer(quizId: string, optionIndex: number | null, now: number): StoryQuizReceipt | null {
     const entry = this.entries.find(e => e.question.quizId === quizId);
     if (!entry || (optionIndex !== null && (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex > 3))) return null;

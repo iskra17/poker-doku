@@ -5,15 +5,17 @@ import { getCharacterById } from '@/lib/characters';
 import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import type { StoryLiveView } from '@/lib/story/views';
+import { quizRemainingMs } from '@/lib/story/quiz-countdown';
 
 export default function MasqueradePanel({ live }: { live: StoryLiveView }) {
   const pending = useStoryStore(state => state.pending);
   const error = useStoryStore(state => state.error);
   const answer = useStoryStore(state => state.answerQuiz);
   const resume = useStoryStore(state => state.resumeLive);
+  const countdown = useStoryStore(state => state.quizCountdown);
   const online = useGameStore(state => state.connected);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 250); return () => clearInterval(timer); }, []);
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => { const timer = setInterval(() => setNow(performance.now()), 250); return () => clearInterval(timer); }, []);
   const mask = live.masquerade;
   if (!mask) return null;
   const quiz = live.pendingQuiz;
@@ -28,9 +30,9 @@ export default function MasqueradePanel({ live }: { live: StoryLiveView }) {
     title={mask.phase === 'feedback' ? '네 가면의 정체' : '가면 퀴즈'}>
     {notes}
     {quiz ? <div key={quiz.quizId} className="mt-3 space-y-2">
-      <p className="text-xs text-gilded">{quiz.number}/{quiz.required} · {Math.min(30, Math.max(0, Math.ceil((quiz.expiresAt - now) / 1000)))}초</p>
+      <p className="text-xs text-gilded">{quiz.number}/{quiz.required} · {Math.ceil(quizRemainingMs(countdown?.quizId === quiz.quizId ? countdown : null, now) / 1000)}초</p>
       <p className="text-sm font-bold">{quiz.prompt}</p>
-      {quiz.options.map((option, index) => <button key={option} type="button" disabled={pending || !online || now >= quiz.expiresAt} onClick={() => void answer(quiz.quizId, index)} className="w-full rounded-xl border border-mystic/30 px-3 py-2.5 text-left text-sm disabled:opacity-50">{index + 1}. {option}</button>)}
+      {quiz.options.map((option, index) => <button key={option} type="button" disabled={pending || !online} onClick={() => void answer(quiz.quizId, index)} className="w-full rounded-xl border border-mystic/30 px-3 py-2.5 text-left text-sm disabled:opacity-50">{index + 1}. {option}</button>)}
       <p className="text-xs text-ink-dim">네 답이 확정된 뒤 정답을 함께 공개해요. 시간이 지나면 무응답으로 기록돼요.</p>
     </div> : mask.feedback ? <div className="mt-3 space-y-3">
       {mask.feedback.map((entry, i) => <article key={entry.seatIndex} className="rounded-xl border border-mystic/20 p-2 text-xs">

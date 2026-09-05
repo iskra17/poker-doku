@@ -13,9 +13,11 @@ import type { PokerClientSocket, RealtimeAck } from '@/lib/realtime/protocol';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
 import type { StoryAdvanceTarget, StoryDrillAck, StoryQuizReceipt, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
 import { emitGameEvent } from '@/lib/events/game-events';
+import { receiveQuizCountdown, type QuizCountdown } from '@/lib/story/quiz-countdown';
 
 interface Dependencies {
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  monotonicNow?: () => number;
 }
 
 export type StoryLoadOutcome = 'ok' | 'unauthorized' | 'error' | 'stale';
@@ -25,6 +27,7 @@ export interface StoryStoreState {
   progress: StoryProgressView | null;
   progressStatus: 'idle' | 'loading' | 'ready' | 'error';
   run: StoryRunView | null;
+  quizCountdown: QuizCountdown | null;
   /** 소켓 명령 진행 중 — UI는 버튼을 잠근다 */
   pending: boolean;
   error: string | null;
@@ -92,6 +95,7 @@ function parseProgress(payload: unknown): StoryProgressView | null {
 }
 
 export function createStoryStore(dependencies: Dependencies): StoryStore {
+  const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
   let boundSocket: PokerClientSocket | null = null;
   let bindCount = 0;
   let onRun: ((view: StoryRunView) => void) | null = null;
@@ -133,6 +137,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
       progress: null,
       progressStatus: 'idle',
       run: null,
+      quizCountdown: null,
       pending: false,
       error: null,
       lastDrillResult: null,
@@ -298,7 +303,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         });
         const expiredTerminal = run.phase === 'ended' && ack && !ack.ok && ack.code === 'story-no-run';
         if ((ack?.ok || expiredTerminal) && get().run?.runId === run.runId) {
-          set({ run: null, hint: null, lastDrillResult: null, error: null });
+          set({ run: null, quizCountdown: null, hint: null, lastDrillResult: null, error: null });
         }
         if (ack?.ok || expiredTerminal) void get().load();
         return !!ack?.ok || !!expiredTerminal;
@@ -313,6 +318,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
         const abandoned = view.phase === 'ended' && !view.result;
         set({
           run: abandoned ? null : view,
+          quizCountdown: receiveQuizCountdown(get().quizCountdown, view.runId, abandoned ? null : view.live?.pendingQuiz ?? null, monotonicNow()),
           ...(drillChanged || abandoned ? { hint: null, lastDrillResult: null } : {}),
         });
         if (view.phase === 'ended') {
@@ -329,7 +335,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
       },
 
       dismissRun: () => {
-        if (get().run?.phase === 'ended') set({ run: null, hint: null, lastDrillResult: null });
+        if (get().run?.phase === 'ended') set({ run: null, quizCountdown: null, hint: null, lastDrillResult: null });
       },
 
       setProfileIdentity: profileId => {
@@ -342,6 +348,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
           progress: null,
           progressStatus: 'idle',
           run: null,
+          quizCountdown: null,
           pending: false,
           error: null,
           lastDrillResult: null,
@@ -380,6 +387,7 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
           progress: null,
           progressStatus: 'idle',
           run: null,
+          quizCountdown: null,
           pending: false,
           error: null,
           lastDrillResult: null,

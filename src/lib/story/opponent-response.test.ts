@@ -1,5 +1,32 @@
 import { expect, it } from 'vitest';
 import { assessOpponentResponse, opponentResponseStrength } from './opponent-response';
+import { cards } from '../poker/test-helpers';
+import { evaluateHand } from '../poker/evaluator';
+
+it.each([
+  ['Tc 2d', '5c 6d 7h 8s 9c', 'straight'],
+  ['Qh 3c', 'Ah Kh 7h 4h 2h', 'flush'],
+  ['Kd 2s', '8c 8d 8h Kc Kh', 'full-house'],
+  ['Th 2c', '5h 6h 7h 8h 9h', 'straight-flush'],
+])('recognizes actual same-rank improvement %s on %s', (holeText, boardText, rank) => {
+  const hole = cards(holeText), board = cards(boardText);
+  const made = evaluateHand(hole, board), boardOnly = evaluateHand([], board);
+  expect(made.rank).toBe(rank);
+  expect(boardOnly.rank).toBe(rank);
+  expect(made.value).toBeGreaterThan(boardOnly.value);
+  const strength = opponentResponseStrength(hole, board);
+  expect(strength).toEqual({ topPairOrBetter: true, strongMade: true });
+  expect(assessOpponentResponse({ type: 'honest', street: 'river', opponents: 1, facingBet: true, betToPot: 0.5, action: 'call', ...strength })).toBeNull();
+});
+
+it.each([
+  ['2c 3d', '5c 6d 7h 8s 9c'],
+  ['Ac Qd', '8c 8d 8h 8s 2c'],
+  ['Ac Ad', '8c 8d 8h 8s 2c'],
+  ['Ac Qd', 'Kc Kd 8h 8s 2c'],
+])('preserves board-only and kicker guards %s on %s', (hole, board) => {
+  expect(opponentResponseStrength(cards(hole), cards(board))).toEqual({ topPairOrBetter: false, strongMade: false });
+});
 it('grades public decision opportunities, including a strong-hand fold, independently of outcome', () => {
   const base = { type: 'bluffer' as const, street: 'river' as const, topPairOrBetter: true, opponents: 1, betToPot: 0.5, facingBet: true };
   expect(assessOpponentResponse({ ...base, action: 'call' })?.correct).toBe(true);

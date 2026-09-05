@@ -103,9 +103,13 @@ describe('Ch7 real socket quiz lifecycle', () => {
     expect(updates.at(-1)?.live?.handsPlayed).toBe(12);
     const firstRoom = updates.at(-1)!.live!.roomId!;
     const first = updates.at(-1)!.live!.pendingQuiz!;
+    await tick(5_000);
     expect(await withAck(done => client.socket.emit('resync', done))).toEqual({ok:true});
     await tick();
-    expect(updates.at(-1)!.live!.pendingQuiz).toEqual(first);
+    const resynced = updates.at(-1)!.live!.pendingQuiz!;
+    expect(resynced).toMatchObject({quizId:first.quizId,expiresAt:first.expiresAt,number:first.number});
+    // In-room resync emits game state only; the client keeps its existing monotonic anchor.
+    expect(resynced).toEqual(first);
     expect(await withAck(done => client.socket.emit('story-quiz', { runId, quizId:'unknown', optionIndex:0 }, done))).toMatchObject({ok:false});
     expect(await withAck(done => stranger.socket.emit('story-quiz', {runId,quizId:first.quizId,optionIndex:0},done))).toMatchObject({ok:false});
     let firstQuestion = 0;
@@ -116,7 +120,18 @@ describe('Ch7 real socket quiz lifecycle', () => {
       client.socket.on('story-update', view => updates.push(view));
       expect(await withAck(done => client.socket.emit('resync',done))).toEqual({ok:true}); await tick();
       expect(previous.socket.connected).toBe(false);
-      expect(updates.at(-1)!.live!.pendingQuiz).toEqual(first);
+      expect(updates.at(-1)!.live!.pendingQuiz).toEqual(resynced);
+      // Keep listeners installed before reconnect so the initial story resend is observed.
+      client.socket.disconnect(); await flush(); await flush(); await tick(2_000);
+      await new Promise<void>(resolve => {
+        client.socket.once('connect', () => resolve());
+        client.socket.connect();
+      });
+      await tick();
+      const reconnected = updates.at(-1)!.live!.pendingQuiz!;
+      expect(reconnected).toMatchObject({quizId:first.quizId,expiresAt:first.expiresAt,number:1});
+      expect(reconnected.remainingMs).toBeLessThanOrEqual(first.remainingMs - 7_000);
+      expect(reconnected.remainingMs).toBe(reconnected.expiresAt - reconnected.sampledAt);
       client.socket.disconnect(); await flush(); await flush();
       await tick(31_000);
       client = await h.connect('ch7-session', {profileCookie:profile.cookie});

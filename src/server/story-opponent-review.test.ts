@@ -10,6 +10,20 @@ function fixture(): CompletedHandRecord {
  ],winners:[],potTotal:400,rake:0,showdown:true};
 }
 const identities = [{seatIndex:1,personalityId:'gumi'}];
+it('grades a hero river all-in call using the prior public price', () => {
+ const record = fixture(); record.actions[3].kind = 'all-in';
+ expect(reviewOpponentResponses(record,'hero',identities)).toMatchObject([{action:'call', mark:'good'}]);
+});
+it('grades a station value shove and exempts a strong made bluff-catch raise', () => {
+ const value = fixture(); value.actions[2] = {street:'river',playerId:'bot',kind:'check',amount:0};
+ value.actions[3] = {street:'river',playerId:'hero',kind:'all-in',amount:1900};
+ expect(reviewOpponentResponses(value,'hero',[{seatIndex:1,personalityId:'chloe'}])).toMatchObject([{action:'all-in',mark:'good'}]);
+ const strong = fixture(); strong.players[0].holeCards = cards('Kh Ks');
+ strong.actions[3] = {street:'river',playerId:'hero',kind:'all-in',amount:1900};
+ expect(reviewOpponentResponses(strong,'hero',identities)).toEqual([]);
+ strong.players[0].holeCards = cards('Kh Qs');
+ expect(reviewOpponentResponses(strong,'hero',identities)).toMatchObject([{mark:'warn'}]);
+});
 it('uses only hero cards, public action prefix and known type, never opponent cards or outcome',()=>{
  const record=fixture(); const expected=reviewOpponentResponses(record,'hero',identities);
  expect(expected).toHaveLength(1); expect(expected[0].mark).toBe('good');

@@ -94,6 +94,9 @@ export interface HandReadQuizView {
   prompt: string;
   options: string[];
   expiresAt: number;
+  /** Server sample, never compare expiresAt to the device wall clock. */
+  sampledAt: number;
+  remainingMs: number;
 }
 
 export interface StoryLiveView {
