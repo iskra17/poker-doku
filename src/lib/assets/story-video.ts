@@ -43,6 +43,8 @@ const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   'scene-act2-ch04-prologue', 'scene-act2-ch04-climax', 'scene-act2-ch04-epilogue',
   'scene-act2-ch05-prologue', 'scene-act2-ch05-climax', 'scene-act2-ch05-epilogue',
   'scene-act2-ch06-prologue', 'scene-act2-ch06-climax', 'scene-act2-ch06-epilogue',
+  // 2026-09-05: exact-byte reviewed H3 pairs, both formats fully exported.
+  'scene-act1-ch02-victory', 'scene-act3-ch09-river-walk',
 ]);
 
 export function hasStoryVideo(cgId: string | null | undefined): boolean {

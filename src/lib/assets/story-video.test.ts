@@ -1,7 +1,27 @@
 import { describe, expect, it } from 'vitest';
 import { getStoryVideo, hasStoryVideo, sceneCgVideoId } from './story-video';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { resolve } from 'node:path';
 
 describe('story-video 매니페스트', () => {
+  it('검수된 일반 영상2개는 완료된 쌍 영수증 및 실제 파일 해시와 일치한다', () => {
+    const supply = JSON.parse(readFileSync(resolve('scripts/art/library/recipes/first-video-supply-20260905.json'), 'utf8'));
+    const jobs = ['sakura-victory-video-v1', 'elena-river-walk-video-v1'];
+    for (const [index, id] of ['scene-act1-ch02-victory', 'scene-act3-ch09-river-walk'].entries()) {
+      const pair = supply.pairs.find((entry: { job_id: string }) => entry.job_id === jobs[index]);
+      expect(pair.state).toBe('complete');
+      const media = getStoryVideo(id)!;
+      for (const format of ['mp4', 'webm'] as const) {
+        const path = resolve(`public${media[format]}`);
+        expect(existsSync(path)).toBe(true);
+        expect(statSync(path).size).toBeLessThanOrEqual(2_500_000);
+        expect(createHash('sha256').update(readFileSync(path)).digest('hex')).toBe(pair.definition.parts[format].media.sha256);
+        expect(pair.definition.parts[format].media.frames).toBe(106);
+      }
+    }
+    expect(hasStoryVideo('scene-act1-ch02-rain-veranda')).toBe(false);
+  });
   it('미등록 id는 null — 뷰어는 정지 CG로 폴백', () => {
     expect(getStoryVideo('scene-act9-ch99-prologue')).toBeNull();
     expect(getStoryVideo(null)).toBeNull();
