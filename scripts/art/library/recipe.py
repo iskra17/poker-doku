@@ -3,7 +3,7 @@ import json
 import os
 from pathlib import Path
 import time
-from .common import canonical, confined, fingerprint, identifier, sha
+from .common import ALLOWED_SCOPES, canonical, confined, fingerprint, identifier, sha
 from .media import inspect_media
 
 def read_json(path): return json.loads(Path(path).read_text(encoding='utf8'))
@@ -40,8 +40,8 @@ def binding(graph, entry, value):
 
 def load_recipe(path):
     path=Path(path).resolve(); recipe=read_json(path)
-    if recipe.get('version')!=1 or recipe.get('queue_approved') is not True or recipe.get('scope')!='general':
-        raise ValueError('Recipe must be explicitly approved for general-art queue use')
+    if recipe.get('version')!=1 or recipe.get('queue_approved') is not True or recipe.get('scope') not in ALLOWED_SCOPES:
+        raise ValueError('Recipe must be explicitly approved for an allowed art queue scope (general|bonus)')
     if recipe['kind'] not in ('image','video'): raise ValueError('Unknown recipe kind')
     for asset in [recipe['workflow'],*recipe.get('models',[])]:
         asset['path']=str((path.parent/asset['path']).resolve())
@@ -61,10 +61,11 @@ def load_recipe(path):
 
 def import_manifest(store, path):
     path=Path(path).resolve(); manifest=read_json(path)
-    if manifest.get('scope')!='general' or Path(manifest['target_root']).resolve()!=Path(store.config['target_root']):
+    if manifest.get('scope') not in ALLOWED_SCOPES or Path(manifest['target_root']).resolve()!=Path(store.config['target_root']):
         raise ValueError('Manifest scope or approved target root mismatch')
     if 'output_root' in manifest and Path(manifest['output_root']).resolve()!=store.root: raise ValueError('Manifest belongs to a different output/job root')
     recipe=load_recipe(path.parent/manifest['recipe']); recipe_hash=fingerprint(recipe)
+    if recipe['scope']!=manifest['scope']: raise ValueError('Manifest scope must match recipe scope')
     jobs=manifest['jobs']
     if not isinstance(jobs,list) or not 1<=len(jobs)<=256: raise ValueError('Import must contain a bounded scene list')
     if 'authorized_jobs' in manifest and manifest['authorized_jobs']!=len(jobs): raise ValueError('Approved job count mismatch')

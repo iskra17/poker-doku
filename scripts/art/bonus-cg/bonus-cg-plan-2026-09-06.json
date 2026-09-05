@@ -1,0 +1,140 @@
+{
+  "version": 1,
+  "batch": "bonus-cg-2026-09-06",
+  "purpose": "성인 인간 캐릭터 10명 × 특별 보너스 이벤트 CG 5장면 (일상·커스텀 의상 — 비노골적, 기본 의상 아님). 원화 GPT Image 2 → 검수 → MiniMax H3 4.4초 루프.",
+  "image": { "width": 1024, "height": 1536, "format": "png" },
+  "style_refs": [
+    { "path": "ref/style-a.png", "from": "public/assets/story/cg/scene-act1-ch02-victory-v2.webp", "role": "quality benchmark (finish, lighting, fabric)" },
+    { "path": "ref/style-b.png", "from": "public/assets/story/cg/scene-act3-ch09-lesson-v2.webp", "role": "quality benchmark (finish, depth)" }
+  ],
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "scenes": {
+    "beach": { "title_ko": "여름 해변", "camera": "full-body or three-quarter, low horizon", "framing": "환경 와이드" },
+    "gym": { "title_ko": "헬스장", "camera": "medium shot from the side or three-quarter", "framing": "허리 위" },
+    "yoga": { "title_ko": "요가·필라테스", "camera": "low wide angle across the mat", "framing": "전신" },
+    "sing": { "title_ko": "노래", "camera": "close-up to medium, stage light", "framing": "표정 클로즈업" },
+    "casual": { "title_ko": "일상", "camera": "over-the-shoulder or environmental wide", "framing": "인물+환경" }
+  },
+  "characters": [
+    {
+      "id": "sakura", "name_ko": "사쿠라", "age": 22,
+      "identity": "shy Japanese girl, short soft pink bob with a small white cherry-blossom hairpin, pink eyes, softly blushing cheeks, slender",
+      "ref": "ref/sakura-showcase.png",
+      "scenes": {
+        "beach": "Wearing a pastel pink frilled bikini top with a matching high-waist bottom and a sheer white pareo tied at the hip, she wades ankle-deep in clear summer shallows holding a striped beach ball above her head and laughing shyly, sunlight sparkling on the water; full-body from a low three-quarter angle, gaze toward the ball, wet sand and distant parasols.",
+        "gym": "Wearing a lavender sports bra and grey high-waist leggings with her hair tied back, she carefully lifts two small pink dumbbells in front of a mirror, cheeks flushed with effort and a determined pout; medium shot from the side, gaze at her own reflection, bright modern gym with soft window light.",
+        "yoga": "Wearing a white ribbed crop top and pale pink yoga leggings, she holds a tree pose on a pink mat in a sunlit wooden studio with potted plants, eyes closed and calm; low wide angle across the mat, full body, morning light through sheer curtains.",
+        "sing": "Wearing a black rock band tee, a tartan mini skirt and fingerless gloves, she sings into a microphone on a small live-house stage with an electric guitar strapped on, eyes shut and mouth open mid-note, surprisingly bold; close-up to medium under magenta and cyan stage lights with haze.",
+        "casual": "Wearing a cream knit sweater, a long pleated skirt and a small crossbody bag, she sits at a window seat of a quiet cafe reading a paperback with a latte, glancing up with a small startled smile as if noticed; over-the-shoulder environmental shot, warm afternoon light, blurred street outside."
+      }
+    },
+    {
+      "id": "ara", "name_ko": "아라", "age": 21,
+      "identity": "Korean girl, long fiery orange-red hair in twin tails tied with black ribbons, sharp red eyes, confident tsundere smirk, athletic",
+      "ref": "ref/ara-showcase.png",
+      "scenes": {
+        "beach": "Wearing a sporty red-and-black bikini with an open black rash guard and mirrored sunglasses pushed up on her head, she sprints along the surf line kicking up spray with a water gun in one hand, grinning fiercely; full-body action shot from a low angle, gaze off-frame at a rival, bright midday beach.",
+        "gym": "Wearing a black sports bra with red trim and black leggings, hair in a high ponytail, she performs a kettlebell swing with fierce focus, sweat glinting; medium side shot, gaze straight ahead, industrial gym with red neon accent lighting.",
+        "yoga": "Wearing a red crop top and black yoga leggings, she balances in a warrior pose on a black mat but looks slightly annoyed at how hard it is, twin tails loosened; low wide angle, full body, rooftop yoga deck at sunrise with city skyline.",
+        "sing": "Wearing an oversized black hoodie and denim shorts, she belts out a song in a neon-lit karaoke room, one foot on the sofa, tambourine in the other hand, screen glow on her face; medium shot, gaze at the lyrics screen, purple and pink neon.",
+        "casual": "Wearing a cropped varsity jacket, a white tee and cargo pants, she plays a rhythm arcade game in a busy game center with intense concentration, tokens on the machine; over-the-shoulder shot, gaze at the screen, colorful cabinet lights."
+      }
+    },
+    {
+      "id": "hana", "name_ko": "하나", "age": 24,
+      "identity": "Korean woman, long straight purple hair with a small side braid, thin rimless glasses, purple eyes, calm analytical expression, elegant",
+      "ref": "ref/hana-showcase.png",
+      "scenes": {
+        "beach": "Wearing a navy one-piece swimsuit with a white sheer cover-up shirt and a wide straw hat, she sits under a striped parasol on a lounge chair reading a strategy book, glasses on, one hand shielding her eyes from the sun with a faint smile; three-quarter full-body, gaze at the book, calm afternoon sea.",
+        "gym": "Wearing a grey fitted tank top and dark purple leggings with her hair in a low bun, she runs on a treadmill checking a smartwatch, composed and precise; medium side shot, gaze down at the watch, clean bright gym with large windows.",
+        "yoga": "Wearing a lilac pilates set, she lies on a reformer machine in a bright pilates studio, legs extended in a controlled stretch, glasses off and hair loose, serene; low wide angle along the reformer, full body, white studio with plants.",
+        "sing": "Wearing a soft blouse and a knit cardigan, she sings quietly into a karaoke microphone with both hands, eyes half closed and cheeks a little pink, more relaxed than usual; close-up to medium, warm karaoke room light, tambourine on the table.",
+        "casual": "Wearing a beige trench coat and a turtleneck, she browses tall shelves in a cozy old bookstore, pulling out a book and glancing over her shoulder at the viewer with a small smile; over-the-shoulder environmental shot, warm lamp light, dust motes."
+      }
+    },
+    {
+      "id": "chloe", "name_ko": "클로이", "age": 23,
+      "identity": "American girl, fluffy light sky-blue wavy hair with snowflake hair clips and a single upright strand on top, big blue eyes, cheerful energetic streamer",
+      "ref": "ref/chloe-showcase.png",
+      "scenes": {
+        "beach": "Wearing a bright color-block bikini (cyan, white and coral) with heart-shaped sunglasses and an inflatable donut float, she floats in turquoise water waving at the viewer with a huge grin; three-quarter shot from slightly above, gaze at the camera, sparkling water and a distant pier.",
+        "gym": "Wearing a cyan sports bra and white shorts with a headband, she does a plank on a mat while a phone on a tripod records, tongue out in playful struggle; medium shot from the side, gaze at the phone, colorful RGB-lit home gym corner.",
+        "yoga": "Wearing a pastel tie-dye yoga set, she wobbles in a downward dog pose on a blue mat and peeks at the viewer between her arms, laughing; low wide angle, full body, sunny living room studio with a big window.",
+        "sing": "Wearing a glittery star-print jacket over a white tank top, she sings a pop song into a sparkly microphone on a small stage with a ring light and chat overlay screens behind, one hand raised; medium shot under pink and blue stage lights, gaze at the audience.",
+        "casual": "Wearing a cropped hoodie, a pleated mini skirt and platform sneakers, she poses with shopping bags in a bright mall taking a selfie, snowflake clips glinting; over-the-shoulder shot from behind toward a shop window reflection, playful wink."
+      }
+    },
+    {
+      "id": "vivian", "name_ko": "비비안", "age": 26,
+      "identity": "French woman, short dark navy hair, teal eyes, theatrical elegant presence, faint knowing smirk, tall",
+      "ref": "ref/vivian-showcase.png",
+      "scenes": {
+        "beach": "Wearing a black high-waisted vintage two-piece swimsuit with a wide-brimmed black sun hat and cat-eye sunglasses, she reclines on a white lounge chair by an infinity pool at a Riviera resort holding a cocktail glass, one leg crossed; three-quarter full-body from a low angle, gaze over the sunglasses at the viewer, golden hour.",
+        "gym": "Wearing a sleek black sports bra and matching leggings, she practices a boxing combination on a heavy bag with wrapped hands, focused and graceful; medium side shot, gaze at the bag, dim boxing gym with a single spotlight.",
+        "yoga": "Wearing a dark teal yoga set, she holds a deep backbend wheel pose on a mat in a mirrored dance studio, hair falling back, effortless; low wide angle, full body, morning light streaks on the wooden floor.",
+        "sing": "Wearing a glamorous burgundy evening gown with long gloves, she performs a musical number on a theatre stage with a vintage microphone, one arm outstretched, spotlight and velvet curtains; medium shot, gaze past the audience, dramatic warm spotlight.",
+        "casual": "Wearing a chic black turtleneck, a camel coat and a beret, she sits at a Paris sidewalk cafe table with an espresso and a script, glancing sideways with an amused smile; environmental wide shot, gaze at something off-frame, rainy cobblestone street reflections."
+      }
+    },
+    {
+      "id": "elena", "name_ko": "엘레나", "age": 27,
+      "identity": "Russian woman, very long straight silver-white hair, pale grey-blue eyes, small silver earrings, cool composed expression, poised",
+      "ref": "ref/elena-showcase.png",
+      "scenes": {
+        "beach": "Wearing a simple white bikini with an open white linen shirt, she stands at the water's edge at dusk letting the small waves touch her feet, hair blowing in the sea wind, looking out to the horizon with a rare soft smile; full-body three-quarter from behind-side, gaze at the sea, pale violet sky.",
+        "gym": "Wearing a white sports bra and light grey leggings with her hair in a long braid, she performs a controlled deadlift with a barbell, calm and precise; medium side shot, gaze fixed forward, minimalist white gym.",
+        "yoga": "Wearing an ice-blue yoga set, she sits in a lotus meditation pose on a mat on a snowy cabin balcony wrapped in a light blanket, eyes closed, breath visible; low wide angle, full body, winter pine forest and soft snowfall.",
+        "sing": "Wearing a slim black dress, she sings a slow jazz standard at a small jazz bar microphone, eyes half closed, one hand resting on the piano; close-up to medium, warm amber bar light and a blurred pianist.",
+        "casual": "Wearing a long black wool coat, a grey scarf and leather gloves, she walks through a snowy park at night holding a paper cup of coffee, turning back toward the viewer; environmental wide shot, gaze at the viewer, warm streetlamp glow and falling snow."
+      }
+    },
+    {
+      "id": "miyako", "name_ko": "미야코", "age": 25,
+      "identity": "Japanese woman, dark purple hair tied up with a gold flower ornament and hanging gold tassels, warm gentle smile, elegant hostess presence",
+      "ref": "ref/miyako-showcase.png",
+      "scenes": {
+        "beach": "Wearing an elegant gold one-piece swimsuit with a sheer black sarong and a straw hat, she stands knee-deep in calm shallow water at a quiet cove holding her hat against the breeze, smiling warmly; full-body three-quarter, gaze at the viewer, late afternoon sun.",
+        "gym": "Wearing a black-and-gold sports bra and black leggings with her hair still up, she stretches with a resistance band, graceful and composed; medium side shot, gaze down at the band, elegant boutique gym with warm wood.",
+        "yoga": "Wearing a plum-colored yoga set, she holds a seated forward fold on a mat in a traditional tatami room with sliding doors open to a garden, tassels resting on the floor; low wide angle, full body, soft morning garden light.",
+        "sing": "Wearing a deep purple evening dress, she sings a gentle ballad with a microphone at a lounge bar counter, one hand near her chest, eyes softly closed; close-up to medium, gold and violet lounge lighting.",
+        "casual": "Wearing a summer yukata in purple with a gold obi and holding a small paper fan, she strolls through a night festival market lined with lanterns, turning back with a delighted smile at fireworks above; environmental wide shot, gaze upward, lantern glow and fireworks bokeh."
+      }
+    },
+    {
+      "id": "yuzuki", "name_ko": "유즈키", "age": 19,
+      "identity": "Japanese shrine maiden, very long straight black hair with straight bangs, a red tassel hair ornament with a small floral card charm, serene mysterious aura, gentle closed-lip smile",
+      "ref": "ref/yuzuki-showcase.png",
+      "scenes": {
+        "beach": "Wearing a red-and-white two-piece swimsuit with a light white cover-up jacket, she crouches at the tide pools examining a starfish with wide curious eyes, long hair tied loosely with the red tassel; full-body three-quarter from a low angle, gaze at the starfish, rocky shore and clear water.",
+        "gym": "Wearing a white sports bra with red trim and red leggings, hair in a long high ponytail, she attempts a pull-up with a determined, slightly strained expression; medium side shot, gaze up at the bar, bright gym with morning light.",
+        "yoga": "Wearing a plain white yoga set, she meditates in a lotus pose on a mat on the wooden veranda of a shrine, incense smoke curling, eyes closed and utterly still; low wide angle, full body, torii gates and maple leaves behind.",
+        "sing": "Wearing a festival happi coat over a white top with a headband, she sings at a shrine summer festival stage holding a microphone, lanterns strung above, eyes open and shining; close-up to medium, warm festival light, gaze at the crowd.",
+        "casual": "Wearing a casual white blouse and a long navy skirt with the tassel ornament, she feeds koi fish at a temple pond from a small bag, kneeling on the stone edge and glancing up with a soft smile; environmental wide shot, gaze at the viewer, dappled light."
+      }
+    },
+    {
+      "id": "lin", "name_ko": "린", "age": 24,
+      "identity": "Taiwanese woman, dark brown hair in twin buns decorated with small white flowers and gold tassels, warm golden-brown eyes, pearl earrings, graceful and warm",
+      "ref": "ref/lin-showcase.png",
+      "scenes": {
+        "beach": "Wearing a mint-green one-piece swimsuit with a thin gold belt and a wide straw hat, she sits at the edge of a wooden pier dipping her feet in the water with a small cup of iced tea beside her, smiling gently; full-body three-quarter, gaze at the water, tropical afternoon.",
+        "gym": "Wearing a sage-green sports bra and beige leggings with her buns intact, she does a slow lunge holding light dumbbells, calm and elegant; medium side shot, gaze forward, bright gym with plants.",
+        "yoga": "Wearing a jade-colored yoga set, she practices a graceful tai-chi-like standing stretch on a mat on a misty tea plantation terrace at dawn; low wide angle, full body, rolling green tea fields and soft fog.",
+        "sing": "Wearing a floral qipao-inspired dress, she sings softly while playing an acoustic guitar on a small stool in a cozy tea house, string lights above; medium shot, gaze down at the strings, warm wood and steaming teacups.",
+        "casual": "Wearing a linen shirt, wide pants and a sun hat, she picks fresh tea leaves in a basket on a hillside, looking back over her shoulder with a bright smile; environmental wide shot, gaze at the viewer, morning sun."
+      }
+    },
+    {
+      "id": "ingrid", "name_ko": "잉그리드", "age": 22,
+      "identity": "Norwegian woman, very long silver-white hair, ice-blue eyes, black nail polish, small ear piercings, rock drummer energy with a fanged grin",
+      "ref": "ref/ingrid-showcase.png",
+      "scenes": {
+        "beach": "Wearing a black sporty bikini with a short board-shorts bottom, she carries a surfboard under one arm walking out of the surf, hair soaked and slicked back, grinning with adrenaline; full-body three-quarter from a low angle, gaze off-frame at the waves, overcast Nordic beach with dramatic light.",
+        "gym": "Wearing a black sports bra and grey joggers, she slams a battle rope with both arms, hair flying, teeth bared in a fierce grin; medium side shot, gaze forward, gritty industrial gym with hanging lights.",
+        "yoga": "Wearing a charcoal yoga set, she sits in a butterfly stretch on a mat looking bored but trying, one eyebrow raised at the instructor off-frame; low wide angle, full body, cozy studio with candles.",
+        "sing": "Wearing a black leather jacket over a band tee, she sings into a microphone while drumming at a full drum kit on a club stage, drumsticks mid-strike, hair whipping; medium shot under white strobe and blue stage lights, gaze at the crowd.",
+        "casual": "Wearing a chunky knit sweater and a beanie, she sits by a campfire at a fjord campsite at night roasting marshmallows, aurora glowing above, laughing at the viewer; environmental wide shot, gaze at the viewer, green aurora and firelight."
+      }
+    }
+  ]
+}

@@ -47,6 +47,10 @@ No automatic retry exists. Unknown blocks its own job. With an empty Comfy queue
 
 Approval records bind exact output bytes. Export rechecks the latest approval, source hash and decode, then calls that target repository's existing `convert.mjs cg` (768x1152, attention crop, WebP quality82). Video uses H264 CRF26 and faststart. New exports are staged and verified before atomic no-overwrite publication. A durable receipt makes a repeated identical export a no-op and recovers a crash between publication and receipt completion. Existing assets, changed exports, different worktrees, traversal and collisions are rejected. An unrecorded conversion leftover is deliberately not adopted; inspect it before manually removing that specific staging file. No command connects exported files to a game gallery or chapter.
 
+## Scopes
+
+`scope` is `general` (fully clothed general art) or `bonus` (the non-explicit special-outfit/leisure bonus CG line — a separate queue per the production design section 7). A manifest's scope must match its recipe's scope, and an external receipt records its own scope on the derived recipe. Any other value is rejected. Scope changes nothing else in the worker.
+
 ## Recipe and recovery contracts
 
 Recipes contain a version, explicit general-art queue approval, SHA256 workflow/models, reviewed node classes, bindings for prompt/seed/input/output, output node/collection, and exact media dimensions. IDs are in the recipe binding map, never the worker. The approved Qwen graph is copied byte-for-byte from the successful A1c graph. Model revisions, canonical references and fixed seeds are in the manifest/recipe. Import checks all file hashes. Each worker fully hashes a model on first use and caches only its resolved path, expected SHA and stat dev/ino/size/mtime_ns/ctime_ns signature; a changed signature forces another full hash. This cache is never persisted. Workflows, canonical sources and image inputs are still hashed for every job. Inputs are copied under content-addressed names without changing their originals.

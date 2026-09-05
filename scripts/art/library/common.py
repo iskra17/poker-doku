@@ -6,6 +6,10 @@ import re
 
 GPU_LOCK = Path('D:/AI-Image-Video/.poker-doku-gpu.lock')
 DEFAULT_ROOT = Path('D:/AI-Image-Video/output/poker-doku-library')
+# Art queue scopes: 'general' (fully clothed general art) and 'bonus' (non-explicit special outfit/leisure bonus CG line,
+# separate queue per docs/superpowers/specs/2026-09-05-art-library-production-design.md section 7). Recipe, manifest and
+# external receipt scopes must agree; nothing else changes between scopes.
+ALLOWED_SCOPES = ('general', 'bonus')
 
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(',', ':'), ensure_ascii=False)

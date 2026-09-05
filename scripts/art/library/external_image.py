@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import time
-from .common import GpuLock, canonical, confined, fingerprint, identifier, sha
+from .common import ALLOWED_SCOPES, GpuLock, canonical, confined, fingerprint, identifier, sha
 from .media import inspect_media
 
 
@@ -51,8 +51,8 @@ def import_external_image(store, path):
     path = Path(path).resolve()
     document = json.loads(path.read_text(encoding='utf8'))
     if not isinstance(document, dict): raise ValueError('External receipt must be a JSON object')
-    if document.get('version') != 1 or document.get('scope') != 'general' or document.get('source_type') != 'external-image' or document.get('provider') != 'gpt-image-2':
-        raise ValueError('Expected general external-image v1 receipt from gpt-image-2')
+    if document.get('version') != 1 or document.get('scope') not in ALLOWED_SCOPES or document.get('source_type') != 'external-image' or document.get('provider') != 'gpt-image-2':
+        raise ValueError('Expected general|bonus external-image v1 receipt from gpt-image-2')
     if not isinstance(document.get('target_root'), str) or Path(document['target_root']).resolve() != Path(store.config['target_root']):
         raise ValueError('External image target root mismatch')
     for key in ('id', 'character', 'scene'): identifier(document.get(key))
@@ -69,7 +69,7 @@ def import_external_image(store, path):
     media = dict(width=width, height=height)
     info = inspect_media(source['path'], 'image', media)
     if info['sha256'] != source['sha256']: raise ValueError('External source changed while decoding')
-    recipe = dict(version=1, scope='general', kind='image', source_type='external-image', provider='gpt-image-2',
+    recipe = dict(version=1, scope=document['scope'], kind='image', source_type='external-image', provider='gpt-image-2',
         queue_approved=False, executable=False, media=media)
     recipe_hash = fingerprint(recipe)
     job = {key: document[key] for key in ('id', 'character', 'scene', 'prompt', 'angle', 'gaze', 'expression', 'outfit')}
