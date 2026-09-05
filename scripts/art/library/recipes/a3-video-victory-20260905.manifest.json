@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "general",
+  "target_root": "C:\\code\\claude\\poker-doku\\.worktrees\\story-expansion-control",
+  "recipe": "h3-fl2v-a3.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/a1c2-20260905",
+  "approval_document": "docs/superpowers/plans/2026-09-05-art-first-supply.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "sakura-victory-video-v1",
+      "character": "sakura",
+      "scene": "victory",
+      "parent_job": "sakura-victory-q1",
+      "seed": 509020263500,
+      "angle": "high three-quarter portrait, fixed camera",
+      "gaze": "eyes closed in joy",
+      "expression": "soft joyful laugh",
+      "outfit": "cream cardigan, white blouse, pink ribbon",
+      "prompt": "Anime illustration with the exact fine linework and softly painted shading of the supplied illustration. One fully clothed adult 22-year-old woman with a short pink bob and white flower hairpin sits in the same chair after a friendly poker practice victory. She keeps her eyes softly closed and laughs gently with delight. Only a small natural smile and gentle shoulder motion, with slight hair-tip movement. The camera is completely fixed. Both hands remain clasped exactly as in the input on her lap; preserve all fingers, cardigan, skirt and chair. Table, chips and decorative cards stay perfectly still. Preserve her mature identity and the original composition. No new people, no words, no text, no costume change. Return naturally to the original joyful pose and expression at the end for a seamless loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\a1c2-20260905\\results\\sakura-victory-q1--00a71a51d9a34109b9e06e7489654736--a1--r2e0585cb9edd5f58eb9cd405ef2a3f1c43a139a45f2cf76df31b5b74269fd0b3_00001_.png",
+          "sha256": "3f679b88915226226934cad27a793d34c6cc362936a03afbff0a515577e88aec"
+        }
+      }
+    }
+  ]
+}

@@ -12,6 +12,12 @@
       "decision": "approved",
       "sha256": "ad0700ebc0372aa99dea51aea267cf7dc2dcdb14e5b40863a3793e07c0ea4bff",
       "reason": "Decoded all 107 frames; visually inspected 12 temporal samples across 0-106. Mature identity, river gaze, rail hand contact, closed mouth and restrained hair/water motion maintained. First/last decoded-frame mean absolute difference 1.6104 at 384x576. Review method is temporal sampling, not continuous realtime playback."
+    },
+    {
+      "job_id": "sakura-rain-veranda-video-v2",
+      "decision": "rejected",
+      "sha256": "1617a62ed4640eda4e9d0ebe54a95e3d37bee5b03f3cf645a7514cf98bb0787c",
+      "reason": "All 107 frames decoded; 12 temporal samples visually reviewed. Frame29 at1.208s opens mouth despite static-expression requirement. Second same failure: stop rain animation series, keep both rejected originals, use static CG."
     }
   ]
 }
