@@ -111,6 +111,7 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
     `2·4의 법칙으로는 ${v(f, 'outs')} × ${v(f, 'ruleMultiplier')} = ${v(f, 'rule24')}% 정도로 어림돼요.`,
     `남은 카드를 전부 돌려 본 정확한 승률은 ${v(f, 'exact')}% — 어림값과 ${v(f, 'gap')}%p 차이예요.`,
   ],
+  'call-river-range': f => [v(f, 'calculation')],
   'call-decision': f => [
     `필요 승률은 ${v(f, 'toCallChips')} ÷ (${v(f, 'potChips')} + ${v(f, 'toCallChips')}) = ${v(f, 'requiredEquity')}%예요.`,
     `내 아우츠는 ${v(f, 'outs')}장, 리버 한 장으로 이길 확률은 ${v(f, 'equity')}%고요.`,
@@ -166,6 +167,7 @@ const REQUIRED_FACTS: Readonly<Record<string, readonly string[]>> = Object.freez
   'odds-required-equity': ['potChips', 'villainName', 'villainBet', 'toCallChips', 'potAfterCall', 'requiredEquity', 'ratio'],
   'odds-ratio-choice': ['potChips', 'villainName', 'villainBet', 'toCallChips', 'potAfterCall', 'requiredEquity', 'ratio'],
   'equity-estimate': ['drawName', 'outs', 'ruleMultiplier', 'rule24', 'exact', 'gap'],
+  'call-river-range': ['calculation', 'range', 'combos', 'equity', 'requiredEquity'],
   'call-decision': ['toCallChips', 'potChips', 'requiredEquity', 'outs', 'equity', 'decision'],
   'breakeven-fold-pct': ['potChips', 'betChips', 'potAfterBet', 'breakeven'],
   'breakeven-choice': ['potChips', 'betChips', 'potAfterBet', 'breakeven'],

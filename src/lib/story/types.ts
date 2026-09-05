@@ -161,6 +161,8 @@ export interface MasqueradePolicy {
   revealedMaxHands: 10;
 }
 export interface LiveTableSpec {
+  reading?: { id: 'river-reading-v1'; maxQuestions: 2 };
+  readingReview?: { id: 'act3-response-v1' };
   masquerade?: MasqueradePolicy;
   blinds: { small: number; big: number };
   heroSeat: number;
@@ -192,6 +194,9 @@ export const OBJECTIVE_KINDS = [
   'survive',
   'quiz-accuracy',
   'opponent-response',
+  'gumi-river-call',
+  'honest-river-fold',
+  'luna-checkraise-fold',
   // 2026-09-03 미션형 목표 — "N핸드 채우기" 대신 행동 한 번을 채우면 끝나는 종류
   'reach-showdown',
   'fold-hands',
@@ -212,6 +217,8 @@ export type ObjectiveKind = typeof OBJECTIVE_KINDS[number];
  * 카드 분포에 좌우되는 절대 비율(VPIP 등)은 두지 않는다(A5-2 목표 규약).
  */
 export interface Objective {
+  /** 새 기회형 횟수 목표만: 최종 결산에서 실제 기회까지 target을 한정한다. */
+  finalOpportunityCap?: boolean;
   id: string;
   kind: ObjectiveKind;
   label: string;

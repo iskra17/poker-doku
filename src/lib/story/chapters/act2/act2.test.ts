@@ -51,7 +51,7 @@ function conceptCards(chapter: Chapter): Array<{ title: string; body: string; fo
 
 describe('2막 챕터 데이터', () => {
   it('레지스트리에 등록됐고 스키마 검증(실제 템플릿 id 집합)을 통과한다', () => {
-    expect(STORY_CHAPTERS.map(chapter => chapter.id)).toEqual([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06', 'act3-ch07']);
+    expect(STORY_CHAPTERS.map(chapter => chapter.id)).toEqual([...ACT1_IDS, 'act2-ch04', 'act2-ch05', 'act2-ch06', 'act3-ch07', 'act3-ch08', 'act3-ch09']);
     expect(validateChapters(STORY_CHAPTERS, { templateIds: DRILL_TEMPLATE_IDS })).toEqual([]);
   });
 

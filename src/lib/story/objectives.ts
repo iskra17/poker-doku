@@ -538,6 +538,8 @@ export function addHand(tally: ObjectiveTally, facts: HeroHandFacts): ObjectiveT
 }
 
 export interface ObjectiveExtras {
+  final?: boolean;
+  readingResponses?: Partial<Record<'gumi-river-call' | 'honest-river-fold' | 'luna-checkraise-fold', { opportunities: number; correct: number }>>;
   /** 라이브 리딩 퀴즈 집계 (Ch7+) — 없으면 quiz-accuracy는 판정 불가(null). */
   quiz?: { issued?: number; answered: number; correct: number; required?: number };
   opponentResponse?: { opportunities: number; correct: number };
@@ -715,6 +717,17 @@ export function evaluateObjective(
       return view(objective, primary, count, maxCount, count <= maxCount);
     }
 
+    case 'gumi-river-call':
+    case 'honest-river-fold':
+    case 'luna-checkraise-fold': {
+      const response = extras?.readingResponses?.[objective.kind];
+      const opportunities = response?.opportunities ?? 0;
+      const correct = response?.correct ?? 0;
+      if (opportunities === 0) return view(objective, primary, 0, objective.target ?? null, null);
+      const capped = objective.finalOpportunityCap && extras?.final && objective.target !== undefined
+        ? { ...objective, target: Math.min(objective.target, opportunities) } : objective;
+      return ratioView(capped, primary, opportunities, correct);
+    }
     case 'opponent-response': {
       const response = extras?.opponentResponse;
       return ratioView(objective, primary, response?.opportunities ?? 0, response?.correct ?? 0);

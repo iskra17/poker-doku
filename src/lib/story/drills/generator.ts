@@ -1,3 +1,4 @@
+import { RIVER_RANGE_TEMPLATES } from './templates/river-range';
 /**
  * 드릴 생성기·채점기 — 스토리 코디네이터(Phase 1.3)와 데일리 수련의 단일 진입점.
  *
@@ -74,6 +75,7 @@ const GENERATED_DEFINITIONS: readonly GeneratedDrillDefinition[] = [
   ...POT_ODDS_TEMPLATES,
   ...EQUITY_TEMPLATES,
   ...CALL_DECISION_TEMPLATES,
+  ...RIVER_RANGE_TEMPLATES,
   // 2막 (Ch4~6): 손익분기·사이징·상대 유형
   ...BREAKEVEN_TEMPLATES,
   ...SIZING_TEMPLATES,

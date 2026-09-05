@@ -87,9 +87,10 @@ export interface MasqueradeView {
   required: 4;
 }
 export interface HandReadQuizView {
+  situation?: {hero: import('@/lib/poker/types').Card[];board: import('@/lib/poker/types').Card[];range:string;potChips:number;toCallChips:number;assumption:string};
   seatIndex: number;
   number: number;
-  required: 4;
+  required: number;
   quizId: string;
   prompt: string;
   options: string[];
@@ -97,6 +98,11 @@ export interface HandReadQuizView {
   /** Server sample, never compare expiresAt to the device wall clock. */
   sampledAt: number;
   remainingMs: number;
+}
+
+export interface ReadingQuizView {
+  phase:'question'|'feedback'; answered:number; correct:number; invalidated:number;
+  feedback:{quizId:string;selected:number|null;correctIndex:number;explanation:string}|null;
 }
 
 export interface StoryLiveView {
@@ -115,6 +121,7 @@ export interface StoryLiveView {
   botThoughts: BotThought[];
   pendingQuiz: HandReadQuizView | null;
   masquerade?: MasqueradeView;
+  reading?: ReadingQuizView;
 }
 
 // ---------------------------------------------------------------------------

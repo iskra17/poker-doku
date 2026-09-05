@@ -242,6 +242,9 @@ export interface MttRoomHooks {
  * 이탈은 `abandon-story` 단일 경로 — toggleSitOut/나가기 예약/leave-room은 거절된다.
  */
 export interface StoryRoomHooks {
+  beforeHeroTurn?(roomId: string, engine: PokerEngine): 'play' | 'hold';
+  onTurnStateChanged?(roomId: string, engine: PokerEngine): void;
+  isTurnHeld?(roomId: string, playerId: string): boolean;
   /** 인터럽트 씬·타임아웃 [계속하기] 대기 등으로 다음 핸드 시작을 보류 중인지 */
   isHeld(roomId: string): boolean;
   /**
@@ -2717,6 +2720,7 @@ export class RoomManager {
     if (!room || !room.engine.state.isHandInProgress) return false;
     const activePlayer = room.engine.state.players[room.engine.state.activePlayerIndex];
     if (!activePlayer || activePlayer.id !== playerId || activePlayer.type !== 'human') return false;
+    if (this.isStoryRoom(room) && this.storyHooks?.isTurnHeld?.(roomId, playerId)) return false;
     if ((activePlayer.timeBankChips ?? 0) <= 0) return false;
 
     activePlayer.timeBankChips = (activePlayer.timeBankChips ?? 0) - 1;
@@ -2817,6 +2821,7 @@ export class RoomManager {
 
     const room = this.rooms.get(roomId);
     if (!room || !room.engine.state.isHandInProgress) return;
+    if (this.isStoryRoom(room)) this.storyHooks?.onTurnStateChanged?.(roomId, room.engine);
 
     // 올인 런아웃 모드: 더 이상 액션이 없다 — 턴 타이머 대신 스트리트 시간차 딜 체인을 돌린다
     if (room.engine.state.allInRunout) {
@@ -2846,6 +2851,7 @@ export class RoomManager {
       }, cfg('timer.disconnectedAutoActMs'));
       this.turnTimers.set(roomId, timer);
     } else {
+      if (this.isStoryRoom(room) && this.storyHooks?.beforeHeroTurn?.(roomId, room.engine) === 'hold') return;
       // 휴먼 턴 → 타이머 시작
       this.startTurnTimer(roomId);
     }
@@ -3079,9 +3085,21 @@ export class RoomManager {
     this.dialogue.shutdown();
   }
 
+  /** 스토리 퀴즈 뒤 같은 히어로 턴만 재개한다. 새 핸드를 만들지 않는다. */
+  resumeHeroTurn(roomId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isStoryRoom(room) || !room.engine.state.isHandInProgress) return false;
+    const player = room.engine.state.players[room.engine.state.activePlayerIndex];
+    if (!player || player.type !== 'human') return false;
+    this.startPlayerLoop(roomId);
+    this.onUpdate(roomId, room.engine);
+    return true;
+  }
+
   processPlayerAction(roomId: string, playerId: string, actionType: ActionType, amount: number = 0): boolean {
     const room = this.rooms.get(roomId);
     if (!room) return false;
+    if (this.isStoryRoom(room) && this.storyHooks?.isTurnHeld?.(roomId, playerId)) return false;
 
     const result = room.engine.processAction({
       playerId,

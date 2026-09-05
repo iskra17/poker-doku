@@ -35,6 +35,7 @@ export function CardBackPreview({ id, className = '' }: { id: string; className?
 
 const FELT_STYLE: Readonly<Record<string, { hi: string; lo: string; rail: string }>> = Object.freeze({
   'story-felt-yellow-belt': { hi: '#4a3d12', lo: '#221a06', rail: '#ffd76a' },
+  'story-felt-brown-belt': { hi: '#553823', lo: '#281a10', rail: '#d4a373' },
   'story-felt-blue-belt': { hi: '#153a5e', lo: '#0a1f36', rail: '#6be4ff' },
 });
 

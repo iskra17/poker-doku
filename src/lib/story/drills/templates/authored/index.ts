@@ -1,3 +1,4 @@
+import { ACT3_AUTHORED_DRILLS } from './act3';
 /**
  * 수기(authored) 드릴 템플릿 레지스트리 — `source.kind: 'authored'`.
  *
@@ -10,4 +11,4 @@ import type { DrillTemplate } from '../../types';
 import { ACT1_AUTHORED_DRILLS } from './act1';
 import { ACT2_AUTHORED_DRILLS } from './act2';
 
-export const AUTHORED_DRILL_TEMPLATES: readonly DrillTemplate[] = [...ACT1_AUTHORED_DRILLS, ...ACT2_AUTHORED_DRILLS];
+export const AUTHORED_DRILL_TEMPLATES: readonly DrillTemplate[] = [...ACT1_AUTHORED_DRILLS, ...ACT2_AUTHORED_DRILLS, ...ACT3_AUTHORED_DRILLS];

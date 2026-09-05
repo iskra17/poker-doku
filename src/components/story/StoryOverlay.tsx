@@ -1,4 +1,5 @@
 'use client';
+import ReadingPanel from './live/ReadingPanel';
 import MasqueradePanel from './live/MasqueradePanel';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -163,6 +164,7 @@ export default function StoryOverlay() {
         </div>
       </div>
 
+      {live?.reading && <ReadingPanel live={live} />}
       {live?.masquerade && <div className={`pointer-events-none absolute z-40 flex justify-center px-3 ${holding ? 'inset-0 items-center' : 'inset-x-0 bottom-16'}`}><MasqueradePanel live={live} /></div>}
       <DecisionReviewSheet review={live?.lastReview ?? null} />
       <StoryCutIn data={missionData} isMobile={isMobile} onDone={() => setMissionData(null)} />

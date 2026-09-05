@@ -7043,6 +7043,21 @@ export const migrations: readonly Migration[] = [
       ('story-outfit-vivian-masquerade', 'outfit', 'outfit', 'vivian', NULL),
       ('story-chips-act3-ch07-s', 'chips', NULL, NULL, 300);`,
   },
+  {
+    version: 36,
+    name: 'story_rewards_act3',
+    sql: `INSERT INTO story_reward_catalog (item_id, kind, equip_slot, character_id, chip_amount) VALUES
+      ('story-title-bluff-catcher', 'title', 'title', NULL, NULL),
+      ('story-chips-act3-ch08-first', 'chips', NULL, NULL, 500),
+      ('story-chips-act3-ch08-s', 'chips', NULL, NULL, 300),
+      ('story-title-shadow-reader', 'title', 'title', NULL, NULL),
+      ('story-chips-act3-ch09-first', 'chips', NULL, NULL, 500),
+      ('story-cg-act3-luna-analysis', 'cg', NULL, 'elena', NULL),
+      ('story-cg-act3-elena-snow', 'cg', NULL, 'elena', NULL),
+      ('story-chips-act3-ch09-s', 'chips', NULL, NULL, 300),
+      ('story-felt-brown-belt', 'felt', 'felt', NULL, NULL),
+      ('story-chips-act3-complete', 'chips', NULL, NULL, 1000);`,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

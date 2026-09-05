@@ -77,10 +77,11 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   const story = storyTheme && !finalTable;
   // 띠 펠트(노란/파란)는 수련 테이블에만 적용 — 실전 방(story=false)은 불변
   const yellowFelt = story && feltId === 'story-felt-yellow-belt';
+  const brownFelt = story && feltId === 'story-felt-brown-belt';
   const blueFelt = story && feltId === 'story-felt-blue-belt';
-  const storyFeltHi = yellowFelt ? 'var(--color-story-felt-yellow-hi)' : blueFelt ? 'var(--color-story-felt-blue-hi)' : 'var(--color-story-felt-hi)';
-  const storyFeltLo = yellowFelt ? 'var(--color-story-felt-yellow-lo)' : blueFelt ? 'var(--color-story-felt-blue-lo)' : 'var(--color-story-felt-lo)';
-  const storyRail = yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
+  const storyFeltHi = brownFelt ? 'var(--color-story-felt-brown-hi)' : yellowFelt ? 'var(--color-story-felt-yellow-hi)' : blueFelt ? 'var(--color-story-felt-blue-hi)' : 'var(--color-story-felt-hi)';
+  const storyFeltLo = brownFelt ? 'var(--color-story-felt-brown-lo)' : yellowFelt ? 'var(--color-story-felt-yellow-lo)' : blueFelt ? 'var(--color-story-felt-blue-lo)' : 'var(--color-story-felt-lo)';
+  const storyRail = brownFelt ? 'var(--color-story-felt-brown-rail)' : yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
   const outerGlow = finalTable
     ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
     : story

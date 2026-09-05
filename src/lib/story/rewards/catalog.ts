@@ -123,6 +123,17 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
     cutscene: { kind: 'belt', characterId: 'miyako', title: '파란띠 승급', caption: '2막 세 수업을 모두 마치셨네요♪ 오늘부터 파란띠 — 먼저 치는 사람의 띠랍니다.' },
   }),
   // Ch7: no third-act reward until Ch8 and Ch9 are both registered and completed.
+  // 3막 Ch8~9 / v36. Ch8의 S 전용 아트는 실제 공급 뒤 추가한다.
+  def({ id: 'story-title-bluff-catcher', kind: 'title', equipSlot: 'title', name: '블러프 캐처', description: '호기심 대신 콜의 가격을 확인하는 수련생.', trigger: first('act3-ch08') }),
+  def({ id: 'story-chips-act3-ch08-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '리딩 수료금', description: '궁금하면 콜 첫 완주 연습 칩 500.', trigger: first('act3-ch08') }),
+  def({ id: 'story-chips-act3-ch08-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '궁금하면 콜 S등급 연습 칩 300.', trigger: gradeS('act3-ch08') }),
+  def({ id: 'story-title-shadow-reader', kind: 'title', equipSlot: 'title', name: '그림자 읽는 사람', description: '액션의 순서와 남은 조합으로 함정을 읽는다.', trigger: first('act3-ch09') }),
+  def({ id: 'story-chips-act3-ch09-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '함정 돌파 상금', description: '그림자와 함정 첫 완주 연습 칩 500.', trigger: first('act3-ch09') }),
+  def({ id: 'story-cg-act3-luna-analysis', kind: 'cg', equipSlot: null, characterId: 'elena', name: '칩 앞의 침묵', description: '루나와의 결정들을 엘레나와 다시 놓아 보는 시간.', trigger: first('act3-ch09'), art: '/assets/story/cg/scene-act3-ch09-analysis.webp', cutscene: { kind: 'boss-win', characterId: 'elena', title: '함정 뒤의 이유', caption: '…결과를 지우면 네 선택이 보여. 오늘은 그 이유가 들렸어.' } }),
+  def({ id: 'story-cg-act3-elena-snow', kind: 'cg', equipSlot: null, characterId: 'elena', name: '창밖의 흰 여백', description: '계절이 바뀐 도장의 창가, 엘레나와 첫눈을 바라본다.', trigger: gradeS('act3-ch09'), art: '/assets/story/cg/scene-act3-ch09-snow-window.webp', cutscene: { kind: 'event-cg', characterId: 'elena', title: '창밖의 흰 여백', caption: '…다음 패가 없어도 조금 더 앉아 있고 싶었어.' } }),
+  def({ id: 'story-chips-act3-ch09-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '그림자와 함정 S등급 연습 칩 300.', trigger: gradeS('act3-ch09') }),
+  def({ id: 'story-felt-brown-belt', kind: 'felt', equipSlot: 'felt', name: '갈색띠 도장 펠트', description: '3막 읽기 수련을 마친 갈색띠 테이블 펠트.', trigger: act(3) }),
+  def({ id: 'story-chips-act3-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '3막 수료금', description: '3막 세 수업 완주 연습 칩 1,000.', trigger: act(3) }),
   def({ id: 'story-title-unmasker', kind: 'title', equipSlot: 'title', name: '가면 벗기기', description: '상대의 행동을 관찰하고 가면 퀴즈를 마쳤다.', trigger: first('act3-ch07') }),
   def({ id: 'story-chips-act3-ch07-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '관찰 수료금', description: '가면무도회 첫 완주 연습 칩 500.', trigger: first('act3-ch07') }),
   def({ id: 'story-outfit-vivian-masquerade', kind: 'outfit', equipSlot: 'outfit', characterId: 'vivian', outfitId: 'masquerade', name: '비비안 · 가면무도회', description: '관찰의 밤을 기념하는 비비안의 무도회 의상.', trigger: gradeS('act3-ch07') }),

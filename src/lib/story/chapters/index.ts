@@ -1,3 +1,5 @@
+import { CH08 } from './act3/ch08-curious-call';
+import { CH09 } from './act3/ch09-shadows-and-traps';
 import { CH07 } from './act3/ch07-masquerade';
 /**
  * 챕터 레지스트리 + 데이터 검증.
@@ -32,7 +34,7 @@ import {
 } from '../types';
 
 /** 등록된 챕터 — 막·순서 정렬을 유지할 것 (chapters.test.ts가 검증). */
-export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06, CH07]);
+export const STORY_CHAPTERS: readonly Chapter[] = Object.freeze([CH01, CH02, CH03, CH04, CH05, CH06, CH07, CH08, CH09]);
 
 const CHAPTER_BY_ID: ReadonlyMap<ChapterId, Chapter> = new Map(STORY_CHAPTERS.map(chapter => [chapter.id, chapter]));
 
@@ -184,6 +186,9 @@ function validateSteps(chapter: Chapter, options: ValidateChaptersOptions, error
         }
         for (const objective of [...step.objectives.primary, ...step.objectives.bonus]) {
           if (!OBJECTIVE_KIND_SET.has(objective.kind)) errors.push(`${stepAt}: unknown objective kind ${String(objective.kind)}`);
+          if (objective.finalOpportunityCap && (!['gumi-river-call', 'honest-river-fold', 'luna-checkraise-fold'].includes(objective.kind)
+            || objective.target === undefined || objective.target < 1 || !Number.isInteger(objective.target))) errors.push(`${at}: invalid final opportunity cap`);
+          if (objective.target !== undefined && objective.minRatio !== undefined) errors.push(`${at}: target and minRatio cannot be combined`);
           if (objective.minRatio !== undefined && !(objective.minRatio > 0 && objective.minRatio <= 1)) {
             errors.push(`${stepAt}: objective ${objective.id} minRatio must be within (0, 1]`);
           }
@@ -210,6 +215,8 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
   if (!(table.blinds.small > 0 && table.blinds.big > table.blinds.small)) errors.push(`${at}: invalid blinds`);
   if (!Number.isInteger(table.heroSeat) || table.heroSeat < 0 || table.heroSeat >= MAX_SEATS) errors.push(`${at}: heroSeat out of range`);
   if (!(table.heroStackBB > 0)) errors.push(`${at}: heroStackBB must be > 0`);
+  if (table.reading && (table.reading.id !== 'river-reading-v1' || table.reading.maxQuestions !== 2 || table.masquerade)) errors.push(`${at}: invalid reading policy`);
+  if (table.readingReview && table.readingReview.id !== 'act3-response-v1') errors.push(`${at}: invalid reading review policy`);
   if (table.masquerade) {
     const policy = table.masquerade;
     if (step.kind !== 'sparring' || policy.id !== 'masquerade-v1' || policy.seats.length !== 4 || new Set(policy.seats).size !== 4

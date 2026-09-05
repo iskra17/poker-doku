@@ -1,3 +1,5 @@
+import { STORY_REWARD_CATALOG } from '@/lib/story/rewards/catalog';
+import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { makeChapterChain } from '@/lib/story/test-fixtures';
 import { PERFECT_SET_FLAG } from '@/lib/story/unlocks';
@@ -134,11 +136,37 @@ describe('StoryRewardService', () => {
     ).get(HERO, 'story-title-perfect')).toEqual({ source_key: 'story-flag:badge:perfect-set' });
   });
 
+  it('3막 첫/S 보상과 갈색 펠트는 DB·인벤토리·장착 뷰에서 멱등이다', () => {
+    const economyRepository = new EconomyRepository(database);
+    service = new StoryRewardService({ database, storyRepository: stories, rewardRepository: new StoryRewardRepository(database), economyRepository,
+      economyService: new EconomyService(economyRepository, () => T0), chapters: STORY_CHAPTERS });
+    stories.recordCompletion(HERO, 'act3-ch08', 'A', T0);
+    expect(service.reconcile(HERO, T0)).toMatchObject({ chips: 500, granted: [{ id: 'story-title-bluff-catcher' }] });
+    expect(service.reconcile(HERO, T0 + 1)).toEqual({ chips: 0, granted: [] });
+    stories.recordCompletion(HERO, 'act3-ch08', 'S', T0 + 2);
+    expect(service.reconcile(HERO, T0 + 2)).toEqual({ chips: 300, granted: [] });
+    stories.recordCompletion(HERO, 'act3-ch09', 'S', T0 + 3);
+    const ch9 = service.reconcile(HERO, T0 + 3);
+    expect(ch9.chips).toBe(800);
+    expect(ch9.granted.map(item => item.id)).toEqual(['story-title-shadow-reader', 'story-cg-act3-luna-analysis', 'story-cg-act3-elena-snow']);
+    expect(inventoryIds()).not.toContain('story-felt-brown-belt');
+    stories.recordCompletion(HERO, 'act3-ch07', 'A', T0 + 4);
+    const act3 = service.reconcile(HERO, T0 + 4);
+    expect(act3.chips).toBe(1500);
+    expect(inventoryIds()).toContain('story-felt-brown-belt');
+    database.db.prepare(`INSERT INTO profile_cosmetics(profile_id, slot, item_id, updated_at) VALUES (?, 'felt', 'story-felt-brown-belt', ?)`).run(HERO, T0 + 5);
+    expect(database.db.prepare(`SELECT item_id FROM profile_cosmetics WHERE profile_id = ? AND slot = 'felt'`).get(HERO)).toEqual({ item_id: 'story-felt-brown-belt' });
+    expect(service.preview(HERO).find(item => item.id === 'story-felt-brown-belt')).toMatchObject({ granted: true, kind: 'felt' });
+    expect(service.reconcile(HERO, T0 + 6)).toEqual({ chips: 0, granted: [] });
+    expect(ledger().filter(row => row.ref_id === 'story-chips-act3-ch08-first')).toHaveLength(1);
+    expect(ledger().filter(row => row.ref_id === 'story-chips-act3-ch08-s')).toHaveLength(1);
+  });
+
   it('previews the whole catalog with granted flags from receipts', () => {
     stories.recordCompletion(HERO, 'act1-ch01', 'A', T0);
     service.reconcile(HERO, T0);
     const preview = service.preview(HERO);
-    expect(preview.map(item => item.id)).toHaveLength(40);
+    expect(preview.map(item => item.id)).toHaveLength(STORY_REWARD_CATALOG.length);
     expect(preview.find(item => item.id === 'story-title-white-belt')).toMatchObject({
       granted: true,
       requirement: expect.stringContaining('첫 완주'),

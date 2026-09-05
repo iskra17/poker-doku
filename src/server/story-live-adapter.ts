@@ -1,3 +1,6 @@
+import { reviewReadingResponses, type ReadingResponseKind } from './story-reading-review';
+import { StoryReadingQuiz } from './story-reading-quiz';
+import { buildReadingQuestion, readingRangeFor } from '../lib/story/reading-policy';
 import { MasqueradeQuiz, shuffledMasqueradePool } from './story-masquerade';
 import { reviewOpponentResponses } from './story-opponent-review';
 /**
@@ -136,6 +139,9 @@ interface MasqueradeSession {
   revealedHands: number;
 }
 interface LiveSession {
+  readingResponses: Partial<Record<ReadingResponseKind, { opportunities: number; correct: number }>>;
+  reading: StoryReadingQuiz | null;
+  readingTimer: NodeJS.Timeout | null;
   masquerade: MasqueradeSession | null;
   lastRecordedHand: string | null;
   profileId: string;
@@ -261,6 +267,11 @@ export class LiveTableAdapter implements StoryRoomHooks {
       if (session.masquerade?.quiz?.pending()) return { ok: true };
       if (!session.masquerade || session.masquerade.phase === 'observing' || session.masquerade.phase === 'revealed-play') return { ok: true };
     }
+    if (session.reading?.held) {
+      if (session.reading.pending(this.now())) return { ok: false, code: 'action-rejected', message: '먼저 리딩 질문에 답해 주세요.' };
+      this.releaseReading(session);
+      return { ok: true };
+    }
     if (session.masquerade && ['quiz', 'feedback'].includes(session.masquerade.phase)) {
       return this.resumeQuiz(session);
     }
@@ -297,6 +308,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
     if (!session) return 'no-session';
     const summary = this.summarizeForced(session);
     if (!this.disposeOwnRoom(session, 'story-end')) return 'busy';
+    this.clearReading(session);
     this.clearQuizTimer(session);
     this.clearFinishTimer(session);
     this.sessions.delete(session.profileId);
@@ -358,12 +370,97 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
   answerQuiz(profileId: string, request: StoryQuizRequest): LiveCommandResult & { receipt?: StoryQuizReceipt } {
     const session = this.sessions.get(profileId);
+    if (session?.runId === request.runId && session.reading) return this.answerReading(session, request);
     if (!session || session.runId !== request.runId || !session.masquerade?.quiz) return { ok: false, code: 'stale-state', message: '현재 수련의 질문이 아니에요.' };
     const pendingId = session.masquerade.quiz.pending()?.quizId;
     const receipt = session.masquerade.quiz.answer(request.quizId, request.optionIndex, this.now());
     if (!receipt) return { ok: false, code: 'action-rejected', message: '이 질문에 없는 선택지예요.' };
     if (pendingId === request.quizId) { this.clearQuizTimer(session); this.afterQuizAnswer(session); }
     return { ok: true, receipt };
+  }
+
+  private readingKey(roomId: string, engine: PokerEngine): string {
+    return `${roomId}:${engine.state.handNumber}:${engine.state.actionSeq}`;
+  }
+
+  onTurnStateChanged(roomId: string, engine: PokerEngine): void {
+    const session = this.byRoom.get(roomId);
+    if (!session?.reading?.held) return;
+    const active = engine.state.players[engine.state.activePlayerIndex];
+    if (!engine.state.isHandInProgress || active?.id !== session.profileId || active.isDisconnected
+      || session.reading.key !== this.readingKey(roomId, engine)) {
+      this.clearReading(session);
+      this.events?.onLiveChanged(session.profileId);
+    }
+  }
+
+  isTurnHeld(roomId: string, playerId: string): boolean {
+    const session = this.byRoom.get(roomId);
+    const room = this.options.roomManager.getRoom(roomId);
+    if (room) this.onTurnStateChanged(roomId, room.engine);
+    return session?.profileId === playerId && !!session.reading?.held;
+  }
+
+  beforeHeroTurn(roomId: string, engine: PokerEngine): 'play' | 'hold' {
+    const session = this.byRoom.get(roomId);
+    if (!session?.reading) return 'play';
+    this.onTurnStateChanged(roomId, engine);
+    if (session.reading.held) return 'hold';
+    const key = this.readingKey(roomId, engine);
+    if (session.reading.wasSeen(key) || session.reading.counts().issued >= 2) return 'play';
+    const state = engine.getPublicState(session.profileId);
+    const hero = state.players[state.activePlayerIndex];
+    if (state.street !== 'river' || hero?.id !== session.profileId || hero.type !== 'human' || hero.isDisconnected || (hero.sitOutNext && !hero.sitOutAuto)) return 'play';
+    const opponents = state.players.filter(p => p.id !== hero.id && (p.status === 'active' || p.status === 'all-in'));
+    if (opponents.length !== 1) return 'play';
+    const opponent = opponents[0];
+    const potChips = state.players.reduce((sum, player) => sum + player.totalContributed, 0);
+    const toCallChips = state.currentBet - hero.currentBet;
+    const personalityId = session.botIdentities?.find(identity => identity.seatIndex === opponent.seatIndex)?.personalityId ?? opponent.avatar;
+    const draft = buildReadingQuestion({ hero: hero.holeCards, board: state.communityCards, potChips, toCallChips,
+      heroStackChips: hero.chips, opponents: opponents.length,
+      hasAllIn: state.players.some(p => p.status === 'all-in'), hasSidePot: state.pots.length > 1,
+      range: readingRangeFor(personalityId ?? '', potChips > toCallChips ? toCallChips / (potChips - toCallChips) : Infinity), opponentName: opponent.name });
+    if (!draft || !session.reading.issue(key, draft, opponent.seatIndex, this.now())) return 'play';
+    this.clearReadingTimer(session);
+    const quizId = session.reading.pending(this.now())!.quizId;
+    session.readingTimer = setTimeout(() => {
+      session.readingTimer = null;
+      this.answerReading(session, { runId: session.runId, quizId, optionIndex: -1 }, true);
+    }, 30_000);
+    this.events?.onLiveChanged(session.profileId);
+    return 'hold';
+  }
+
+  private answerReading(session: LiveSession, request: StoryQuizRequest, timeout = false): LiveCommandResult & { receipt?: StoryQuizReceipt } {
+    const room = session.roomId ? this.options.roomManager.getRoom(session.roomId) : undefined;
+    if (room) this.onTurnStateChanged(session.roomId!, room.engine);
+    const pendingId = session.reading!.pending(this.now())?.quizId;
+    const receipt = session.reading!.answer(request.quizId, timeout ? null : request.optionIndex, this.now());
+    if (!receipt) return { ok: false, code: 'stale-state', message: '이 리딩 질문의 원래 턴이 끝났어요.' };
+    if (pendingId === request.quizId) {
+      this.clearReadingTimer(session);
+      session.readingTimer = setTimeout(() => { session.readingTimer = null; this.releaseReading(session); }, 10_000);
+      this.events?.onLiveChanged(session.profileId);
+    }
+    return { ok: true, receipt };
+  }
+
+  private clearReadingTimer(session: LiveSession): void {
+    if (session.readingTimer) clearTimeout(session.readingTimer);
+    session.readingTimer = null;
+  }
+
+  private clearReading(session: LiveSession): void {
+    this.clearReadingTimer(session);
+    session.reading?.invalidate();
+  }
+
+  private releaseReading(session: LiveSession): void {
+    this.clearReadingTimer(session);
+    session.reading?.release();
+    if (session.roomId) this.options.roomManager.resumeHeroTurn(session.roomId);
+    this.events?.onLiveChanged(session.profileId);
   }
 
   private online(session: LiveSession): boolean {
@@ -448,26 +545,27 @@ export class LiveTableAdapter implements StoryRoomHooks {
   phase(profileId: string): 'live-hold' | 'live-play' | null {
     const session = this.sessions.get(profileId);
     if (!session) return null;
-    return session.hold || !session.roomId ? 'live-hold' : 'live-play';
+    return session.hold || session.reading?.held || !session.roomId ? 'live-hold' : 'live-play';
   }
 
   view(profileId: string): StoryLiveView | null {
     const session = this.sessions.get(profileId);
     if (!session) return null;
-    const question = session.masquerade?.quiz?.pending();
     const sampledAt = this.now();
+    const question = session.reading?.pending(sampledAt) ?? session.masquerade?.quiz?.pending();
     return {
       roomId: session.roomId,
       tag: session.step.tag,
-      hold: session.hold || !session.roomId,
-      holdReason: session.masquerade && ['quiz', 'feedback'].includes(session.masquerade.phase) ? 'quiz' : !session.roomId ? 'room-lost' : session.holdReason,
+      hold: session.hold || !!session.reading?.held || !session.roomId,
+      holdReason: session.reading?.held ? 'quiz' : session.masquerade && ['quiz', 'feedback'].includes(session.masquerade.phase) ? 'quiz' : !session.roomId ? 'room-lost' : session.holdReason,
       interruptId: session.interruptId,
       objectives: this.objectiveViews(session),
       handsPlayed: session.handsPlayed,
       maxHands: this.maxHands(session),
       minHands: session.step.kind === 'sparring' ? (session.step.minHands ?? null) : null,
       lastReview: session.lastReview,
-      botThoughts: this.exposeBotThoughts && !session.masquerade ? [...session.botThoughts] : [],
+      botThoughts: this.exposeBotThoughts && !session.masquerade && !session.reading ? [...session.botThoughts] : [],
+      reading: session.reading?.view(),
       pendingQuiz: question ? { ...question, sampledAt, remainingMs: Math.min(30_000, Math.max(0, question.expiresAt - sampledAt)) } : null,
       ...(session.masquerade ? { masquerade: { phase: session.masquerade.phase, notes: session.masquerade.notes.map(n => ({ ...n })),
         feedback: session.masquerade.phase === 'feedback' || session.masquerade.phase === 'revealed-play' ? session.masquerade.quiz?.feedback() ?? null : null,
@@ -487,6 +585,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       this.sweepTimer = null;
     }
     for (const session of [...this.sessions.values()]) {
+      this.clearReading(session);
       this.clearQuizTimer(session);
       this.clearFinishTimer(session);
       // 종료 시엔 해체 실패(정산 미해결)를 따지지 않는다 — RoomManager.shutdown이 나머지를 정리한다
@@ -565,8 +664,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const state = room.engine.state;
     const hero = state.players.find(p => p.id === session.profileId);
     // 히어로가 떠나는 중인 핸드(grace 만료·abandon)는 집계하지 않는다 — 방은 곧 해체된다
+    this.clearReading(session);
     if (!hero || hero.pendingRemoval) return 'continue';
-
     const record = room.engine.getCompletedHandRecord();
     const recordKey = `${roomId}:${state.handNumber}`;
     if (record && session.lastRecordedHand === recordKey) return session.hold ? 'hold' : 'continue';
@@ -581,6 +680,15 @@ export class LiveTableAdapter implements StoryRoomHooks {
         } else {
           session.tally = addHand(session.tally, facts);
           session.lastReview = reviewHand(record, session.profileId);
+          if (session.step.table.readingReview) {
+            const responses = reviewReadingResponses(record, session.profileId, session.botIdentities ?? []);
+            for (const { kind, verdict } of responses) {
+              const count = session.readingResponses[kind] ??= { opportunities: 0, correct: 0 };
+              count.opportunities++;
+              if (verdict.mark === 'good') count.correct++;
+            }
+            session.lastReview = { handNumber: record.handNumber, verdicts: responses.map(item => item.verdict) };
+          }
           if (session.masquerade?.phase === 'observing') this.observeHand(session, record);
           if (session.masquerade?.phase === 'revealed-play') {
             session.masquerade.revealedHands++;
@@ -688,6 +796,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
     this.byRoom.delete(roomId);
     if (session.disposing) return; // 자체 해체(story-end/idle) 중 — 후속 처리는 호출부(finish/dropSession/abort)가 담당
     if (reason === 'shutdown') {
+      this.clearReading(session);
       this.clearQuizTimer(session);
       this.clearFinishTimer(session);
       this.sessions.delete(session.profileId);
@@ -703,6 +812,9 @@ export class LiveTableAdapter implements StoryRoomHooks {
   private freshSession(input: LiveEnterInput): LiveSession {
     return {
       lastRecordedHand: null,
+      readingResponses: {},
+      reading: input.step.table.reading ? new StoryReadingQuiz() : null,
+      readingTimer: null,
       masquerade: input.step.table.masquerade ? { phase: 'observing', quiz: null, timer: null, responses: { opportunities: 0, correct: 0 }, revealedHands: 0,
         notes: input.step.table.masquerade.seats.map(seatIndex => ({ seatIndex, hands: 0, entered: 0, raised: 0, called: 0 })) } : null,
       profileId: input.profileId,
@@ -923,6 +1035,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
   /** 진행 불가 상황에서 방을 닫고 room-lost hold로 보존 — 닫을 수 없으면(정산 미해결) [계속하기] hold로 대기 */
   private abortToRoomLost(session: LiveSession): void {
+    this.clearReading(session);
     if (!session.roomId) return;
     this.clearFinishTimer(session);
     if (!this.disposeOwnRoom(session, 'idle')) {
@@ -933,6 +1046,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
   }
 
   private markRoomLost(session: LiveSession, notify: boolean): void {
+    this.clearReading(session);
     this.clearFinishTimer(session);
     session.roomId = null;
     session.deck = null;
@@ -968,13 +1082,13 @@ export class LiveTableAdapter implements StoryRoomHooks {
     }
   }
 
-  private objectiveViews(session: LiveSession): ObjectiveProgressView[] {
+  private objectiveViews(session: LiveSession, final = false): ObjectiveProgressView[] {
     if (session.step.kind !== 'sparring') return [];
     const counts = session.masquerade?.quiz?.counts();
     return evaluateObjectives(session.step.objectives, session.tally, session.masquerade ? {
       quiz: counts ? { ...counts, correct: counts.answered === 4 ? counts.correct : 0 } : { issued: 0, answered: 0, correct: 0, required: 4 },
       opponentResponse: session.masquerade.responses,
-    } : undefined);
+    } : { final, quiz: session.reading?.counts(), readingResponses: session.readingResponses });
   }
 
   private maxHands(session: LiveSession): number {
@@ -999,6 +1113,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
   /** 스텝 종료 예약 — 승리 연출이 끝난 뒤 방을 해체하고 코디네이터에 결과를 넘긴다 */
   private finish(session: LiveSession, outcome: 'done' | 'failed', reason: LiveFinishReason): void {
     if (session.finishTimer) return;
+    this.clearReading(session);
     this.clearQuizTimer(session);
     const summary = this.summarize(session, outcome);
     const complete = (): void => {
@@ -1036,7 +1151,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
         netBB: 0,
       };
     }
-    const objectives = this.objectiveViews(session);
+    const objectives = this.objectiveViews(session, true);
     return {
       outcome,
       tag: session.step.tag,
@@ -1087,6 +1202,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
   /** 세션 폐기 — 방을 닫을 수 없으면 세션도 남긴다(소유권 유지). */
   private dropSession(session: LiveSession): boolean {
     if (!this.disposeOwnRoom(session, 'story-end')) return false;
+    this.clearReading(session);
     this.clearQuizTimer(session);
     this.clearFinishTimer(session);
     this.sessions.delete(session.profileId);

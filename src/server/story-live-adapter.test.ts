@@ -1,3 +1,4 @@
+import { cards as parseCards } from '../lib/poker/test-helpers';
 import { CH07 } from '../lib/story/chapters/act3/ch07-masquerade';
 /**
  * LiveTableAdapter 통합 테스트 — RoomManager 실물 + fake timers.
@@ -130,6 +131,38 @@ describe('LiveTableAdapter', () => {
     expect(stats.rooms).toBe(0);
     expect(stats.botTimers + stats.pendingStartTimers + stats.turnTimers + stats.sitOutTimers).toBe(0);
     vi.useRealTimers();
+  });
+
+  it('리버 리딩은 같은 턴을 보류하고 액션·타임칩을 막은 뒤 답/해설만 끝내고 재개한다', () => {
+    const roomId = enter(practiceStep({ reading: { id: 'river-reading-v1', maxQuestions: 2 }, lineup: [{ seatIndex: 1, characterId: 'gumi', stackBB: 100, role: 'neighbor' }] }));
+    const engine = manager.getRoom(roomId)!.engine;
+    const st = engine.state;
+    const hero = heroSeat(roomId)!;
+    const villain = st.players.find(p => p.id !== PROFILE)!;
+    st.street = 'river'; st.isHandInProgress = true; st.activePlayerIndex = st.players.indexOf(hero);
+    st.communityCards = parseCards('As Kd 7c 4h 2s'); hero.holeCards = parseCards('Ah Ad');
+    hero.status = 'active'; villain.status = 'active'; hero.chips = 1800; villain.chips = 1700;
+    hero.currentBet = 0; villain.currentBet = 100; st.currentBet = 100;
+    hero.totalContributed = 100; villain.totalContributed = 200;
+    st.pots = [{ amount: 300, eligiblePlayerIds: [hero.id, villain.id] }];
+    expect(manager.resumeHeroTurn(roomId)).toBe(true);
+    const question = adapter.view(PROFILE)!.pendingQuiz!;
+    expect(question.required).toBe(2);
+    expect(adapter.view(PROFILE)!.hold).toBe(true);
+    expect(manager.processPlayerAction(roomId, PROFILE, 'call')).toBe(false);
+    expect(manager.useTimeBank(roomId, PROFILE)).toBe(false);
+    manager.resumeHeroTurn(roomId);
+    expect(adapter.view(PROFILE)!.pendingQuiz!.quizId).toBe(question.quizId);
+    const seq = st.actionSeq;
+    const receipt = adapter.answerQuiz(PROFILE, { runId: RUN, quizId: question.quizId, optionIndex: 0 });
+    expect(receipt.ok).toBe(true);
+    expect(JSON.stringify(receipt)).not.toMatch(/correct|explanation/);
+    expect(st.actionSeq).toBe(seq);
+    expect(adapter.view(PROFILE)!.reading!.phase).toBe('feedback');
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    expect(adapter.view(PROFILE)!.hold).toBe(false);
+    expect(st.actionSeq).toBe(seq);
+    expect(manager.processPlayerAction(roomId, PROFILE, 'call')).toBe(true);
   });
 
   // --- 헬퍼 ---------------------------------------------------------------

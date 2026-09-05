@@ -1,3 +1,4 @@
+import { getSceneCg } from '@/lib/assets/story-cgs';
 import { STORY_CURRICULUM } from '../curriculum';
 import { describe, expect, it } from 'vitest';
 import { STORY_CHAPTERS } from '../chapters';
@@ -21,6 +22,11 @@ function state(overrides: Partial<StoryRewardState> = {}): StoryRewardState {
 }
 
 describe('story reward catalog', () => {
+  it('Ch9 보상 CG는 아트 담당이 등록한 실제 씬 경로를 재사용한다', () => {
+    expect(getStoryRewardDefinition('story-cg-act3-luna-analysis')?.art).toBe(getSceneCg('act3-ch09-analysis')?.src);
+    expect(getStoryRewardDefinition('story-cg-act3-elena-snow')?.art).toBe(getSceneCg('act3-ch09-snow-window')?.src);
+  });
+
   it('ids are unique, well-formed, and every trigger points at a registered chapter / heroine / flag', () => {
     const ids = new Set<string>();
     const chapterIds = new Set(STORY_CHAPTERS.map(chapter => chapter.id));

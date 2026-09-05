@@ -1,3 +1,4 @@
+import { STORY_REWARD_CATALOG } from '../lib/story/rewards/catalog';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ProgressionSnapshot } from '../lib/progression/types';
 import type { RealtimeAck } from '../lib/realtime/protocol';
@@ -261,7 +262,7 @@ describe('story socket events', () => {
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
       'story-cardback-dojo-crest', 'story-chips-act1-ch01-s', 'story-title-perfect',
     ]);
-    expect(progress.data?.rewards).toHaveLength(40);
+    expect(progress.data?.rewards).toHaveLength(STORY_REWARD_CATALOG.length);
     // 재조회 reconcile은 무변경 — 지갑 그대로
     expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
   });
