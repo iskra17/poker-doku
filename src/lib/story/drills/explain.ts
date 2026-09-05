@@ -195,12 +195,6 @@ const CORES: Readonly<Record<string, CoreBuilder | undefined>> = Object.freeze({
     `스택 ${v(f, 'heroStack')}은 지금 ${v(f, 'currentBb')}BB인데, 다음 레벨 BB ${v(f, 'nextBigBlind')}으로 나누면 ${v(f, 'nextBbExact')}BB — 칩은 그대로인데 ${v(f, 'dropBb')}BB가 줄어드는 셈이에요.`,
     '블라인드 인상은 아무 액션 없이도 스택을 깎고요. 그래서 SnG는 칩을 늘릴 시점을 미리 정해 둬야 하는 구조예요.',
   ],
-  'sng-orbit-cost': f => [
-    `남은 인원이 ${v(f, 'players')}명이니까 한 오르빗은 ${v(f, 'players')}핸드예요.`,
-    `그동안 SB ${v(f, 'smallBlind')} 한 번 + BB ${v(f, 'bigBlind')} 한 번${anteTerm(f)} = ${v(f, 'orbitCost')}을 내는 거예요.`,
-    '상황 카드의 팟과 같은 금액인데, 한 핸드의 데드머니와 한 오르빗 비용이 원래 같은 값이기 때문이에요.',
-    '이건 아무 핸드도 하지 않아도 자동으로 나가는 비용이에요. 블라인드가 오르면 이 금액도 같이 커지고요.',
-  ],
   'sng-itm-distance': f => [
     `상금은 ${v(f, 'paidPlaces')}위까지고, 지금 남은 인원은 ${v(f, 'players')}명이에요.`,
     Number(f.toBust) <= 0
@@ -250,7 +244,6 @@ const REQUIRED_FACTS: Readonly<Record<string, readonly string[]>> = Object.freez
   'sng-stack-bb': ['heroStack', 'bigBlind', 'stackBb'],
   'sng-m-ratio': ['smallBlind', 'bigBlind', 'players', 'orbitCost', 'heroStack', 'm'],
   'sng-next-level-bb': ['level', 'smallBlind', 'bigBlind', 'nextLevel', 'nextSmallBlind', 'nextBigBlind', 'heroStack', 'currentBb', 'nextBbExact', 'dropBb'],
-  'sng-orbit-cost': ['players', 'smallBlind', 'bigBlind', 'orbitCost'],
   'sng-itm-distance': ['paidPlaces', 'players', 'answer'],
   'sng-stack-zone': ['heroStack', 'bigBlind', 'stackBb', 'zone', 'pushFoldMax', 'shortMax'],
 });

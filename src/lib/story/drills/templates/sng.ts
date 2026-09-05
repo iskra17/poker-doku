@@ -245,34 +245,6 @@ const nextLevelBb: GeneratedDrillDefinition = {
   },
 };
 
-const orbitCost: GeneratedDrillDefinition = {
-  template: {
-    id: 'sng-orbit-cost',
-    category: 'sng-math',
-    title: '한 오르빗에 나가는 칩',
-    difficulty: 2,
-    hints: ['남은 인원이 {players}명이면 한 오르빗은 {players}핸드예요. SB·BB는 각각 한 번씩 내요.'],
-    source: { kind: 'generated', params: {} },
-  },
-  build: ({ rng }) => {
-    const withAnte = rng() < 0.6;
-    const spot = buildSpot(rng, {
-      withAnte,
-      heroStack: ({ bigBlind, rng: inner }) => bigBlind * (8 + randomInt(inner, 33)),
-    });
-    if (!spot) return null;
-    return {
-      situation: spot.situation,
-      question:
-        `남은 인원 ${spot.players}명, 블라인드 ${spot.smallBlind}/${spot.bigBlind}, `
-        + `${spot.ante > 0 ? `앤티 각자 ${spot.ante}칩` : '앤티 없음'}. `
-        + '한 오르빗을 다 도는 동안 아무 핸드도 하지 않으면 몇 칩이 나갈까요?',
-      answerSpec: { kind: 'numeric', correct: spot.orbitCost, tolerance: 0, unit: 'chips', min: 0, max: 100_000 },
-      facts: { ...baseFacts(spot), orbitCost: spot.orbitCost },
-    };
-  },
-};
-
 /** 고정 4지선다 — 순서를 섞지 않는다(「이미 상금권」이 항상 마지막이라 읽기 쉽다). */
 const ITM_OPTIONS: readonly string[] = ['1명', '2명', '3명', '이미 상금권'];
 
@@ -341,7 +313,6 @@ export const SNG_TEMPLATES: readonly GeneratedDrillDefinition[] = [
   stackBb,
   mRatio,
   nextLevelBb,
-  orbitCost,
   itmDistance,
   zoneChoice,
 ];

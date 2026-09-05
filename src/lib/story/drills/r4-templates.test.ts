@@ -1,5 +1,6 @@
 /**
- * R4a 회귀 — 4막(Ch10 MDF2 · Ch12 SNG6)이 지목할 드릴 11종.
+ * R4a 회귀 — 4막(Ch10 MDF · Ch12 SnG)이 지목할 드릴 10종
+ * (`sng-orbit-cost`는 정답이 상황 카드의 팟과 같은 값이라 2026-09-06에 삭제했다 — 등록만 남겨 두지 않는다).
  *
  * 모델은 `r3-templates.test.ts`와 같다: 등록·결정론·공개 DTO·채점·수학 대조를 한 파일에서 본다.
  * 다른 점 두 가지 —
@@ -36,9 +37,7 @@ import {
 import type { DrillInstance } from './types';
 
 const MDF_IDS = ['mdf-defend-pct', 'mdf-choice', 'mdf-vs-call-equity'];
-const SNG_IDS = [
-  'sng-stack-bb', 'sng-m-ratio', 'sng-next-level-bb', 'sng-orbit-cost', 'sng-itm-distance', 'sng-stack-zone',
-];
+const SNG_IDS = ['sng-stack-bb', 'sng-m-ratio', 'sng-next-level-bb', 'sng-itm-distance', 'sng-stack-zone'];
 const GENERATED_IDS = [...MDF_IDS, ...SNG_IDS];
 const AUTHORED_IDS = ['act-ch12-push-btn-8bb', 'act-ch12-fold-utg-8bb'];
 const ALL_IDS = [...GENERATED_IDS, ...AUTHORED_IDS];
@@ -50,7 +49,7 @@ const LIVE_COMBOS = (50 * 49) / 2;
 // ---------------------------------------------------------------------------
 // ① 등록
 
-it('registers the 11 Act 4 MDF / SnG drill templates', () => {
+it('registers the 10 Act 4 MDF / SnG drill templates', () => {
   for (const id of ALL_IDS) {
     expect(DRILL_TEMPLATE_IDS.has(id), id).toBe(true);
     expect(generateDrill(id, 7, { teacher: 'vivian' }).templateId).toBe(id);
@@ -231,14 +230,6 @@ function verifySng(instance: DrillInstance): void {
       expect(f.nextBbExact).toBe(Math.round((heroStack / next.bigBlind) * 10) / 10);
       expect(Number(f.dropBb)).toBeGreaterThan(0);
       expect(spec.unit).toBe('bb');
-      return;
-    }
-    case 'sng-orbit-cost': {
-      expect(spec.kind).toBe('numeric');
-      if (spec.kind !== 'numeric') return;
-      expect(spec.correct).toBe(smallBlind + bigBlind + ante * players);
-      expect(spec.tolerance).toBe(0);
-      expect(spec.unit).toBe('chips');
       return;
     }
     case 'sng-itm-distance': {

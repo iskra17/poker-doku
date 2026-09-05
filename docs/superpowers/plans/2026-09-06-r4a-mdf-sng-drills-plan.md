@@ -42,7 +42,7 @@ facts: `potBeforeBet, betChips, potChips(=P+B), mdf, callEquity, villainBreakeve
 이만큼 방어하지 않으면 상대는 아무 카드로 벳해도 이익", ③ **콜 필요 승률은 B/(P+2B) = c%로 다른 숫자**, ④ 한계: "MDF는 레인지 기준이지 이
 핸드의 의무 콜이 아니고, 실제 상대가 블러프를 덜 하면 그만큼 덜 방어해도 된다". 숫자는 facts에서만.
 
-## 3. SnG 생성 템플릿 6종 — `src/lib/story/drills/templates/sng.ts` (category `'sng-math'`)
+## 3. SnG 생성 템플릿 5종 — `src/lib/story/drills/templates/sng.ts` (category `'sng-math'`)
 
 공통: 6-max SnG, 프리플랍, 보드 없음, 히어로 카드 2장은 뽑되(상황 카드가 내 스택/BB를 표시하려면 hero가 비면 안 됨) 정답과 무관함을 문항에
 밝히지 않아도 된다(문항이 묻는 것은 스택·블라인드·인원). 블라인드 레벨은 `SNG_BLIND_SCHEDULE`(blind-schedule.ts) 인덱스 0~8에서 뽑고
@@ -57,7 +57,6 @@ facts: `potBeforeBet, betChips, potChips(=P+B), mdf, callEquity, villainBreakeve
 | `sng-stack-bb` | numeric `bb` tol 1 | 스택 ÷ BB. 스택은 BB의 정수배(4~40BB)로 만든다 |
 | `sng-m-ratio` | numeric `x` tol 0.5 | M = 스택 ÷ (SB+BB+앤티×남은 인원). 앤티 있는 변형 절반 이상(앤티는 BB의 10~12.5% 정수). 소수 1자리로 떨어지게 스택 선택, `mExact` facts |
 | `sng-next-level-bb` | numeric `bb` tol 1 | 다음 레벨(`SNG_BLIND_SCHEDULE[i+1]`) BB로 나눈 스택. 정답 `round`, `exact` 소수1 facts. 마지막 레벨 인덱스는 뽑지 않음 |
-| `sng-orbit-cost` | numeric `chips` tol 0 | 한 오르빗(남은 인원 k핸드) 동안 SB+BB(+앤티×k) — "블라인드 인상이 스택을 어떻게 깎는지" |
 | `sng-itm-distance` | 4지선다 고정 `['1명','2명','3명','이미 상금권']` | 남은 인원 k∈{3,4,5,6}, 상금 3자리 → k−3 (k=3이면 '이미 상금권') |
 | `sng-stack-zone` | 3지선다 `['푸시/폴드 구간 (10BB 이하)','숏스택 (10~20BB)','여유 (20BB 초과)']` | `stackZone(스택/BB)`. 경계 ±1BB(9~11, 19~21)는 리롤 |
 
@@ -128,3 +127,5 @@ git diff --check
 4. **테스트 계약**: `generator.test.ts:181`의 authored id 배열에 신규 2개 추가를 허용(유일한 기존 단언 수정 예외). 변형 수 >3 단언은 생성형 9종만.
    오답 검사는 `correct + tolerance + 1`(허용 오차 밖). 신규 문항 상대 풀은 조연 6명만 엄격 검사. SnG 생성 문항 `toCallChips`는 히어로가 블라인드 좌석이
    아니면 BB(콜 필요), BB 좌석이면 0 — note에 명시. facts는 `explanation.facts`에만, 공개 `note`에는 전제만 둔다.
+
+**총괄 확정 (2026-09-06):** `sng-orbit-cost`는 정답이 상황 카드의 팟(SB+BB+앤티 합)과 같은 값이라 문항 가치가 없어 **삭제**한다 — 위 §3 표에서 제거했고, 등록만 남겨 두지 않는다(신규 ID 11 → 10).
