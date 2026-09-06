@@ -3,6 +3,7 @@ import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
 } from '../lib/progression/types';
+import { eventLog } from './event-log';
 import {
   ProgressionRuntime,
   type ProgressionRuntimeService,
@@ -425,24 +426,96 @@ describe('ProgressionRuntime', () => {
       expect(reconcile.mock.calls.map(call => call[0])).toEqual(['alice', 'bob']);
     });
 
-    it('reconcile 실패는 격리한다 — 핸드 보상·전달은 그대로 진행된다', () => {
+    it('새로 지급된 아이템은 뒤이어 읽는 전달 스냅샷에 실린다', () => {
       const service = makeService();
-      const emit = vi.fn();
-      const runtime = new ProgressionRuntime(service.service, emit, () => 9_000, {
-        reconcile: () => { throw new Error('reward store down'); },
+      const granted = new Set<string>();
+      service.getRuntimeSnapshot.mockImplementation((profileId: string) => {
+        const base = snapshot(profileId, 'sakura');
+        return {
+          ...base,
+          inventory: [...granted].map(itemId => ({ profileId, itemId, quantity: 1, grantedAt: 1, updatedAt: 1 })),
+        };
       });
+      const delivered: ProgressionSnapshot[] = [];
+      const runtime = new ProgressionRuntime(
+        service.service,
+        (_profileId, current) => delivered.push(current),
+        () => 8_200,
+        {
+          reconcile: () => {
+            granted.add('story-bonus-cg-sakura-casual');
+            return { granted: [{ id: 'story-bonus-cg-sakura-casual' }], chips: 0 };
+          },
+        },
+      );
       runtime.captureHandStart({
         roomId: 'cash-room',
-        roomRunId: 'run-fail',
-        handNumber: 5,
+        roomRunId: 'run-grant',
+        handNumber: 6,
         mode: 'cash',
         players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
       });
-      expect(() => runtime.completeHand({
-        roomId: 'cash-room', roomRunId: 'run-fail', handNumber: 5, pendingRemovalProfileIds: [],
-      })).not.toThrow();
-      expect(service.recordCompletedHand).toHaveBeenCalledOnce();
-      expect(emit).toHaveBeenCalledOnce();
+      runtime.completeHand({
+        roomId: 'cash-room', roomRunId: 'run-grant', handNumber: 6, pendingRemovalProfileIds: [],
+      });
+
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0].inventory.map(item => item.itemId)).toEqual(['story-bonus-cg-sakura-casual']);
+    });
+
+    it('reconcile 실패는 격리하되 맥락과 함께 로그를 남긴다', () => {
+      const service = makeService();
+      const emit = vi.fn();
+      const log = vi.spyOn(eventLog, 'log').mockImplementation(() => {});
+      try {
+        const runtime = new ProgressionRuntime(service.service, emit, () => 9_000, {
+          reconcile: () => { throw new Error('reward store down'); },
+        });
+        runtime.captureHandStart({
+          roomId: 'cash-room',
+          roomRunId: 'run-fail',
+          handNumber: 5,
+          mode: 'cash',
+          players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
+        });
+        expect(() => runtime.completeHand({
+          roomId: 'cash-room', roomRunId: 'run-fail', handNumber: 5, pendingRemovalProfileIds: [],
+        })).not.toThrow();
+        expect(service.recordCompletedHand).toHaveBeenCalledOnce();
+        expect(emit).toHaveBeenCalledOnce();
+        expect(log).toHaveBeenCalledOnce();
+        expect(log).toHaveBeenCalledWith('story-reward-reconcile-failed', {
+          roomId: 'cash-room',
+          playerId: 'alice',
+          data: { mode: 'cash', roomRunId: 'run-fail', at: 9_000, reason: 'reward store down' },
+        });
+      } finally {
+        log.mockRestore();
+      }
+    });
+
+    it('SnG reconcile 실패 로그는 sng 모드로 남는다', () => {
+      const service = makeService();
+      const log = vi.spyOn(eventLog, 'log').mockImplementation(() => {});
+      try {
+        const runtime = new ProgressionRuntime(service.service, () => {}, () => 9_500, {
+          reconcile: () => { throw new Error('reward store down'); },
+        });
+        runtime.captureHandStart({
+          roomId: 'sng-room',
+          roomRunId: 'run-fail',
+          handNumber: 1,
+          mode: 'sng',
+          players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
+        });
+        runtime.completeSng({
+          roomId: 'sng-room', roomRunId: 'run-fail', results: [{ profileId: 'alice', place: 1 }],
+        });
+        expect(log).toHaveBeenCalledOnce();
+        expect(log.mock.calls[0][1]).toMatchObject({ roomId: 'sng-room', data: { mode: 'sng' } });
+      } finally {
+        log.mockRestore();
+      }
     });
   });
 });

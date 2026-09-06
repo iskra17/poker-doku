@@ -6,7 +6,7 @@ import { PERFECT_SET_FLAG } from '@/lib/story/unlocks';
 import { EconomyRepository } from './economy-repository';
 import { EconomyService } from './economy-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
-import { ProgressionRepository } from './progression-repository';
+import { ProgressionPersistenceError, ProgressionRepository } from './progression-repository';
 import { ProgressionService } from './progression-service';
 import { StoryRepository } from './story-repository';
 import { StoryRewardRepository } from './story-reward-repository';
@@ -249,7 +249,10 @@ describe('StoryRewardService — 보너스 CG 레벨 트리거', () => {
   let database: PokerDatabase;
   let progressionRepository: ProgressionRepository;
 
-  function makeService(withLevels: boolean): StoryRewardService {
+  function makeService(
+    withLevels: boolean,
+    override?: Pick<ProgressionRepository, 'getSnapshotInTransaction'>,
+  ): StoryRewardService {
     const economyRepository = new EconomyRepository(database);
     return new StoryRewardService({
       database,
@@ -257,7 +260,7 @@ describe('StoryRewardService — 보너스 CG 레벨 트리거', () => {
       rewardRepository: new StoryRewardRepository(database),
       economyRepository,
       economyService: new EconomyService(economyRepository, () => T0),
-      ...(withLevels ? { progressionRepository } : {}),
+      ...(withLevels ? { progressionRepository: override ?? progressionRepository } : {}),
       chapters: CHAPTERS,
     });
   }
@@ -299,6 +302,27 @@ describe('StoryRewardService — 보너스 CG 레벨 트리거', () => {
     expect(bonusIds(makeService(false).reconcile(HERO, T0))).toEqual([]);
     // 주입했지만 progression 프로필이 아직 없다
     expect(bonusIds(makeService(true).reconcile(HERO, T0))).toEqual([]);
+  });
+
+  it('프로필 부재가 아닌 스냅샷 오류는 삼키지 않고 그대로 던진다', () => {
+    // 손상된 스냅샷까지 레벨 0으로 흡수하면 보너스가 조용히 빠진 채 reconcile이 "성공"으로 끝나
+    // 결산의 실패·재시도 경로를 건너뛴다(Astra 구현 검토 P2)
+    const broken = {
+      getSnapshotInTransaction: () => {
+        throw new ProgressionPersistenceError('PROGRESSION_PERSISTENCE_INVALID');
+      },
+    } as unknown as Pick<ProgressionRepository, 'getSnapshotInTransaction'>;
+    const service = makeService(true, broken);
+    new StoryRepository(database).setFlags(HERO, { [PERFECT_SET_FLAG]: '1' }, T0);
+
+    expect(() => service.reconcile(HERO, T0)).toThrow(ProgressionPersistenceError);
+    // 롤백 — 같은 트랜잭션의 기존 보상도 남지 않는다
+    expect(database.db.prepare('SELECT COUNT(*) AS count FROM story_rewards WHERE profile_id = ?').get(HERO))
+      .toEqual({ count: 0 });
+
+    // progression 프로필만 없는 경우는 기존대로 레벨 0 — 보너스만 빠지고 나머지는 정상 지급된다
+    const healthy = makeService(true);
+    expect(healthy.reconcile(HERO, T0).granted.map(item => item.id)).toEqual(['story-title-perfect']);
   });
 
   it('인연 레벨 경계에서만 히로인 CG를 열고, 재실행은 무변경(영수증 1회)', () => {

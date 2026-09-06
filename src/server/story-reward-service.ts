@@ -12,7 +12,7 @@ import type { StoryRewardItemView, StoryRewardPreview, StoryRewardTrigger } from
 import type { EconomyRepository } from './economy-repository';
 import type { EconomyService } from './economy-service';
 import type { PokerDatabase } from './persistence/database';
-import type { ProgressionRepository } from './progression-repository';
+import { ProgressionPersistenceError, type ProgressionRepository } from './progression-repository';
 import type { StoryRepository } from './story-repository';
 import type { StoryRewardRepository } from './story-reward-repository';
 
@@ -115,7 +115,12 @@ export class StoryRewardService {
     return amount;
   }
 
-  /** 호출자가 연 트랜잭션 안에서만 — 프로필이 없으면 레벨 0(보너스 CG 미지급) */
+  /**
+   * 호출자가 연 트랜잭션 안에서만.
+   * **프로필 부재만** 레벨 0(보너스 CG 미지급)으로 흡수하고 나머지 오류는 그대로 던진다 —
+   * 손상된 스냅샷(`PROGRESSION_PERSISTENCE_INVALID` 등)까지 삼키면 보너스가 조용히 빠진 채
+   * reconcile이 "성공"으로 끝나 결산의 실패·재시도 경로를 건너뛴다(2026-09-06 Astra 구현 검토 P2).
+   */
   #loadLevels(profileId: string): { dojoLevel: number; affinityLevels: Map<string, number> } {
     const affinityLevels = new Map<string, number>();
     const repository = this.#deps.progressionRepository;
@@ -123,9 +128,12 @@ export class StoryRewardService {
     let snapshot: ReturnType<ProgressionRepository['getSnapshotInTransaction']>;
     try {
       snapshot = repository.getSnapshotInTransaction(profileId);
-    } catch {
-      // progression 프로필이 아직 없다 — 레벨 0으로 두고 다음 reconcile이 자기 치유한다
-      return { dojoLevel: 0, affinityLevels };
+    } catch (error) {
+      if (isProgressionProfileMissing(error)) {
+        // progression 행이 아직 없다 — 레벨 0으로 두고 다음 reconcile이 자기 치유한다
+        return { dojoLevel: 0, affinityLevels };
+      }
+      throw error;
     }
     for (const affinity of snapshot.affinities) affinityLevels.set(affinity.characterId, affinity.level);
     return { dojoLevel: snapshot.profile.dojoLevel, affinityLevels };
@@ -150,6 +158,10 @@ export class StoryRewardService {
       affinityLevels: levels.affinityLevels,
     };
   }
+}
+
+function isProgressionProfileMissing(error: unknown): boolean {
+  return error instanceof ProgressionPersistenceError && error.code === 'PROGRESSION_PROFILE_NOT_FOUND';
 }
 
 /** 영수증 source_key — 자격 트리거를 감사 가능한 문자열로 */

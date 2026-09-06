@@ -2,6 +2,7 @@ import type {
   ProgressionRewardSummary,
   ProgressionSnapshot,
 } from '../lib/progression/types';
+import { eventLog } from './event-log';
 import type {
   CompletedHandInput,
   ProgressionService,
@@ -99,15 +100,30 @@ export class ProgressionRuntime {
   ) {}
 
   /**
-   * 커밋 뒤 레벨 보상 reconcile — 실패는 격리한다(다음 진행도 조회·결산이 자기 치유).
-   * 반드시 XP 기록이 커밋된 뒤, 전송 스냅샷을 읽기 **전에** 호출한다.
+   * 커밋 뒤 레벨 보상 reconcile — 실패는 격리하되 **반드시 로그로 남긴다**
+   * (다음 진행도 조회·결산이 자기 치유하지만, 지급 누락이 아무 흔적 없이 사라지면 안 된다 —
+   * 2026-09-06 Astra 구현 검토 P3). `story-reward-reconcile-failed`는 ops_event 영속 대상이다.
    */
-  private reconcileLevelRewards(profileId: string, at: number): void {
+  private reconcileLevelRewards(
+    profileId: string,
+    at: number,
+    context: { mode: RuntimeGameMode; roomId: string; roomRunId: string },
+  ): void {
     if (!this.storyRewards) return;
     try {
       this.storyRewards.reconcile(profileId, at);
-    } catch {
-      // 핸드/토너먼트 진행을 보상 장애로 막지 않는다
+    } catch (error) {
+      // 핸드/토너먼트 진행을 보상 장애로 막지 않는다 — 맥락만 남기고 계속한다
+      eventLog.log('story-reward-reconcile-failed', {
+        roomId: context.roomId,
+        playerId: profileId,
+        data: {
+          mode: context.mode,
+          roomRunId: context.roomRunId,
+          at,
+          reason: error instanceof Error ? error.message : 'unknown',
+        },
+      });
     }
   }
 
@@ -196,7 +212,11 @@ export class ProgressionRuntime {
       };
       const reward = this.service.recordRuntimeCompletedHand(rewardInput);
       // 인연·도장 레벨이 이 핸드로 올랐을 수 있다 — 커밋 뒤 reconcile → 스냅샷 재조회
-      this.reconcileLevelRewards(profileId, completedAt);
+      this.reconcileLevelRewards(profileId, completedAt, {
+        mode: context.mode,
+        roomId: input.roomId,
+        roomRunId: input.roomRunId,
+      });
       const current = this.service.getRuntimeSnapshot(
         profileId,
         selectedCharacterId,
@@ -238,7 +258,11 @@ export class ProgressionRuntime {
         completedAt,
       };
       const reward = this.service.recordRuntimeSngFinish(rewardInput);
-      this.reconcileLevelRewards(result.profileId, completedAt);
+      this.reconcileLevelRewards(result.profileId, completedAt, {
+        mode: 'sng',
+        roomId: input.roomId,
+        roomRunId: input.roomRunId,
+      });
       const current = this.service.getRuntimeSnapshot(
         result.profileId,
         selectedCharacterId,

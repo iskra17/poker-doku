@@ -49,6 +49,8 @@ export const OPS_PERSIST_TYPES = new Set([
   'mtt-payout-freeze',
   'mtt-late-reg-refund',
   'mtt-payout-pending',
+  // 정산 커밋 뒤 스토리 보상 reconcile 실패 — 게임은 계속되지만 지급이 누락된 흔적을 남긴다
+  'story-reward-reconcile-failed',
 ]);
 
 /** settlementOk:false인 hand-end처럼 조건부로 영속할 이벤트 판정 */

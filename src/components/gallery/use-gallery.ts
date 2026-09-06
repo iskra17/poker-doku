@@ -1,9 +1,9 @@
 'use client';
 
 import { useMemo } from 'react';
-import { buildGallery, summarizeGallery, type GalleryEntry, type GallerySectionSummary } from '@/lib/gallery/catalog';
-import { newEntries } from '@/lib/gallery/seen';
+import { buildGallery, type GalleryEntry, type GallerySectionSummary } from '@/lib/gallery/catalog';
 import { useGallerySeen } from '@/lib/gallery/use-gallery-seen';
+import { selectGalleryView } from '@/lib/gallery/view';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
@@ -35,21 +35,15 @@ export function useGallery(): GalleryState {
   const preview = useOperatorMode();
   // 보너스 CG 표시 — 목록·집계·NEW를 함께 거른다(지급·해금 상태는 그대로)
   const showBonusCg = useSettingsStore(state => state.showBonusCg);
-  return useMemo(() => {
-    const visible = (entries: GalleryEntry[]) => (showBonusCg ? entries : entries.filter(entry => entry.section !== 'bonus'));
-    const real = buildGallery({ snapshot, progress });
-    const realVisible = visible(real);
-    const entries = preview ? visible(buildGallery({ snapshot, progress, unlockAll: true })) : realVisible;
-    return {
-      profileId,
-      entries,
-      // 표시 설정으로 통째로 숨긴 섹션은 탭도 만들지 않는다(0/0 빈 탭 방지)
-      summary: summarizeGallery(entries).filter(row => row.total > 0),
+  return useMemo(() => ({
+    profileId,
+    ...selectGalleryView({
+      real: buildGallery({ snapshot, progress }),
+      previewEntries: preview ? buildGallery({ snapshot, progress, unlockAll: true }) : null,
       seen,
-      newIds: new Set(newEntries(realVisible, seen).map(entry => entry.id)),
-      unlockedIds: realVisible.filter(entry => entry.unlocked).map(entry => entry.id),
-      baselineIds: real.filter(entry => entry.unlocked).map(entry => entry.id),
-      preview,
-    };
-  }, [profileId, snapshot, progress, seen, preview, showBonusCg]);
+      showBonusCg,
+    }),
+    seen,
+    preview,
+  }), [profileId, snapshot, progress, seen, preview, showBonusCg]);
 }

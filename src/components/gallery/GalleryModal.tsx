@@ -10,6 +10,7 @@ import { getCharacterById } from '@/lib/characters';
 import type { BondScene } from '@/lib/characters/bond-scenes';
 import { GALLERY_SECTION_LABEL, GALLERY_SECTIONS, type GalleryEntry, type GallerySection } from '@/lib/gallery/catalog';
 import { markSeen } from '@/lib/gallery/seen';
+import { shouldReloadOnOpen } from '@/lib/gallery/view';
 import { useStoryStore } from '@/lib/store/story-store';
 import type { StoryRewardCutsceneView } from '@/lib/story/views';
 import GalleryTile from './GalleryTile';
@@ -41,7 +42,7 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
    * 기록실을 열어도 새로 열린 보너스 CG가 바로 보인다(2026-09-06 Astra 검토 P2 ⑦).
    */
   useEffect(() => {
-    if (isOpen && progressStatus !== 'loading') void load();
+    if (shouldReloadOnOpen(isOpen, progressStatus)) void load();
     // 열리는 순간에만 — 로딩 상태 변화로 재요청하지 않는다
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
