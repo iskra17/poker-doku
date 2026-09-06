@@ -29,6 +29,15 @@ export type ProgressionRuntimeEmitter = (
   summary: ProgressionRewardSummary,
 ) => void;
 
+/**
+ * 레벨 트리거 보상(보너스 CG) 즉시 반영 — 캐시/연습 핸드·SnG 정산이 **커밋된 뒤**에만 호출한다.
+ * 스토리 결산·데일리·진행도 조회의 기존 reconcile 호출처는 그대로 둔다(결산 지급 목록을 가로채면 안 된다,
+ * 2026-09-06 Astra 검토 P2 ②). 여기서 새 지급이 생기면 전송 스냅샷을 **그 뒤에** 다시 읽는다.
+ */
+export interface ProgressionRuntimeStoryRewards {
+  reconcile(profileId: string, now: number): { granted: unknown[]; chips: number };
+}
+
 export interface RoomProgressionHooks {
   captureHandStart(input: CaptureHandStartInput): void;
   confirmHandStart(roomId: string, roomRunId: string, handNumber: number): void;
@@ -86,7 +95,21 @@ export class ProgressionRuntime {
     private readonly service: ProgressionRuntimeService,
     private readonly emitReward: ProgressionRuntimeEmitter,
     private readonly now: () => number = Date.now,
+    private readonly storyRewards?: ProgressionRuntimeStoryRewards,
   ) {}
+
+  /**
+   * 커밋 뒤 레벨 보상 reconcile — 실패는 격리한다(다음 진행도 조회·결산이 자기 치유).
+   * 반드시 XP 기록이 커밋된 뒤, 전송 스냅샷을 읽기 **전에** 호출한다.
+   */
+  private reconcileLevelRewards(profileId: string, at: number): void {
+    if (!this.storyRewards) return;
+    try {
+      this.storyRewards.reconcile(profileId, at);
+    } catch {
+      // 핸드/토너먼트 진행을 보상 장애로 막지 않는다
+    }
+  }
 
   getSnapshot(
     profileId: string,
@@ -172,6 +195,8 @@ export class ProgressionRuntime {
         completedAt,
       };
       const reward = this.service.recordRuntimeCompletedHand(rewardInput);
+      // 인연·도장 레벨이 이 핸드로 올랐을 수 있다 — 커밋 뒤 reconcile → 스냅샷 재조회
+      this.reconcileLevelRewards(profileId, completedAt);
       const current = this.service.getRuntimeSnapshot(
         profileId,
         selectedCharacterId,
@@ -213,6 +238,7 @@ export class ProgressionRuntime {
         completedAt,
       };
       const reward = this.service.recordRuntimeSngFinish(rewardInput);
+      this.reconcileLevelRewards(result.profileId, completedAt);
       const current = this.service.getRuntimeSnapshot(
         result.profileId,
         selectedCharacterId,

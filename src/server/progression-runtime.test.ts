@@ -362,4 +362,87 @@ describe('ProgressionRuntime', () => {
     expect(service.recordCompletedHand).toHaveBeenCalledOnce();
     expect(delivered).toEqual([]);
   });
+
+  /**
+   * 보너스 CG(레벨 트리거) 즉시 반영 — 핸드/SnG 정산이 **커밋된 뒤**에만 reconcile하고,
+   * 그 다음에 전송 스냅샷을 읽는다. reconcile 실패는 핸드 진행을 막지 않는다.
+   */
+  describe('레벨 보상 reconcile', () => {
+    it('완주 기록이 커밋된 뒤·스냅샷을 읽기 전에 한 번 호출한다', () => {
+      const service = makeService();
+      const calls: string[] = [];
+      service.recordCompletedHand.mockImplementation((input: { profileId: string }) => {
+        calls.push('record');
+        return summary(`completed-hand:${input.profileId}`, 'sakura');
+      });
+      service.getRuntimeSnapshot.mockImplementation((profileId: string) => {
+        calls.push('snapshot');
+        return snapshot(profileId, 'sakura');
+      });
+      const reconcile = vi.fn(() => {
+        calls.push('reconcile');
+        return { granted: [], chips: 0 };
+      });
+      const runtime = new ProgressionRuntime(service.service, () => {}, () => 8_000, { reconcile });
+
+      runtime.captureHandStart({
+        roomId: 'cash-room',
+        roomRunId: 'run-bonus',
+        handNumber: 4,
+        mode: 'cash',
+        players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
+      });
+      calls.length = 0;
+      runtime.completeHand({
+        roomId: 'cash-room', roomRunId: 'run-bonus', handNumber: 4, pendingRemovalProfileIds: [],
+      });
+
+      expect(calls).toEqual(['record', 'reconcile', 'snapshot']);
+      expect(reconcile).toHaveBeenCalledWith('alice', 8_000);
+    });
+
+    it('SnG 정산에도 순위별로 한 번씩 붙는다', () => {
+      const service = makeService();
+      const reconcile = vi.fn<(profileId: string, now: number) => { granted: unknown[]; chips: number }>(
+        () => ({ granted: [], chips: 0 }),
+      );
+      const runtime = new ProgressionRuntime(service.service, () => {}, () => 8_500, { reconcile });
+      runtime.captureHandStart({
+        roomId: 'sng-room',
+        roomRunId: 'run-bonus',
+        handNumber: 1,
+        mode: 'sng',
+        players: [
+          { profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true },
+          { profileId: 'bob', fallbackCharacterId: 'sakura', dealt: true },
+        ],
+      });
+      runtime.completeSng({
+        roomId: 'sng-room',
+        roomRunId: 'run-bonus',
+        results: [{ profileId: 'alice', place: 1 }, { profileId: 'bob', place: 2 }],
+      });
+      expect(reconcile.mock.calls.map(call => call[0])).toEqual(['alice', 'bob']);
+    });
+
+    it('reconcile 실패는 격리한다 — 핸드 보상·전달은 그대로 진행된다', () => {
+      const service = makeService();
+      const emit = vi.fn();
+      const runtime = new ProgressionRuntime(service.service, emit, () => 9_000, {
+        reconcile: () => { throw new Error('reward store down'); },
+      });
+      runtime.captureHandStart({
+        roomId: 'cash-room',
+        roomRunId: 'run-fail',
+        handNumber: 5,
+        mode: 'cash',
+        players: [{ profileId: 'alice', fallbackCharacterId: 'sakura', dealt: true }],
+      });
+      expect(() => runtime.completeHand({
+        roomId: 'cash-room', roomRunId: 'run-fail', handNumber: 5, pendingRemovalProfileIds: [],
+      })).not.toThrow();
+      expect(service.recordCompletedHand).toHaveBeenCalledOnce();
+      expect(emit).toHaveBeenCalledOnce();
+    });
+  });
 });

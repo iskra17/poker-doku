@@ -503,6 +503,10 @@ export function setupSocketHandlers(
           target.emit('reward-summary', summary);
         });
       },
+      Date.now,
+      // 보너스 CG(레벨 트리거)는 캐시/연습 핸드·SnG 정산 **커밋 뒤**에 reconcile — 스토리 결산·데일리 경로는 불변.
+      // 새 지급이 있으면 뒤이어 읽는 스냅샷에 반영돼 같은 progression-update로 나간다.
+      storyRewards ? { reconcile: (profileId, now) => storyRewards.reconcile(profileId, now) } : undefined,
     )
     : undefined;
 
