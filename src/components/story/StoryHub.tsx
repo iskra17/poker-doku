@@ -138,7 +138,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
               >
                 {inProgress ? '이어하기' : '시작'}
               </button>
-              {recommendedState === 'available' && (
+              {recommendedState === 'available' && !recommended.examDisabled && (
                 <button
                   type="button"
                   onClick={() => void startChapter(recommended.id, 'exam')}
@@ -180,6 +180,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                   pending={pending || (!!activeRun && activeRun.chapterId !== chapter.id)}
                   onStart={() => void startChapter(chapter.id)}
                   onExam={() => void startChapter(chapter.id, 'exam')}
+                  onGraduation={chapter.graduation ? () => void startChapter(chapter.id, 'graduation') : undefined}
                 />
               ))}
             </div>

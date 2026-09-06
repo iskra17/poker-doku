@@ -72,6 +72,8 @@ export interface SocketTestHarness {
   /** 운영자 capability(operator) 부여 — 스토리 스킵·잠긴 챕터 시작 */
   grantOperator: (profileId: string) => void;
   profileManager: ProfileManager;
+  /** 수련 스토리 영속 — 테스트가 완료 기록·플래그를 시드해 후속 모드를 열 때 쓴다 */
+  storyRepository: StoryRepository;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
   connect: (
@@ -414,6 +416,7 @@ export async function createSocketTestHarness(
         return originalJoin(rooms);
       };
     }),
+    storyRepository,
     recentEvents: () => eventLog.recent(),
     walletState: profileId => {
       const row = database.db.prepare(`

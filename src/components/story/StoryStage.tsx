@@ -108,8 +108,12 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
         >
           <header className="flex flex-none items-center justify-between border-b border-mystic/20 px-4 py-2">
             <div className="min-w-0">
-              <p className={`text-[10px] font-bold tracking-wider ${run.mode === 'exam' ? 'text-gilded' : 'text-ink-dim'}`}>
-                {run.mode === 'exam' ? '실력 확인 · 힌트 없음 · 85점 이상 통과' : '수련 스토리'}
+              <p className={`text-[10px] font-bold tracking-wider ${run.mode === 'full' ? 'text-ink-dim' : 'text-gilded'}`}>
+                {run.mode === 'exam'
+                  ? '실력 확인 · 힌트 없음 · 85점 이상 통과'
+                  : run.mode === 'graduation'
+                    ? '졸업 대결 · 실제 6인 Sit & Go'
+                    : '수련 스토리'}
               </p>
               <h2 className="truncate text-sm font-bold">{title}</h2>
             </div>
@@ -161,6 +165,10 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 onFullCourse={() => {
                   const chapterId = run.chapterId;
                   void startChapter(chapterId, 'full');
+                }}
+                onGraduationRetry={() => {
+                  const chapterId = run.chapterId;
+                  void startChapter(chapterId, 'graduation');
                 }}
               />
             )}

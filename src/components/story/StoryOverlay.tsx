@@ -155,6 +155,7 @@ export default function StoryOverlay() {
               handsPlayed={live?.handsPlayed ?? 0}
               maxHands={live?.maxHands ?? 0}
               minHands={live?.minHands ?? null}
+              tournament={live?.tournament}
               finishHint={liveFinishHint(live)}
               lines={hudLines}
               expanded={hudExpanded}

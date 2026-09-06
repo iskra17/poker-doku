@@ -3,12 +3,15 @@
 import { motion } from 'framer-motion';
 import { useState } from 'react';
 import { formatObjectiveDetailProgress, formatObjectiveProgress, type ObjectiveHudLine } from '@/lib/story/story-live-rules';
+import type { StoryLiveView } from '@/lib/story/views';
 import Modal from '@/components/ui/Modal';
 
 interface ObjectiveHudProps {
   tag: '연습' | '대결';
   handsPlayed: number;
   maxHands: number;
+  /** 졸업 대결(실제 Sit & Go)이면 서버가 준 진행 상태 — 목표 대신 이 블록이 진행을 알린다 */
+  tournament?: StoryLiveView['tournament'];
   /** 미션형이면 최소 핸드 수(조기 종료 가능), 아니면 null */
   minHands: number | null;
   /** 펼쳤을 때 목표 위에 놓는 진행 안내 (liveFinishHint) */
@@ -63,13 +66,25 @@ function ObjectiveRow({ line, onOpen }: { line: ObjectiveHudLine; onOpen: () => 
  * 라이브 스텝 HUD — '연습'/'대결' 배지 + 진행 핸드 수 + 행동 목표(primary 먼저).
  * 좁은 화면에선 배지+카운터만 남기고 탭으로 펼친다 (좌석/보드를 가리지 않게).
  */
-export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, finishHint, lines, expanded, onToggle }: ObjectiveHudProps) {
+export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, finishHint, lines, expanded, onToggle, tournament }: ObjectiveHudProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   // 미션형은 "N/최대" 카운터가 숙제처럼 읽히므로 진행 핸드 수만 보여 준다 — 상한은 안내 문구로
   const counter = minHands !== null || maxHands <= 0
     ? `${handsPlayed}핸드`
     : `${Math.min(handsPlayed, maxHands)}/${maxHands}핸드`;
-  const canExpand = lines.length > 0;
+  // 졸업 대결은 행동 목표가 없으므로 토너먼트 블록만 있어도 펼칠 수 있어야 한다
+  const canExpand = lines.length > 0 || !!tournament;
+  const tournamentBlock = tournament ? (
+    <div className="mb-1 space-y-0.5 text-[9px] text-ink-dim" aria-label="졸업 대결 진행">
+      <p>
+        남은 인원 <span className="tabular font-bold text-ink">{tournament.alive}</span>/{tournament.entrants}
+        {tournament.heroPlace !== null && <span className="ml-1 text-gilded">· 내 순위 {tournament.heroPlace}위</span>}
+      </p>
+      <p>
+        레벨 {tournament.level} · 블라인드 <span className="tabular">{tournament.smallBlind}/{tournament.bigBlind}</span>
+      </p>
+    </div>
+  ) : null;
   return (
     <>
       <motion.div
@@ -94,6 +109,7 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
         </button>
         {canExpand && expanded && (
           <div className="mt-1.5 border-t border-mystic/20 pt-1.5">
+            {tournamentBlock}
             {finishHint && <p className="mb-1 text-[9px] text-ink-dim">{finishHint}</p>}
             <ul className="space-y-1">
               {lines.map(line => <ObjectiveRow key={line.id} line={line} onOpen={() => setDetailsOpen(true)} />)}
@@ -109,6 +125,13 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
       </motion.div>
       <Modal isOpen={detailsOpen} onClose={() => setDetailsOpen(false)} title="이번 수련 미션">
         <p className="text-sm text-ink-dim">{tag} · {counter}</p>
+        {tournament && (
+          <p className="mt-2 text-sm text-ink">
+            남은 인원 {tournament.alive}/{tournament.entrants} · 레벨 {tournament.level} ·
+            블라인드 {tournament.smallBlind}/{tournament.bigBlind}
+            {tournament.heroPlace !== null && ` · 내 순위 ${tournament.heroPlace}위`}
+          </p>
+        )}
         {finishHint && <p className="mt-2 text-sm leading-relaxed text-ink">{finishHint}</p>}
         <ul className="mt-4 space-y-3">
           {lines.map(line => (

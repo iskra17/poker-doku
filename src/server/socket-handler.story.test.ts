@@ -5,7 +5,7 @@ import type { RealtimeAck } from '../lib/realtime/protocol';
 import { generateDrill, gradeDrill } from '../lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '../lib/story/drills/types';
 import { makeChapterChain, makeChapter, makeScene, makeSteps } from '../lib/story/test-fixtures';
-import type { StoryTeacherId } from '../lib/story/types';
+import type { Chapter, StoryTeacherId } from '../lib/story/types';
 import type { StoryDrillAck, StoryProgressView, StoryRunView } from '../lib/story/views';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
@@ -354,4 +354,88 @@ describe('story socket events', () => {
     restored.socket.disconnect();
   }, 15_000);
 
+  it('Ch12 졸업 대결은 실제 6인 Sit & Go 방으로 열리고, 재도전은 완주 뒤에만 열린다', async () => {
+    const chapter = graduationFixture();
+    harness = await createSocketTestHarness({ storyChapters: [chapter] });
+    const h = harness;
+    const profile = await h.createProfile();
+    // storyStart 레이트리밋(2회/10초)은 소켓별이라 거절 검사와 실제 시작을 다른 소켓으로 나눈다
+    const guard = await h.connect('grad-guard', { profileCookie: profile.cookie });
+    expect(await withAck(done => guard.socket.emit('start-story-chapter', { chapterId: 'act4-ch12', mode: 'graduation' }, done)))
+      .toMatchObject({ ok: false, code: 'story-locked' });
+    expect(await withAck(done => guard.socket.emit('start-story-chapter', { chapterId: 'act4-ch12', mode: 'exam' }, done)))
+      .toMatchObject({ ok: false, code: 'action-rejected' });
+    guard.socket.disconnect();
+
+    const client = await h.connect('grad-hero', { profileCookie: profile.cookie });
+    const views = collect<StoryRunView>(client, 'story-update');
+    expect(await withAck(done => client.socket.emit('start-story-chapter', { chapterId: 'act4-ch12' }, done)))
+      .toMatchObject({ ok: true });
+    await sleep(30);
+    const live = views.at(-1)!;
+    expect(live.stepKind).toBe('sparring');
+    const room = h.runtime.roomManager.getRoom(live.live!.roomId!)!;
+    expect(room.config.gameMode).toBe('sng');
+    expect(room.config.sngStructureId).toBe('graduation');
+    expect(room.engine.state.players).toHaveLength(6);
+    expect(room.engine.state.players.find(player => player.id === client.playerId)?.chips).toBe(1_000);
+    expect(live.live!.tournament).toMatchObject({ entrants: 6, heroPlace: null });
+
+    expect(await withAck(done => client.socket.emit('abandon-story', { runId: live.runId }, done))).toMatchObject({ ok: true });
+    expect(h.runtime.roomManager.getRoom(live.live!.roomId!)).toBeUndefined();
+
+    // 완주 기록이 있으면 졸업 대결만 재도전이 열리고 드릴 없이 바로 대결로 들어간다
+    h.storyRepository.recordCompletion(profile.profile.id, 'act4-ch12', 'B', Date.now());
+    expect(await withAck(done => client.socket.emit('start-story-chapter', { chapterId: 'act4-ch12', mode: 'graduation' }, done)))
+      .toMatchObject({ ok: true });
+    await sleep(30);
+    const retry = views.at(-1)!;
+    expect(retry.mode).toBe('graduation');
+    expect(retry.stepKind).toBe('sparring');
+    expect(retry.drill).toBeNull();
+    expect(await withAck(done => client.socket.emit('abandon-story', { runId: retry.runId }, done))).toMatchObject({ ok: true });
+  }, 15_000);
+
 });
+
+/** Ch12 계약을 그대로 쓰는 최소 졸업 챕터 — 첫 스텝이 졸업 SnG라 start 즉시 방이 열린다 */
+function graduationFixture(): Chapter {
+  return makeChapter({
+    id: 'act4-ch12',
+    act: 4,
+    order: 3,
+    title: '졸업 시험',
+    belt: 'black',
+    requires: [],
+    examDisabled: true,
+    graduation: true,
+    steps: [
+      {
+        kind: 'sparring',
+        id: 'ch12-graduation',
+        tag: '대결',
+        table: {
+          tournament: { id: 'graduation-sng-v1', sngStructureId: 'graduation' },
+          blinds: { small: 10, big: 20 },
+          heroSeat: 0,
+          heroStackBB: 50,
+          lineup: [
+            { seatIndex: 1, characterId: 'paeng', stackBB: 50 },
+            { seatIndex: 2, characterId: 'luna', stackBB: 50 },
+            { seatIndex: 3, characterId: 'vivian', stackBB: 50 },
+            { seatIndex: 4, characterId: 'elena', stackBB: 50 },
+            { seatIndex: 5, characterId: 'ingrid', stackBB: 50 },
+          ],
+          difficulty: 'normal',
+          turnTimeSec: 30,
+          botThinkScale: 0.5,
+          hints: 0,
+        },
+        maxHands: 400,
+        objectives: { primary: [], bonus: [] },
+        interrupts: [],
+      },
+      { kind: 'result', id: 'ch12-result' },
+    ],
+  });
+}

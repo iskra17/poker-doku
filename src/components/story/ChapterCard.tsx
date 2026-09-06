@@ -29,6 +29,8 @@ interface ChapterCardProps {
   onStart: () => void;
   /** 아는 내용이면 문제만 풀어 통과하는 실력 확인 — 미완료 챕터에서만 */
   onExam?: () => void;
+  /** 졸업 챕터를 완주한 뒤 대결만 다시 도전 — 완료 기록·XP는 늘지 않고 순위만 남는다 */
+  onGraduation?: () => void;
 }
 
 const STATE_LABEL: Record<ChapterCardState, string> = {
@@ -59,7 +61,7 @@ function SkillChip({ skill }: { skill: ChapterSkill }) {
  * 순서 강제 없음: 잠김은 requires가 있는 후속 막에서만 나온다. 진행 중은 강조, 추천은 테두리로 표시.
  */
 export default function ChapterCard({
-  number, chapter, progress, state, skills, rewardHints, recommended, partnerId, pending, onStart, onExam,
+  number, chapter, progress, state, skills, rewardHints, recommended, partnerId, pending, onStart, onExam, onGraduation,
 }: ChapterCardProps) {
   const teacherId = chapter?.teacher === 'partner' ? (partnerId ?? 'miyako') : (chapter?.teacher ?? 'miyako');
   const teacherName = teacherDisplayName(teacherId, id => getCharacterById(id)?.name);
@@ -123,7 +125,7 @@ export default function ChapterCard({
           >
             {state === 'in-progress' ? '이어하기' : state === 'completed' ? '다시' : '시작'}
           </button>
-          {onExam && state === 'available' && (
+          {onExam && !chapter?.examDisabled && state === 'available' && (
             <button
               type="button"
               onClick={onExam}
@@ -132,6 +134,17 @@ export default function ChapterCard({
               className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
             >
               실력 확인
+            </button>
+          )}
+          {onGraduation && state === 'completed' && (
+            <button
+              type="button"
+              onClick={onGraduation}
+              disabled={pending}
+              title="수업을 건너뛰고 졸업 대결(실제 6인 Sit & Go)만 다시 도전해요"
+              className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
+            >
+              졸업 대결만
             </button>
           )}
         </div>

@@ -143,6 +143,8 @@ export function objectiveHudLines(view: StoryLiveView | null): ObjectiveHudLine[
  */
 export function liveFinishHint(view: StoryLiveView | null): string | null {
   if (!view || view.tag !== '대결') return null;
+  // 졸업 대결은 순위가 끝을 정한다 — 핸드 수 상한은 안내하지 않는다(폭주 가드일 뿐)
+  if (view.tournament) return '탈락하거나 우승하면 끝나요 · 자리를 비워도 블라인드는 계속 나가요';
   if (view.minHands !== null) return `목표를 다 채우면 끝나요 (최대 ${view.maxHands}핸드)`;
   return `${view.maxHands}핸드까지 진행해요`;
 }
@@ -185,6 +187,12 @@ export function holdCopy(holdReason: StoryHoldReason | null): HoldCopy {
         title: '테이블 연결이 끊겨 잠시 멈췄어요',
         body: '이어서 같은 자리에서 다시 시작해요.',
         cta: '이어하기',
+      };
+    case 'persist':
+      return {
+        title: '결과를 저장하는 중이에요',
+        body: '확정된 순위를 기록하고 있어요. 저장이 끝나면 이어서 진행할게요.',
+        cta: '다시 시도',
       };
     default:
       return {

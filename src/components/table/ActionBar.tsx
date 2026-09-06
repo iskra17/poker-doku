@@ -76,8 +76,11 @@ export default function ActionBar() {
   const formatChips = useChipFormatter();
   // 수련 스토리 라이브 스텝 — 자리비움은 서버가 거절하고(이탈은 abandon 한 갈래),
   // 스텝의 hints 레벨만큼 코치 한 줄을 독 안에 얹는다 (독 높이는 상수 유지)
-  const { active: inStoryRoom, step: storyStep } = useStoryLive();
+  const { active: inStoryRoom, step: storyStep, live: storyLive } = useStoryLive();
   const coachHints = inStoryRoom ? liveHintLevel(storyStep) : 0;
+  // 졸업 대결(실제 Sit & Go)은 부재 중에도 딜인·블라인드가 계속 나간다 —
+  // 자리비움 **시작**은 서버가 계속 거절하지만 [게임 복귀]만은 열어 준다
+  const storyTournament = inStoryRoom && !!storyLive?.tournament;
 
   if (!gameState) return null;
 
@@ -103,8 +106,9 @@ export default function ActionBar() {
     !!myPlayer,
   );
 
-  // 스토리 라이브 방에서는 자리비움/게임 복귀를 감춘다 — 서버 toggle-sit-out이 rejected다
-  const sitOutButton = myPlayer && !inStoryRoom && (
+  // 스토리 라이브 방에서는 자리비움/게임 복귀를 감춘다 — 서버 toggle-sit-out이 rejected다.
+  // 예외: 졸업 대결의 **부재 상태**에서만 [게임 복귀]를 노출한다(서버도 복귀만 허용).
+  const sitOutButton = myPlayer && (!inStoryRoom || (storyTournament && sittingOut)) && (
     <button
       onClick={toggleSitOut}
       disabled={controlsDisabled}
