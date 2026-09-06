@@ -258,6 +258,7 @@ export async function createSocketTestHarness(
       rewardRepository: new StoryRewardRepository(database),
       economyRepository,
       economyService,
+      progressionRepository,
       chapters: options.storyChapters,
     }),
     storyChapters: options.storyChapters,

@@ -12,6 +12,7 @@ import type { StoryRewardItemView, StoryRewardPreview, StoryRewardTrigger } from
 import type { EconomyRepository } from './economy-repository';
 import type { EconomyService } from './economy-service';
 import type { PokerDatabase } from './persistence/database';
+import type { ProgressionRepository } from './progression-repository';
 import type { StoryRepository } from './story-repository';
 import type { StoryRewardRepository } from './story-reward-repository';
 
@@ -41,6 +42,12 @@ export interface StoryRewardServiceDeps {
   rewardRepository: Pick<StoryRewardRepository, 'listGrantedIds' | 'grantInTransaction'>;
   economyRepository: Pick<EconomyRepository, 'applyWalletDeltaInTransaction'>;
   economyService: Pick<EconomyService, 'grantStoryDailyChips'>;
+  /**
+   * 보너스 CG(v39) 레벨 트리거 입력 — **같은 트랜잭션 안에서** 도장/인연 레벨을 읽는다.
+   * `ProgressionService.getSnapshot`은 자체 트랜잭션을 열어 중첩 오류로 기존 지급까지 실패시키므로
+   * 절대 주입하지 말 것(2026-09-06 Astra 검토 P1). 없거나 프로필이 없으면 레벨 0 = 미지급.
+   */
+  progressionRepository?: Pick<ProgressionRepository, 'getSnapshotInTransaction'>;
   /** 챕터 레지스트리 오버라이드 (테스트 픽스처용 — 기본 STORY_CHAPTERS) */
   chapters?: readonly Chapter[];
 }
@@ -108,6 +115,22 @@ export class StoryRewardService {
     return amount;
   }
 
+  /** 호출자가 연 트랜잭션 안에서만 — 프로필이 없으면 레벨 0(보너스 CG 미지급) */
+  #loadLevels(profileId: string): { dojoLevel: number; affinityLevels: Map<string, number> } {
+    const affinityLevels = new Map<string, number>();
+    const repository = this.#deps.progressionRepository;
+    if (!repository) return { dojoLevel: 0, affinityLevels };
+    let snapshot: ReturnType<ProgressionRepository['getSnapshotInTransaction']>;
+    try {
+      snapshot = repository.getSnapshotInTransaction(profileId);
+    } catch {
+      // progression 프로필이 아직 없다 — 레벨 0으로 두고 다음 reconcile이 자기 치유한다
+      return { dojoLevel: 0, affinityLevels };
+    }
+    for (const affinity of snapshot.affinities) affinityLevels.set(affinity.characterId, affinity.level);
+    return { dojoLevel: snapshot.profile.dojoLevel, affinityLevels };
+  }
+
   #loadState(profileId: string): StoryRewardState {
     const rows = this.#deps.storyRepository.listProgress(profileId);
     const completed = new Set<ChapterId>();
@@ -116,12 +139,15 @@ export class StoryRewardService {
       if (row.completions > 0) completed.add(row.chapterId);
       if (row.bestGrade) bestGrade.set(row.chapterId, row.bestGrade);
     }
+    const levels = this.#loadLevels(profileId);
     return {
       curriculum: this.#deps.curriculum ?? STORY_CURRICULUM,
       completed,
       bestGrade,
       flags: this.#deps.storyRepository.getFlags(profileId),
       chapters: this.#chapters,
+      dojoLevel: levels.dojoLevel,
+      affinityLevels: levels.affinityLevels,
     };
   }
 }
@@ -139,6 +165,10 @@ export function storyRewardSourceKey(trigger: StoryRewardTrigger): string {
       return `story-flag:${trigger.key}`;
     case 'graduation':
       return `story-graduation:${trigger.requirement}`;
+    case 'affinity-level':
+      return `story-affinity:${trigger.characterId}:${trigger.level}`;
+    case 'dojo-level':
+      return `story-dojo:${trigger.level}`;
   }
 }
 

@@ -198,6 +198,8 @@ describe('4막 보상 카탈로그 (v37)', () => {
     bestGrade: new Map(bestGrade),
     flags: {},
     chapters: STORY_CHAPTERS,
+    dojoLevel: 0,
+    affinityLevels: new Map<string, number>(),
   });
 
   it('Ch10·Ch11 첫 완주와 S등급 보상이 각각 자격을 만든다', () => {

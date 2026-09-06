@@ -6,6 +6,8 @@ import { PERFECT_SET_FLAG } from '@/lib/story/unlocks';
 import { EconomyRepository } from './economy-repository';
 import { EconomyService } from './economy-service';
 import { openPokerDatabase, type PokerDatabase } from './persistence/database';
+import { ProgressionRepository } from './progression-repository';
+import { ProgressionService } from './progression-service';
 import { StoryRepository } from './story-repository';
 import { StoryRewardRepository } from './story-reward-repository';
 import { StoryRewardService, storyRewardSourceKey } from './story-reward-service';
@@ -236,4 +238,120 @@ describe('StoryRewardService', () => {
       INSERT INTO wallets (profile_id, balance, updated_at) VALUES (?, ?, 1)
     `).run(profileId, walletBalance);
   }
+});
+
+/**
+ * 보너스 CG(v39) — 레벨 트리거 reconcile.
+ * 자격 입력은 progression 스냅샷(도장 레벨·인연 레벨)이며 같은 트랜잭션 안에서 읽는다.
+ * 리포지토리를 주입하지 않거나 progression 프로필이 없으면 레벨 0 = 미지급.
+ */
+describe('StoryRewardService — 보너스 CG 레벨 트리거', () => {
+  let database: PokerDatabase;
+  let progressionRepository: ProgressionRepository;
+
+  function makeService(withLevels: boolean): StoryRewardService {
+    const economyRepository = new EconomyRepository(database);
+    return new StoryRewardService({
+      database,
+      storyRepository: new StoryRepository(database),
+      rewardRepository: new StoryRewardRepository(database),
+      economyRepository,
+      economyService: new EconomyService(economyRepository, () => T0),
+      ...(withLevels ? { progressionRepository } : {}),
+      chapters: CHAPTERS,
+    });
+  }
+
+  function bonusIds(result: { granted: Array<{ id: string }> }): string[] {
+    return result.granted.map(item => item.id).filter(id => id.startsWith('story-bonus-cg-'));
+  }
+
+  /** progression 행을 만들고 도장·인연 레벨을 원하는 값으로 맞춘다 (스키마 CHECK: 도장 1~50 · 인연 1~20) */
+  function setLevels(profileId: string, dojoLevel: number, affinity: Record<string, number> = {}): void {
+    new ProgressionService(database, progressionRepository).getSnapshot(profileId, 'sakura', T0);
+    database.db.prepare('UPDATE progression_profiles SET dojo_level = ? WHERE profile_id = ?').run(dojoLevel, profileId);
+    for (const [characterId, level] of Object.entries(affinity)) {
+      database.db.prepare(`
+        INSERT INTO character_affinity (profile_id, character_id, level, xp_milli) VALUES (?, ?, ?, 0)
+        ON CONFLICT(profile_id, character_id) DO UPDATE SET level = excluded.level
+      `).run(profileId, characterId, level);
+    }
+  }
+
+  beforeEach(() => {
+    database = openPokerDatabase(':memory:');
+    progressionRepository = new ProgressionRepository(database);
+    database.db.prepare(`
+      INSERT INTO profiles (
+        id, credential_hash, credential_lookup, recovery_hash, recovery_lookup,
+        alias, avatar_id, adult_confirmed_at, created_at, updated_at
+      ) VALUES (?, 'h', 'l', 'rh', 'rl', 'alias', 'sakura', 1, 1, 1)
+    `).run(HERO);
+    database.db.prepare('INSERT INTO wallets (profile_id, balance, updated_at) VALUES (?, 1000, 1)').run(HERO);
+  });
+
+  afterEach(() => {
+    database.close();
+  });
+
+  it('progression 스냅샷이 없으면 레벨 0 — 보너스 CG를 주지 않는다', () => {
+    // 리포지토리 미주입
+    expect(bonusIds(makeService(false).reconcile(HERO, T0))).toEqual([]);
+    // 주입했지만 progression 프로필이 아직 없다
+    expect(bonusIds(makeService(true).reconcile(HERO, T0))).toEqual([]);
+  });
+
+  it('인연 레벨 경계에서만 히로인 CG를 열고, 재실행은 무변경(영수증 1회)', () => {
+    const service = makeService(true);
+    setLevels(HERO, 1, { sakura: 7 });
+    expect(bonusIds(service.reconcile(HERO, T0))).toEqual(['story-bonus-cg-sakura-casual']);
+
+    setLevels(HERO, 1, { sakura: 8 });
+    expect(bonusIds(service.reconcile(HERO, T0 + 1))).toEqual(['story-bonus-cg-sakura-sing']);
+
+    // 멱등 — 재실행은 새 지급 없음
+    expect(bonusIds(service.reconcile(HERO, T0 + 2))).toEqual([]);
+    const receipts = database.db.prepare(`
+      SELECT item_id, source_key FROM story_rewards
+      WHERE profile_id = ? AND item_id LIKE 'story-bonus-cg-%' ORDER BY item_id
+    `).all(HERO) as Array<{ item_id: string; source_key: string }>;
+    expect(receipts).toEqual([
+      { item_id: 'story-bonus-cg-sakura-casual', source_key: 'story-affinity:sakura:4' },
+      { item_id: 'story-bonus-cg-sakura-sing', source_key: 'story-affinity:sakura:8' },
+    ]);
+    // 인벤토리 마커도 아이템당 1개
+    const inventory = database.db.prepare(`
+      SELECT item_id, quantity FROM inventory_items
+      WHERE profile_id = ? AND item_id LIKE 'story-bonus-cg-%' ORDER BY item_id
+    `).all(HERO) as Array<{ item_id: string; quantity: number }>;
+    expect(inventory).toEqual([
+      { item_id: 'story-bonus-cg-sakura-casual', quantity: 1 },
+      { item_id: 'story-bonus-cg-sakura-sing', quantity: 1 },
+    ]);
+    // 칩 원장은 늘지 않는다 — 보너스 CG는 칩 보상이 아니다
+    expect(database.db.prepare('SELECT COUNT(*) AS count FROM chip_ledger WHERE profile_id = ?').get(HERO))
+      .toEqual({ count: 0 });
+  });
+
+  it('도장 레벨은 비히로인 4명분만 한꺼번에 연다', () => {
+    const service = makeService(true);
+    setLevels(HERO, 20);
+    expect(bonusIds(service.reconcile(HERO, T0)).sort()).toEqual([
+      'story-bonus-cg-ingrid-casual', 'story-bonus-cg-ingrid-sing',
+      'story-bonus-cg-lin-casual', 'story-bonus-cg-lin-sing',
+      'story-bonus-cg-miyako-casual', 'story-bonus-cg-miyako-sing',
+      'story-bonus-cg-yuzuki-casual', 'story-bonus-cg-yuzuki-sing',
+    ]);
+    // 도장 레벨은 히로인 인연 CG를 열지 않는다
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM story_rewards
+      WHERE profile_id = ? AND item_id LIKE 'story-bonus-cg-sakura-%'
+    `).get(HERO)).toEqual({ count: 0 });
+    // character_id가 NULL이어도 v32 인벤토리 sync 트리거는 그대로 마커를 만든다
+    expect(database.db.prepare(`
+      SELECT COUNT(*) AS count FROM inventory_items
+      WHERE profile_id = ? AND item_id LIKE 'story-bonus-cg-%'
+    `).get(HERO)).toEqual({ count: 8 });
+    expect(bonusIds(service.reconcile(HERO, T0 + 1))).toEqual([]);
+  });
 });

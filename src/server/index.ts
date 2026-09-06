@@ -222,6 +222,8 @@ function initializePersistenceAndRecover(): void {
     rewardRepository: new StoryRewardRepository(database),
     economyRepository,
     economyService,
+    // 보너스 CG(v39) 레벨 트리거 — 같은 트랜잭션 안에서 읽는 리포지토리만 주입한다(ProgressionService 금지: 중첩 트랜잭션)
+    progressionRepository,
   });
   handHistoryService = new HandHistoryService(new HandHistoryRepository(database), {
     // 테이블 정본 기록(전역 핸드 ID) — 백오피스 핸드 감사(/api/admin/hands*)의 데이터 소스

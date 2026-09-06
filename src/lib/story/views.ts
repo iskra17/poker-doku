@@ -158,7 +158,11 @@ export type StoryRewardTrigger =
    * 졸업 자격 — 'black-belt'는 `deriveBelt`가 'black'(4막 전체 완주 ∧ ITM 플래그)일 때,
    * 'champion'은 거기에 우승 플래그까지. **플래그만으로는 지급하지 않는다**(막 완주가 함께 필요).
    */
-  | { kind: 'graduation'; requirement: 'black-belt' | 'champion' };
+  | { kind: 'graduation'; requirement: 'black-belt' | 'champion' }
+  /** 보너스 CG(2026-09-06) — 히로인 인연 레벨 도달. 자격 입력은 progression 스냅샷의 인연 레벨 */
+  | { kind: 'affinity-level'; characterId: StoryHeroineId; level: number }
+  /** 보너스 CG — 도장 레벨 도달(비히로인 담당) */
+  | { kind: 'dojo-level'; level: number };
 
 export interface StoryRewardItemView {
   id: string;
@@ -181,11 +185,17 @@ export interface StoryRewardPreview extends StoryRewardItemView {
   granted: boolean;
 }
 
+/**
+ * 컷신 주인공 — 히로인 6명 + 미야코 + 보너스 CG 담당 비히로인 3명(2026-09-06).
+ * 보상 정의의 `characterId`(DB 패리티 대상)는 여전히 히로인 한정이다.
+ */
+export type StoryCutsceneCharacterId = StoryHeroineId | 'miyako' | 'yuzuki' | 'lin' | 'ingrid';
+
 export interface StoryRewardCutsceneView {
   /** 보상 아이템 id (CG) */
   id: string;
   kind: 'event-cg' | 'belt' | 'boss-win';
-  characterId: StoryHeroineId | 'miyako';
+  characterId: StoryCutsceneCharacterId;
   title: string;
   caption: string;
   art: string;

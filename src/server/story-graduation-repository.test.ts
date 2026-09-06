@@ -119,6 +119,8 @@ describe('졸업 보상 자격', () => {
       bestGrade: new Map<ChapterId, ChapterGrade>(),
       flags,
       chapters,
+      dojoLevel: 0,
+      affinityLevels: new Map<string, number>(),
     };
   }
 

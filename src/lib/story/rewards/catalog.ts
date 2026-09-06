@@ -16,11 +16,18 @@ import type { Chapter, ChapterGrade, ChapterId, StoryAct, StoryHeroineId } from 
 import { deriveBelt, isActCompleted } from '../unlocks';
 import { ACT_TITLE, BELT_LABEL, ACT_BELT } from '../story-hub-rules';
 import type { StoryRewardCutsceneView, StoryRewardItemView, StoryRewardKind, StoryRewardPreview, StoryRewardTrigger } from '../views';
+import { BONUS_CG_REWARDS, BONUS_CG_SUBJECT_NAME, BONUS_REWARD_LINE, type BonusCgSubjectId } from './bonus-cg';
 
 export type StoryRewardEquipSlot = 'title' | 'card-back' | 'felt' | 'outfit';
 
 /** 졸업 대결 우승 플래그 — 순위 영수증이 단조 갱신한다(`unlocks.ts`의 검은띠 플래그와 짝) */
 export const GRADUATION_CHAMPION_FLAG = 'graduation:champion';
+
+/**
+ * 보상 라인 — 기본은 수련 스토리 진행 보상('story'), 'bonus'는 인연·도장 레벨로 열리는 보너스 CG 라인이다.
+ * (기존 항목은 `line`을 두지 않는다 = 'story')
+ */
+export type StoryRewardLine = 'story' | 'bonus';
 
 export interface StoryRewardDefinition {
   readonly id: string;
@@ -28,6 +35,10 @@ export interface StoryRewardDefinition {
   readonly name: string;
   readonly description: string;
   readonly trigger: StoryRewardTrigger;
+  /** 'bonus'만 명시 — 없으면 스토리 진행 보상 */
+  readonly line?: StoryRewardLine;
+  /** 보너스 CG의 주인공(비히로인 포함) — DB `character_id`가 아닌 화면 그룹핑 키 */
+  readonly subjectId?: BonusCgSubjectId;
   /** outfit 필수, 히로인 CG 선택 */
   readonly characterId?: StoryHeroineId;
   readonly equipSlot: StoryRewardEquipSlot | null;
@@ -53,8 +64,19 @@ const gradeS = (chapterId: ChapterId): StoryRewardTrigger => ({ kind: 'chapter-g
 const act = (value: StoryAct): StoryRewardTrigger => ({ kind: 'act-complete', act: value });
 const graduation = (requirement: 'black-belt' | 'champion'): StoryRewardTrigger => ({ kind: 'graduation', requirement });
 
-/** 컷신 우선순위 — 보스 > 띠 > 에필로그 (결산은 새 CG 중 하나만 풀스크린으로) */
+/** 컷신 우선순위 — 보스 > 띠 > 에필로그, 보너스 CG는 항상 마지막 (결산은 새 CG 중 하나만 풀스크린으로) */
 const CUTSCENE_PRIORITY: Readonly<Record<StoryRewardCutsceneView['kind'], number>> = { 'boss-win': 0, belt: 1, 'event-cg': 2 };
+const BONUS_CUTSCENE_PENALTY = 10;
+
+/** 보너스 CG 라인인가 — 결산 컷신 순서·기록실 섹션·표시 설정이 함께 쓴다 */
+export function isBonusStoryReward(item: Pick<StoryRewardDefinition, 'line'> | undefined | null): boolean {
+  return item?.line === BONUS_REWARD_LINE;
+}
+
+/** 아이템 id가 보너스 CG인가 (DTO에는 `line`이 없어 클라이언트는 id로 조회한다) */
+export function isBonusStoryRewardId(id: string): boolean {
+  return isBonusStoryReward(BY_ID.get(id));
+}
 
 export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.freeze([
   // ── Ch1 도장의 문
@@ -161,6 +183,8 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),
   def({ id: 'story-title-empty-note', kind: 'title', equipSlot: 'title', name: '빈 노트', description: '복습 노트를 졸업으로 비웠다.', trigger: { kind: 'flag', key: 'badge:empty-note', label: '복습 노트 비우기' } }),
+  // ── 보너스 CG 라인 50장 (v39) — 인연/도장 레벨 해금. 정의는 `bonus-cg.ts`(순수 생성기)
+  ...BONUS_CG_REWARDS,
 ]);
 
 const BY_ID: ReadonlyMap<string, StoryRewardDefinition> = new Map(STORY_REWARD_CATALOG.map(item => [item.id, item]));
@@ -176,6 +200,10 @@ export interface StoryRewardState {
   bestGrade: ReadonlyMap<ChapterId, ChapterGrade>;
   flags: Readonly<Record<string, string>>;
   chapters: readonly Chapter[];
+  /** 보너스 CG(도장 레벨 트리거) — progression 스냅샷이 없으면 0(미지급) */
+  dojoLevel: number;
+  /** 보너스 CG(인연 레벨 트리거) — 없는 캐릭터는 0(미지급) */
+  affinityLevels: ReadonlyMap<string, number>;
 }
 
 export function isStoryRewardEntitled(item: StoryRewardDefinition, state: StoryRewardState): boolean {
@@ -195,6 +223,10 @@ export function isStoryRewardEntitled(item: StoryRewardDefinition, state: StoryR
       if (!black) return false;
       return trigger.requirement === 'black-belt' || state.flags[GRADUATION_CHAMPION_FLAG] === '1';
     }
+    case 'affinity-level':
+      return (state.affinityLevels.get(trigger.characterId) ?? 0) >= trigger.level;
+    case 'dojo-level':
+      return state.dojoLevel >= trigger.level;
   }
 }
 
@@ -213,6 +245,10 @@ export function storyRewardRequirement(item: StoryRewardDefinition, chapters: re
       return trigger.label;
     case 'graduation':
       return trigger.requirement === 'champion' ? '졸업 대결 우승 (검은띠)' : '졸업 대결 3위 이내 (검은띠)';
+    case 'affinity-level':
+      return `${BONUS_CG_SUBJECT_NAME[trigger.characterId]} 인연 Lv.${trigger.level}`;
+    case 'dojo-level':
+      return `도장 Lv.${trigger.level}`;
   }
 }
 
@@ -234,12 +270,16 @@ export function toStoryRewardCutscene(item: StoryRewardDefinition): StoryRewardC
   return { id: item.id, art: item.art, ...item.cutscene };
 }
 
-/** 새로 지급된 CG 중 결산 컷신으로 띄울 하나 (보스 > 띠 > 에필로그, 그 안에서는 카탈로그 순) */
+function cutsceneRank(item: StoryRewardDefinition): number {
+  return CUTSCENE_PRIORITY[item.cutscene!.kind] + (isBonusStoryReward(item) ? BONUS_CUTSCENE_PENALTY : 0);
+}
+
+/** 새로 지급된 CG 중 결산 컷신으로 띄울 하나 (보스 > 띠 > 에필로그 > 보너스, 그 안에서는 카탈로그 순) */
 export function pickStoryCutscene(items: readonly StoryRewardItemView[]): StoryRewardCutsceneView | null {
   const candidates = items
     .map(item => getStoryRewardDefinition(item.id))
     .filter((item): item is StoryRewardDefinition => !!item && item.kind === 'cg' && !!item.cutscene)
-    .sort((a, b) => CUTSCENE_PRIORITY[a.cutscene!.kind] - CUTSCENE_PRIORITY[b.cutscene!.kind]);
+    .sort((a, b) => cutsceneRank(a) - cutsceneRank(b));
   return candidates.length > 0 ? toStoryRewardCutscene(candidates[0]) : null;
 }
 

@@ -4,9 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { STORY_CHAPTERS } from '../chapters';
 import { EMPTY_NOTE_FLAG, PERFECT_SET_FLAG } from '../unlocks';
 import { STORY_HEROINE_IDS } from '../types';
+import { hasAwkwardPokerTerminology } from '@/lib/characters/poker-terminology';
+import { BONUS_CG_SCENES, bonusCgRewardId } from './bonus-cg';
 import {
   STORY_REWARD_CATALOG,
   getStoryRewardDefinition,
+  isBonusStoryReward,
+  isBonusStoryRewardId,
   isStoryRewardEntitled,
   listStoryRewardPreview,
   listStoryRewardsDue,
@@ -18,7 +22,16 @@ import {
 } from './catalog';
 
 function state(overrides: Partial<StoryRewardState> = {}): StoryRewardState {
-  return { curriculum: STORY_CURRICULUM, completed: new Set(), bestGrade: new Map(), flags: {}, chapters: STORY_CHAPTERS, ...overrides };
+  return {
+    curriculum: STORY_CURRICULUM,
+    completed: new Set(),
+    bestGrade: new Map(),
+    flags: {},
+    chapters: STORY_CHAPTERS,
+    dojoLevel: 0,
+    affinityLevels: new Map<string, number>(),
+    ...overrides,
+  };
 }
 
 describe('story reward catalog', () => {
@@ -118,12 +131,72 @@ describe('story reward catalog', () => {
     expect(pickStoryCutscene([toStoryRewardItemView(getStoryRewardDefinition('story-title-perfect')!)])).toBeNull();
   });
 
+  it('보너스 CG 50장은 히로인 인연 / 비히로인 도장 레벨 트리거로 붙는다', () => {
+    const bonus = STORY_REWARD_CATALOG.filter(item => isBonusStoryReward(item));
+    expect(bonus).toHaveLength(50);
+    expect(new Set(bonus.map(item => item.subjectId)).size).toBe(10);
+    for (const item of bonus) {
+      expect(item.kind).toBe('cg');
+      expect(item.equipSlot).toBeNull();
+      expect(item.chipAmount).toBeUndefined();
+      expect(item.id).toBe(`story-bonus-cg-${item.subjectId}-${item.id.split('-').pop()}`);
+      expect(item.art).toBe(`/assets/story/cg/bonus-${item.subjectId}-${item.id.split('-').pop()}.webp`);
+      expect(item.cutscene?.kind).toBe('event-cg');
+      expect(item.cutscene?.characterId).toBe(item.subjectId);
+      // DB character_id CHECK는 히로인 6명만 허용한다 — 비히로인은 비워 둔다
+      const heroine = STORY_HEROINE_IDS.includes(item.subjectId as never);
+      expect(item.characterId).toBe(heroine ? item.subjectId : undefined);
+      expect(item.trigger.kind).toBe(heroine ? 'affinity-level' : 'dojo-level');
+    }
+    // 장면 순서대로 임계가 오른다
+    expect(BONUS_CG_SCENES.map(scene => getStoryRewardDefinition(bonusCgRewardId('sakura', scene))!.trigger))
+      .toEqual([4, 8, 12, 16, 20].map(level => ({ kind: 'affinity-level', characterId: 'sakura', level })));
+    expect(BONUS_CG_SCENES.map(scene => getStoryRewardDefinition(bonusCgRewardId('lin', scene))!.trigger))
+      .toEqual([10, 20, 30, 40, 50].map(level => ({ kind: 'dojo-level', level })));
+  });
+
+  it('레벨 트리거 자격은 경계에서 정확히 갈린다 (−1 / 정확 / +1)', () => {
+    const sakuraYoga = getStoryRewardDefinition(bonusCgRewardId('sakura', 'yoga'))!; // 인연 Lv.12
+    const linGym = getStoryRewardDefinition(bonusCgRewardId('lin', 'gym'))!; // 도장 Lv.40
+    const at = (level: number) => state({ affinityLevels: new Map([['sakura', level]]) });
+    expect(isStoryRewardEntitled(sakuraYoga, at(11))).toBe(false);
+    expect(isStoryRewardEntitled(sakuraYoga, at(12))).toBe(true);
+    expect(isStoryRewardEntitled(sakuraYoga, at(13))).toBe(true);
+    // 다른 캐릭터 레벨은 영향이 없다
+    expect(isStoryRewardEntitled(sakuraYoga, state({ affinityLevels: new Map([['ara', 20]]) }))).toBe(false);
+    expect(isStoryRewardEntitled(linGym, state({ dojoLevel: 39 }))).toBe(false);
+    expect(isStoryRewardEntitled(linGym, state({ dojoLevel: 40 }))).toBe(true);
+    expect(isStoryRewardEntitled(linGym, state({ dojoLevel: 41 }))).toBe(true);
+    // 스냅샷 없음 = 레벨 0 → 아무것도 열리지 않는다
+    expect(listStoryRewardsDue(state(), new Set()).filter(item => isBonusStoryReward(item))).toEqual([]);
+  });
+
+  it('보너스 CG 조건 문구·컷신 순서·「다음 보상」 제외', () => {
+    expect(storyRewardRequirement(getStoryRewardDefinition(bonusCgRewardId('hana', 'sing'))!, STORY_CHAPTERS)).toBe('하나 인연 Lv.8');
+    expect(storyRewardRequirement(getStoryRewardDefinition(bonusCgRewardId('miyako', 'beach'))!, STORY_CHAPTERS)).toBe('도장 Lv.50');
+
+    // 보너스 컷신은 보스/띠/에필로그 뒤 — 같이 지급돼도 스토리 CG가 먼저 나온다
+    const bonusView = toStoryRewardItemView(getStoryRewardDefinition(bonusCgRewardId('ara', 'beach'))!);
+    const beltView = toStoryRewardItemView(getStoryRewardDefinition('story-cg-act1-belt-white')!);
+    expect(pickStoryCutscene([bonusView, beltView])?.id).toBe('story-cg-act1-belt-white');
+    expect(pickStoryCutscene([bonusView])?.id).toBe(bonusCgRewardId('ara', 'beach'));
+
+    // 결산 「다음 보상」은 챕터·막 트리거만 — 레벨 트리거는 절대 섞이지 않는다
+    for (const chapter of STORY_CHAPTERS) {
+      expect(nextStoryRewards(STORY_CHAPTERS, new Set(), chapter.id, 50).some(item => isBonusStoryRewardId(item.id))).toBe(false);
+    }
+    expect(isBonusStoryRewardId('story-title-white-belt')).toBe(false);
+    expect(isBonusStoryRewardId('nope')).toBe(false);
+  });
+
   it('cutscene captions and names follow the 원어 terminology rule', () => {
     const banned = /접[다는어었을]|여는 손|손을|판을|판이/;
     for (const item of STORY_REWARD_CATALOG) {
       expect(item.name).not.toMatch(banned);
       expect(item.description).not.toMatch(banned);
       if (item.cutscene) expect(item.cutscene.caption).not.toMatch(banned);
+      // 공용 검사기(생성 대사·캐시와 같은 규칙)도 함께 통과해야 한다
+      expect(hasAwkwardPokerTerminology(`${item.name} ${item.description} ${item.cutscene?.caption ?? ''}`), item.id).toBe(false);
     }
   });
 });
