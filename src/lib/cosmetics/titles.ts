@@ -38,6 +38,8 @@ const STYLE: Readonly<Record<string, TitleStyle>> = Object.freeze({
   'story-title-value-artisan': { tier: 'rare', glyph: 'crest' },
   'story-title-storm-caller': { tier: 'epic', glyph: 'flame' },
   'story-title-all-rounder': { tier: 'epic', glyph: 'laurel' },
+  'story-title-graduate': { tier: 'legend', glyph: 'belt', belt: 'black' },
+  'story-title-master-deputy': { tier: 'legend', glyph: 'crown' },
   'story-title-perfect': { tier: 'epic', glyph: 'star' },
   'story-title-empty-note': { tier: 'rare', glyph: 'note' },
 });

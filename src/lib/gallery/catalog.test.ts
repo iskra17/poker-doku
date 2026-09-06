@@ -70,7 +70,7 @@ describe('buildGallery', () => {
       progress: null,
     });
     const titles = entries.filter(entry => entry.section === 'title');
-    expect(titles).toHaveLength(14);
+    expect(titles).toHaveLength(16);
     expect(titles.find(entry => entry.id === 'story-title-unmasker')?.unlocked).toBe(false);
     expect(titles.filter(entry => entry.unlocked).map(entry => entry.id).sort()).toEqual(['dojo-title-sprout-challenger', 'story-title-white-belt']);
     expect(titles.find(entry => entry.id === 'dojo-title-steady-trainee')?.hint).toBe('도장 Lv.15');

@@ -79,9 +79,10 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
   const yellowFelt = story && feltId === 'story-felt-yellow-belt';
   const brownFelt = story && feltId === 'story-felt-brown-belt';
   const blueFelt = story && feltId === 'story-felt-blue-belt';
-  const storyFeltHi = brownFelt ? 'var(--color-story-felt-brown-hi)' : yellowFelt ? 'var(--color-story-felt-yellow-hi)' : blueFelt ? 'var(--color-story-felt-blue-hi)' : 'var(--color-story-felt-hi)';
-  const storyFeltLo = brownFelt ? 'var(--color-story-felt-brown-lo)' : yellowFelt ? 'var(--color-story-felt-yellow-lo)' : blueFelt ? 'var(--color-story-felt-blue-lo)' : 'var(--color-story-felt-lo)';
-  const storyRail = brownFelt ? 'var(--color-story-felt-brown-rail)' : yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
+  const blackFelt = story && feltId === 'story-felt-black-belt';
+  const storyFeltHi = blackFelt ? 'var(--color-story-felt-black-hi)' : brownFelt ? 'var(--color-story-felt-brown-hi)' : yellowFelt ? 'var(--color-story-felt-yellow-hi)' : blueFelt ? 'var(--color-story-felt-blue-hi)' : 'var(--color-story-felt-hi)';
+  const storyFeltLo = blackFelt ? 'var(--color-story-felt-black-lo)' : brownFelt ? 'var(--color-story-felt-brown-lo)' : yellowFelt ? 'var(--color-story-felt-yellow-lo)' : blueFelt ? 'var(--color-story-felt-blue-lo)' : 'var(--color-story-felt-lo)';
+  const storyRail = blackFelt ? 'var(--color-story-felt-black-rail)' : brownFelt ? 'var(--color-story-felt-brown-rail)' : yellowFelt ? 'var(--color-gilded)' : 'var(--color-cyber)';
   const outerGlow = finalTable
     ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
     : story

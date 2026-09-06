@@ -14,6 +14,9 @@ import { deriveBelt } from '../../unlocks';
 import { STORY_CHAPTERS, validateChapters } from '../index';
 import { CH10 } from './ch10-storm-call';
 import { CH11, CH11_REVIEW_POOL } from './ch11-all-round';
+import { CH12 } from './ch12-graduation';
+import { PUSH_FOLD_MAX_BB } from '../../sng-thresholds';
+import { STORY_HEROINE_IDS } from '../../types';
 
 const ACT3 = [...STORY_CURRICULUM[3]];
 
@@ -29,9 +32,15 @@ describe('4막 Ch10·Ch11 등록', () => {
     }
   });
 
-  it('Ch12가 없으므로 4막은 미완주 — 3막 완주 갈색띠에서 멈춘다', () => {
+  it('Ch12를 마치기 전에는 ITM 플래그가 있어도 갈색띠에서 멈춘다', () => {
     const completed = new Set([...STORY_CURRICULUM[1], ...STORY_CURRICULUM[2], ...ACT3, 'act4-ch10', 'act4-ch11']);
     expect(deriveBelt(STORY_CHAPTERS, completed, { 'belt:black': '1' }, STORY_CURRICULUM)).toBe('brown');
+  });
+
+  it('4막 전체 완주 ∧ ITM 플래그일 때만 검은띠다', () => {
+    const completed = new Set([...STORY_CURRICULUM[1], ...STORY_CURRICULUM[2], ...ACT3, ...STORY_CURRICULUM[4]]);
+    expect(deriveBelt(STORY_CHAPTERS, completed, {}, STORY_CURRICULUM)).toBe('brown');
+    expect(deriveBelt(STORY_CHAPTERS, completed, { 'belt:black': '1' }, STORY_CURRICULUM)).toBe('black');
   });
 });
 
@@ -210,7 +219,101 @@ describe('4막 보상 카탈로그 (v37)', () => {
     expect(items.every(item => isStoryRewardEntitled(item, graded))).toBe(true);
   });
 
-  it('4막 완주 보상은 아직 없다 (Ch12는 R4c 범위)', () => {
-    expect(STORY_REWARD_CATALOG.some(item => item.trigger.kind === 'act-complete' && item.trigger.act === 4)).toBe(false);
+  it('4막 완주 보상(v38)은 4막 세 챕터를 모두 마쳐야 열린다', () => {
+    const actReward = STORY_REWARD_CATALOG.find(item => item.trigger.kind === 'act-complete' && item.trigger.act === 4)!;
+    expect(actReward.id).toBe('story-chips-act4-complete');
+    expect(isStoryRewardEntitled(actReward, state(['act4-ch10', 'act4-ch11']))).toBe(false);
+    expect(isStoryRewardEntitled(actReward, state([...STORY_CURRICULUM[4]]))).toBe(true);
+  });
+});
+
+describe('Ch12 졸업 시험', () => {
+  const drills = CH12.steps.find(step => step.kind === 'drill-set');
+  const practice = CH12.steps.find(step => step.kind === 'practice-table');
+  const sparring = CH12.steps.find(step => step.kind === 'sparring');
+  const epilogues = CH12.steps.filter(step => step.kind === 'scene' && step.graduation === 'epilogue');
+
+  it('졸업 챕터 플래그와 요구 조건을 갖춘다', () => {
+    expect(CH12.act).toBe(4);
+    expect(CH12.order).toBe(3);
+    expect(CH12.belt).toBe('black');
+    expect(CH12.teacher).toBe('miyako');
+    expect(CH12.requires).toEqual(ACT3);
+    expect(CH12.graduation).toBe(true);
+    expect(CH12.examDisabled).toBe(true);
+    // 순위로 통과하는 수업이라 실패 씬(스파링 재도전 경로)이 없다
+    expect(CH12.failScene).toBeUndefined();
+  });
+
+  it('드릴은 SnG 7문 + 동적 복습 2문이고 복습 풀은 Ch11과 같다', () => {
+    if (drills?.kind !== 'drill-set') throw new Error('fixture');
+    expect(drills.drills.map(slot => slot.templateId)).toEqual([
+      'sng-stack-bb', 'sng-m-ratio', 'sng-next-level-bb', 'sng-stack-zone', 'sng-itm-distance',
+      'act-ch12-push-btn-8bb', 'act-ch12-fold-utg-8bb', '*review', '*review',
+    ]);
+    expect(drills.reviewPool).toBe(CH11_REVIEW_POOL);
+    for (const slot of drills.drills) {
+      if (slot.templateId === '*review') continue;
+      expect(getDrillTemplate(slot.templateId)).toBeDefined();
+    }
+  });
+
+  it('8BB 푸시 프리셋은 푸시/폴드 구간 스택으로 깔린다', () => {
+    if (practice?.kind !== 'practice-table') throw new Error('fixture');
+    expect(practice.table.heroStackBB).toBeLessThanOrEqual(PUSH_FOLD_MAX_BB);
+    expect(practice.table.blinds).toEqual({ small: 100, big: 200 });
+    expect(practice.table.lineup.map(seat => seat.characterId)).toEqual(['paeng']);
+    expect(practice.scripts).toHaveLength(2);
+  });
+
+  it('대결은 졸업 SnG 정책이고 행동 목표를 두지 않는다 (순위가 통과 조건)', () => {
+    if (sparring?.kind !== 'sparring') throw new Error('fixture');
+    expect(sparring.table.tournament).toEqual({ id: 'graduation-sng-v1', sngStructureId: 'graduation' });
+    expect(sparring.table.lineup.map(seat => seat.characterId))
+      .toEqual(['paeng', 'luna', 'vivian', 'elena', 'ingrid']);
+    expect(sparring.objectives.primary).toEqual([]);
+    expect(sparring.objectives.bonus).toEqual([]);
+    expect(sparring.checklist).toBeUndefined();
+    expect(sparring.maxHands).toBeGreaterThanOrEqual(200);
+    expect(sparring.table.turnTimeSec).toBe(30);
+    expect(sparring.table.botThinkScale).toBe(0.5);
+  });
+
+  it('에필로그는 순위 3종 + 파트너 6종이고 전부 플래그로 분기한다', () => {
+    expect(epilogues).toHaveLength(9);
+    const outcomes = epilogues
+      .map(step => (step.kind === 'scene' ? step.scene.requiresFlags?.['graduation:outcome'] : undefined))
+      .filter(Boolean);
+    expect(outcomes).toEqual(['out', 'itm', 'champion']);
+    const partners = epilogues
+      .map(step => (step.kind === 'scene' ? step.scene.requiresFlags?.partner : undefined))
+      .filter(Boolean);
+    expect(partners).toEqual([...STORY_HEROINE_IDS]);
+    for (const step of epilogues) {
+      if (step.kind !== 'scene') throw new Error('fixture');
+      expect(Object.keys(step.scene.requiresFlags ?? {})).toHaveLength(1);
+      // 아직 받지 않은 띠를 수여하는 문장은 두지 않는다 (승급은 결산 beltAwarded가 알린다)
+      for (const line of step.scene.lines) {
+        if (line.kind !== 'say') continue;
+        expect(line.text).not.toMatch(/검은띠(를)?\s*(수여|드립|드려|줄게)/);
+      }
+    }
+  });
+
+  it('보상은 첫 완주 500,000 XP · 전원 인연 30,000 · 졸업생 칭호다', () => {
+    expect(CH12.rewards.first.dojoXpMilli).toBe(500_000);
+    expect(CH12.rewards.first.affinity).toEqual([{ target: 'all', milli: 30_000 }]);
+    expect(CH12.rewards.first.badgeId).toBe('story-title-graduate');
+    expect(CH12.rewards.replay.dojoXpMilli).toBe(50_000);
+    expect(CH12.rewards.gradeBonusMilli).toEqual({ A: 50_000, S: 120_000 });
+    const grant = firstClearRewards(CH12, 'S', 'sakura');
+    expect(grant.dojoXpMilli).toBe(620_000);
+    expect(grant.affinity).toHaveLength(STORY_HEROINE_IDS.length);
+  });
+
+  it('검은띠 코스메틱과 졸업 칭호가 카탈로그에 있다', () => {
+    for (const id of ['story-title-graduate', 'story-cardback-black-belt', 'story-felt-black-belt', 'story-title-master-deputy']) {
+      expect(STORY_REWARD_CATALOG.some(item => item.id === id)).toBe(true);
+    }
   });
 });

@@ -41,6 +41,7 @@ const CARD_BACK_VARIANT: Readonly<Record<string, { stops: [string, string, strin
   'story-cardback-dojo-crest': { stops: ['#2a1b4d', '#1e1235', '#120a24'], accent: '#ffd76a', glyph: 'crest' },
   'story-cardback-yellow-belt': { stops: ['#3a2c0e', '#241c0c', '#140f06'], accent: '#ffd76a', glyph: 'band' },
   'story-cardback-blue-belt': { stops: ['#0e2a4d', '#0b1d38', '#061024'], accent: '#6be4ff', glyph: 'band' },
+  'story-cardback-black-belt': { stops: ['#1c1c22', '#101014', '#050508'], accent: '#e7e2f2', glyph: 'band' },
 });
 
 /** 카드 뒷면 — 기본: 핑크→퍼플 그라디언트 + 사선 격자 + 다이아 모노그램. 장착 카드백이 있으면 그 무늬(보는 사람 기준). */

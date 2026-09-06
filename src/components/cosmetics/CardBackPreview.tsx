@@ -9,6 +9,7 @@ const CARD_BACK_STYLE: Readonly<Record<string, { base: string; accent: string; g
   'story-cardback-dojo-crest': { base: '#1e1235', accent: '#ffd76a', glyph: 'crest' },
   'story-cardback-yellow-belt': { base: '#241c0c', accent: '#ffd76a', glyph: 'band' },
   'story-cardback-blue-belt': { base: '#0b1d38', accent: '#6be4ff', glyph: 'band' },
+  'story-cardback-black-belt': { base: '#101014', accent: '#e7e2f2', glyph: 'band' },
 });
 
 export function CardBackPreview({ id, className = '' }: { id: string; className?: string }) {
