@@ -43,6 +43,11 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
 - 이번 배치에 커밋한 도구 변경: 계획 JSON(사쿠라 gym 문구), `ledger_bonus.py`(`BONUS_SEED_OFFSET`/`BONUS_VIDEO_EXTRA`/`BONUS_MOTION_OVERRIDE`,
   `video_job_of` — 원장에서 최신 비반려 video job을 찾아 approve-videos/export가 `-v4` 같은 재생성 id를 자동 사용), `video-sheets.sh`(진행 중 클립 ffprobe 스킵),
   `video-montage.mjs`, 영수증 `recipes/bonus-cg-20260906/`(50×external+provenance), 영상 매니페스트 7개.
+- **검토 화면**(2026-09-06 사용자 요청): `node scripts/art/bonus-cg/review-page.mjs`가 `<staging>/review/index.html`을 만들고
+  `node scripts/art/bonus-cg/review-serve.mjs`(Range 206 지원 — python http.server는 Range 미지원이라 Chrome 영상이 멈춘다)로
+  `http://127.0.0.1:8765/review/`에서 50루프(mp4/webm 100파일)+원화를 승인/반려·메모하고 [반려 목록]으로 「캐릭터:장면」 텍스트를 뽑는다.
+  상태는 브라우저 localStorage(`bonus-cg-review-<batch>`), JSON 저장/불러오기 가능. 원장에서 최신 비반려 video job을 찾으므로 린 요가는 v4를 보여준다
+  (`encode-probe/bonus-lin-yoga-video-v4.*`는 같은 설정으로 재인코딩해 추가). 반려 재생성 뒤에는 probe 재인코딩 + 페이지 재생성.
 - 게임 연결 계약: `docs/superpowers/plans/2026-09-06-bonus-cg-integration-plan.md`(카탈로그 `line:'bonus'` 50항목, 트리거 affinity-level/dojo-level,
   임계 casual→sing→yoga→gym→beach = 인연 4/8/12/16/20·도장 10/20/30/40/50, 기록실 'bonus' 섹션, 설정 `showBonusCg`, v39, `VIDEO_AVAILABLE`).
 
