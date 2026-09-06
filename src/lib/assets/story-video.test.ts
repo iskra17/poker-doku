@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { BONUS_CG_VIDEO_STEMS } from '@/lib/story/rewards/bonus-cg';
 import { getStoryVideo, hasStoryVideo, sceneCgVideoId } from './story-video';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -67,6 +68,26 @@ describe('story-video 매니페스트', () => {
   });
 });
 
+
+describe('보너스 CG 영상 (2026-09-06)', () => {
+  it('보상 아이템 id 50개가 bonus-<subject>-<scene> 파일 쌍으로 해석되고 실제로 존재한다', () => {
+    expect(BONUS_CG_VIDEO_STEMS.size).toBe(50);
+    for (const [rewardId, stem] of BONUS_CG_VIDEO_STEMS) {
+      expect(hasStoryVideo(rewardId), rewardId).toBe(true);
+      expect(getStoryVideo(rewardId)).toEqual({
+        webm: `/assets/story/video/${stem}.webm`,
+        mp4: `/assets/story/video/${stem}.mp4`,
+      });
+      for (const format of ['mp4', 'webm'] as const) {
+        const path = resolve(`public/assets/story/video/${stem}.${format}`);
+        expect(existsSync(path), `${stem}.${format}`).toBe(true);
+        expect(statSync(path).size).toBeGreaterThan(0);
+      }
+      // 정지 CG 원본도 함께 배치돼 있어야 폴백이 성립한다
+      expect(existsSync(resolve(`public/assets/story/cg/${stem}.webp`)), `${stem}.webp`).toBe(true);
+    }
+  });
+});
 
 describe('event CG v2 routing', () => {
   it('preserves the exact unversioned paths of all 49 original videos', () => {

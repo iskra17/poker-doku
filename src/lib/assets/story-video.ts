@@ -1,3 +1,4 @@
+import { BONUS_CG_VIDEO_STEMS } from '@/lib/story/rewards/bonus-cg';
 import { EVENT_CG_V2_IDS, sceneCgAssetStem } from './story-cgs';
 
 /**
@@ -47,15 +48,18 @@ const VIDEO_AVAILABLE: ReadonlySet<string> = new Set<string>([
   'scene-act2-ch06-prologue', 'scene-act2-ch06-climax', 'scene-act2-ch06-epilogue',
   // Event CG replacements ship with matching v2 video pairs.
   ...EVENT_CG_V2_IDS.map(sceneCgVideoId),
+  // 보너스 CG 50장 (2026-09-06) — 보상 아이템 id → `bonus-<subject>-<scene>` stem
+  ...BONUS_CG_VIDEO_STEMS.keys(),
 ]);
 
 const VIDEO_ALIASES: ReadonlyMap<string, string> = new Map([
   ['story-cg-act3-luna-analysis', sceneCgVideoId('act3-ch09-analysis')],
   ['story-cg-act3-elena-snow', sceneCgVideoId('act3-ch09-snow-window')],
 ]);
-const VERSIONED_VIDEO_STEMS: ReadonlyMap<string, string> = new Map(
-  EVENT_CG_V2_IDS.map(id => [sceneCgVideoId(id), sceneCgAssetStem(id)]),
-);
+const VERSIONED_VIDEO_STEMS: ReadonlyMap<string, string> = new Map([
+  ...EVENT_CG_V2_IDS.map(id => [sceneCgVideoId(id), sceneCgAssetStem(id)] as const),
+  ...BONUS_CG_VIDEO_STEMS,
+]);
 
 function resolveVideoStem(cgId: string | null | undefined): string | null {
   if (!cgId) return null;
