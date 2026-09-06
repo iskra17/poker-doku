@@ -18,6 +18,8 @@ export type ProgressionRuntimeService = Pick<
   | 'recordRuntimeCompletedHand'
   | 'recordRuntimeSngFinish'
   | 'recordRuntimeStoryChapterComplete'
+  | 'recordStoryChapterCompleteInTransaction'
+  | 'hasStoryChapterEvent'
   | 'recordRuntimeStoryDailyDrills'
 >;
 
@@ -233,6 +235,32 @@ export class ProgressionRuntime {
       this.emitReward(input.profileId, result.snapshot, result.summary);
     }
     return result;
+  }
+
+  /**
+   * 원자 결산 전용 — 호출자가 연 트랜잭션에 참여한다. 보상 카드(emit)는 커밋 뒤
+   * `notifyStoryChapterReward`로 따로 띄운다(트랜잭션 안에서 소켓을 밀지 않는다).
+   */
+  completeStoryChapterInTransaction(
+    input: StoryChapterCompleteInput,
+  ): StoryChapterCompleteResult {
+    return this.service.recordStoryChapterCompleteInTransaction(input);
+  }
+
+  /** 고정된 완주 이벤트가 이미 있는가 — 완료 횟수 증가 전 run 단위 멱등 검사 */
+  hasStoryChapterEvent(input: {
+    profileId: string;
+    chapterId: string;
+    runId: string;
+    firstClear: boolean;
+  }): boolean {
+    return this.service.hasStoryChapterEvent(input);
+  }
+
+  /** 커밋 뒤 보상 카드 — 중복 지급이면 다시 띄우지 않는다 */
+  notifyStoryChapterReward(profileId: string, result: StoryChapterCompleteResult): void {
+    if (result.duplicate) return;
+    this.emitReward(profileId, result.snapshot, result.summary);
   }
 
   /** 오늘의 수련 문제 3개 완료 — 하루 1회. */

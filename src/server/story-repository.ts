@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { ChapterGrade } from '@/lib/story/types';
 import { isDrillCategory, type DrillCategory } from '@/lib/story/drills/types';
 import type { PokerDatabase } from './persistence/database';
@@ -17,6 +18,7 @@ import type { PokerDatabase } from './persistence/database';
  */
 
 export type StoryErrorCode =
+  | 'STORY_GRADUATION_CONFLICT'
   | 'STORY_VALUE_INVALID'
   | 'STORY_TIME_INVALID'
   | 'STORY_PROFILE_NOT_FOUND'
@@ -59,6 +61,30 @@ export type ReviewBox = 1 | 2 | 3;
 
 /** box 3 정답 = 졸업(행 삭제), 노트가 없으면 'none' */
 export type ReviewOutcome = 'promoted' | 'graduated' | 'none';
+
+/** 검은띠 자격 플래그 — `src/lib/story/unlocks.ts`의 BLACK_BELT_FLAG와 같은 키 (영속 계층 중복 정의 회피용 상수) */
+const STORY_BLACK_BELT_FLAG = 'belt:black';
+/** 졸업 대결 우승 플래그 — `rewards/catalog.ts`의 GRADUATION_CHAMPION_FLAG와 같은 키 */
+const STORY_GRADUATION_CHAMPION_FLAG = 'graduation:champion';
+
+export interface StoryGraduationInput {
+  runId: string;
+  place: number;
+  entrants: number;
+  /** 실제 런 모드 — 운영자 스킵 출처는 source가 따로 남긴다 */
+  mode: 'full' | 'graduation';
+  source: 'play' | 'operator-skip';
+  finishedAt: number;
+}
+
+export type StoryGraduationRow = StoryGraduationInput;
+
+export interface StoryGraduationOutcome {
+  status: 'recorded' | 'duplicate';
+  /** 3위 이내 — 검은띠 자격 플래그가 세워졌다 */
+  itm: boolean;
+  champion: boolean;
+}
 
 const GRADE_RANK: Readonly<Record<ChapterGrade, number>> = { B: 1, A: 2, S: 3 };
 const MAX_UINT32 = 4_294_967_295;
@@ -249,6 +275,110 @@ export class StoryRepository {
   ): StoryProgressRow {
     this.#assertTransaction();
     return this.#recordCompletion(profileId, chapterId, grade, now);
+  }
+
+  /**
+   * 스토리 영속 트랜잭션 소유권을 호출자에게 연다 — 결산 원자 커밋(완료 기록·플래그·순위 영수증·XP)이
+   * 한 트랜잭션에 묶여야 하기 때문. 이미 트랜잭션 안이면 그대로 참여한다(PokerDatabase는 중첩 금지).
+   */
+  runAtomic<T>(work: () => T): T {
+    return this.#atomic(work);
+  }
+
+  // -------------------------------------------------------------------------
+  // 졸업 대결 순위 영수증 (v38)
+
+  /**
+   * 순위 영수증 1행 + 단조 자격 플래그. **에필로그 전에** 호출자가 연 트랜잭션 안에서 실행한다.
+   *  - 같은 (profile, run)이 같은 fingerprint면 `'duplicate'`(재전달·재시도 안전),
+   *    다른 값이면 `STORY_GRADUATION_CONFLICT`(순위를 덮어쓰지 않는다).
+   *  - 자격 플래그는 **내리지 않는다**: 3위 이내면 검은띠 플래그, 1위면 우승 플래그를 세운다.
+   */
+  recordGraduationInTransaction(
+    profileId: string,
+    input: StoryGraduationInput,
+  ): StoryGraduationOutcome {
+    this.#assertTransaction();
+    assertProfileId(profileId);
+    assertRunId(input.runId);
+    assertPlace(input.place, input.entrants);
+    if (input.mode !== 'full' && input.mode !== 'graduation') {
+      throw new StoryPersistenceError('STORY_VALUE_INVALID');
+    }
+    if (input.source !== 'play' && input.source !== 'operator-skip') {
+      throw new StoryPersistenceError('STORY_VALUE_INVALID');
+    }
+    assertTimestamp(input.finishedAt);
+    this.#assertProfileExists(profileId);
+
+    const fingerprint = graduationFingerprint(profileId, input);
+    const itm = input.place <= 3;
+    const champion = input.place === 1;
+    const existing = this.#database.db.prepare(`
+      SELECT fingerprint FROM story_graduations
+      WHERE profile_id = ? AND run_id = ?
+    `).get(profileId, input.runId) as unknown as { fingerprint: unknown } | undefined;
+    if (existing !== undefined) {
+      if (String(existing.fingerprint) !== fingerprint) {
+        throw new StoryPersistenceError('STORY_GRADUATION_CONFLICT');
+      }
+      // 플래그는 멱등하게 다시 보장한다 (영수증만 남고 플래그가 유실된 상태 복구)
+      this.#applyGraduationFlags(profileId, itm, champion, input.finishedAt);
+      return { status: 'duplicate', itm, champion };
+    }
+    try {
+      this.#database.db.prepare(`
+        INSERT INTO story_graduations (
+          profile_id, run_id, place, entrants, mode, source,
+          fingerprint, finished_at, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        profileId,
+        input.runId,
+        input.place,
+        input.entrants,
+        input.mode,
+        input.source,
+        fingerprint,
+        input.finishedAt,
+        input.finishedAt,
+      );
+    } catch (error) {
+      rethrowUnexpected(error);
+    }
+    this.#applyGraduationFlags(profileId, itm, champion, input.finishedAt);
+    return { status: 'recorded', itm, champion };
+  }
+
+  /** 졸업 영수증 목록 (최근 순) — 허브·결산 표시용 */
+  listGraduations(profileId: string): StoryGraduationRow[] {
+    assertProfileId(profileId);
+    const rows = this.#database.db.prepare(`
+      SELECT run_id, place, entrants, mode, source, finished_at
+      FROM story_graduations
+      WHERE profile_id = ?
+      ORDER BY finished_at DESC, run_id ASC
+    `).all(profileId) as unknown as Array<Record<string, unknown>>;
+    return rows.map(row => ({
+      runId: String(row.run_id),
+      place: Number(row.place),
+      entrants: Number(row.entrants),
+      mode: String(row.mode) as StoryGraduationInput['mode'],
+      source: String(row.source) as StoryGraduationInput['source'],
+      finishedAt: Number(row.finished_at),
+    }));
+  }
+
+  #applyGraduationFlags(
+    profileId: string,
+    itm: boolean,
+    champion: boolean,
+    now: number,
+  ): void {
+    const flags: Record<string, string> = {};
+    if (itm) flags[STORY_BLACK_BELT_FLAG] = '1';
+    if (champion) flags[STORY_GRADUATION_CHAMPION_FLAG] = '1';
+    if (Object.keys(flags).length > 0) this.#setFlags(profileId, flags, now);
   }
 
   // -------------------------------------------------------------------------
@@ -818,6 +948,30 @@ function assertChapterId(value: string): void {
 
 function assertRunId(value: string): void {
   assertBoundedString(value, 64);
+}
+
+function assertPlace(place: number, entrants: number): void {
+  if (
+    !Number.isInteger(place) || !Number.isInteger(entrants)
+    || place < 1 || place > 6
+    || entrants < 2 || entrants > 6
+    || place > entrants
+  ) {
+    throw new StoryPersistenceError('STORY_VALUE_INVALID');
+  }
+}
+
+/** 영수증 지문 — 같은 run의 재전달이 같은 값을 내고, 한 필드라도 다르면 충돌로 잡힌다 */
+function graduationFingerprint(profileId: string, input: StoryGraduationInput): string {
+  return createHash('sha256').update([
+    profileId,
+    input.runId,
+    String(input.place),
+    String(input.entrants),
+    input.mode,
+    input.source,
+    String(input.finishedAt),
+  ].join('|')).digest('hex');
 }
 
 function assertTemplateId(value: string): void {

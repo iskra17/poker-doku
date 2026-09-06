@@ -520,6 +520,56 @@ export function setupSocketHandlers(
             const result = progression.completeStoryChapter(input);
             return { duplicate: result.duplicate, affinityTransitions: result.affinityTransitions };
           },
+          // 졸업 순위는 에필로그 **전에** 단독 트랜잭션으로 확정한다 — 이후 포기·크래시가 나도
+          // 영수증과 자격 플래그는 남는다(완료 기록·XP는 결산의 원자 커밋이 따로 소유).
+          recordGraduation: (profileId, receipt) => storyRepository.runAtomic(
+            () => ({ status: storyRepository.recordGraduationInTransaction(profileId, receipt).status }),
+          ),
+          /**
+           * 결산 원자 커밋 — ①고정 이벤트 id 중복 검사(완료 횟수 갱신 **전**) ②완료 기록 ③플래그
+           * ④순위 영수증 재검증 ⑤XP·인연. 카탈로그 reconcile·보상 카드는 커밋 뒤 별도 경로다.
+           */
+          completeChapterAtomic: input => {
+            const outcome = storyRepository.runAtomic(() => {
+              if (progression.hasStoryChapterEvent({
+                profileId: input.profileId,
+                chapterId: input.chapterId,
+                runId: input.runId,
+                firstClear: input.firstClear,
+              })) {
+                return { duplicate: true as const, reward: null };
+              }
+              storyRepository.recordCompletionInTransaction(
+                input.profileId,
+                input.chapterId,
+                input.grade,
+                input.completedAt,
+              );
+              if (Object.keys(input.flags).length > 0) {
+                storyRepository.setFlagsInTransaction(input.profileId, input.flags, input.completedAt);
+              }
+              if (input.graduation) {
+                storyRepository.recordGraduationInTransaction(input.profileId, input.graduation);
+              }
+              const reward = progression.completeStoryChapterInTransaction({
+                profileId: input.profileId,
+                chapterId: input.chapterId,
+                runId: input.runId,
+                firstClear: input.firstClear,
+                grade: input.grade,
+                dojoXpMilli: input.dojoXpMilli,
+                affinity: input.affinity,
+                completedAt: input.completedAt,
+              });
+              return { duplicate: reward.duplicate, reward };
+            });
+            // 보상 카드는 커밋 뒤에만 — 트랜잭션 안에서 소켓을 밀지 않는다
+            if (outcome.reward) progression.notifyStoryChapterReward(input.profileId, outcome.reward);
+            return {
+              duplicate: outcome.duplicate,
+              ...(outcome.reward ? { affinityTransitions: outcome.reward.affinityTransitions } : {}),
+            };
+          },
           completeDaily: input => ({ duplicate: progression.completeStoryDaily(input).duplicate }),
           ...(storyRewards
             ? {

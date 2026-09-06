@@ -137,6 +137,8 @@ export function storyRewardSourceKey(trigger: StoryRewardTrigger): string {
       return `story-act:${trigger.act}`;
     case 'flag':
       return `story-flag:${trigger.key}`;
+    case 'graduation':
+      return `story-graduation:${trigger.requirement}`;
   }
 }
 

@@ -13,11 +13,14 @@ import type { StoryCurriculum } from '../curriculum';
  * - 카드백·펠트는 SVG/CSS(컨벤션: 이미지 생성은 캐릭터/배경/로고만) — `art` 없음, 클라가 id로 그린다.
  */
 import type { Chapter, ChapterGrade, ChapterId, StoryAct, StoryHeroineId } from '../types';
-import { isActCompleted } from '../unlocks';
+import { deriveBelt, isActCompleted } from '../unlocks';
 import { ACT_TITLE, BELT_LABEL, ACT_BELT } from '../story-hub-rules';
 import type { StoryRewardCutsceneView, StoryRewardItemView, StoryRewardKind, StoryRewardPreview, StoryRewardTrigger } from '../views';
 
 export type StoryRewardEquipSlot = 'title' | 'card-back' | 'felt' | 'outfit';
+
+/** 졸업 대결 우승 플래그 — 순위 영수증이 단조 갱신한다(`unlocks.ts`의 검은띠 플래그와 짝) */
+export const GRADUATION_CHAMPION_FLAG = 'graduation:champion';
 
 export interface StoryRewardDefinition {
   readonly id: string;
@@ -48,6 +51,7 @@ function def(item: Omit<StoryRewardDefinition, 'gameplayModifiers'>): StoryRewar
 const first = (chapterId: ChapterId): StoryRewardTrigger => ({ kind: 'chapter-first-clear', chapterId });
 const gradeS = (chapterId: ChapterId): StoryRewardTrigger => ({ kind: 'chapter-grade', chapterId, grade: 'S' });
 const act = (value: StoryAct): StoryRewardTrigger => ({ kind: 'act-complete', act: value });
+const graduation = (requirement: 'black-belt' | 'champion'): StoryRewardTrigger => ({ kind: 'graduation', requirement });
 
 /** 컷신 우선순위 — 보스 > 띠 > 에필로그 (결산은 새 CG 중 하나만 풀스크린으로) */
 const CUTSCENE_PRIORITY: Readonly<Record<StoryRewardCutsceneView['kind'], number>> = { 'boss-win': 0, belt: 1, 'event-cg': 2 };
@@ -146,6 +150,14 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   def({ id: 'story-title-all-rounder', kind: 'title', equipSlot: 'title', name: '올라운더', description: '배운 것을 한 자리에서 모두 꺼내 쓴 수련생.', trigger: first('act4-ch11') }),
   def({ id: 'story-chips-act4-ch11-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '종합 수련 수료금', description: '종합 수련 첫 완주 연습 칩 500.', trigger: first('act4-ch11') }),
   def({ id: 'story-chips-act4-ch11-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '종합 수련 S등급 연습 칩 300.', trigger: gradeS('act4-ch11') }),
+  // ── Ch12 졸업 시험 · 검은띠 (v38). 검은띠 코스메틱은 SVG/CSS라 아트 파일이 없다.
+  def({ id: 'story-title-graduate', kind: 'title', equipSlot: 'title', name: '졸업생', description: '졸업 대결의 자리를 끝까지 지킨 수련생.', trigger: first('act4-ch12') }),
+  def({ id: 'story-chips-act4-ch12-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '졸업 수료금', description: '졸업 시험 첫 완주 연습 칩 500.', trigger: first('act4-ch12') }),
+  def({ id: 'story-chips-act4-ch12-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '졸업 시험 S등급 연습 칩 300.', trigger: gradeS('act4-ch12') }),
+  def({ id: 'story-cardback-black-belt', kind: 'card-back', equipSlot: 'card-back', name: '검은띠 카드백', description: '검은띠 무늬의 카드 뒷면.', trigger: graduation('black-belt') }),
+  def({ id: 'story-felt-black-belt', kind: 'felt', equipSlot: 'felt', name: '검은띠 도장 펠트', description: '검은띠 색으로 물든 수련 테이블 펠트.', trigger: graduation('black-belt') }),
+  def({ id: 'story-chips-act4-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '4막 수료금', description: '4막 세 수업 완주 연습 칩 1,000.', trigger: act(4) }),
+  def({ id: 'story-title-master-deputy', kind: 'title', equipSlot: 'title', name: '사범대리', description: '졸업 대결에서 마지막까지 남은 사람의 칭호.', trigger: graduation('champion') }),
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),
   def({ id: 'story-title-empty-note', kind: 'title', equipSlot: 'title', name: '빈 노트', description: '복습 노트를 졸업으로 비웠다.', trigger: { kind: 'flag', key: 'badge:empty-note', label: '복습 노트 비우기' } }),
@@ -177,6 +189,12 @@ export function isStoryRewardEntitled(item: StoryRewardDefinition, state: StoryR
       return isActCompleted(state.chapters, trigger.act, state.completed, state.curriculum);
     case 'flag':
       return state.flags[trigger.key] === '1';
+    case 'graduation': {
+      // 플래그만으로 지급하지 않는다 — 4막 전체 완주 ∧ ITM 플래그로 검은띠가 확정돼야 한다
+      const black = deriveBelt(state.chapters, state.completed, state.flags, state.curriculum) === 'black';
+      if (!black) return false;
+      return trigger.requirement === 'black-belt' || state.flags[GRADUATION_CHAMPION_FLAG] === '1';
+    }
   }
 }
 
@@ -193,6 +211,8 @@ export function storyRewardRequirement(item: StoryRewardDefinition, chapters: re
       return `${ACT_TITLE[trigger.act]} 완주 (${BELT_LABEL[ACT_BELT[trigger.act]]})`;
     case 'flag':
       return trigger.label;
+    case 'graduation':
+      return trigger.requirement === 'champion' ? '졸업 대결 우승 (검은띠)' : '졸업 대결 3위 이내 (검은띠)';
   }
 }
 

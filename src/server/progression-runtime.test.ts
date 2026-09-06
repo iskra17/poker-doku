@@ -88,6 +88,13 @@ function makeService(characters: Record<string, 'sakura' | 'hana'> = {}): {
         summary: summary(`story-chapter:${input.chapterId}`, 'sakura'),
         affinityTransitions: [],
       })),
+      recordStoryChapterCompleteInTransaction: vi.fn(input => ({
+        duplicate: false,
+        snapshot: snapshot(input.profileId, 'sakura'),
+        summary: summary(`story-chapter:${input.chapterId}`, 'sakura'),
+        affinityTransitions: [],
+      })),
+      hasStoryChapterEvent: vi.fn(() => false),
       recordRuntimeStoryDailyDrills: vi.fn(input => ({
         duplicate: false,
         snapshot: snapshot(input.profileId, 'sakura'),

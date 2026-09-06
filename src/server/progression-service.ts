@@ -720,6 +720,47 @@ export class ProgressionService {
     return this.recordStoryChapterComplete(input);
   }
 
+  /**
+   * 호출자가 연 트랜잭션에 **참여**하는 챕터 완주 기록 — 원자 결산(completeChapterAtomic) 전용.
+   * 이벤트 id·멱등 규약은 public 경로와 완전히 동일하고, 트랜잭션만 열지 않는다.
+   */
+  recordStoryChapterCompleteInTransaction(
+    input: StoryChapterCompleteInput,
+  ): StoryChapterCompleteResult {
+    this.database.assertTransactionActive();
+    const safeInput = validateStoryChapterCompleteInput(input);
+    return this.runStoryRewardInTransaction({
+      eventId: buildStoryChapterEventId(
+        safeInput.profileId,
+        safeInput.chapterId,
+        safeInput.firstClear ? undefined : safeInput.runId,
+      ),
+      eventType: EVENT_TYPE_STORY_CHAPTER,
+      profileId: safeInput.profileId,
+      dojoXpMilli: safeInput.dojoXpMilli,
+      affinity: safeInput.affinity,
+      completedAt: safeInput.completedAt,
+    });
+  }
+
+  /**
+   * 고정된 챕터 완주 이벤트가 이미 있는가 — **완료 횟수를 늘리기 전에** run 단위 멱등을 판정한다.
+   * (커밋 뒤 reconcile 실패 → 재시도에서 firstClear가 뒤집혀 replay XP가 다시 나가는 경로 차단)
+   */
+  hasStoryChapterEvent(input: {
+    profileId: string;
+    chapterId: string;
+    runId: string;
+    firstClear: boolean;
+  }): boolean {
+    const eventId = buildStoryChapterEventId(
+      input.profileId,
+      input.chapterId,
+      input.firstClear ? undefined : input.runId,
+    );
+    return this.repository.getProgressionEvent(eventId) !== undefined;
+  }
+
   /** 오늘의 수련 문제 3개 완료 — 출제 히로인 인연 +5/일, 도장 XP 없음. 하루 1회 멱등. */
   recordStoryDailyDrills(
     input: StoryDailyDrillsInput,
@@ -755,7 +796,19 @@ export class ProgressionService {
     affinity: readonly StoryAffinityGrant[];
     completedAt: number;
   }): StoryRewardResult {
-    return this.database.transaction(() => {
+    return this.database.transaction(() => this.runStoryRewardInTransaction(input));
+  }
+
+  /** recordStoryReward 본문 — 트랜잭션은 호출자가 소유한다(public 경로는 위에서 연다) */
+  private runStoryRewardInTransaction(input: {
+    eventId: string;
+    eventType: string;
+    profileId: string;
+    dojoXpMilli: number;
+    affinity: readonly StoryAffinityGrant[];
+    completedAt: number;
+  }): StoryRewardResult {
+    {
       const duplicate = this.getDuplicate(
         input.eventId,
         input.profileId,
@@ -791,7 +844,7 @@ export class ProgressionService {
         summary,
         affinityTransitions,
       };
-    });
+    }
   }
 
   /**

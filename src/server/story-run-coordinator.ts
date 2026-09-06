@@ -150,6 +150,32 @@ export interface StoryAffinityTransitionRecord {
  * (없으면 XP 없이 진행: 테스트·비활성 환경). reconcile/preview/grantDailyChips는 선택 —
  * 없으면 결산 DTO의 items/chips/cutscene/next를 채우지 않아 클라가 폴백한다.
  */
+/** 졸업 대결 순위 영수증 — 에필로그 **전에** 고정·저장하고, 결산이 같은 값으로 재검증한다 */
+export interface StoryGraduationReceipt {
+  runId: string;
+  place: number;
+  entrants: number;
+  /** 실제 런 모드 (운영자 스킵 출처는 source가 남긴다) */
+  mode: 'full' | 'graduation';
+  source: 'play' | 'operator-skip';
+  finishedAt: number;
+}
+
+export interface StoryChapterCompleteAtomicInput {
+  profileId: string;
+  chapterId: ChapterId;
+  runId: string;
+  firstClear: boolean;
+  grade: ChapterGrade;
+  dojoXpMilli: number;
+  affinity: Array<{ characterId: StoryHeroineId; milli: number }>;
+  completedAt: number;
+  /** 통과 시 함께 영속할 플래그 (선택지·퍼펙트) */
+  flags: Record<string, string>;
+  /** 졸업 런이면 이미 저장된 영수증을 같은 트랜잭션에서 재검증한다 */
+  graduation?: StoryGraduationReceipt;
+}
+
 export interface StoryRewardPort {
   completeChapter(input: {
     profileId: string;
@@ -168,6 +194,19 @@ export interface StoryRewardPort {
   preview?(profileId: string): StoryRewardPreview[];
   /** 오늘의 수련 완료 칩 — 날짜당 1회, 이미 지급이면 0 */
   grantDailyChips?(profileId: string, kstDate: string, now: number): number;
+  /**
+   * 순위 영수증 + 단조 자격 플래그만 **단독 트랜잭션**으로 — 에필로그 진입 전에 확정한다.
+   * 같은 run의 재전달은 'duplicate', 순위가 다르면 throw(결산을 확정하지 않는다).
+   */
+  recordGraduation?(profileId: string, receipt: StoryGraduationReceipt): { status: 'recorded' | 'duplicate' };
+  /**
+   * 완료 기록·플래그·순위 영수증 재검증·XP를 **한 트랜잭션**으로. 있으면 모든 챕터의 full 완료가 이 경로다.
+   * 고정된 progression 이벤트 id가 이미 있으면 완료 횟수를 늘리지 않고 duplicate를 돌려준다(run 단위 멱등).
+   */
+  completeChapterAtomic?(input: StoryChapterCompleteAtomicInput): {
+    duplicate: boolean;
+    affinityTransitions?: StoryAffinityTransitionRecord[];
+  };
 }
 
 export interface StoryRunCoordinatorDeps {

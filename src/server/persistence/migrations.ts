@@ -7069,6 +7069,59 @@ export const migrations: readonly Migration[] = [
       ('story-chips-act4-ch11-first', 'chips', NULL, NULL, 500),
       ('story-chips-act4-ch11-s', 'chips', NULL, NULL, 300);`,
   },
+  {
+    version: 38,
+    name: 'story_graduations',
+    sql: `
+      -- Ch12 졸업 SnG 순위 영수증 (2026-09-06 R4c). 에필로그 **전에** 저장되며, 이후 포기·크래시가 나도
+      -- 확정된 순위와 자격(검은띠·사범대리 플래그)은 보존된다. 결산의 완료 기록·XP와는 분리된 트랜잭션이다.
+      --  · (profile, run) 1행 캡 + fingerprint로 재전달을 duplicate/conflict로 가른다.
+      --  · mode는 실제 런 모드('full' | 'graduation'), 운영자 스킵 출처는 source로만 남긴다.
+      --  · DELETE는 프로필 삭제 CASCADE만 허용(v32 story_rewards와 같은 패턴).
+      CREATE TABLE story_graduations (
+        profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        run_id TEXT NOT NULL CHECK (length(run_id) BETWEEN 1 AND 128),
+        place INTEGER NOT NULL CHECK (place BETWEEN 1 AND 6),
+        entrants INTEGER NOT NULL CHECK (
+          entrants BETWEEN 2 AND 6 AND place <= entrants
+        ),
+        mode TEXT NOT NULL CHECK (mode IN ('full', 'graduation')),
+        source TEXT NOT NULL CHECK (source IN ('play', 'operator-skip')),
+        fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 64),
+        finished_at INTEGER NOT NULL CHECK (
+          finished_at BETWEEN 0 AND 253402300799999
+        ),
+        created_at INTEGER NOT NULL CHECK (
+          created_at BETWEEN 0 AND 253402300799999
+        ),
+        PRIMARY KEY (profile_id, run_id)
+      ) STRICT;
+
+      CREATE INDEX idx_story_graduations_profile_finished
+        ON story_graduations(profile_id, finished_at);
+
+      CREATE TRIGGER freeze_story_graduation_update
+      BEFORE UPDATE ON story_graduations
+      BEGIN SELECT RAISE(ABORT, 'story graduation is immutable'); END;
+
+      CREATE TRIGGER freeze_story_graduation_delete
+      BEFORE DELETE ON story_graduations
+      WHEN EXISTS (SELECT 1 FROM profiles WHERE id = OLD.profile_id)
+      BEGIN SELECT RAISE(ABORT, 'story graduation is immutable'); END;
+
+      -- Ch12 보상 + 검은띠 코스메틱 (카탈로그 단일 소스는 src/lib/story/rewards/catalog.ts)
+      INSERT INTO story_reward_catalog (
+        item_id, kind, equip_slot, character_id, chip_amount
+      ) VALUES
+        ('story-title-graduate', 'title', 'title', NULL, NULL),
+        ('story-chips-act4-ch12-first', 'chips', NULL, NULL, 500),
+        ('story-chips-act4-ch12-s', 'chips', NULL, NULL, 300),
+        ('story-cardback-black-belt', 'card-back', 'card-back', NULL, NULL),
+        ('story-felt-black-belt', 'felt', 'felt', NULL, NULL),
+        ('story-chips-act4-complete', 'chips', NULL, NULL, 1000),
+        ('story-title-master-deputy', 'title', 'title', NULL, NULL);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

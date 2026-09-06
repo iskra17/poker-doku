@@ -12,8 +12,13 @@ export type StoryRunPhase = 'failure-scene' | 'scene' | 'lesson' | 'drill' | 'li
  * 런 모드 — 'full'은 챕터 전체, 'exam'은 **실력 확인**: 드릴 세트만 풀고(씬·레슨·라이브 스킵, 힌트 없음)
  * `EXAM_PASS_SCORE` 이상이면 완료로 기록한다. 아는 내용을 억지로 플레이하지 않게 하는 우회로(2026-09-03 피드백 ②).
  */
-export type StoryRunMode = 'full' | 'exam';
-export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost' | 'quiz';
+/**
+ * 'graduation'은 **졸업 대결만 재도전** — 이미 완주한 졸업 챕터에서 드릴·레슨을 건너뛰고
+ * 토너먼트 스파링과 에필로그·결산만 돈다. 완료 횟수·XP·인연·칩은 늘지 않고 순위 영수증만 남는다.
+ */
+export type StoryRunMode = 'full' | 'exam' | 'graduation';
+/** 'persist' — 확정된 순위를 저장하지 못해 재시도를 기다리는 상태 */
+export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost' | 'quiz' | 'persist';
 
 export interface StoryDrillView {
   setId: string;
@@ -148,7 +153,12 @@ export type StoryRewardTrigger =
   | { kind: 'chapter-first-clear'; chapterId: ChapterId }
   | { kind: 'chapter-grade'; chapterId: ChapterId; grade: 'S' }
   | { kind: 'act-complete'; act: StoryAct }
-  | { kind: 'flag'; key: string; label: string };
+  | { kind: 'flag'; key: string; label: string }
+  /**
+   * 졸업 자격 — 'black-belt'는 `deriveBelt`가 'black'(4막 전체 완주 ∧ ITM 플래그)일 때,
+   * 'champion'은 거기에 우승 플래그까지. **플래그만으로는 지급하지 않는다**(막 완주가 함께 필요).
+   */
+  | { kind: 'graduation'; requirement: 'black-belt' | 'champion' };
 
 export interface StoryRewardItemView {
   id: string;
@@ -229,6 +239,18 @@ export interface ChapterResultView {
   nextChapterId: ChapterId | null;
   /** 이 완주로 띠가 올랐으면 새 띠 — 결산이 승급 연출을 맡는다(에필로그는 순서를 가정하지 않는다) */
   beltAwarded: StoryBelt | null;
+  /**
+   * 졸업 대결 결과 — 서버가 확정한 순위 영수증의 투영이다(클라 계산 없음).
+   * `mode`는 이 런의 모드: 'full'은 챕터 전체 완주, 'graduation'은 졸업 대결만 재도전.
+   */
+  graduation?: {
+    place: number;
+    entrants: number;
+    itm: boolean;
+    champion: boolean;
+    blackBelt: boolean;
+    mode: 'full' | 'graduation';
+  };
 }
 
 export interface StoryRunView {
