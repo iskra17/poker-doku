@@ -13,17 +13,18 @@ import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import { resolveTitle } from '@/lib/cosmetics/titles';
 import { PROGRESSION_CHARACTER_IDS, type ProgressionSnapshot } from '@/lib/progression/types';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
-import { STORY_REWARD_CATALOG, storyRewardRequirement, toStoryRewardCutscene } from '@/lib/story/rewards/catalog';
+import { STORY_REWARD_CATALOG, isBonusStoryReward, storyRewardRequirement, toStoryRewardCutscene } from '@/lib/story/rewards/catalog';
 import type { Chapter } from '@/lib/story/types';
 import type { StoryProgressView, StoryRewardCutsceneView } from '@/lib/story/views';
 
-export type GallerySection = 'bond' | 'cg' | 'outfit' | 'title' | 'bg';
+export type GallerySection = 'bond' | 'cg' | 'bonus' | 'outfit' | 'title' | 'bg';
 
-export const GALLERY_SECTIONS: readonly GallerySection[] = ['bond', 'cg', 'outfit', 'title', 'bg'];
+export const GALLERY_SECTIONS: readonly GallerySection[] = ['bond', 'cg', 'bonus', 'outfit', 'title', 'bg'];
 
 export const GALLERY_SECTION_LABEL: Readonly<Record<GallerySection, string>> = Object.freeze({
   bond: '인연 씬',
   cg: '이벤트 CG',
+  bonus: '보너스',
   outfit: '의상',
   title: '칭호',
   bg: '배경',
@@ -111,7 +112,9 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
     const hint = storyRewardRequirement(item, chapters);
     if (item.kind === 'cg') {
       const cutscene = toStoryRewardCutscene(item) ?? undefined;
-      entries.push({ id: item.id, section: 'cg', name: item.name, unlocked, hint, art: item.art ?? null, characterId: item.characterId, cutscene, caption: cutscene?.caption });
+      // 보너스 CG(인연·도장 레벨 해금)는 별도 섹션 — 기존 이벤트 CG 집계를 흔들지 않는다
+      const section: GallerySection = isBonusStoryReward(item) ? 'bonus' : 'cg';
+      entries.push({ id: item.id, section, name: item.name, unlocked, hint, art: item.art ?? null, characterId: item.subjectId ?? item.characterId, cutscene, caption: cutscene?.caption });
     } else if (item.kind === 'outfit' && item.characterId) {
       const art = getCharacterArt(item.characterId, 'happy', item.outfitId ?? null) ?? getCharacterArt(item.characterId, 'happy');
       entries.push({ id: item.id, section: 'outfit', name: item.name, unlocked, hint, art, characterId: item.characterId, outfitId: item.outfitId, caption: item.description });

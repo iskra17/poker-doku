@@ -9,6 +9,7 @@ import { formatObjectiveProgress } from '@/lib/story/story-live-rules';
 import { STAGE_TIMING_MS, buildRewardRevealPlan, stageAutoAdvanceMs, type RevealStage } from '@/lib/story/reward-view';
 import type { ChapterResultView } from '@/lib/story/views';
 import { usePresentationStore } from '@/lib/store/presentation-store';
+import { useSettingsStore } from '@/lib/store/settings-store';
 import BeltBanner from './BeltBanner';
 import RewardCutscene from './RewardCutscene';
 import RewardItemCard, { type RewardCardItem } from './RewardItemCard';
@@ -35,7 +36,9 @@ const GRADE_COLOR: Record<ChapterResultView['grade'], string> = {
  */
 export default function RewardReveal({ result, onDone }: RewardRevealProps) {
   const reduced = usePrefersReducedMotion();
-  const plan = useMemo(() => buildRewardRevealPlan(result), [result]);
+  // 보너스 CG를 숨겨 뒀으면 컷신 단계 자체를 만들지 않는다(플랜 입력 — 렌더 숨김은 진행이 멈춘다)
+  const showBonusCg = useSettingsStore(state => state.showBonusCg);
+  const plan = useMemo(() => buildRewardRevealPlan(result, undefined, { showBonusCg }), [result, showBonusCg]);
   const lastIndex = plan.stages.length - 1;
   const [stageIndex, setStageIndex] = useState(() => (reduced ? lastIndex : 0));
   const [flipped, setFlipped] = useState(() => (reduced ? Number.MAX_SAFE_INTEGER : 0));

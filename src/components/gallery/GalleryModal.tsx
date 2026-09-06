@@ -35,10 +35,16 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
   const [cutscene, setCutscene] = useState<StoryRewardCutsceneView | null>(null);
   const [scene, setScene] = useState<CgStageScene | null>(null);
 
-  // 로비 헤더에서 바로 열면 스토리 진행도가 아직 없을 수 있다 — 한 번 불러온다(배경·미리보기 해금 판정용)
+  /**
+   * 열 때마다 진행도를 다시 불러온다(`GET /api/story` — 레이트리밋 30/분 안).
+   * 서버 `getProgress`가 조회 전에 보상 reconcile로 자기 치유하므로, 인연·도장 레벨이 방금 오른 직후
+   * 기록실을 열어도 새로 열린 보너스 CG가 바로 보인다(2026-09-06 Astra 검토 P2 ⑦).
+   */
   useEffect(() => {
-    if (isOpen && progressStatus === 'idle') void load();
-  }, [isOpen, progressStatus, load]);
+    if (isOpen && progressStatus !== 'loading') void load();
+    // 열리는 순간에만 — 로딩 상태 변화로 재요청하지 않는다
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // 열릴 때 초기 섹션 — 지정값 > NEW가 있는 첫 섹션 > 인연 씬
   useEffect(() => {
@@ -54,7 +60,7 @@ export default function GalleryModal({ isOpen, onClose, initialSection }: Galler
     if (profileId) markSeen(profileId, [entry.id]);
     if (entry.section === 'bond' && entry.bond) {
       setBond(entry.bond);
-    } else if (entry.section === 'cg' && entry.cutscene) {
+    } else if ((entry.section === 'cg' || entry.section === 'bonus') && entry.cutscene) {
       setCutscene(entry.cutscene);
     } else if (entry.section === 'cg' && entry.sceneCg && entry.art) {
       setScene({

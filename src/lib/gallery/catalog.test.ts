@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ProgressionSnapshot } from '@/lib/progression/types';
 import type { StoryProgressView } from '@/lib/story/views';
 import { buildGallery, collectChapterBackgroundIds, summarizeGallery } from './catalog';
+import { newEntries } from './seen';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 
 function snapshot(overrides: Partial<ProgressionSnapshot> = {}): ProgressionSnapshot {
@@ -95,6 +96,43 @@ describe('buildGallery', () => {
     const after = buildGallery({ snapshot: snapshot(), progress: completed });
     expect(after.find(entry => entry.id === 'scene-cg:act3-ch09-river-walk')?.unlocked).toBe(true);
     expect(after.find(entry => entry.id === 'scene-cg:act1-ch02-garden-walk')?.unlocked).toBe(false);
+  });
+});
+
+describe('buildGallery — 보너스 CG 섹션', () => {
+  it('보너스 CG 50장은 별도 섹션이고 기존 이벤트 CG 집계를 건드리지 않는다', () => {
+    const entries = buildGallery({ snapshot: snapshot(), progress: progress() });
+    const bonus = entries.filter(entry => entry.section === 'bonus');
+    expect(bonus).toHaveLength(50);
+    expect(summarizeGallery(entries).find(row => row.section === 'cg')?.total).toBe(35);
+    expect(bonus.every(entry => entry.id.startsWith('story-bonus-cg-'))).toBe(true);
+    // 타일은 잠긴 상태에서도 컷신 payload를 들고 있어 해금 즉시 재생된다
+    const sakuraCasual = bonus.find(entry => entry.id === 'story-bonus-cg-sakura-casual')!;
+    expect(sakuraCasual.unlocked).toBe(false);
+    expect(sakuraCasual.hint).toBe('사쿠라 인연 Lv.4');
+    expect(sakuraCasual.cutscene?.kind).toBe('event-cg');
+    expect(sakuraCasual.art).toBe('/assets/story/cg/bonus-sakura-casual.webp');
+    // 비히로인도 subjectId로 그룹핑된다
+    expect(bonus.find(entry => entry.id === 'story-bonus-cg-yuzuki-beach')).toMatchObject({
+      characterId: 'yuzuki', hint: '도장 Lv.50',
+    });
+  });
+
+  it('보유하면 해금 + NEW 후보가 된다', () => {
+    const owned = snapshot({
+      inventory: [{ itemId: 'story-bonus-cg-lin-casual', quantity: 1, updatedAt: 0 }] as ProgressionSnapshot['inventory'],
+    });
+    const entries = buildGallery({ snapshot: owned, progress: progress() });
+    expect(entries.find(entry => entry.id === 'story-bonus-cg-lin-casual')?.unlocked).toBe(true);
+    expect(newEntries(entries, new Set()).map(entry => entry.id)).toContain('story-bonus-cg-lin-casual');
+    expect(newEntries(entries, new Set(['story-bonus-cg-lin-casual'])).map(entry => entry.id))
+      .not.toContain('story-bonus-cg-lin-casual');
+  });
+
+  it('운영자 unlockAll은 보너스 섹션도 함께 연다', () => {
+    const all = buildGallery({ snapshot: snapshot(), progress: progress(), unlockAll: true });
+    expect(all.filter(entry => entry.section === 'bonus').every(entry => entry.unlocked)).toBe(true);
+    expect(summarizeGallery(all).find(row => row.section === 'bonus')).toEqual({ section: 'bonus', unlocked: 50, total: 50 });
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STORY_CHAPTERS } from './chapters';
 import { buildRewardRevealPlan, deriveFallbackRewards, stageAutoAdvanceMs } from './reward-view';
+import { getStoryRewardDefinition, toStoryRewardCutscene, toStoryRewardItemView } from './rewards/catalog';
 import type { ChapterResultView } from './views';
 
 function result(overrides: Partial<ChapterResultView> = {}): ChapterResultView {
@@ -18,6 +19,48 @@ function result(overrides: Partial<ChapterResultView> = {}): ChapterResultView {
     ...overrides,
   };
 }
+
+describe('reward reveal plan — 보너스 CG 표시 설정', () => {
+  const bonusId = 'story-bonus-cg-sakura-casual';
+  const bonusCutscene = toStoryRewardCutscene(getStoryRewardDefinition(bonusId)!)!;
+  const bonusItem = toStoryRewardItemView(getStoryRewardDefinition(bonusId)!);
+
+  function bonusResult(): ChapterResultView {
+    return result({
+      rewards: {
+        firstClear: true, dojoXpMilli: 0, affinity: [], badgeId: null,
+        items: [bonusItem], chips: 0, cutscene: bonusCutscene, unlockedScenes: [], next: [],
+      },
+    });
+  }
+
+  it('기본(표시 켜짐)은 보너스 컷신 단계를 그대로 만든다', () => {
+    const plan = buildRewardRevealPlan(bonusResult(), STORY_CHAPTERS);
+    expect(plan.cutscene?.id).toBe(bonusId);
+    expect(plan.stages).toContain('cutscene');
+  });
+
+  it('표시를 끄면 컷신과 그 단계를 함께 뺀다 — 아이템 카드는 남는다', () => {
+    const plan = buildRewardRevealPlan(bonusResult(), STORY_CHAPTERS, { showBonusCg: false });
+    expect(plan.cutscene).toBeNull();
+    expect(plan.stages).not.toContain('cutscene');
+    expect(plan.stages).toContain('items');
+    expect(plan.items.map(item => item.id)).toEqual([bonusId]);
+  });
+
+  it('스토리 CG 컷신은 표시를 꺼도 그대로 나온다', () => {
+    const beltId = 'story-cg-act1-belt-white';
+    const plan = buildRewardRevealPlan(result({
+      rewards: {
+        firstClear: true, dojoXpMilli: 0, affinity: [], badgeId: null,
+        items: [toStoryRewardItemView(getStoryRewardDefinition(beltId)!)],
+        chips: 0, cutscene: toStoryRewardCutscene(getStoryRewardDefinition(beltId)!), unlockedScenes: [], next: [],
+      },
+    }), STORY_CHAPTERS, { showBonusCg: false });
+    expect(plan.cutscene?.id).toBe(beltId);
+    expect(plan.stages).toContain('cutscene');
+  });
+});
 
 describe('reward reveal plan', () => {
   it('졸업 대결만 재도전은 등급 스탬프·드릴 통계 단계를 빼고 순위 카드만 남긴다', () => {

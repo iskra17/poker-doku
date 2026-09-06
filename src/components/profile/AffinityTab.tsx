@@ -17,6 +17,7 @@ import { PROGRESSION_CHARACTER_IDS, type ProgressionCharacterId } from '@/lib/pr
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import {
   STORY_REWARD_CATALOG,
+  isBonusStoryReward,
   storyRewardRequirement,
   toStoryRewardCutscene,
   type StoryRewardDefinition,
@@ -24,6 +25,7 @@ import {
 import type { StoryRewardCutsceneView } from '@/lib/story/views';
 import { useOperatorMode, useOperatorStore } from '@/lib/store/operator-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
+import { useSettingsStore } from '@/lib/store/settings-store';
 
 /** 잠긴 갤러리 타일 — 🔒 + 해금 조건 */
 function LockedTile({ label, hint }: { label: string; hint: string }) {
@@ -55,12 +57,18 @@ export default function AffinityTab() {
   const operator = useOperatorMode();
   const outfitPreview = useOperatorStore(state => state.outfitPreview);
   const setOutfitPreview = useOperatorStore(state => state.setOutfitPreview);
+  // 보너스 CG 표시 설정 — 기록실과 같은 필터를 인연 탭의 두 CG 목록에도 적용한다
+  const showBonusCg = useSettingsStore(state => state.showBonusCg);
   if (!snapshot) return null;
   const balance = getBalance(snapshot.profile.balanceVersion);
   const owned = new Set(snapshot.inventory.map(item => item.itemId));
   const viewable = (itemId: string): boolean => operator || owned.has(itemId);
   const cosmetics = snapshot.cosmetics;
-  const dojoCgs = STORY_REWARD_CATALOG.filter(item => item.kind === 'cg' && !item.characterId);
+  const dojoCgs = STORY_REWARD_CATALOG.filter(item => item.kind === 'cg' && !item.characterId && !isBonusStoryReward(item));
+  // 보너스 CG — 히로인 담당분은 각 캐릭터 카드에, 비히로인(미야코·유즈키·린·잉그리드)은 도장 기록 아래 따로
+  const bonusDojoCgs = showBonusCg
+    ? STORY_REWARD_CATALOG.filter(item => isBonusStoryReward(item) && !item.characterId)
+    : [];
 
   const cgTile = (item: StoryRewardDefinition) => {
     const cutscene = toStoryRewardCutscene(item);
@@ -104,6 +112,15 @@ export default function AffinityTab() {
         </section>
       )}
 
+      {/* 보너스 CG (도장 레벨 해금) — 미야코·유즈키·린·잉그리드 */}
+      {bonusDojoCgs.length > 0 && (
+        <section className="rounded-xl border border-mystic/25 bg-elevated/40 p-3" aria-label="보너스 CG">
+          <h3 className="text-xs font-bold text-mystic">보너스 CG</h3>
+          <p className="mt-0.5 text-[10px] text-ink-dim">도장 레벨이 오르면 열려요. 설정 → 표시에서 숨길 수 있어요.</p>
+          <div className="mt-2 grid grid-cols-4 gap-1.5">{bonusDojoCgs.map(cgTile)}</div>
+        </section>
+      )}
+
       {PROGRESSION_CHARACTER_IDS.map(characterId => {
         const character = getCharacterById(characterId);
         const affinity = snapshot.affinities.find(value => value.characterId === characterId);
@@ -112,7 +129,10 @@ export default function AffinityTab() {
         const threshold = level >= balance.affinityMaxLevel ? 0 : balance.affinityForNextLevel(level);
         const scenes = getBondScenes(characterId);
         const outfits = STORY_REWARD_CATALOG.filter(item => item.kind === 'outfit' && item.characterId === characterId);
-        const cgs = STORY_REWARD_CATALOG.filter(item => item.kind === 'cg' && item.characterId === characterId);
+        const cgs = STORY_REWARD_CATALOG.filter(item => item.kind === 'cg' && item.characterId === characterId && !isBonusStoryReward(item));
+        const bonusCgs = showBonusCg
+          ? STORY_REWARD_CATALOG.filter(item => isBonusStoryReward(item) && item.characterId === characterId)
+          : [];
         const equippedOutfit = cosmetics.outfits[characterId as ProgressionCharacterId] ?? null;
         const equippedOutfitId = equippedOutfit ? outfits.find(item => item.id === equippedOutfit)?.outfitId ?? null : null;
         return (
@@ -176,6 +196,14 @@ export default function AffinityTab() {
               <div className="mt-2">
                 <p className="text-[10px] font-bold text-ink-dim">이벤트 CG</p>
                 <div className="mt-1 grid grid-cols-4 gap-1.5">{cgs.map(cgTile)}</div>
+              </div>
+            )}
+
+            {/* 보너스 CG — 인연 레벨 해금 */}
+            {bonusCgs.length > 0 && (
+              <div className="mt-2">
+                <p className="text-[10px] font-bold text-ink-dim">보너스 CG</p>
+                <div className="mt-1 grid grid-cols-4 gap-1.5">{bonusCgs.map(cgTile)}</div>
               </div>
             )}
 

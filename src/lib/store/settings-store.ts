@@ -82,7 +82,42 @@ interface SettingsStore {
   /** 투척 사용법 가이드를 본 적 있는지 — 첫 발사대 탭에서 1회 노출 (피커 ❓로 재열람 가능) */
   throwablesGuideSeen: boolean;
   markThrowablesGuideSeen: () => void;
+  /**
+   * 보너스 CG 표시 — **노출 선호**(연령 인증이 아니다). 끄면 기록실 '보너스' 탭·타일·NEW 집계,
+   * 프로필 인연 탭의 보너스 CG 목록, 결산 컷신에서 보너스 항목을 숨긴다.
+   * 지급·해금 상태는 그대로 유지되므로 다시 켜면 전부 보인다.
+   */
+  showBonusCg: boolean;
+  toggleBonusCg: () => void;
 }
+
+/**
+ * persist 마이그레이션 — 저장본에 없던 키의 기본값을 채운다(회귀: `settings-store.test.ts`).
+ * v2: 캐릭터 로스터 개편 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
+ * v3: 카드 스타일 '클래식' 삭제 — 저장돼 있던 classic(및 미지 값)은 solid로
+ * v4: 장면별 BGM 선택(musicTrackPrefs) — 없으면 빈 객체(전부 auto)
+ * v5: 보너스 CG 표시(showBonusCg) — 기존 사용자는 기본 노출(true)
+ */
+export function migrateSettings(persisted: unknown): SettingsStore {
+  const s = persisted as Partial<SettingsStore> | undefined;
+  if (!s) return persisted as SettingsStore;
+  const idMap: Record<string, string> = { ryuka: 'ara', yuki: 'chloe', akira: 'vivian', reika: 'elena' };
+  if (s.profileCharacter && idMap[s.profileCharacter]) {
+    s.profileCharacter = idMap[s.profileCharacter];
+  }
+  if (s.deckStyle && !['solid', 'big-rank'].includes(s.deckStyle)) {
+    s.deckStyle = 'solid';
+  }
+  if (!s.musicTrackPrefs || typeof s.musicTrackPrefs !== 'object') {
+    s.musicTrackPrefs = {};
+  }
+  if (typeof s.showBonusCg !== 'boolean') {
+    s.showBonusCg = true;
+  }
+  return s as SettingsStore;
+}
+
+export const SETTINGS_PERSIST_VERSION = 5;
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
@@ -131,28 +166,13 @@ export const useSettingsStore = create<SettingsStore>()(
       setSelectedThrowable: (selectedThrowableId) => set({ selectedThrowableId }),
       throwablesGuideSeen: false,
       markThrowablesGuideSeen: () => set({ throwablesGuideSeen: true }),
+      showBonusCg: true,
+      toggleBonusCg: () => set(s => ({ showBonusCg: !s.showBonusCg })),
     }),
     {
       name: 'poker-doku-settings',
-      version: 4,
-      // v2: 캐릭터 로스터 개편 (ryuka→ara, yuki→chloe, akira→vivian, reika→elena)
-      // v3: 카드 스타일 '클래식' 삭제 — 저장돼 있던 classic(및 미지 값)은 solid로
-      // v4: 장면별 BGM 선택(musicTrackPrefs) — 없으면 빈 객체(전부 auto)
-      migrate: (persisted) => {
-        const s = persisted as Partial<SettingsStore> | undefined;
-        if (!s) return persisted as SettingsStore;
-        const idMap: Record<string, string> = { ryuka: 'ara', yuki: 'chloe', akira: 'vivian', reika: 'elena' };
-        if (s.profileCharacter && idMap[s.profileCharacter]) {
-          s.profileCharacter = idMap[s.profileCharacter];
-        }
-        if (s.deckStyle && !['solid', 'big-rank'].includes(s.deckStyle)) {
-          s.deckStyle = 'solid';
-        }
-        if (!s.musicTrackPrefs || typeof s.musicTrackPrefs !== 'object') {
-          s.musicTrackPrefs = {};
-        }
-        return s as SettingsStore;
-      },
+      version: SETTINGS_PERSIST_VERSION,
+      migrate: migrateSettings,
     },
   ),
 );

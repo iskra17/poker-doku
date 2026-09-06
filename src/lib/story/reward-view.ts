@@ -6,7 +6,7 @@
  * - 단계는 존재하는 것만: stamp → stats → items → cutscene → belt → next → done.
  */
 import { STORY_CHAPTERS } from './chapters';
-import { STORY_REWARD_CATALOG, nextStoryRewards, pickStoryCutscene, toStoryRewardItemView } from './rewards/catalog';
+import { STORY_REWARD_CATALOG, isBonusStoryRewardId, nextStoryRewards, pickStoryCutscene, toStoryRewardItemView } from './rewards/catalog';
 import type { Chapter, StoryBelt } from './types';
 import type { ChapterResultView, StoryRewardCutsceneView, StoryRewardItemView, StoryRewardKind, StoryRewardPreview, StoryUnlockedSceneView } from './views';
 
@@ -64,14 +64,28 @@ export function deriveFallbackRewards(result: ChapterResultView, chapter: Chapte
   return { items, chips };
 }
 
-export function buildRewardRevealPlan(result: ChapterResultView, chapters: readonly Chapter[] = STORY_CHAPTERS): RewardRevealPlan {
+export interface RewardRevealOptions {
+  /**
+   * 보너스 CG 표시 설정(기본 true). false면 보너스 컷신을 **플랜 생성 전에** 뺀다 —
+   * 렌더에서만 숨기면 자동 진행이 없는 'cutscene' 단계에 갇힌다(2026-09-06 Astra 검토 P2 ⑥).
+   * 서버 DTO에는 `line`이 없으므로 아이템 id로 공유 카탈로그를 조회해 판정한다.
+   */
+  showBonusCg?: boolean;
+}
+
+export function buildRewardRevealPlan(
+  result: ChapterResultView,
+  chapters: readonly Chapter[] = STORY_CHAPTERS,
+  { showBonusCg = true }: RewardRevealOptions = {},
+): RewardRevealPlan {
   const chapter = chapters.find(candidate => candidate.id === result.chapterId);
   const rewards = result.rewards;
   const fallback = rewards.items === undefined;
   const derived = fallback ? deriveFallbackRewards(result, chapter) : null;
   const items = rewards.items ?? derived?.items ?? [];
   const chips = rewards.chips ?? derived?.chips ?? 0;
-  const cutscene = rewards.cutscene === undefined ? pickStoryCutscene(items) : rewards.cutscene;
+  const picked = rewards.cutscene === undefined ? pickStoryCutscene(items) : rewards.cutscene;
+  const cutscene = picked && !showBonusCg && isBonusStoryRewardId(picked.id) ? null : picked;
   const belt = result.beltAwarded;
   const granted = new Set(items.map(item => item.id));
   const next = result.chapterId === 'daily'

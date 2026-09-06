@@ -174,6 +174,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     stackedPot, toggleStackedPot,
     showBlindButtons, toggleBlindButtons,
     throwablesEnabled, toggleThrowables,
+    showBonusCg, toggleBonusCg,
     muted, toggleMuted,
     musicMuted, toggleMusicMuted,
   } = useSettingsStore();
@@ -296,6 +297,14 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <SectionTitle>딜러 (미야코)</SectionTitle>
               <Toggle checked={showDealerAvatar} onToggle={toggleDealerAvatar} label="아바타 표시" />
               <Toggle checked={showDealerBubble} onToggle={toggleDealerBubble} label="말풍선 표시" />
+            </section>
+            <section>
+              <SectionTitle>기록실</SectionTitle>
+              <Toggle checked={showBonusCg} onToggle={toggleBonusCg} label="보너스 CG 표시" />
+              <p className="text-[11px] text-ink-dim leading-snug">
+                인연·도장 레벨로 열리는 보너스 CG를 기록실·인연 탭·결산 연출에서 보여 줘요.
+                꺼도 이미 받은 보상은 그대로 남아요.
+              </p>
             </section>
           </>
         )}
