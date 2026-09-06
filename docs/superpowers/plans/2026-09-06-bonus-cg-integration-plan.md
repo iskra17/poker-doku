@@ -51,3 +51,25 @@ reconcile 호출처는 기존(결산·데일리·`getProgress`)을 유지하고,
 - `gallery/catalog.test`: 'bonus' 섹션 분리, 토글 숨김, unlockAll, NEW.
 - `settings-store` persist v5 마이그레이션 테스트.
 - 브라우저(총괄): 기록실 보너스 탭·뷰어 루프 재생·토글·레벨업 뒤 해금 반영.
+
+## 6. Astra 검토 반영 (2026-09-06, 총괄 확정 — 본문과 다르면 이 절이 우선)
+
+근거: [reviews/2026-09-06-bonus-cg-plan-astra.md](../reviews/2026-09-06-bonus-cg-plan-astra.md). 7건 전부 수용.
+
+1. **레벨 스냅샷 의존성(P1)**: `StoryRewardService`에 `ProgressionService.getSnapshot`을 주입하지 않는다(중첩 트랜잭션 → 기존 지급까지 실패).
+   같은 DB의 `Pick<ProgressionRepository, 'getSnapshotInTransaction'>`를 주입하고(`server/index.ts`에 인스턴스 있음) `#loadState`가 같은 트랜잭션 안에서
+   `profile.dojoLevel`·`affinities[].level`을 읽는다. 프로필 부재만 레벨 0(미지급). 스냅샷 호출 실패는 기존 reconcile 예외 경로와 같게 처리.
+2. **reconcile 호출처(P2)**: 스토리 결산·데일리·`getProgress`는 **그대로**(스토리 XP 알림 콜백에 동기 reconcile을 넣으면 결산 지급 목록을 가로챈다).
+   즉시 반영은 cash/practice `completeHand`와 SnG `completeSng`(`progression-runtime.ts`)의 **커밋 이후**에만 추가하고, 실패는 격리(로그만)하며,
+   지급이 있었으면 전송 스냅샷을 다시 읽어 `progression-update`에 싣는다.
+3. **컷신 캐릭터 타입(P2)**: `views.ts`의 컷신 `characterId` 타입(현재 `StoryHeroineId | 'miyako'`)에 `'yuzuki' | 'lin' | 'ingrid'`를 추가한다.
+   보상 정의의 `characterId`(DB 패리티 대상)는 히로인 한정 유지 — 비히로인은 `subjectId`로 그룹핑.
+4. **기록실 뷰어(P2)**: `GalleryModal`의 컷신 뷰어 분기가 `section === 'cg'`만 받으므로 `'bonus'`도 연다(같은 CgStage 뷰어·`layer='modal'`).
+5. **표시 설정 범위(P2)**: `showBonusCg=false`는 기록실(`use-gallery.ts` 공유 필터 — 목록·집계·NEW)뿐 아니라 `AffinityTab`의 도장 기록 CG 행과
+   히로인별 이벤트 CG 목록에도 적용한다. NEW 기준선(`gallery/seen.ts`)의 실제 획득 집합은 필터와 무관하게 유지.
+6. **결산 컷신(P2)**: 표시 설정을 `reward-view.ts` **플랜 생성 전** 입력으로 넣어 보너스 컷신과 그 단계를 함께 제외한다(렌더만 숨기면 진행이 멈춘다).
+   DTO에는 `line`이 없으므로 클라이언트는 아이템 id로 공유 카탈로그(`rewards/catalog.ts`)를 조회해 `line`을 판정한다(순수 함수, 테스트).
+7. **자기 치유 재조회(P2)**: `GalleryModal`을 열 때 진행도가 이미 `ready`여도 `GET /api/story`를 다시 불러온다(레이트리밋 30/분 안). 레벨업 직후 열어도 최신 자격이 보이게.
+
+확인된 불변: v39 50행 INSERT·비히로인 `character_id NULL`·`kind='cg'`는 v32 CHECK/트리거 통과, 영수증 PK 멱등, `story-bonus-cg-<character>-<scene>` →
+`bonus-<character>-<scene>` stem 매핑은 `VIDEO_AVAILABLE`+stem 맵 동시 등록, 설정 persist v4→v5, `nextStoryRewards`는 레벨 트리거 제외.
