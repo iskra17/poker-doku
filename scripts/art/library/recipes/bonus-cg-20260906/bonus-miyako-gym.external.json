@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-miyako-gym",
+  "character": "miyako",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-miyako-gym.png",
+    "sha256": "d4e0edf1cc45764f18c44fb22a4b5fa8a00c3fc2c4de119f7e4c9e527dbdefec"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-miyako-gym.provenance.json",
+    "sha256": "055be55eecde837314558edd8e6a56092ce0098d027b1c4606c7b98869e7895f"
+  },
+  "prompt": "Wearing a black-and-gold sports bra and black leggings with her hair still up, she stretches with a resistance band, graceful and composed; medium side shot, gaze down at the band, elegant boutique gym with warm wood.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "down at the band",
+  "expression": "see prompt",
+  "outfit": "a black-and-gold sports bra and black leggings with her hair still up"
+}

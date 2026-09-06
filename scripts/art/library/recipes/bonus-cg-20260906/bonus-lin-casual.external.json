@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-lin-casual",
+  "character": "lin",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-lin-casual.png",
+    "sha256": "b4c1e099d3ae5af0dd9e0246f5c6a600f77f8d22d6d8eed4d7aa43f813a8952c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-lin-casual.provenance.json",
+    "sha256": "fd29c53973afb6d6a875854897a9b56c4dad901520c8e7e61ac2a6f741a439ca"
+  },
+  "prompt": "Wearing a linen shirt, wide pants and a sun hat, she picks fresh tea leaves in a basket on a hillside, looking back over her shoulder with a bright smile; environmental wide shot, gaze at the viewer, morning sun.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the viewer",
+  "expression": "see prompt",
+  "outfit": "a linen shirt, wide pants and a sun hat"
+}

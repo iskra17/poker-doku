@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-sing",
+  "character": "chloe",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-sing.png",
+    "sha256": "efe57d22028b7ab27af9c9512fbf867856c8d78e012746e472c332cc6ae6aad0"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-sing.provenance.json",
+    "sha256": "713971a60e62a0fbe509e82df065c5d0457937087773214c76cdc0a09b560258"
+  },
+  "prompt": "Wearing a glittery star-print jacket over a white tank top, she sings a pop song into a sparkly microphone on a small stage with a ring light and chat overlay screens behind, one hand raised; medium shot under pink and blue stage lights, gaze at the audience.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "at the audience.",
+  "expression": "see prompt",
+  "outfit": "a glittery star-print jacket over a white tank top"
+}

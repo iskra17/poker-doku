@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-casual",
+  "character": "chloe",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-casual.png",
+    "sha256": "a76761dce5bb6a0c8d1fb0a8ee90d00d8f9d7fc3e047eeeabe0a1a1b005e302c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-casual.provenance.json",
+    "sha256": "3f5e738f89fa56175f8a79c85f783be694e7fd1615c59400c3fa96992e9e0b14"
+  },
+  "prompt": "Wearing a cropped hoodie, a pleated mini skirt and platform sneakers, she poses with shopping bags in a bright mall taking a selfie, snowflake clips glinting; over-the-shoulder shot from behind toward a shop window reflection, playful wink.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a cropped hoodie, a pleated mini skirt and platform sneakers"
+}

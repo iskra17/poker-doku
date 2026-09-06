@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-beach",
+  "character": "chloe",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-beach.png",
+    "sha256": "5fd10c0a629c59228782de47a1549f876a076ef67061b62a952e9bee052d776c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-beach.provenance.json",
+    "sha256": "ea95102db93c19ecbef238aa4a39b15d3294ea0defbef8c453b6140dacf5c8b7"
+  },
+  "prompt": "Wearing a bright color-block bikini (cyan, white and coral) with heart-shaped sunglasses and an inflatable donut float, she floats in turquoise water waving at the viewer with a huge grin; three-quarter shot from slightly above, gaze at the camera, sparkling water and a distant pier.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the camera",
+  "expression": "see prompt",
+  "outfit": "a bright color-block bikini (cyan, white and coral) with heart-shaped sunglasses and an inflatable donut float"
+}

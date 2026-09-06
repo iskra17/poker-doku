@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "lin",
+  "scene": "casual",
+  "age": 24,
+  "prompt": "Wearing a linen shirt, wide pants and a sun hat, she picks fresh tea leaves in a basket on a hillside, looking back over her shoulder with a bright smile; environmental wide shot, gaze at the viewer, morning sun.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/lin.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/lin-showcase.png",
+      "sha256": "10c8e911e9e748e5ec99a3a2b174db8a431629e46ba6b6c7ae38b6728c66322c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/lin/casual.png",
+    "sha256": "b4c1e099d3ae5af0dd9e0246f5c6a600f77f8d22d6d8eed4d7aa43f813a8952c",
+    "width": 1024,
+    "height": 1536
+  }
+}

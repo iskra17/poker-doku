@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-vivian-beach",
+  "character": "vivian",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-vivian-beach.png",
+    "sha256": "2d8131c2ce627ea431c8e847b2882c881a4bf83bd34c05f9e3afcad212336300"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-vivian-beach.provenance.json",
+    "sha256": "37d3dc13b9bb4a8d98fc27ed002b3fbf7ffe5251a3cc7a9a10573b45f7d97c7c"
+  },
+  "prompt": "Wearing a black high-waisted vintage two-piece swimsuit with a wide-brimmed black sun hat and cat-eye sunglasses, she reclines on a white lounge chair by an infinity pool at a Riviera resort holding a cocktail glass, one leg crossed; three-quarter full-body from a low angle, gaze over the sunglasses at the viewer, golden hour.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "over the sunglasses at the viewer",
+  "expression": "see prompt",
+  "outfit": "a black high-waisted vintage two-piece swimsuit with a wide-brimmed black sun hat and cat-eye sunglasses"
+}

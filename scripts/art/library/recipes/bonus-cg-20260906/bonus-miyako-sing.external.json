@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-miyako-sing",
+  "character": "miyako",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-miyako-sing.png",
+    "sha256": "5aaebf11dc9efc6ba9e2888a08a76596c8106154d864af573bb4123417963b4c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-miyako-sing.provenance.json",
+    "sha256": "1ec75f0c79d35e2c8ac2c284faa3e3ac4a0095f31c3b9bbff45808916e91ec29"
+  },
+  "prompt": "Wearing a deep purple evening dress, she sings a gentle ballad with a microphone at a lounge bar counter, one hand near her chest, eyes softly closed; close-up to medium, gold and violet lounge lighting.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a deep purple evening dress"
+}

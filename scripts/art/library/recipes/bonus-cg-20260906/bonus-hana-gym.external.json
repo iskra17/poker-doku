@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-hana-gym",
+  "character": "hana",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-hana-gym.png",
+    "sha256": "7e25e91a04fb84dafce80fc75b3e46ec2b1fca94ae7e7189af1aed4c0c472cef"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-hana-gym.provenance.json",
+    "sha256": "5a227068052037ca5c52e9a955c1d57d41ef0ef2757dc393484e93da352af56d"
+  },
+  "prompt": "Wearing a grey fitted tank top and dark purple leggings with her hair in a low bun, she runs on a treadmill checking a smartwatch, composed and precise; medium side shot, gaze down at the watch, clean bright gym with large windows.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "down at the watch",
+  "expression": "see prompt",
+  "outfit": "a grey fitted tank top and dark purple leggings with her hair in a low bun"
+}

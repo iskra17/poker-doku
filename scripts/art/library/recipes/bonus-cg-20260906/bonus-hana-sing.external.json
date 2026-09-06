@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-hana-sing",
+  "character": "hana",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-hana-sing.png",
+    "sha256": "3058403ebd951f0c2416fe0864ade75d4253b3d1da8a1d096bcdb084edb0934c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-hana-sing.provenance.json",
+    "sha256": "5ed7e202eab998657bb1727f9d179640f8db38918b2b34d15ed4cd55962c9b33"
+  },
+  "prompt": "Wearing a soft blouse and a knit cardigan, she sings quietly into a karaoke microphone with both hands, eyes half closed and cheeks a little pink, more relaxed than usual; close-up to medium, warm karaoke room light, tambourine on the table.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a soft blouse and a knit cardigan"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-yuzuki-gym",
+  "character": "yuzuki",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-yuzuki-gym.png",
+    "sha256": "b2b01d8793e5ffffbf6c0018d16bef4bad05641f2cf9db617b1440ad1835b2e5"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-yuzuki-gym.provenance.json",
+    "sha256": "a0507431e131342b6d05f6c22b2087842a8049705f38b9d3b2eac3715a52ce83"
+  },
+  "prompt": "Wearing a white sports bra with red trim and red leggings, hair in a long high ponytail, she attempts a pull-up with a determined, slightly strained expression; medium side shot, gaze up at the bar, bright gym with morning light.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "up at the bar",
+  "expression": "see prompt",
+  "outfit": "a white sports bra with red trim and red leggings, hair in a long high ponytail"
+}

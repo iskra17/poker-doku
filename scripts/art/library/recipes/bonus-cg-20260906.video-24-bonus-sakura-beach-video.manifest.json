@@ -1,0 +1,443 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 24,
+  "jobs": [
+    {
+      "id": "bonus-sakura-beach-video",
+      "character": "sakura",
+      "scene": "beach",
+      "parent_job": "bonus-sakura-beach",
+      "seed": 509020266000,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "toward the ball",
+      "expression": "see prompt",
+      "outfit": "a pastel pink frilled bikini top with a matching high-waist bottom and a sheer white pareo tied at the hip",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-beach--cfc193cfee535bfacbec2dba1103d983e0db0a8dc8d41c9a44bf36ec1787bffa\\source.png",
+          "sha256": "e3c56ec6dbdc18d2d086cb3bbcdf838fe418265bf106a85507f7ddf926d3c24c"
+        }
+      }
+    },
+    {
+      "id": "bonus-sakura-yoga-video",
+      "character": "sakura",
+      "scene": "yoga",
+      "parent_job": "bonus-sakura-yoga",
+      "seed": 509020266001,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a white ribbed crop top and pale pink yoga leggings",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: calm slow breathing, curtain or leaves stirring softly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-yoga--5ce1ba8cb6e52aff96d24bba14d5fed8d026c8e6b269315ef0d85510f431b14c\\source.png",
+          "sha256": "26269eed3a81a88bbc939f36606885e7ffabf3ffd0ac9b2d364cd2ac0d33b67d"
+        }
+      }
+    },
+    {
+      "id": "bonus-sakura-sing-video",
+      "character": "sakura",
+      "scene": "sing",
+      "parent_job": "bonus-sakura-sing",
+      "seed": 509020266002,
+      "angle": "close-up to medium, stage light",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a black rock band tee, a tartan mini skirt and fingerless gloves",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: stage light shimmer and haze drifting, hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-sing--0a0dfdbf3e0db7b8fee2b2ef573face98f785c86fbc87ceb637ca398fcdfd145\\source.png",
+          "sha256": "206d7b2f9b60cd55f0393310e588951f732ca1435efe5d7c2455138a07effbc9"
+        }
+      }
+    },
+    {
+      "id": "bonus-sakura-casual-video",
+      "character": "sakura",
+      "scene": "casual",
+      "parent_job": "bonus-sakura-casual",
+      "seed": 509020266003,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a cream knit sweater, a long pleated skirt and a small crossbody bag",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: ambient drift such as steam, petals, snow or leaves, hair stirring, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-casual--4fd109720286f86f73d04700505206a827283562b69f3d5ee2a3a3ed742f5952\\source.png",
+          "sha256": "e0aa8b8818c326163e6cac940b0b1b1b8c2e818e578125d3b8b1faf30d6eb16b"
+        }
+      }
+    },
+    {
+      "id": "bonus-ara-beach-video",
+      "character": "ara",
+      "scene": "beach",
+      "parent_job": "bonus-ara-beach",
+      "seed": 509020266004,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "off-frame at a rival",
+      "expression": "see prompt",
+      "outfit": "a sporty red-and-black bikini with an open black rash guard and mirrored sunglasses pushed up on her head",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-beach--5a7bad0c76a392b09682d19f525db93103ac67415ae0285b83ed7e7e51e69473\\source.png",
+          "sha256": "6a4b335ff1b972ea77e04782c031c63fd6126d1b1eb3db7595c25f9fad4b2e75"
+        }
+      }
+    },
+    {
+      "id": "bonus-ara-gym-video",
+      "character": "ara",
+      "scene": "gym",
+      "parent_job": "bonus-ara-gym",
+      "seed": 509020266005,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "straight ahead",
+      "expression": "see prompt",
+      "outfit": "a black sports bra with red trim and black leggings, hair in a high ponytail",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-gym--2e4c5d5644db342019e33fe5481270ac586a49fe492da284b9d9becee8a23eda\\source.png",
+          "sha256": "e4cb65c6d52275ff9c4008fd706799084943a596a9cbbd624957cfc2fbca38e8"
+        }
+      }
+    },
+    {
+      "id": "bonus-ara-yoga-video",
+      "character": "ara",
+      "scene": "yoga",
+      "parent_job": "bonus-ara-yoga",
+      "seed": 509020266006,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a red crop top and black yoga leggings",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: calm slow breathing, curtain or leaves stirring softly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-yoga--f759f685de488a3368fb9190f65dce4f01a5af05c9057b6305e65bddacc595eb\\source.png",
+          "sha256": "4762171f605a593e8cdad808f9167765c9067e61b642892d9af10fed93017759"
+        }
+      }
+    },
+    {
+      "id": "bonus-ara-sing-video",
+      "character": "ara",
+      "scene": "sing",
+      "parent_job": "bonus-ara-sing",
+      "seed": 509020266007,
+      "angle": "close-up to medium, stage light",
+      "gaze": "at the lyrics screen",
+      "expression": "see prompt",
+      "outfit": "an oversized black hoodie and denim shorts",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: stage light shimmer and haze drifting, hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-sing--19a7549f4e3568063c1b52cd2f3213ea436e54fb272f249812de71f5fbc9a438\\source.png",
+          "sha256": "d502f193a1b08ec538961bee4da8a8f678ad42df8030efe1798b271ab8e1113c"
+        }
+      }
+    },
+    {
+      "id": "bonus-ara-casual-video",
+      "character": "ara",
+      "scene": "casual",
+      "parent_job": "bonus-ara-casual",
+      "seed": 509020266008,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "at the screen",
+      "expression": "see prompt",
+      "outfit": "a cropped varsity jacket, a white tee and cargo pants",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: ambient drift such as steam, petals, snow or leaves, hair stirring, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-casual--c8cfce4fbc9704cb35a77e49c988d66b3f3d85b16afb4bfd371e93e0ddde197c\\source.png",
+          "sha256": "6a9897bebee7195144bf734cc1c303b3e06e1a612e131f62eb693f9aa683caa9"
+        }
+      }
+    },
+    {
+      "id": "bonus-hana-beach-video",
+      "character": "hana",
+      "scene": "beach",
+      "parent_job": "bonus-hana-beach",
+      "seed": 509020266009,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "at the book",
+      "expression": "see prompt",
+      "outfit": "a navy one-piece swimsuit with a white sheer cover-up shirt and a wide straw hat",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (하나) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-hana-beach--bc265d8d82e849ec2c17e236644f7058182326f341aef26f82494dbcde961c43\\source.png",
+          "sha256": "6ec448041fa1fd6ae22235324dcd1ca2be5cdb4c0c44c1c3fef85017e9f2a2a3"
+        }
+      }
+    },
+    {
+      "id": "bonus-hana-gym-video",
+      "character": "hana",
+      "scene": "gym",
+      "parent_job": "bonus-hana-gym",
+      "seed": 509020266010,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "down at the watch",
+      "expression": "see prompt",
+      "outfit": "a grey fitted tank top and dark purple leggings with her hair in a low bun",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (하나) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-hana-gym--fdc1f352dbfc5f571b03155e28361799db6899b9a26a3a912207cce13035aa48\\source.png",
+          "sha256": "7e25e91a04fb84dafce80fc75b3e46ec2b1fca94ae7e7189af1aed4c0c472cef"
+        }
+      }
+    },
+    {
+      "id": "bonus-hana-yoga-video",
+      "character": "hana",
+      "scene": "yoga",
+      "parent_job": "bonus-hana-yoga",
+      "seed": 509020266011,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a lilac pilates set",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (하나) in the same outfit. Subtle ambient motion only: calm slow breathing, curtain or leaves stirring softly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-hana-yoga--b18e0cfc64a195703ae93d27af684bb5acf03fb2b54ad83459c4c2c92b2e4916\\source.png",
+          "sha256": "28e0a33edc93e59fbcb42639014d151a46db143193e66a8b5f4dfbdf1fc5f8e7"
+        }
+      }
+    },
+    {
+      "id": "bonus-hana-sing-video",
+      "character": "hana",
+      "scene": "sing",
+      "parent_job": "bonus-hana-sing",
+      "seed": 509020266012,
+      "angle": "close-up to medium, stage light",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a soft blouse and a knit cardigan",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (하나) in the same outfit. Subtle ambient motion only: stage light shimmer and haze drifting, hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-hana-sing--096e61b249a7bfa4ecbc295e165d2f634920a4afd1dc214df2643c1302f39cc5\\source.png",
+          "sha256": "3058403ebd951f0c2416fe0864ade75d4253b3d1da8a1d096bcdb084edb0934c"
+        }
+      }
+    },
+    {
+      "id": "bonus-hana-casual-video",
+      "character": "hana",
+      "scene": "casual",
+      "parent_job": "bonus-hana-casual",
+      "seed": 509020266013,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a beige trench coat and a turtleneck",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (하나) in the same outfit. Subtle ambient motion only: ambient drift such as steam, petals, snow or leaves, hair stirring, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-hana-casual--e3a427dda809a8cbf332b3b20878ca67f308c89d9172390f2eeaf7967d58b567\\source.png",
+          "sha256": "c488c9cd135214b723c17e19a2c31b30b33798e71e8b1b28e9c3856a48d7946e"
+        }
+      }
+    },
+    {
+      "id": "bonus-chloe-beach-video",
+      "character": "chloe",
+      "scene": "beach",
+      "parent_job": "bonus-chloe-beach",
+      "seed": 509020266014,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "at the camera",
+      "expression": "see prompt",
+      "outfit": "a bright color-block bikini (cyan, white and coral) with heart-shaped sunglasses and an inflatable donut float",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 23-year-old woman (클로이) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-chloe-beach--940a255685d1bfb4dc089252c88400d2909cf9ac81f3f3ec7ff78c9690fe8346\\source.png",
+          "sha256": "5fd10c0a629c59228782de47a1549f876a076ef67061b62a952e9bee052d776c"
+        }
+      }
+    },
+    {
+      "id": "bonus-chloe-gym-video",
+      "character": "chloe",
+      "scene": "gym",
+      "parent_job": "bonus-chloe-gym",
+      "seed": 509020266015,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "at the phone",
+      "expression": "see prompt",
+      "outfit": "a cyan sports bra and white shorts with a headband",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 23-year-old woman (클로이) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-chloe-gym--b4e0075f9b02923afa6aca5182cae3436955b41da5d20a6bd776ed84a66ec689\\source.png",
+          "sha256": "9e67b2dd9cad7c25cb184b4a00080b485f627944f7e4e7292af5d9091dcb51ad"
+        }
+      }
+    },
+    {
+      "id": "bonus-chloe-yoga-video",
+      "character": "chloe",
+      "scene": "yoga",
+      "parent_job": "bonus-chloe-yoga",
+      "seed": 509020266016,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a pastel tie-dye yoga set",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 23-year-old woman (클로이) in the same outfit. Subtle ambient motion only: calm slow breathing, curtain or leaves stirring softly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-chloe-yoga--afdbec383577f968ddd2ddc9a0444445af98cda7b0c3840f2ecbe43d35916eb8\\source.png",
+          "sha256": "529d7127a1f68a21eb84e69f943aa03bec5eaced148c2d74aac1d6bb4ee58a8d"
+        }
+      }
+    },
+    {
+      "id": "bonus-chloe-sing-video",
+      "character": "chloe",
+      "scene": "sing",
+      "parent_job": "bonus-chloe-sing",
+      "seed": 509020266017,
+      "angle": "close-up to medium, stage light",
+      "gaze": "at the audience.",
+      "expression": "see prompt",
+      "outfit": "a glittery star-print jacket over a white tank top",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 23-year-old woman (클로이) in the same outfit. Subtle ambient motion only: stage light shimmer and haze drifting, hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-chloe-sing--9f3f0972adedd0a078dd5389303e98f20e30c665246a3aa5afe4025b513ad07f\\source.png",
+          "sha256": "efe57d22028b7ab27af9c9512fbf867856c8d78e012746e472c332cc6ae6aad0"
+        }
+      }
+    },
+    {
+      "id": "bonus-chloe-casual-video",
+      "character": "chloe",
+      "scene": "casual",
+      "parent_job": "bonus-chloe-casual",
+      "seed": 509020266018,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a cropped hoodie, a pleated mini skirt and platform sneakers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 23-year-old woman (클로이) in the same outfit. Subtle ambient motion only: ambient drift such as steam, petals, snow or leaves, hair stirring, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-chloe-casual--a4596f600b33f6012c883f380fa7e8716265033486816d5e9a7d4967317bd56b\\source.png",
+          "sha256": "a76761dce5bb6a0c8d1fb0a8ee90d00d8f9d7fc3e047eeeabe0a1a1b005e302c"
+        }
+      }
+    },
+    {
+      "id": "bonus-vivian-beach-video",
+      "character": "vivian",
+      "scene": "beach",
+      "parent_job": "bonus-vivian-beach",
+      "seed": 509020266019,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "over the sunglasses at the viewer",
+      "expression": "see prompt",
+      "outfit": "a black high-waisted vintage two-piece swimsuit with a wide-brimmed black sun hat and cat-eye sunglasses",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-beach--616be3eee8a9272cdf36910fc22ad98c5a85ab84d922dd9d4af448c199368b4d\\source.png",
+          "sha256": "2d8131c2ce627ea431c8e847b2882c881a4bf83bd34c05f9e3afcad212336300"
+        }
+      }
+    },
+    {
+      "id": "bonus-vivian-gym-video",
+      "character": "vivian",
+      "scene": "gym",
+      "parent_job": "bonus-vivian-gym",
+      "seed": 509020266020,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "at the bag",
+      "expression": "see prompt",
+      "outfit": "a sleek black sports bra and matching leggings",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-gym--2b7b7b7bd0d27cae8ef7b88912d65b08dfbd7f8df0e0c4ab62549c85ce5d4adc\\source.png",
+          "sha256": "b590d9f745079391d44ed6a1c23788f2e0da33301e52351586fe9b6d6674df24"
+        }
+      }
+    },
+    {
+      "id": "bonus-vivian-yoga-video",
+      "character": "vivian",
+      "scene": "yoga",
+      "parent_job": "bonus-vivian-yoga",
+      "seed": 509020266021,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a dark teal yoga set",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: calm slow breathing, curtain or leaves stirring softly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-yoga--da939e615cbd5294025fbbc066ceb066c27aabc266865294fb55366767116452\\source.png",
+          "sha256": "c6ff76c21d05ca2931fa117e12494e6882d73bdbf5826f583fc76f06edd20808"
+        }
+      }
+    },
+    {
+      "id": "bonus-vivian-sing-video",
+      "character": "vivian",
+      "scene": "sing",
+      "parent_job": "bonus-vivian-sing",
+      "seed": 509020266022,
+      "angle": "close-up to medium, stage light",
+      "gaze": "past the audience",
+      "expression": "see prompt",
+      "outfit": "a glamorous burgundy evening gown with long gloves",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: stage light shimmer and haze drifting, hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-sing--3547693cfea6eb6688b29f896de470fce7f74501d9bca704e357eb95932fa290\\source.png",
+          "sha256": "8f8cb74b8bf5c847c15a1d70b61fb0a8c9a08fbce2c0b5e1b1e856696eae6f16"
+        }
+      }
+    },
+    {
+      "id": "bonus-vivian-casual-video",
+      "character": "vivian",
+      "scene": "casual",
+      "parent_job": "bonus-vivian-casual",
+      "seed": 509020266023,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "at something off-frame",
+      "expression": "see prompt",
+      "outfit": "a chic black turtleneck, a camel coat and a beret",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: ambient drift such as steam, petals, snow or leaves, hair stirring, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-casual--070761156e1154b3f9bff1deea005d5047017b45b4a5bc73c628d890dbaddb2c\\source.png",
+          "sha256": "701637663667af7a41e54c9b38ba20d7528b2ad8320c5638ce33ec98c6708fb0"
+        }
+      }
+    }
+  ]
+}

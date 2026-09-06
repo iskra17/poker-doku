@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-lin-gym",
+  "character": "lin",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-lin-gym.png",
+    "sha256": "608e3c47cefb32d65679de83cd7c12d205ae6fec00188647422ef8fa2d39dbe5"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-lin-gym.provenance.json",
+    "sha256": "2ed92889c4be33bc79eeba588e6e002821f29055246cdbf482991fdce0eb749d"
+  },
+  "prompt": "Wearing a sage-green sports bra and beige leggings with her buns intact, she does a slow lunge holding light dumbbells, calm and elegant; medium side shot, gaze forward, bright gym with plants.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "forward",
+  "expression": "see prompt",
+  "outfit": "a sage-green sports bra and beige leggings with her buns intact"
+}

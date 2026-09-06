@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-hana-casual",
+  "character": "hana",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-hana-casual.png",
+    "sha256": "c488c9cd135214b723c17e19a2c31b30b33798e71e8b1b28e9c3856a48d7946e"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-hana-casual.provenance.json",
+    "sha256": "8554a36942f0467f520b81dc2440b0f9a163e7ec480da80c2b652d61800c4a5f"
+  },
+  "prompt": "Wearing a beige trench coat and a turtleneck, she browses tall shelves in a cozy old bookstore, pulling out a book and glancing over her shoulder at the viewer with a small smile; over-the-shoulder environmental shot, warm lamp light, dust motes.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a beige trench coat and a turtleneck"
+}

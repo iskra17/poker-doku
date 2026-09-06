@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-yoga",
+  "character": "ingrid",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-yoga.png",
+    "sha256": "2562400192b57a5c73369e93f646fb2338d80f3fe3bcc0bd6356e956f92733ef"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-yoga.provenance.json",
+    "sha256": "17a6d0602e0540bd2048999faac8926450f841a4c79377389cd9b123d4f0aab2"
+  },
+  "prompt": "Wearing a charcoal yoga set, she sits in a butterfly stretch on a mat looking bored but trying, one eyebrow raised at the instructor off-frame; low wide angle, full body, cozy studio with candles.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a charcoal yoga set"
+}

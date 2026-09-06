@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-gym",
+  "character": "chloe",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-gym.png",
+    "sha256": "9e67b2dd9cad7c25cb184b4a00080b485f627944f7e4e7292af5d9091dcb51ad"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-gym.provenance.json",
+    "sha256": "da07afd20cc56d77adc5b123c4c9c3218bada7125df4dc934ce23f8b17ec07e5"
+  },
+  "prompt": "Wearing a cyan sports bra and white shorts with a headband, she does a plank on a mat while a phone on a tripod records, tongue out in playful struggle; medium shot from the side, gaze at the phone, colorful RGB-lit home gym corner.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "at the phone",
+  "expression": "see prompt",
+  "outfit": "a cyan sports bra and white shorts with a headband"
+}

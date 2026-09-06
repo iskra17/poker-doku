@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "vivian",
+  "scene": "beach",
+  "age": 26,
+  "prompt": "Wearing a black high-waisted vintage two-piece swimsuit with a wide-brimmed black sun hat and cat-eye sunglasses, she reclines on a white lounge chair by an infinity pool at a Riviera resort holding a cocktail glass, one leg crossed; three-quarter full-body from a low angle, gaze over the sunglasses at the viewer, golden hour.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/vivian.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/vivian-showcase.png",
+      "sha256": "b1fb0cececdce91013f251cbc1cdea0b5bffa5257912ee5a16d7293dee30e679"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/vivian/beach.png",
+    "sha256": "2d8131c2ce627ea431c8e847b2882c881a4bf83bd34c05f9e3afcad212336300",
+    "width": 1024,
+    "height": 1536
+  }
+}

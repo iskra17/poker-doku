@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-vivian-sing",
+  "character": "vivian",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-vivian-sing.png",
+    "sha256": "8f8cb74b8bf5c847c15a1d70b61fb0a8c9a08fbce2c0b5e1b1e856696eae6f16"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-vivian-sing.provenance.json",
+    "sha256": "ad0ea64dc712ed1890c1313983b57bcb22d2a62b1919c875cf2dcd2c47120e3a"
+  },
+  "prompt": "Wearing a glamorous burgundy evening gown with long gloves, she performs a musical number on a theatre stage with a vintage microphone, one arm outstretched, spotlight and velvet curtains; medium shot, gaze past the audience, dramatic warm spotlight.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "past the audience",
+  "expression": "see prompt",
+  "outfit": "a glamorous burgundy evening gown with long gloves"
+}

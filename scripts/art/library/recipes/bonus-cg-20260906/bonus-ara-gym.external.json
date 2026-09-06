@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-gym",
+  "character": "ara",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-gym.png",
+    "sha256": "e4cb65c6d52275ff9c4008fd706799084943a596a9cbbd624957cfc2fbca38e8"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-gym.provenance.json",
+    "sha256": "9a7e837861537ba10545ecb12478e5eec024eeb0df996ed871c1cbcc18ea4f0e"
+  },
+  "prompt": "Wearing a black sports bra with red trim and black leggings, hair in a high ponytail, she performs a kettlebell swing with fierce focus, sweat glinting; medium side shot, gaze straight ahead, industrial gym with red neon accent lighting.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "straight ahead",
+  "expression": "see prompt",
+  "outfit": "a black sports bra with red trim and black leggings, hair in a high ponytail"
+}

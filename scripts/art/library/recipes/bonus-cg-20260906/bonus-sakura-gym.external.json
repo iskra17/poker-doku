@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-sakura-gym",
+  "character": "sakura",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-sakura-gym.png",
+    "sha256": "3c61365c6ef83b0bd79fe1b8278c38bedfcf449d8dd56b856fd96f7bd514d3d2"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-sakura-gym.provenance.json",
+    "sha256": "521f4ea1d564eb0a54454cd6c900984a1b0c914afe8e9a41974f311d274fa9c8"
+  },
+  "prompt": "Wearing a lavender sports bra and grey high-waist leggings with her short bob held back by a thin headband (no ponytail, no mirror in frame), she carefully lifts two small pink dumbbells beside a dumbbell rack, cheeks flushed with effort and a determined pout; medium shot from a three-quarter side angle, gaze at the dumbbells, bright modern gym with soft window light.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "at the dumbbells",
+  "expression": "see prompt",
+  "outfit": "a lavender sports bra and grey high-waist leggings with her short bob held back by a thin headband (no ponytail, no mirror in frame)"
+}

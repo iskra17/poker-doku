@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-lin-beach",
+  "character": "lin",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-lin-beach.png",
+    "sha256": "9e8d85939e248d3e79689788058376850e26f392b63ae3e440d92fe0023e1d33"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-lin-beach.provenance.json",
+    "sha256": "4867f75e8d78ee030caa7d3405d29b53eed7c3212323357b49b3ca1de6ff5d81"
+  },
+  "prompt": "Wearing a mint-green one-piece swimsuit with a thin gold belt and a wide straw hat, she sits at the edge of a wooden pier dipping her feet in the water with a small cup of iced tea beside her, smiling gently; full-body three-quarter, gaze at the water, tropical afternoon.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the water",
+  "expression": "see prompt",
+  "outfit": "a mint-green one-piece swimsuit with a thin gold belt and a wide straw hat"
+}

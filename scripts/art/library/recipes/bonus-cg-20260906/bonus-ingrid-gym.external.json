@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-gym",
+  "character": "ingrid",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-gym.png",
+    "sha256": "5510a914eeaeddac86e8b36fdba7ed57d287263a77e82f9451d3d76d0eecb7be"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-gym.provenance.json",
+    "sha256": "682fce6600ff2da44c1a2f82049c7d27c5e7e1012da6289f01f03715bf0b9edc"
+  },
+  "prompt": "Wearing a black sports bra and grey joggers, she slams a battle rope with both arms, hair flying, teeth bared in a fierce grin; medium side shot, gaze forward, gritty industrial gym with hanging lights.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "forward",
+  "expression": "see prompt",
+  "outfit": "a black sports bra and grey joggers"
+}

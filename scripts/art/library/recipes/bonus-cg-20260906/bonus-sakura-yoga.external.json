@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-sakura-yoga",
+  "character": "sakura",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-sakura-yoga.png",
+    "sha256": "26269eed3a81a88bbc939f36606885e7ffabf3ffd0ac9b2d364cd2ac0d33b67d"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-sakura-yoga.provenance.json",
+    "sha256": "03257c9faf592c4b3e6ec5aebce4dd1b734b3be564150516217fff9f7d94c0f0"
+  },
+  "prompt": "Wearing a white ribbed crop top and pale pink yoga leggings, she holds a tree pose on a pink mat in a sunlit wooden studio with potted plants, eyes closed and calm; low wide angle across the mat, full body, morning light through sheer curtains.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a white ribbed crop top and pale pink yoga leggings"
+}

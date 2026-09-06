@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-casual",
+  "character": "ara",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-casual.png",
+    "sha256": "6a9897bebee7195144bf734cc1c303b3e06e1a612e131f62eb693f9aa683caa9"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-casual.provenance.json",
+    "sha256": "8086f196f9ae67e175866b50ddfb09a5648be8fa80463b12c16c61b4c016f354"
+  },
+  "prompt": "Wearing a cropped varsity jacket, a white tee and cargo pants, she plays a rhythm arcade game in a busy game center with intense concentration, tokens on the machine; over-the-shoulder shot, gaze at the screen, colorful cabinet lights.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the screen",
+  "expression": "see prompt",
+  "outfit": "a cropped varsity jacket, a white tee and cargo pants"
+}

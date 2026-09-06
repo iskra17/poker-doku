@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-beach",
+  "character": "ingrid",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-beach.png",
+    "sha256": "477f378e5d6cfcffb049570952fb19f26061796caed256d5571eb194853bbbc4"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-beach.provenance.json",
+    "sha256": "dad31517a2a4b9c5d31c965a6c99e0162ca970768163fa39d784375efc09b6ad"
+  },
+  "prompt": "Wearing a black sporty bikini with a short board-shorts bottom, she carries a surfboard under one arm walking out of the surf, hair soaked and slicked back, grinning with adrenaline; full-body three-quarter from a low angle, gaze off-frame at the waves, overcast Nordic beach with dramatic light.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "off-frame at the waves",
+  "expression": "see prompt",
+  "outfit": "a black sporty bikini with a short board-shorts bottom"
+}

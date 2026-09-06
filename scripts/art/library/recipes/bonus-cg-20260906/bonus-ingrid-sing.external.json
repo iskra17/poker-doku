@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-sing",
+  "character": "ingrid",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-sing.png",
+    "sha256": "4f8b23b642732737299752cd2055c34cd7039b5035254541510b39d9bfcececc"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-sing.provenance.json",
+    "sha256": "8fc54e1861546412fb83ef4ce148c4e1a6a638bb8b7e271875ffc57d073abc36"
+  },
+  "prompt": "Wearing a black leather jacket over a band tee, she sings into a microphone while drumming at a full drum kit on a club stage, drumsticks mid-strike, hair whipping; medium shot under white strobe and blue stage lights, gaze at the crowd.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "at the crowd.",
+  "expression": "see prompt",
+  "outfit": "a black leather jacket over a band tee"
+}

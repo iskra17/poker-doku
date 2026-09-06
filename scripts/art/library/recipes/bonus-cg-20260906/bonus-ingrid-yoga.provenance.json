@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "ingrid",
+  "scene": "yoga",
+  "age": 22,
+  "prompt": "Wearing a charcoal yoga set, she sits in a butterfly stretch on a mat looking bored but trying, one eyebrow raised at the instructor off-frame; low wide angle, full body, cozy studio with candles.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/ingrid.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/ingrid-showcase.png",
+      "sha256": "00337881be6840941964a4202bdc128d01336d786d2119002bdb7f557e846f0d"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/ingrid/yoga.png",
+    "sha256": "2562400192b57a5c73369e93f646fb2338d80f3fe3bcc0bd6356e956f92733ef",
+    "width": 1024,
+    "height": 1536
+  }
+}

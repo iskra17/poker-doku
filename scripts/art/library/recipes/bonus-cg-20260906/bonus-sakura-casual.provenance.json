@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "sakura",
+  "scene": "casual",
+  "age": 22,
+  "prompt": "Wearing a cream knit sweater, a long pleated skirt and a small crossbody bag, she sits at a window seat of a quiet cafe reading a paperback with a latte, glancing up with a small startled smile as if noticed; over-the-shoulder environmental shot, warm afternoon light, blurred street outside.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/sakura.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/sakura-showcase.png",
+      "sha256": "1d81761021b076013f9eed27f75c573a24e573872abedac5dce50663e02e31f9"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/sakura/casual.png",
+    "sha256": "e0aa8b8818c326163e6cac940b0b1b1b8c2e818e578125d3b8b1faf30d6eb16b",
+    "width": 1024,
+    "height": 1536
+  }
+}

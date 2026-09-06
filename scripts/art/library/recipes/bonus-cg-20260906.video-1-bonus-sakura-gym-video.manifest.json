@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "bonus-sakura-gym-video",
+      "character": "sakura",
+      "scene": "gym",
+      "parent_job": "bonus-sakura-gym",
+      "seed": 509020266000,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "at the dumbbells",
+      "expression": "see prompt",
+      "outfit": "a lavender sports bra and grey high-waist leggings with her short bob held back by a thin headband (no ponytail, no mirror in frame)",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-gym--c59c86e8c9866f4a1a3d15460fccba7eec0e8cb85307a68dfc3c75064a80a6e9\\source.png",
+          "sha256": "3c61365c6ef83b0bd79fe1b8278c38bedfcf449d8dd56b856fd96f7bd514d3d2"
+        }
+      }
+    }
+  ]
+}

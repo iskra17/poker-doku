@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-elena-beach",
+  "character": "elena",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-elena-beach.png",
+    "sha256": "92c64e4264597cace17461c140509fb8ecb0414f985ea45a10ef2ff86ff79a3a"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-elena-beach.provenance.json",
+    "sha256": "a6065ad9a78769ca0a87500f26777745ddb027f924acfe2c32a205c7037da852"
+  },
+  "prompt": "Wearing a simple white bikini with an open white linen shirt, she stands at the water's edge at dusk letting the small waves touch her feet, hair blowing in the sea wind, looking out to the horizon with a rare soft smile; full-body three-quarter from behind-side, gaze at the sea, pale violet sky.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the sea",
+  "expression": "see prompt",
+  "outfit": "a simple white bikini with an open white linen shirt"
+}

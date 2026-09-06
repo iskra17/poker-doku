@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-elena-yoga",
+  "character": "elena",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-elena-yoga.png",
+    "sha256": "c309ec8653a08a4584b1eb97cba2a5aa9e72324d40fa8ebce8faafc256660f09"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-elena-yoga.provenance.json",
+    "sha256": "67671d9ebd397566a1f27c304816a6260a2003a0586a97236209f7480542d708"
+  },
+  "prompt": "Wearing an ice-blue yoga set, she sits in a lotus meditation pose on a mat on a snowy cabin balcony wrapped in a light blanket, eyes closed, breath visible; low wide angle, full body, winter pine forest and soft snowfall.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "an ice-blue yoga set"
+}

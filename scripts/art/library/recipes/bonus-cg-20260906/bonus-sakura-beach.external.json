@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-sakura-beach",
+  "character": "sakura",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-sakura-beach.png",
+    "sha256": "e3c56ec6dbdc18d2d086cb3bbcdf838fe418265bf106a85507f7ddf926d3c24c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-sakura-beach.provenance.json",
+    "sha256": "c07ab0efbe8249b06233e4640866f4fa7012006034a32504f330d4c6977dd11c"
+  },
+  "prompt": "Wearing a pastel pink frilled bikini top with a matching high-waist bottom and a sheer white pareo tied at the hip, she wades ankle-deep in clear summer shallows holding a striped beach ball above her head and laughing shyly, sunlight sparkling on the water; full-body from a low three-quarter angle, gaze toward the ball, wet sand and distant parasols.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "toward the ball",
+  "expression": "see prompt",
+  "outfit": "a pastel pink frilled bikini top with a matching high-waist bottom and a sheer white pareo tied at the hip"
+}

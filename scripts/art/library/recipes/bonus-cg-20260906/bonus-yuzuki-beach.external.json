@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-yuzuki-beach",
+  "character": "yuzuki",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-yuzuki-beach.png",
+    "sha256": "42ec85e2e0ca711539c0f31a028b1f785beac379b13c0df8cfc36b3ad9d2632b"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-yuzuki-beach.provenance.json",
+    "sha256": "3b6f464b8e4c8c73b22631fad166a78423aed6ddae249bb2ca5300d0ec527777"
+  },
+  "prompt": "Wearing a red-and-white two-piece swimsuit with a light white cover-up jacket, she crouches at the tide pools examining a starfish with wide curious eyes, long hair tied loosely with the red tassel; full-body three-quarter from a low angle, gaze at the starfish, rocky shore and clear water.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the starfish",
+  "expression": "see prompt",
+  "outfit": "a red-and-white two-piece swimsuit with a light white cover-up jacket"
+}

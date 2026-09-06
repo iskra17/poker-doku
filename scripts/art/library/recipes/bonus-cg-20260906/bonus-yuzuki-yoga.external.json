@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-yuzuki-yoga",
+  "character": "yuzuki",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-yuzuki-yoga.png",
+    "sha256": "3ec47d93fb2bb865d998f24702a55af23436324aef6f2bee2042604667b98862"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-yuzuki-yoga.provenance.json",
+    "sha256": "59a9c925c2820ee3cae075ba49e890644e8606c3463c679d9a13ccf0f3facc97"
+  },
+  "prompt": "Wearing a plain white yoga set, she meditates in a lotus pose on a mat on the wooden veranda of a shrine, incense smoke curling, eyes closed and utterly still; low wide angle, full body, torii gates and maple leaves behind.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a plain white yoga set"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-miyako-yoga",
+  "character": "miyako",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-miyako-yoga.png",
+    "sha256": "3c24434a5200c190672816d3a628dd6718c7506347817c5ecfe66475189df7c0"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-miyako-yoga.provenance.json",
+    "sha256": "5d33b5fca0a92a1446a504e3ff7b5eb527737e53d2f36f56b49f10e13f2cc5b7"
+  },
+  "prompt": "Wearing a plum-colored yoga set, she holds a seated forward fold on a mat in a traditional tatami room with sliding doors open to a garden, tassels resting on the floor; low wide angle, full body, soft morning garden light.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a plum-colored yoga set"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-yoga",
+  "character": "chloe",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-yoga.png",
+    "sha256": "529d7127a1f68a21eb84e69f943aa03bec5eaced148c2d74aac1d6bb4ee58a8d"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-yoga.provenance.json",
+    "sha256": "1966735346ee953ff901584c65534d52d457b0d62cc878be23e29b3279dfb2eb"
+  },
+  "prompt": "Wearing a pastel tie-dye yoga set, she wobbles in a downward dog pose on a blue mat and peeks at the viewer between her arms, laughing; low wide angle, full body, sunny living room studio with a big window.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a pastel tie-dye yoga set"
+}

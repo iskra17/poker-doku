@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-miyako-beach",
+  "character": "miyako",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-miyako-beach.png",
+    "sha256": "dc55676befba37731781c891a9ca78349d383bafbc83a9bda56f88659641cfd3"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-miyako-beach.provenance.json",
+    "sha256": "994cf9623b218090121cb27c6c202f3bbb7926fa3338db4a1641d29b8756a1f5"
+  },
+  "prompt": "Wearing an elegant gold one-piece swimsuit with a sheer black sarong and a straw hat, she stands knee-deep in calm shallow water at a quiet cove holding her hat against the breeze, smiling warmly; full-body three-quarter, gaze at the viewer, late afternoon sun.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the viewer",
+  "expression": "see prompt",
+  "outfit": "an elegant gold one-piece swimsuit with a sheer black sarong and a straw hat"
+}

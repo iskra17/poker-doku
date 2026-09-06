@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "chloe",
+  "scene": "gym",
+  "age": 23,
+  "prompt": "Wearing a cyan sports bra and white shorts with a headband, she does a plank on a mat while a phone on a tripod records, tongue out in playful struggle; medium shot from the side, gaze at the phone, colorful RGB-lit home gym corner.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/chloe.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/chloe-showcase.png",
+      "sha256": "f2a19a12d0a99ddc09e8565f37d8bbe21cea6716329e8da960b0b5304936aa58"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/chloe/gym.png",
+    "sha256": "9e67b2dd9cad7c25cb184b4a00080b485f627944f7e4e7292af5d9091dcb51ad",
+    "width": 1024,
+    "height": 1536
+  }
+}

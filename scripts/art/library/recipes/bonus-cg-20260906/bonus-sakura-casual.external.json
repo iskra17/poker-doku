@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-sakura-casual",
+  "character": "sakura",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-sakura-casual.png",
+    "sha256": "e0aa8b8818c326163e6cac940b0b1b1b8c2e818e578125d3b8b1faf30d6eb16b"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-sakura-casual.provenance.json",
+    "sha256": "ac3f3ea336fb7335927c5e3af4e03380f84b0fc322f4af2895fac8e93f52376e"
+  },
+  "prompt": "Wearing a cream knit sweater, a long pleated skirt and a small crossbody bag, she sits at a window seat of a quiet cafe reading a paperback with a latte, glancing up with a small startled smile as if noticed; over-the-shoulder environmental shot, warm afternoon light, blurred street outside.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a cream knit sweater, a long pleated skirt and a small crossbody bag"
+}

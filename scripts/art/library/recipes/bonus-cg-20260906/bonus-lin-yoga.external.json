@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-lin-yoga",
+  "character": "lin",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-lin-yoga.png",
+    "sha256": "e8f17935bb074287fc93809aab6678ee1b302c6bfee3116784b538f2191bb6b3"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-lin-yoga.provenance.json",
+    "sha256": "664d5df6a18dfa15cbf19069d31bdf3b05ec2f733ec99eb3da332ca997d3e141"
+  },
+  "prompt": "Wearing a jade-colored yoga set, she practices a graceful tai-chi-like standing stretch on a mat on a misty tea plantation terrace at dawn; low wide angle, full body, rolling green tea fields and soft fog.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a jade-colored yoga set"
+}

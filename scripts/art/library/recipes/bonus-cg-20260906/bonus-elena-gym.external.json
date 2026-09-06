@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-elena-gym",
+  "character": "elena",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-elena-gym.png",
+    "sha256": "12933c8bc859a67ec69c54ea7820a4bc23cbb396a12bb39b2d4f024ba63b34e0"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-elena-gym.provenance.json",
+    "sha256": "3b2885a9e8383b967cb10c4427a2e8804d39f9663de320ab60a255e3faf3b0fb"
+  },
+  "prompt": "Wearing a white sports bra and light grey leggings with her hair in a long braid, she performs a controlled deadlift with a barbell, calm and precise; medium side shot, gaze fixed forward, minimalist white gym.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "fixed forward",
+  "expression": "see prompt",
+  "outfit": "a white sports bra and light grey leggings with her hair in a long braid"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-elena-sing",
+  "character": "elena",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-elena-sing.png",
+    "sha256": "cbae62a493045e875c1cfa9ddda1d89c07782f30adc1243ffb4ba9d4e545346f"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-elena-sing.provenance.json",
+    "sha256": "fe5de5b62dd345cf7f5c24096546b51527bc53297c079b74d8f8f2cd6075d085"
+  },
+  "prompt": "Wearing a slim black dress, she sings a slow jazz standard at a small jazz bar microphone, eyes half closed, one hand resting on the piano; close-up to medium, warm amber bar light and a blurred pianist.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a slim black dress"
+}

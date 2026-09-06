@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-vivian-casual",
+  "character": "vivian",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-vivian-casual.png",
+    "sha256": "701637663667af7a41e54c9b38ba20d7528b2ad8320c5638ce33ec98c6708fb0"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-vivian-casual.provenance.json",
+    "sha256": "2a45b21973d3cc46ed6c41111979ee90104f2191c4b7e23ce14822b140db48b2"
+  },
+  "prompt": "Wearing a chic black turtleneck, a camel coat and a beret, she sits at a Paris sidewalk cafe table with an espresso and a script, glancing sideways with an amused smile; environmental wide shot, gaze at something off-frame, rainy cobblestone street reflections.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at something off-frame",
+  "expression": "see prompt",
+  "outfit": "a chic black turtleneck, a camel coat and a beret"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-hana-yoga",
+  "character": "hana",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-hana-yoga.png",
+    "sha256": "28e0a33edc93e59fbcb42639014d151a46db143193e66a8b5f4dfbdf1fc5f8e7"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-hana-yoga.provenance.json",
+    "sha256": "986fa394cdca8e2b79a4843314e6d5af8e2da7f41c70dc337f09e71ab5c91aac"
+  },
+  "prompt": "Wearing a lilac pilates set, she lies on a reformer machine in a bright pilates studio, legs extended in a controlled stretch, glasses off and hair loose, serene; low wide angle along the reformer, full body, white studio with plants.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a lilac pilates set"
+}

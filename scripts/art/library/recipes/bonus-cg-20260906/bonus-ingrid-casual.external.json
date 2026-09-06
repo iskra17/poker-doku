@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-casual",
+  "character": "ingrid",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-casual.png",
+    "sha256": "84049a5c783edc327989cbcbd67a18586065494150fae8c2c5e9b0e1cc39a91c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-casual.provenance.json",
+    "sha256": "f5606fcef84b1156649b516ec3800ef47a775c61429fc9dfbedc6b908066ac61"
+  },
+  "prompt": "Wearing a chunky knit sweater and a beanie, she sits by a campfire at a fjord campsite at night roasting marshmallows, aurora glowing above, laughing at the viewer; environmental wide shot, gaze at the viewer, green aurora and firelight.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the viewer",
+  "expression": "see prompt",
+  "outfit": "a chunky knit sweater and a beanie"
+}

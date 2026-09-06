@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-lin-sing",
+  "character": "lin",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-lin-sing.png",
+    "sha256": "11e12cdc5edcc2c001799c6e7c29701469ea61c3a9bcfeab1c2dbb5ddbb9b80a"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-lin-sing.provenance.json",
+    "sha256": "91fa6c56cd0f755a392a73d95efea39cb7b7ea4f94877c3cbcd556321547bfa0"
+  },
+  "prompt": "Wearing a floral qipao-inspired dress, she sings softly while playing an acoustic guitar on a small stool in a cozy tea house, string lights above; medium shot, gaze down at the strings, warm wood and steaming teacups.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "down at the strings",
+  "expression": "see prompt",
+  "outfit": "a floral qipao-inspired dress"
+}

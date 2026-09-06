@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-yuzuki-sing",
+  "character": "yuzuki",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-yuzuki-sing.png",
+    "sha256": "33af6e90d0c70a605b194863f5e39728be0d4c9239eec1c1a4088090ca264f37"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-yuzuki-sing.provenance.json",
+    "sha256": "0284cc1d89c6f7f0a60f65eaea07ab0e857324866d4ddacaae1efeb39f45a0b7"
+  },
+  "prompt": "Wearing a festival happi coat over a white top with a headband, she sings at a shrine summer festival stage holding a microphone, lanterns strung above, eyes open and shining; close-up to medium, warm festival light, gaze at the crowd.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "at the crowd.",
+  "expression": "see prompt",
+  "outfit": "a festival happi coat over a white top with a headband"
+}

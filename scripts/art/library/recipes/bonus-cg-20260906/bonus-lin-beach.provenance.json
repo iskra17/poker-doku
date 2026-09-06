@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "lin",
+  "scene": "beach",
+  "age": 24,
+  "prompt": "Wearing a mint-green one-piece swimsuit with a thin gold belt and a wide straw hat, she sits at the edge of a wooden pier dipping her feet in the water with a small cup of iced tea beside her, smiling gently; full-body three-quarter, gaze at the water, tropical afternoon.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/lin.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/lin-showcase.png",
+      "sha256": "10c8e911e9e748e5ec99a3a2b174db8a431629e46ba6b6c7ae38b6728c66322c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/lin/beach.png",
+    "sha256": "9e8d85939e248d3e79689788058376850e26f392b63ae3e440d92fe0023e1d33",
+    "width": 1024,
+    "height": 1536
+  }
+}

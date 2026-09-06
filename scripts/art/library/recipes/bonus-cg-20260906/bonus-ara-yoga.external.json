@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-yoga",
+  "character": "ara",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-yoga.png",
+    "sha256": "4762171f605a593e8cdad808f9167765c9067e61b642892d9af10fed93017759"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-yoga.provenance.json",
+    "sha256": "665e93b875991d625d6c29e19d85506f51de8db01ec424ca3fef83303e63422f"
+  },
+  "prompt": "Wearing a red crop top and black yoga leggings, she balances in a warrior pose on a black mat but looks slightly annoyed at how hard it is, twin tails loosened; low wide angle, full body, rooftop yoga deck at sunrise with city skyline.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a red crop top and black yoga leggings"
+}

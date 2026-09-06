@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-elena-casual",
+  "character": "elena",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-elena-casual.png",
+    "sha256": "94a5462dd3962126afbb791999339578b7f230c0fdada917fa68ea877541215b"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-elena-casual.provenance.json",
+    "sha256": "477328617ea8788e858c851bfe8be04016fcbb2361a90a51ca5a2348eb1beab4"
+  },
+  "prompt": "Wearing a long black wool coat, a grey scarf and leather gloves, she walks through a snowy park at night holding a paper cup of coffee, turning back toward the viewer; environmental wide shot, gaze at the viewer, warm streetlamp glow and falling snow.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the viewer",
+  "expression": "see prompt",
+  "outfit": "a long black wool coat, a grey scarf and leather gloves"
+}

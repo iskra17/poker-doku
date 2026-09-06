@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-beach",
+  "character": "ara",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-beach.png",
+    "sha256": "6a4b335ff1b972ea77e04782c031c63fd6126d1b1eb3db7595c25f9fad4b2e75"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-beach.provenance.json",
+    "sha256": "2c1a9192b738a16f8997a4397f69bb1a74efc94d1ce8b97d55d42a7f2cb62a98"
+  },
+  "prompt": "Wearing a sporty red-and-black bikini with an open black rash guard and mirrored sunglasses pushed up on her head, she sprints along the surf line kicking up spray with a water gun in one hand, grinning fiercely; full-body action shot from a low angle, gaze off-frame at a rival, bright midday beach.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "off-frame at a rival",
+  "expression": "see prompt",
+  "outfit": "a sporty red-and-black bikini with an open black rash guard and mirrored sunglasses pushed up on her head"
+}

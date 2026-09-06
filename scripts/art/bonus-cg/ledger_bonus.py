@@ -93,6 +93,14 @@ def image_job_id(cid, scene):
     return f'bonus-{cid}-{scene}'
 
 
+def video_job_of(con, image):
+    """이미지 job의 최신 비반려 video job id — 반려 뒤 재생성(-v2 …)이 있으면 그 id를 쓴다."""
+    row = con.execute(
+        "SELECT id FROM jobs WHERE json_extract(spec,'$.job.parent_job')=? AND state!='rejected' ORDER BY created DESC LIMIT 1",
+        (image,)).fetchone()
+    return row['id'] if row else f'{image}-video'
+
+
 def cmd_receipts(staging, pairs):
     pl = plan()
     RECEIPT_DIR.mkdir(parents=True, exist_ok=True)
@@ -159,6 +167,14 @@ def cmd_approve(pairs):
 
 
 def cmd_video_manifest(pairs):
+    """영상 재생성(반려 뒤)은 환경변수로 변형: BONUS_VIDEO_SUFFIX=v2(새 job id), BONUS_SEED_OFFSET=1000(seed 변경),
+    BONUS_VIDEO_EXTRA='…'(프롬프트에 덧붙일 고정 지시)."""
+    import os
+    suffix = os.environ.get('BONUS_VIDEO_SUFFIX', '')
+    seed_offset = int(os.environ.get('BONUS_SEED_OFFSET', '0'))
+    extra = os.environ.get('BONUS_VIDEO_EXTRA', '').strip()
+    # BONUS_MOTION_OVERRIDE='…'이면 장면 기본 모션 큐(MOTION[scene])를 통째로 대체한다(장면과 안 맞는 단어를 빼야 할 때).
+    motion_override = os.environ.get('BONUS_MOTION_OVERRIDE', '').strip()
     pl = plan()
     con = db()
     jobs = []
@@ -173,13 +189,14 @@ def cmd_video_manifest(pairs):
         prompt = (
             'Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair '
             f'and softly painted cinematic lighting fully preserved. One adult {c["age"]}-year-old woman ({c["name_ko"]}) in the same outfit. '
-            f'Subtle ambient motion only: {MOTION[scene]}. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, '
+            f'Subtle ambient motion only: {motion_override or MOTION[scene]}. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, '
             'no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. '
             'Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop.'
+            + (f' {extra}' if extra else '')
         )
         jobs.append({
-            'id': f'{parent}-video', 'character': cid, 'scene': scene, 'parent_job': parent,
-            'seed': SEED_BASE + index, 'angle': pl['scenes'][scene]['camera'], 'gaze': gaze_of(text),
+            'id': f'{parent}-video{"-" + suffix if suffix else ""}', 'character': cid, 'scene': scene, 'parent_job': parent,
+            'seed': SEED_BASE + seed_offset + index, 'angle': pl['scenes'][scene]['camera'], 'gaze': gaze_of(text),
             'expression': 'see prompt', 'outfit': outfit_of(text), 'prompt': prompt,
             'inputs': {'reference': {'path': row['output'], 'sha256': row['output_hash']}},
         })
@@ -197,14 +214,16 @@ def cmd_video_manifest(pairs):
 
 
 def cmd_approve_videos(pairs):
-    approve([f'{image_job_id(c, s)}-video' for c, s in pairs], 'Loop reviewed: fixed camera, identity and outfit preserved, seamless first/last frame')
+    con = db()
+    approve([video_job_of(con, image_job_id(c, s)) for c, s in pairs], 'Loop reviewed: fixed camera, identity and outfit preserved, seamless first/last frame')
 
 
 def cmd_export(pairs):
+    con = db()
     for cid, scene in pairs:
         image = image_job_id(cid, scene)
         worker('export', image, '--target-root', TARGET_ROOT, '--path', f'public/assets/story/cg/{image}.webp')
-        worker('export-video-pair', f'{image}-video', '--target-root', TARGET_ROOT, '--stem', f'public/assets/story/video/{image}')
+        worker('export-video-pair', video_job_of(con, image), '--target-root', TARGET_ROOT, '--stem', f'public/assets/story/video/{image}')
 
 
 def main(argv):

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-vivian-yoga",
+  "character": "vivian",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-vivian-yoga.png",
+    "sha256": "c6ff76c21d05ca2931fa117e12494e6882d73bdbf5826f583fc76f06edd20808"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-vivian-yoga.provenance.json",
+    "sha256": "15cece669949f646635fafb2e499a4268e5bcf31067b7ad45951ef9abe3319d6"
+  },
+  "prompt": "Wearing a dark teal yoga set, she holds a deep backbend wheel pose on a mat in a mirrored dance studio, hair falling back, effortless; low wide angle, full body, morning light streaks on the wooden floor.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a dark teal yoga set"
+}

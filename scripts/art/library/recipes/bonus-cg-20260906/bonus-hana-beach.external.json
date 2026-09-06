@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-hana-beach",
+  "character": "hana",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-hana-beach.png",
+    "sha256": "6ec448041fa1fd6ae22235324dcd1ca2be5cdb4c0c44c1c3fef85017e9f2a2a3"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-hana-beach.provenance.json",
+    "sha256": "b183ca0f286f9c24aee4390d9ef5b2432e964940ac96df54d6dc90c0c0061aa3"
+  },
+  "prompt": "Wearing a navy one-piece swimsuit with a white sheer cover-up shirt and a wide straw hat, she sits under a striped parasol on a lounge chair reading a strategy book, glasses on, one hand shielding her eyes from the sun with a faint smile; three-quarter full-body, gaze at the book, calm afternoon sea.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "at the book",
+  "expression": "see prompt",
+  "outfit": "a navy one-piece swimsuit with a white sheer cover-up shirt and a wide straw hat"
+}

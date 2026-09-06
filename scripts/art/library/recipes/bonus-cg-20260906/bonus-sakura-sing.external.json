@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-sakura-sing",
+  "character": "sakura",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-sakura-sing.png",
+    "sha256": "206d7b2f9b60cd55f0393310e588951f732ca1435efe5d7c2455138a07effbc9"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-sakura-sing.provenance.json",
+    "sha256": "e86aeff9370bc46285fc0306a9fe495c41b90385619acaa4fdb060c49ff2e177"
+  },
+  "prompt": "Wearing a black rock band tee, a tartan mini skirt and fingerless gloves, she sings into a microphone on a small live-house stage with an electric guitar strapped on, eyes shut and mouth open mid-note, surprisingly bold; close-up to medium under magenta and cyan stage lights with haze.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a black rock band tee, a tartan mini skirt and fingerless gloves"
+}

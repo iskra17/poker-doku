@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-vivian-gym",
+  "character": "vivian",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-vivian-gym.png",
+    "sha256": "b590d9f745079391d44ed6a1c23788f2e0da33301e52351586fe9b6d6674df24"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-vivian-gym.provenance.json",
+    "sha256": "731fda554ddc294ef2aeb741d9607b2bb3e65c3e8eb4012d030834fa988e9dc6"
+  },
+  "prompt": "Wearing a sleek black sports bra and matching leggings, she practices a boxing combination on a heavy bag with wrapped hands, focused and graceful; medium side shot, gaze at the bag, dim boxing gym with a single spotlight.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "at the bag",
+  "expression": "see prompt",
+  "outfit": "a sleek black sports bra and matching leggings"
+}

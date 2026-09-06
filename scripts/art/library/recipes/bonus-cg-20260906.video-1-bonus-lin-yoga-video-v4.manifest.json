@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "bonus-lin-yoga-video-v4",
+      "character": "lin",
+      "scene": "yoga",
+      "parent_job": "bonus-lin-yoga",
+      "seed": 509020269000,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a jade-colored yoga set",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 24-year-old woman (린) in the same outfit. Subtle ambient motion only: thin morning mist drifting very slowly across the distant tea fields, a few tea leaves in the foreground stirring, loose hair strands moving slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Keep the exact same wide full-body framing for the entire clip with the whole figure in her standing tai-chi pose fully visible; no close-up, no cut, no reframing, nothing added to the terrace.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-lin-yoga--d0f6a8213444d2354d815c02d247b096297e4244bb9b7499bc50d8471a358353\\source.png",
+          "sha256": "e8f17935bb074287fc93809aab6678ee1b302c6bfee3116784b538f2191bb6b3"
+        }
+      }
+    }
+  ]
+}

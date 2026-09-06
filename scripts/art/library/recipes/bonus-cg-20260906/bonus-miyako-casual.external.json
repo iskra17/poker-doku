@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-miyako-casual",
+  "character": "miyako",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-miyako-casual.png",
+    "sha256": "29ae73a55d7cee8e92f88382e3311d703ae455d0cb5a0e41ca01ca351ace0078"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-miyako-casual.provenance.json",
+    "sha256": "edaba248f3593738a33f4b253e3500140d3b71ee78c8cff791e94b2c675ca399"
+  },
+  "prompt": "Wearing a summer yukata in purple with a gold obi and holding a small paper fan, she strolls through a night festival market lined with lanterns, turning back with a delighted smile at fireworks above; environmental wide shot, gaze upward, lantern glow and fireworks bokeh.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "upward",
+  "expression": "see prompt",
+  "outfit": "a summer yukata in purple with a gold obi and holding a small paper fan"
+}

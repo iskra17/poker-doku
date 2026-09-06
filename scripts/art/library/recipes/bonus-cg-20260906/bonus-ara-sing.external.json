@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-sing",
+  "character": "ara",
+  "scene": "sing",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-sing.png",
+    "sha256": "d502f193a1b08ec538961bee4da8a8f678ad42df8030efe1798b271ab8e1113c"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-sing.provenance.json",
+    "sha256": "16d094c5874b01abbb13fb35cd7ec35d60e8d940f37b51aa492a268ebdf841c5"
+  },
+  "prompt": "Wearing an oversized black hoodie and denim shorts, she belts out a song in a neon-lit karaoke room, one foot on the sofa, tambourine in the other hand, screen glow on her face; medium shot, gaze at the lyrics screen, purple and pink neon.",
+  "angle": "close-up to medium, stage light",
+  "gaze": "at the lyrics screen",
+  "expression": "see prompt",
+  "outfit": "an oversized black hoodie and denim shorts"
+}

@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-yuzuki-casual",
+  "character": "yuzuki",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-yuzuki-casual.png",
+    "sha256": "54bf17878990a0169d6be99a1632355bf5efe8cb5ddbd857c26971e274b63b4a"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-yuzuki-casual.provenance.json",
+    "sha256": "58e39344f0c301586c034b0e47272104b0247001d31013defeec0d518d8fefd2"
+  },
+  "prompt": "Wearing a casual white blouse and a long navy skirt with the tassel ornament, she feeds koi fish at a temple pond from a small bag, kneeling on the stone edge and glancing up with a soft smile; environmental wide shot, gaze at the viewer, dappled light.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the viewer",
+  "expression": "see prompt",
+  "outfit": "a casual white blouse and a long navy skirt with the tassel ornament"
+}
