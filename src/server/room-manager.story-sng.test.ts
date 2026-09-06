@@ -247,6 +247,16 @@ describe('RoomManager 졸업 SnG', () => {
     if (statusBefore === 'active' || statusBefore === 'all-in') expect(hero.status).toBe(statusBefore);
   });
 
+  it('휴먼 좌석이 남아 있으므로 유휴 스윕이 스토리 SnG 방을 회수하지 않는다', () => {
+    const roomId = manager.createRoom(storySngConfig());
+    seatTable(roomId, GRADUATION_STARTING_STACK);
+    vi.advanceTimersByTime(2_000);
+    // 히어로가 끊겨 있어도 좌석(휴먼)은 남는다 — 스윕 제외 근거는 봇 진행이 아니라 이 좌석이다
+    manager.getRoom(roomId)!.engine.state.players.find(p => p.id === 'hero')!.isDisconnected = true;
+    expect(manager.sweepIdleRooms(0)).toBe(0);
+    expect(manager.getRoom(roomId)).toBeTruthy();
+  });
+
   it('스토리 SnG 좌석은 grace 만료에도 보존된다', () => {
     const roomId = manager.createRoom(storySngConfig());
     seatTable(roomId, GRADUATION_STARTING_STACK);
