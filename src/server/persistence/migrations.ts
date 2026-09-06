@@ -7122,6 +7122,69 @@ export const migrations: readonly Migration[] = [
         ('story-title-master-deputy', 'title', 'title', NULL, NULL);
     `,
   },
+  {
+    version: 39,
+    name: 'story_rewards_bonus_cg',
+    sql: `
+      -- 보너스 이벤트 CG 50장 (2026-09-06). 카탈로그 단일 소스는 src/lib/story/rewards/bonus-cg.ts —
+      -- 이 시드는 사본이며 database.test.ts 패리티로 고정한다(INSERT만, UPDATE/DELETE는 v32 트리거가 동결).
+      -- 해금은 히로인 인연 레벨(4/8/12/16/20) · 비히로인 도장 레벨(10/20/30/40/50)이며 자격 판정은 서비스가 소유한다.
+      -- character_id CHECK가 히로인 6명만 허용하므로 미야코·유즈키·린·잉그리드는 NULL(화면 그룹핑은 TS subjectId).
+      INSERT INTO story_reward_catalog (
+        item_id, kind, equip_slot, character_id, chip_amount
+      ) VALUES
+        ('story-bonus-cg-sakura-casual', 'cg', NULL, 'sakura', NULL),
+        ('story-bonus-cg-sakura-sing', 'cg', NULL, 'sakura', NULL),
+        ('story-bonus-cg-sakura-yoga', 'cg', NULL, 'sakura', NULL),
+        ('story-bonus-cg-sakura-gym', 'cg', NULL, 'sakura', NULL),
+        ('story-bonus-cg-sakura-beach', 'cg', NULL, 'sakura', NULL),
+        ('story-bonus-cg-ara-casual', 'cg', NULL, 'ara', NULL),
+        ('story-bonus-cg-ara-sing', 'cg', NULL, 'ara', NULL),
+        ('story-bonus-cg-ara-yoga', 'cg', NULL, 'ara', NULL),
+        ('story-bonus-cg-ara-gym', 'cg', NULL, 'ara', NULL),
+        ('story-bonus-cg-ara-beach', 'cg', NULL, 'ara', NULL),
+        ('story-bonus-cg-hana-casual', 'cg', NULL, 'hana', NULL),
+        ('story-bonus-cg-hana-sing', 'cg', NULL, 'hana', NULL),
+        ('story-bonus-cg-hana-yoga', 'cg', NULL, 'hana', NULL),
+        ('story-bonus-cg-hana-gym', 'cg', NULL, 'hana', NULL),
+        ('story-bonus-cg-hana-beach', 'cg', NULL, 'hana', NULL),
+        ('story-bonus-cg-chloe-casual', 'cg', NULL, 'chloe', NULL),
+        ('story-bonus-cg-chloe-sing', 'cg', NULL, 'chloe', NULL),
+        ('story-bonus-cg-chloe-yoga', 'cg', NULL, 'chloe', NULL),
+        ('story-bonus-cg-chloe-gym', 'cg', NULL, 'chloe', NULL),
+        ('story-bonus-cg-chloe-beach', 'cg', NULL, 'chloe', NULL),
+        ('story-bonus-cg-vivian-casual', 'cg', NULL, 'vivian', NULL),
+        ('story-bonus-cg-vivian-sing', 'cg', NULL, 'vivian', NULL),
+        ('story-bonus-cg-vivian-yoga', 'cg', NULL, 'vivian', NULL),
+        ('story-bonus-cg-vivian-gym', 'cg', NULL, 'vivian', NULL),
+        ('story-bonus-cg-vivian-beach', 'cg', NULL, 'vivian', NULL),
+        ('story-bonus-cg-elena-casual', 'cg', NULL, 'elena', NULL),
+        ('story-bonus-cg-elena-sing', 'cg', NULL, 'elena', NULL),
+        ('story-bonus-cg-elena-yoga', 'cg', NULL, 'elena', NULL),
+        ('story-bonus-cg-elena-gym', 'cg', NULL, 'elena', NULL),
+        ('story-bonus-cg-elena-beach', 'cg', NULL, 'elena', NULL),
+        ('story-bonus-cg-miyako-casual', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-miyako-sing', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-miyako-yoga', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-miyako-gym', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-miyako-beach', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-yuzuki-casual', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-yuzuki-sing', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-yuzuki-yoga', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-yuzuki-gym', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-yuzuki-beach', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-lin-casual', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-lin-sing', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-lin-yoga', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-lin-gym', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-lin-beach', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-ingrid-casual', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-ingrid-sing', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-ingrid-yoga', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-ingrid-gym', 'cg', NULL, NULL, NULL),
+        ('story-bonus-cg-ingrid-beach', 'cg', NULL, NULL, NULL);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -34,7 +34,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_season_catalog',
       'arena_season_results',
@@ -99,7 +99,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(new ArenaRepository(database)
       .requireProfile('v14-season', 'v1-marker').mmr).toBe(1_000);
     expect(database.db.prepare(`
@@ -320,7 +320,7 @@ describe('PokerDatabase migrations', () => {
       .all()
       .map((column) => (column as { name: string }).name);
 
-    expect(migration.version).toBe(38);
+    expect(migration.version).toBe(39);
     expect(database.tableNames()).toEqual(
       expect.arrayContaining([
         'profiles',
@@ -490,6 +490,15 @@ describe('PokerDatabase migrations', () => {
       }))
       .sort((left, right) => (left.item_id < right.item_id ? -1 : 1));
     expect(seeded).toEqual(expected);
+    // v39 보너스 CG 50행 — 히로인 30행은 character_id, 비히로인 20행은 NULL(CHECK 목록 밖이라 NULL이 유일한 값)
+    const bonus = seeded.filter(row => String(row.item_id).startsWith('story-bonus-cg-'));
+    expect(bonus).toHaveLength(50);
+    expect(bonus.every(row => row.kind === 'cg' && row.equip_slot === null && row.chip_amount === null)).toBe(true);
+    expect(bonus.filter(row => row.character_id === null)).toHaveLength(20);
+    for (const subject of ['miyako', 'yuzuki', 'lin', 'ingrid']) {
+      expect(bonus.filter(row => String(row.item_id).startsWith(`story-bonus-cg-${subject}-`)).every(row => row.character_id === null)).toBe(true);
+    }
+    expect(bonus.find(row => row.item_id === 'story-bonus-cg-sakura-beach')?.character_id).toBe('sakura');
     expect(() => database?.db.prepare(`
       UPDATE story_reward_catalog SET kind = 'title' WHERE item_id = 'story-felt-yellow-belt'
     `).run()).toThrow(/immutable/);
@@ -559,7 +568,7 @@ describe('PokerDatabase migrations', () => {
     const result = database.db
       .prepare('SELECT COUNT(*) AS count FROM schema_migrations')
       .get() as { count: number };
-    expect(result.count).toBe(38);
+    expect(result.count).toBe(39);
   });
 
   it('adds v27 scheduled tournament and promotion fund schema', () => {
@@ -567,7 +576,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     const tables = database.db.prepare(`
       SELECT name, sql FROM sqlite_schema
       WHERE type = 'table' AND name LIKE 'tournament_%'
@@ -2511,7 +2520,7 @@ describe('PokerDatabase migrations', () => {
     `).get()).toEqual({ alias: 'v1-marker-alias' });
     expect(database.db.prepare(`
       SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(database.tableNames()).toEqual(expect.arrayContaining([
       'arena_seasons', 'arena_profiles', 'arena_ticket_escrows',
       'arena_matches', 'arena_entries', 'arena_groups',
@@ -2543,7 +2552,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(database.db.prepare(`
       SELECT place, points, result_key FROM arena_entries
     `).get()).toEqual({ place: 1, points: 100, result_key: 'v14-result' });
@@ -2786,7 +2795,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(arena.requireSeason('v14-season').id).toBe('v14-season');
     expect(arena.requireProfile('v14-season', 'v1-marker').mmr).toBe(1000);
     expect(arena.requireMatch('v14-match').status).toBe('forming');
@@ -2841,7 +2850,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(arena.requireGroup('v15-open-group').status).toBe('open');
     expect(arena.listGroupMembers('v15-open-group')).toHaveLength(1);
     expect(database.db.prepare(`
@@ -3825,7 +3834,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -3854,7 +3863,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -3902,7 +3911,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
   });
 
@@ -3948,7 +3957,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -4260,7 +4269,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -4520,7 +4529,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -4787,7 +4796,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(database.db.prepare(`
       SELECT "table", "from", "to", on_delete
       FROM pragma_foreign_key_list('streak_state')
@@ -5130,7 +5139,7 @@ describe('PokerDatabase migrations', () => {
 
     expect(database.db.prepare(`
       SELECT MAX(version) AS version FROM schema_migrations
-    `).get()).toEqual({ version: 38 });
+    `).get()).toEqual({ version: 39 });
     expect(database.db.prepare(`
       SELECT source_ref, source_event_id, source_date, granted_at
       FROM progression_item_grants
