@@ -93,6 +93,12 @@ export function validateChapters(chapters: readonly Chapter[], options: Validate
     if (!chapter.title.trim() || !chapter.subtitle.trim()) errors.push(`${at}: title/subtitle required`);
     if (!(chapter.estimatedMinutes > 0)) errors.push(`${at}: estimatedMinutes must be > 0`);
     if (chapter.requires.includes(chapter.id)) errors.push(`${at}: requires itself`);
+    if (chapter.graduation) {
+      // 졸업 챕터는 순위로 통과하므로 드릴만 푸는 실력 확인 우회를 막고, 토너먼트 스파링이 정확히 하나여야 한다
+      if (!chapter.examDisabled) errors.push(`${at}: graduation chapter must set examDisabled`);
+      const tournaments = chapter.steps.filter(step => step.kind === 'sparring' && step.table.tournament).length;
+      if (tournaments !== 1) errors.push(`${at}: graduation chapter needs exactly one tournament sparring (found ${tournaments})`);
+    }
     validateRewards(chapter, errors);
     validateSteps(chapter, options, errors);
     if (chapter.failScene) validateScene(chapter.failScene, `${at} failScene`, errors);
@@ -287,6 +293,25 @@ function validateTable(step: Extract<Step, { kind: 'practice-table' | 'sparring'
       || !step.objectives.primary.some(objective => objective.kind === 'opponent-response' && objective.minRatio === 0.5)) errors.push(`${at}: invalid masquerade policy`);
   }
   if (table.reviewPolicy !== undefined && table.reviewPolicy !== 'act4-overbet-v1') errors.push(`${at}: invalid review policy`);
+  if (table.tournament) {
+    const policy = table.tournament;
+    // 졸업 대결: 실제 6인 SnG — 통과는 엔진 순위가 정한다(행동 목표 없음). 라인업은 히로인 토큰 없이 비히로인 봇 5석 고정.
+    if (
+      step.kind !== 'sparring'
+      || policy.id !== 'graduation-sng-v1'
+      || policy.sngStructureId !== 'graduation'
+      || table.masquerade || table.reading || table.readingReview
+      || table.lineup.length !== 5
+      || table.lineup.some(seat => seat.characterId === 'partner' || seat.characterId === HEROINE_FILL_SEAT
+        || !BOT_CHARACTERS.some(character => character.id === seat.characterId))
+      || step.objectives.primary.length !== 0
+      || step.objectives.bonus.length !== 0
+      || step.checklist !== undefined
+      || step.maxHands < 200
+      || table.turnTimeSec !== 30
+      || table.botThinkScale !== 0.5
+    ) errors.push(`${at}: invalid tournament policy`);
+  }
   if (table.lineup.length === 0 || table.lineup.length >= MAX_SEATS) errors.push(`${at}: lineup must have 1..${MAX_SEATS - 1} seats`);
   const seats = new Set<number>([table.heroSeat]);
   const characters = new Set<string>();

@@ -40,7 +40,8 @@ import {
   type ObjectiveTally,
 } from '../lib/story/objectives';
 import { reviewHand } from '../lib/story/review';
-import { HEROINE_FILL_SEAT, STORY_HEROINE_IDS, type Interrupt, type Step, type StoryHeroineId } from '../lib/story/types';
+import { HEROINE_FILL_SEAT, STORY_HEROINE_IDS, type Interrupt, type LiveTournamentPolicy, type Step, type StoryHeroineId } from '../lib/story/types';
+import { resolveSngStructure } from './sng-structures';
 import type { BotThought, DecisionReview, ObjectiveProgressView, StoryHoldReason, StoryLiveView, StoryQuizRequest, StoryQuizReceipt, ObservationNote } from '../lib/story/views';
 import { eventLog } from './event-log';
 import type { RoomDisposeReason, RoomManager, StoryRoomHooks } from './room-manager';
@@ -48,7 +49,7 @@ import type { RoomDisposeReason, RoomManager, StoryRoomHooks } from './room-mana
 export type LiveStep = Extract<Step, { kind: 'practice-table' | 'sparring' }>;
 
 /** 라이브 스텝 종료 사유(이벤트 로그 전용) — 'objectives'는 미션형 조기 종료 */
-export type LiveFinishReason = 'objectives' | 'max-hands' | 'table-short' | 'bust' | 'scripts' | 'operator-skip';
+export type LiveFinishReason = 'objectives' | 'max-hands' | 'table-short' | 'bust' | 'scripts' | 'operator-skip' | 'tournament';
 
 export interface LiveStepSummary {
   outcome: 'done' | 'failed' | 'abandoned';
@@ -60,6 +61,11 @@ export interface LiveStepSummary {
   liveScore: number | null;
   handsPlayed: number;
   netBB: number;
+  /**
+   * 졸업 대결(토너먼트 정책)의 **확정 순위** — 엔진 `finishPlace`/`tournament.entrants`에서만 나온다.
+   * 클라이언트 제출값이나 칩 재추정으로 만들지 않는다. `source`는 실제 플레이/운영자 스킵 출처.
+   */
+  tournament?: { place: number; entrants: number; source: 'play' | 'operator-skip' };
 }
 
 export interface LiveEnterInput {
@@ -140,6 +146,14 @@ interface MasqueradeSession {
   revealedHands: number;
 }
 interface LiveSession {
+  /** 졸업 대결 정책 (없으면 일반 라이브 스텝) — 방 구성·종료 판정·재개 경계가 갈린다 */
+  tournament: LiveTournamentPolicy | null;
+  /**
+   * 첫 딜이 실제로 시작됐는가(beforeHand가 'deal'을 처음 돌려준 시점).
+   * `handsPlayed`는 핸드 **완료** 후에만 늘어나므로 방 재생성 경계로 쓸 수 없다 —
+   * 첫 핸드 진행 중 방이 사라지면 새 스택으로 재개돼 순위가 리셋된다.
+   */
+  dealStarted: boolean;
   readingResponses: Partial<Record<ReadingResponseKind, { opportunities: number; correct: number }>>;
   reading: StoryReadingQuiz | null;
   readingTimer: NodeJS.Timeout | null;
@@ -262,6 +276,10 @@ export class LiveTableAdapter implements StoryRoomHooks {
       return { ok: false, code: 'action-rejected', message: '결과를 정리하는 중이에요.' };
     }
     if (!session.roomId) {
+      if (session.tournament && session.dealStarted) {
+        // 첫 딜 뒤의 방 소실은 순위 없는 종료로 이미 끝났어야 한다 — 새 방으로 이어 붙이지 않는다
+        return { ok: false, code: 'stale-state', message: '이미 끝난 졸업 대결이에요.' };
+      }
       if (!this.openRoom(session)) {
         return { ok: false, code: 'server-error', message: '테이블을 다시 열지 못했어요. 잠시 후 다시 시도해 주세요.' };
       }
@@ -567,10 +585,30 @@ export class LiveTableAdapter implements StoryRoomHooks {
       lastReview: session.lastReview,
       botThoughts: this.exposeBotThoughts && !session.masquerade && !session.reading ? [...session.botThoughts] : [],
       reading: session.reading?.view(),
+      ...(session.tournament ? { tournament: this.tournamentView(session) } : {}),
       pendingQuiz: question ? { ...question, sampledAt, remainingMs: Math.min(30_000, Math.max(0, question.expiresAt - sampledAt)) } : null,
       ...(session.masquerade ? { masquerade: { phase: session.masquerade.phase, notes: session.masquerade.notes.map(n => ({ ...n })),
         feedback: session.masquerade.phase === 'feedback' || session.masquerade.phase === 'revealed-play' ? session.masquerade.quiz?.feedback() ?? null : null,
         answered: session.masquerade.quiz?.counts().answered ?? 0, required: 4 as const } } : {}),
+    };
+  }
+
+  /** 졸업 대결 HUD — 생존 인원·내 순위·현재 레벨/블라인드 (엔진 상태 그대로) */
+  private tournamentView(session: LiveSession): NonNullable<StoryLiveView['tournament']> {
+    const state = session.roomId ? this.options.roomManager.getRoom(session.roomId)?.engine.state : undefined;
+    const structure = resolveSngStructure(session.tournament?.sngStructureId);
+    const tournament = state?.tournament;
+    const hero = state?.players.find(player => player.id === session.profileId);
+    const alive = state
+      ? state.players.filter(player => !player.pendingRemoval && !player.finishPlace && player.chips > 0).length
+      : 0;
+    return {
+      alive,
+      entrants: tournament?.entrants || session.step.table.lineup.length + 1,
+      heroPlace: hero?.finishPlace ?? null,
+      level: tournament?.level ?? 1,
+      smallBlind: tournament?.smallBlind ?? structure.levels[0].smallBlind,
+      bigBlind: tournament?.bigBlind ?? structure.levels[0].bigBlind,
     };
   }
 
@@ -611,6 +649,13 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const state = engine.state;
     const hero = state.players.find(p => p.id === session.profileId);
     if (!hero || hero.pendingRemoval) return 'hold'; // 히어로 이탈 — leave 경로가 방을 정리한다
+
+    if (session.tournament) {
+      // 졸업 대결은 실제 SnG 계약: 부재·끊김도 딜인하고 블라인드가 계속 나간다(RoomManager가 자동 폴드).
+      // 파산/테이블 축소는 엔진 순위가 확정하므로 여기서 실패로 끊지 않는다.
+      session.dealStarted = true;
+      return 'deal';
+    }
 
     if (hero.isDisconnected) {
       this.setHold(session, 'timeout');
@@ -654,7 +699,8 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
   skipHandProgression(roomId: string): boolean {
     const session = this.byRoom.get(roomId);
-    return session?.step.kind === 'practice-table';
+    // 졸업 대결 핸드도 일반 경기 XP·일일 미션에 적립하지 않는다 — 보상은 스토리 결산이 소유
+    return session?.step.kind === 'practice-table' || !!session?.tournament;
   }
 
   onHandComplete(roomId: string): 'continue' | 'hold' | 'gone' {
@@ -704,6 +750,31 @@ export class LiveTableAdapter implements StoryRoomHooks {
       }
     }
     session.netChips = hero.chips - session.heroStartChips;
+
+    // 졸업 대결 종료 판정 — 엔진이 확정한 순위(finishPlace) 또는 토너먼트 종료(히어로 우승)만 본다.
+    // 히어로가 탈락하면 봇 우승을 기다리지 않고 즉시 끝낸다.
+    if (session.tournament) {
+      const tournamentState = state.tournament;
+      const place = hero.finishPlace
+        ?? (tournamentState?.finished
+          ? tournamentState.results.find(result => result.playerId === session.profileId)?.place
+          : undefined);
+      if (place !== undefined && tournamentState) {
+        this.finish(session, 'done', 'tournament', {
+          place,
+          entrants: tournamentState.entrants,
+          source: 'play',
+        });
+        return 'hold';
+      }
+      if (session.handsPlayed >= this.maxHands(session)) {
+        // 폭주 가드 — 순위 없이 끝난다(운영 오류 종료)
+        this.finish(session, 'failed', 'max-hands');
+        return 'hold';
+      }
+      this.events?.onLiveChanged(session.profileId);
+      return 'continue';
+    }
 
     // 종료 판정
     if (session.step.kind === 'sparring' && hero.chips <= 0) {
@@ -806,14 +877,17 @@ export class LiveTableAdapter implements StoryRoomHooks {
       return;
     }
     // grace 만료 회수·유휴 정리·hold 타임아웃 — 집계를 보존한 채 room-lost hold로 전환
-    this.markRoomLost(session, true);
+    this.handleRoomGone(session, true);
   }
 
   // ---------------------------------------------------------------------------
   // 내부
 
   private freshSession(input: LiveEnterInput): LiveSession {
+    const tournament = input.step.table.tournament ?? null;
     return {
+      tournament,
+      dealStarted: false,
       lastRecordedHand: null,
       readingResponses: {},
       reading: input.step.table.reading ? new StoryReadingQuiz() : null,
@@ -833,7 +907,9 @@ export class LiveTableAdapter implements StoryRoomHooks {
       deck: null,
       scriptCursor: 0,
       handsPlayed: 0,
-      heroStartChips: input.step.table.heroStackBB * input.step.table.blinds.big,
+      heroStartChips: tournament
+        ? resolveSngStructure(tournament.sngStructureId).startingStack
+        : input.step.table.heroStackBB * input.step.table.blinds.big,
       netChips: 0,
       tally: emptyTally(),
       lastReview: null,
@@ -852,18 +928,22 @@ export class LiveTableAdapter implements StoryRoomHooks {
   private openRoom(session: LiveSession): boolean {
     const { step } = session;
     const table = step.table;
-    const big = table.blinds.big;
-    const heroChips = table.heroStackBB * big;
+    // 졸업 대결은 실제 SnG — 블라인드·스택은 구조 레지스트리가 정하고 스펙의 stackBB는 무시한다
+    const structure = session.tournament ? resolveSngStructure(session.tournament.sngStructureId) : null;
+    const big = structure ? structure.levels[0].bigBlind : table.blinds.big;
+    const small = structure ? structure.levels[0].smallBlind : table.blinds.small;
+    const heroChips = structure ? structure.startingStack : table.heroStackBB * big;
     const config: RoomConfig = {
       name: `수련 · ${session.chapterTitle}`,
-      smallBlind: table.blinds.small,
+      smallBlind: small,
       bigBlind: big,
       minBuyIn: heroChips,
       maxBuyIn: heroChips,
       maxPlayers: 6,
       economyMode: 'practice',
       turnTime: table.turnTimeSec,
-      gameMode: 'cash',
+      gameMode: structure ? 'sng' : 'cash',
+      ...(structure ? { startingStack: structure.startingStack, sngStructureId: structure.id } : {}),
       difficulty: table.difficulty,
       botCount: 0,
       tableType: 'bots',
@@ -892,8 +972,9 @@ export class LiveTableAdapter implements StoryRoomHooks {
     }
     session.roomId = roomId;
     session.deck = deck ?? null;
-    // 재개(room-lost 후)면 새 방의 히어로 스택은 마지막 스택을 이어받는다 — 스파링 netBB 연속성
-    const heroSeatChips = step.kind === 'sparring' && session.handsPlayed > 0
+    // 재개(room-lost 후)면 새 방의 히어로 스택은 마지막 스택을 이어받는다 — 스파링 netBB 연속성.
+    // 졸업 대결은 첫 딜 전에만 재개하므로(그 뒤 방 소실은 순위 없는 종료) 항상 시작 스택이다.
+    const heroSeatChips = !structure && step.kind === 'sparring' && session.handsPlayed > 0
       ? Math.max(big, session.heroStartChips + session.netChips)
       : heroChips;
     // hold를 좌석 채우기 전에 — joinRoom이 tryStartGame을 부르므로 착석 중 핸드가 시작되면 안 된다
@@ -904,7 +985,10 @@ export class LiveTableAdapter implements StoryRoomHooks {
     session.disposing = false;
     this.byRoom.set(roomId, session);
 
-    const stackBySeat = new Map(table.lineup.map(seat => [seat.seatIndex, seat.stackBB * big]));
+    const stackBySeat = new Map(table.lineup.map(seat => [
+      seat.seatIndex,
+      structure ? structure.startingStack : seat.stackBB * big,
+    ]));
     for (const identity of identities) {
       // 이미 공개된 좌석은 실제 캐릭터로(표시 덮어쓰기 없이) 앉는다 — 공개는 새 방에도 이어진다
       const display = identity.revealed ? undefined : identity.maskedDisplay ?? undefined;
@@ -1050,7 +1134,36 @@ export class LiveTableAdapter implements StoryRoomHooks {
       this.setHold(session, 'timeout');
       return;
     }
-    this.markRoomLost(session, true);
+    this.handleRoomGone(session, true);
+  }
+
+  /**
+   * 방이 사라졌다 — 재개 경계는 **첫 딜 시작 여부**다.
+   * 졸업 대결은 첫 딜 뒤에 방이 사라지면 순위를 만들 수 없으므로 새 방으로 이어 붙이지 않고
+   * 순위 없는 종료(abandoned)로 끝낸다(스택·순위 리셋 방지). 그 밖엔 기존 room-lost 보존.
+   */
+  private handleRoomGone(session: LiveSession, notify: boolean): void {
+    if (session.tournament && session.dealStarted) {
+      this.finishAbandoned(session);
+      return;
+    }
+    this.markRoomLost(session, notify);
+  }
+
+  /** 순위 없이 끝난 졸업 대결 — 세션을 버리고 코디네이터에 abandoned 요약을 넘긴다 */
+  private finishAbandoned(session: LiveSession): void {
+    this.clearReading(session);
+    this.clearQuizTimer(session);
+    this.clearFinishTimer(session);
+    session.roomId = null;
+    session.deck = null;
+    this.sessions.delete(session.profileId);
+    const summary = this.summarize(session, 'abandoned');
+    eventLog.log('story-step', {
+      playerId: session.profileId,
+      data: { runId: session.runId, event: 'live-finish', outcome: 'abandoned', reason: 'tournament', handsPlayed: summary.handsPlayed, netBB: summary.netBB },
+    });
+    this.events?.onStepFinished(session.profileId, session.runId, summary);
   }
 
   private markRoomLost(session: LiveSession, notify: boolean): void {
@@ -1119,11 +1232,16 @@ export class LiveTableAdapter implements StoryRoomHooks {
   }
 
   /** 스텝 종료 예약 — 승리 연출이 끝난 뒤 방을 해체하고 코디네이터에 결과를 넘긴다 */
-  private finish(session: LiveSession, outcome: 'done' | 'failed', reason: LiveFinishReason): void {
+  private finish(
+    session: LiveSession,
+    outcome: 'done' | 'failed',
+    reason: LiveFinishReason,
+    tournament?: NonNullable<LiveStepSummary['tournament']>,
+  ): void {
     if (session.finishTimer) return;
     this.clearReading(session);
     this.clearQuizTimer(session);
-    const summary = this.summarize(session, outcome);
+    const summary = this.summarize(session, outcome, tournament);
     const complete = (): void => {
       session.finishTimer = null;
       if (!this.disposeOwnRoom(session, 'story-end')) {
@@ -1146,8 +1264,25 @@ export class LiveTableAdapter implements StoryRoomHooks {
     this.events?.onLiveChanged(session.profileId);
   }
 
-  private summarize(session: LiveSession, outcome: LiveStepSummary['outcome']): LiveStepSummary {
+  private summarize(
+    session: LiveSession,
+    outcome: LiveStepSummary['outcome'],
+    tournament?: NonNullable<LiveStepSummary['tournament']>,
+  ): LiveStepSummary {
     const big = session.step.table.blinds.big;
+    if (session.tournament) {
+      return {
+        outcome,
+        tag: session.step.tag,
+        objectives: [],
+        // 통과는 순위가 정한다 — 행동 목표·라이브 점수는 이 스텝에 없다
+        primaryObjectivesMet: null,
+        liveScore: null,
+        handsPlayed: session.handsPlayed,
+        netBB: Math.round((session.netChips / big) * 10) / 10,
+        ...(tournament ? { tournament } : {}),
+      };
+    }
     if (session.step.kind === 'practice-table') {
       return {
         outcome,
@@ -1173,6 +1308,13 @@ export class LiveTableAdapter implements StoryRoomHooks {
 
   /** 운영자 스킵용 요약 — 모든 목표를 달성(progress=target)으로 채운 done 요약. '연습'은 목표가 없으니 그대로. */
   private summarizeForced(session: LiveSession): LiveStepSummary {
+    if (session.tournament) {
+      // 운영자 스킵은 1위로 확정한다 — 자격 부여는 실제 완주와 같고 출처만 영수증에 남는다
+      const entrants = (session.roomId
+        ? this.options.roomManager.getRoom(session.roomId)?.engine.state.tournament?.entrants
+        : undefined) || session.step.table.lineup.length + 1;
+      return this.summarize(session, 'done', { place: 1, entrants, source: 'operator-skip' });
+    }
     const base = this.summarize(session, 'done');
     if (session.step.kind === 'practice-table' || session.masquerade) return base;
     const checklist = session.step.checklist;

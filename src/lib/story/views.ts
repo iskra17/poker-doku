@@ -124,6 +124,19 @@ export interface StoryLiveView {
   pendingQuiz: HandReadQuizView | null;
   masquerade?: MasqueradeView;
   reading?: ReadingQuizView;
+  /**
+   * 졸업 대결(실제 6인 Sit & Go) HUD — 서버 엔진 상태의 투영이다.
+   * 통과 조건이 행동 목표가 아니라 순위이므로 objectives는 비어 있고 이 블록이 진행을 알린다.
+   */
+  tournament?: {
+    alive: number;
+    entrants: number;
+    /** 내 확정 순위 (아직 생존이면 null) */
+    heroPlace: number | null;
+    level: number;
+    smallBlind: number;
+    bigBlind: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

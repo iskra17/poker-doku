@@ -173,7 +173,18 @@ export interface MasqueradePolicy {
   revealedMinHands: 2;
   revealedMaxHands: 10;
 }
+/**
+ * 졸업 대결 정책 — 이 스파링은 **실제 6인 Sit & Go**로 돈다(연습경제, 1,000칩·2분 구조).
+ * 통과 조건은 행동 목표가 아니라 **엔진이 확정한 순위**이므로 objectives는 비운다.
+ * Ch12 전용이며 검증기가 라인업(비히로인 봇 5석)·maxHands 하한·턴 시간을 고정한다.
+ */
+export interface LiveTournamentPolicy {
+  id: 'graduation-sng-v1';
+  sngStructureId: 'graduation';
+}
+
 export interface LiveTableSpec {
+  tournament?: LiveTournamentPolicy;
   reading?: { id: 'river-reading-v1'; maxQuestions: 2 };
   readingReview?: { id: 'act3-response-v1' };
   masquerade?: MasqueradePolicy;
@@ -284,7 +295,8 @@ export interface Interrupt {
 // 스텝
 
 export type Step =
-  | { kind: 'scene'; id: string; scene: Scene }
+  /** `graduation: 'epilogue'` — 졸업 대결 뒤에만 재생하는 씬 스텝(졸업 모드도 이 스텝만 진입한다) */
+  | { kind: 'scene'; id: string; scene: Scene; graduation?: 'epilogue' }
   | { kind: 'lesson'; id: string; title: string; blocks: LessonBlock[] }
   | {
       kind: 'drill-set';
@@ -359,6 +371,13 @@ export interface Chapter {
   /** 통과 시 도달하는 띠 (막 마지막 챕터만 승급, 나머지는 현재 띠 유지) */
   belt: StoryBelt;
   requires: ChapterId[];
+  /** 실력 확인(exam) 우회를 막는다 — 졸업 챕터처럼 드릴만으로 통과시킬 수 없는 수업 */
+  examDisabled?: true;
+  /**
+   * 졸업 챕터 — 완주 뒤 '졸업 대결만 재도전'(`mode: 'graduation'`)을 열어 준다.
+   * 검증기: tournament 스파링 정확히 1개 + `examDisabled`.
+   */
+  graduation?: true;
   steps: Step[];
   failScene?: Scene;
   rewards: ChapterRewards;
