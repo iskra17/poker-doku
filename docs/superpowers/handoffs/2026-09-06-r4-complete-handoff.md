@@ -71,4 +71,4 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
   운영자 미리보기 50/50(실제 획득 불변), 설정 「보너스 CG 표시」 OFF→보너스 탭 소멸·ON→복구, 뷰어는 `bonus-<id>-<scene>.webm` `<video>`를 마운트한다.
   **주의**: 자동화 브라우저는 백그라운드 창(`document.hidden`)이라 CgStage의 1.5초 canplay 폴백이 발동해 정지 CG로 떨어졌다(기존 이벤트 CG도 동일) —
   전면 탭에서 루프 재생을 한 번 눈으로 확인할 것. 인연 탭(AffinityTab) 보너스 목록 게이트는 단위 테스트·Astra 확인만.
-- 미배포·미push. 다음 후보: 배포(사용자 지시), 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상(후순위).
+- **배포 완료**: 사용자 지시로 main `57ba40f` push + `fly deploy --ha=false` → Fly v87(머신 48ed666a50d2e8, healthz 200, 보너스 에셋 서빙 확인). 다음 후보: 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상(후순위).

@@ -667,7 +667,7 @@ npx tsc --noEmit
   표준 1,500/3분 불변), 순위 영수증은 `story_graduations`(v38, 에필로그 전 선저장, `belt:black`·`graduation:champion`
   단조 플래그, 6위 재도전에도 회수 없음). 졸업 대결만 재도전은 `StoryRunMode 'graduation'` — 토너먼트 스파링·에필로그
   씬·결산만 진입하고 완료 기록·XP·인연·칩 없이 순위만 기록한다. Ch12는 실력 확인(exam) 없음. 브라우저 QA(완주·재접속·
-  자리비움 복귀·ITM 분기·재도전)와 다음 시작점은 `docs/superpowers/handoffs/2026-09-06-r4-complete-handoff.md`. **미배포**.
+  자리비움 복귀·ITM 분기·재도전)와 다음 시작점은 `docs/superpowers/handoffs/2026-09-06-r4-complete-handoff.md`. **Fly v87 배포(2026-09-06)**.
   **보너스 이벤트 CG 50장 연결 완료(2026-09-06, R5)**: 사용자 검수 50/50 → 원장 export(`public/assets/story/{cg,video}/bonus-<id>-<scene>.*`)
   → 카탈로그 `line:'bonus'`(`src/lib/story/rewards/bonus-cg.ts`, 트리거 `affinity-level`/`dojo-level` — 히로인 6명 인연 4/8/12/16/20,
   미야코·유즈키·린·잉그리드 도장 10/20/30/40/50, 장면 casual→sing→yoga→gym→beach) + v39 INSERT(비히로인 `character_id NULL`).
