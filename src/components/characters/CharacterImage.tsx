@@ -18,6 +18,12 @@ interface CharacterImageProps {
    * 테이블 좌석·말풍선·컷인은 넘기지 않아 기본 의상으로 남는다. 아트 미배치 의상은 기본 경로로 폴백.
    */
   outfitId?: string | null;
+  /**
+   * VN 스프라이트처럼 "액자 없이" 그린다 — 실제 아트를 그릴 때만 배경 그라디언트·모서리 라운딩·
+   * overflow 클리핑·스킨/패널 오버레이를 전부 생략한다(투명 배경 버스트가 상자 없이 얹히도록).
+   * 이모지 폴백은 이 옵션과 무관하게 기존 그라디언트 원/사각을 유지한다.
+   */
+  frameless?: boolean;
 }
 
 /**
@@ -27,6 +33,7 @@ interface CharacterImageProps {
  */
 export default function CharacterImage({
   characterId, expression = 'neutral', round = true, className = '', skinId = null, outfitId = null,
+  frameless = false,
 }: CharacterImageProps) {
   const [errored, setErrored] = useState(false);
   const character = getCharacterById(characterId);
@@ -57,8 +64,10 @@ export default function CharacterImage({
 
   return (
     <div
-      className={`relative overflow-hidden ${round ? 'rounded-full' : 'rounded-xl'} ${className}`}
-      style={{ background: `linear-gradient(135deg, ${color}33, ${colorSecondary}55)` }}
+      className={frameless
+        ? `relative ${className}`
+        : `relative overflow-hidden ${round ? 'rounded-full' : 'rounded-xl'} ${className}`}
+      style={frameless ? undefined : { background: `linear-gradient(135deg, ${color}33, ${colorSecondary}55)` }}
     >
       <AnimatePresence mode="popLayout" initial={false}>
         <motion.img
@@ -76,7 +85,7 @@ export default function CharacterImage({
           draggable={false}
         />
       </AnimatePresence>
-      {renderer && (
+      {renderer && !frameless && (
         <span aria-hidden className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${skinGradient}`}>
           <span className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-panel/35 to-transparent" />
           <span className="absolute right-2 top-2 text-gilded">{renderer.overlay === 'cherry-blossom' ? '✿' : '✦'}</span>

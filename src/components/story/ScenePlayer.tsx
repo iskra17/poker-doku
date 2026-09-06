@@ -224,9 +224,10 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
               animate={{ opacity: 1, y: [0, -4, 0] }}
               exit={{ opacity: 0 }}
               transition={{ y: { duration: 0.45 }, opacity: { duration: 0.25 } }}
-              className={`overflow-hidden rounded-t-3xl ${compact ? 'h-40 w-40' : 'h-56 w-56'}`}
+              // 투명 배경 버스트 — 액자(그라디언트 상자)·모서리 클리핑 없이 배경 위에 바로 얹는다
+              className={compact ? 'h-40 w-40' : 'h-56 w-56'}
             >
-              <CharacterImage characterId={speaker.artId} expression={line?.expression ?? 'neutral'} round={false} outfitId={speakerOutfit} className="h-full w-full text-6xl" />
+              <CharacterImage characterId={speaker.artId} expression={line?.expression ?? 'neutral'} round={false} frameless outfitId={speakerOutfit} className="h-full w-full text-6xl" />
             </motion.div>
           )}
         </AnimatePresence>
