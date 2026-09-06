@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-chloe-casual-v2",
+  "character": "chloe",
+  "scene": "casual",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-chloe-casual-v2.png",
+    "sha256": "3e03d42215e4902a8b12bff7c30b2078aa024efd33c518fd6d3490cfbe016608"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-chloe-casual-v2.provenance.json",
+    "sha256": "ae719d85f681708beaaa90359208d5261820aec1ac9a645a1b44a7118129afb8"
+  },
+  "prompt": "Wearing a cropped hoodie, a pleated mini skirt and platform sneakers, she faces the viewer holding her phone up for a selfie with shopping bags hooked on her other arm, snowflake clips glinting, playful wink; medium front-facing shot at eye level, gaze at the phone camera, bright mall atrium with escalators and storefront lights softly blurred behind her, no mirrors or reflective glass surfaces.",
+  "angle": "over-the-shoulder or environmental wide",
+  "gaze": "at the phone camera",
+  "expression": "see prompt",
+  "outfit": "a cropped hoodie, a pleated mini skirt and platform sneakers"
+}

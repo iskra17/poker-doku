@@ -10,10 +10,13 @@ const LEDGER = (process.argv[3] ?? 'D:/AI-Image-Video/output/poker-doku-library/
 const plan = JSON.parse(fs.readFileSync(new URL('./bonus-cg-plan-2026-09-06.json', import.meta.url), 'utf8'));
 const SCENES = ['beach', 'gym', 'yoga', 'sing', 'casual'];
 
-function resolveVideoJob(db, image) {
+// (캐릭터, 장면)의 최신 비반려 원화 job → 그 원화의 최신 비반려 video job (재생성 -v2 … 자동 추적)
+function resolveVideoJob(db, cid, scene, image) {
   if (!db) return `${image}-video`;
-  const row = db.prepare("SELECT id FROM jobs WHERE json_extract(spec,'$.job.parent_job')=? AND state!='rejected' ORDER BY created DESC LIMIT 1").get(image);
-  return row?.id ?? `${image}-video`;
+  const img = db.prepare("SELECT id FROM jobs WHERE character=? AND scene=? AND kind!='video' AND state!='rejected' ORDER BY created DESC LIMIT 1").get(cid, scene)?.id ?? image;
+  const row = db.prepare("SELECT id, state FROM jobs WHERE json_extract(spec,'$.job.parent_job')=? AND state!='rejected' ORDER BY created DESC LIMIT 1").get(img);
+  if (!row) return { job: `${image}-video`, loopPending: true };
+  return { job: row.id, loopPending: ['pending', 'submitted', 'running', 'queued', 'failed'].includes(row.state) };
 }
 
 let db = null;
@@ -25,14 +28,16 @@ const missing = [];
 for (const c of plan.characters) {
   for (const scene of SCENES) {
     const image = `bonus-${c.id}-${scene}`;
-    let job = resolveVideoJob(db, image);
-    if (!fs.existsSync(`${STAGING}/encode-probe/${job}.mp4`) && fs.existsSync(`${STAGING}/encode-probe/${image}-video.mp4`)) job = `${image}-video`;
+    const resolved = resolveVideoJob(db, c.id, scene, image);
+    let job = resolved.job;
+    // 루프가 아직 없거나(생성 중) probe 인코딩이 없으면 카드는 원화만 보여 주고 결정을 잠근다
+    const loopPending = resolved.loopPending || !fs.existsSync(`${STAGING}/encode-probe/${job}.mp4`);
     const still = `${STAGING}/out/${c.id}/${scene}.png`;
     const item = {
       key: `${c.id}:${scene}`, id: c.id, name: c.name_ko, age: c.age, scene, sceneTitle: plan.scenes[scene].title_ko, job,
       mp4: `../encode-probe/${job}.mp4`, webm: `../encode-probe/${job}.webm`, still: `../out/${c.id}/${scene}.png`,
       mp4Kb: kb(`${STAGING}/encode-probe/${job}.mp4`), webmKb: kb(`${STAGING}/encode-probe/${job}.webm`), stillKb: kb(still),
-      prompt: c.scenes[scene],
+      prompt: c.scenes[scene], loopPending,
     };
     for (const [label, present] of [['mp4', item.mp4Kb], ['webm', item.webmKb], ['png', item.stillKb]]) if (present === null) missing.push(`${item.key} ${label}`);
     items.push(item);
@@ -149,15 +154,19 @@ const KEY = 'bonus-cg-review-${plan.batch}';
 let state = {};
 try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch { state = {}; }
 const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} };
+// job 필드가 없는 예전 결정은 첫 검토 화면(2026-09-06)의 job에 묶는다 — 원본 클립, 린 요가만 v4.
+for (const it of ITEMS) { const s = state[it.key]; if (s && !s.job && (s.d || s.n)) s.job = it.key === 'lin:yoga' ? 'bonus-lin-yoga-video-v4' : 'bonus-' + it.id + '-' + it.scene + '-video'; }
+save();
 const ui = { filter: 'all', char: 'all', fmt: 'mp4', autoplay: true, stillAll: false, size: 240 };
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const byKey = new Map(ITEMS.map((it) => [it.key, it]));
 const cards = new Map();
 
-function decision(key) { return state[key]?.d || ''; }
+// 결정은 검토 당시의 video job에 묶인다 — 클립이 재생성돼 job id가 바뀌면 자동으로 '미검토'로 돌아온다(메모는 남김).
+function decision(key) { const s = state[key]; if (!s) return ''; if (s.job && s.job !== byKey.get(key).job) return ''; return s.d || ''; }
 function setDecision(key, d) {
-  state[key] = { ...(state[key] || {}), d: decision(key) === d ? '' : d };
+  state[key] = { ...(state[key] || {}), d: decision(key) === d ? '' : d, job: byKey.get(key).job };
   save(); paint(key); counts(); applyFilter();
 }
 function setNote(key, n) { state[key] = { ...(state[key] || {}), n }; save(); }
@@ -176,14 +185,15 @@ function build() {
       card.className = 'card'; card.dataset.key = it.key;
       card.innerHTML =
         '<div class="head"><b>' + it.sceneTitle + '</b><code>' + it.key + '</code></div>' +
-        '<div class="media"><span class="badge">' + it.job + '</span>' +
+        '<div class="media' + (it.loopPending ? ' still' : '') + '"><span class="badge">' + (it.loopPending ? '⏳ 루프 생성 중 — 원화만' : it.job + (state[it.key]?.job && state[it.key].job !== it.job ? ' · 재생성됨' : '')) + '</span>' +
         '<video muted loop playsinline preload="metadata" poster="' + it.still + '"></video>' +
         '<img loading="lazy" src="' + it.still + '" alt="' + it.key + ' 원화"><div class="err">파일 없음/재생 실패</div></div>' +
         '<div class="foot"><div class="meta"><span>mp4 ' + (it.mp4Kb ?? '—') + 'KB · webm ' + (it.webmKb ?? '—') + 'KB</span><button class="stillBtn" style="padding:1px 8px;font-size:11px">원화</button></div>' +
         '<div class="actions"><button class="ok">✅ 승인</button><button class="ng">❌ 반려</button></div>' +
         '<input type="text" placeholder="반려 사유 / 메모" value="' + (state[it.key]?.n || '').replace(/"/g, '&quot;') + '"></div>';
       const video = $('video', card);
-      video.src = ui.fmt === 'mp4' ? it.mp4 : it.webm;
+      if (it.loopPending) { for (const b of $$('.actions button', card)) { b.disabled = true; b.title = '루프가 나오면 검토할 수 있어요'; } }
+      else video.src = ui.fmt === 'mp4' ? it.mp4 : it.webm;
       video.addEventListener('error', () => $('.media', card).classList.add('broken'));
       video.addEventListener('loadeddata', () => $('.media', card).classList.remove('broken'));
       $('.media', card).addEventListener('click', () => openLb(it.key));
@@ -224,7 +234,7 @@ const io = new IntersectionObserver((entries) => {
   }
 }, { threshold: 0.25 });
 function refreshSources() {
-  for (const it of ITEMS) { const v = $('video', cards.get(it.key)); const src = ui.fmt === 'mp4' ? it.mp4 : it.webm; if (v.getAttribute('src') !== src) { v.src = src; v.load(); } }
+  for (const it of ITEMS) { if (it.loopPending) continue; const v = $('video', cards.get(it.key)); const src = ui.fmt === 'mp4' ? it.mp4 : it.webm; if (v.getAttribute('src') !== src) { v.src = src; v.load(); } }
 }
 
 // 크게 보기
@@ -274,7 +284,9 @@ function rejectText() {
   const ng = ITEMS.filter((i) => decision(i.key) === 'ng');
   const pending = ITEMS.filter((i) => !decision(i.key));
   const lines = ['반려 ' + ng.length + '건 (' + new Date().toLocaleString('ko-KR') + ')', ng.map((i) => i.key).join(', '), '', ...ng.map((i) => i.key + ' — ' + i.name + ' ' + i.sceneTitle + (state[i.key]?.n ? ' — ' + state[i.key].n : ''))];
-  if (pending.length) lines.push('', '미검토 ' + pending.length + '건: ' + pending.map((i) => i.key).join(', '));
+  const waiting = pending.filter((i) => i.loopPending); const todo = pending.filter((i) => !i.loopPending);
+  if (todo.length) lines.push('', '미검토 ' + todo.length + '건: ' + todo.map((i) => i.key).join(', '));
+  if (waiting.length) lines.push('', '루프 생성 중 ' + waiting.length + '건: ' + waiting.map((i) => i.key).join(', '));
   return lines.join('\\n');
 }
 function openSheet(title, text) { $('#sheetTitle').textContent = title; $('#sheetText').value = text; $('#sheetMsg').textContent = ''; $('#sheet').classList.add('open'); }

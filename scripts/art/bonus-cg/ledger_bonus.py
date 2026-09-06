@@ -89,8 +89,24 @@ def gaze_of(text):
     return text[idx + len(marker):].split(',', 1)[0].strip()
 
 
-def image_job_id(cid, scene):
+def asset_stem(cid, scene):
+    """게임 에셋 파일 stem — 재생성 접미(-v2)와 무관하게 항상 bonus-<id>-<scene>."""
     return f'bonus-{cid}-{scene}'
+
+
+def image_job_id(cid, scene):
+    """새로 등록할 원화 job id. 반려 뒤 재생성은 BONUS_IMAGE_SUFFIX=v2 로 새 id(같은 id 재사용 불가)."""
+    import os
+    suffix = os.environ.get('BONUS_IMAGE_SUFFIX', '').strip()
+    return f'bonus-{cid}-{scene}' + (f'-{suffix}' if suffix else '')
+
+
+def image_job_of(con, cid, scene):
+    """(캐릭터, 장면)의 최신 비반려 원화 job id — 재생성본이 있으면 그것."""
+    row = con.execute(
+        "SELECT id FROM jobs WHERE character=? AND scene=? AND kind!='video' AND state!='rejected' ORDER BY created DESC LIMIT 1",
+        (cid, scene)).fetchone()
+    return row['id'] if row else asset_stem(cid, scene)
 
 
 def video_job_of(con, image):
@@ -179,7 +195,7 @@ def cmd_video_manifest(pairs):
     con = db()
     jobs = []
     for index, (cid, scene) in enumerate(pairs):
-        parent = image_job_id(cid, scene)
+        parent = image_job_of(con, cid, scene)
         row = con.execute('SELECT output, output_hash, state FROM jobs WHERE id=?', (parent,)).fetchone()
         if not row or row['state'] != 'approved':
             print(f'skip {parent} — not approved in ledger')
@@ -215,15 +231,16 @@ def cmd_video_manifest(pairs):
 
 def cmd_approve_videos(pairs):
     con = db()
-    approve([video_job_of(con, image_job_id(c, s)) for c, s in pairs], 'Loop reviewed: fixed camera, identity and outfit preserved, seamless first/last frame')
+    approve([video_job_of(con, image_job_of(con, c, s)) for c, s in pairs], 'Loop reviewed: fixed camera, identity and outfit preserved, seamless first/last frame')
 
 
 def cmd_export(pairs):
     con = db()
     for cid, scene in pairs:
-        image = image_job_id(cid, scene)
-        worker('export', image, '--target-root', TARGET_ROOT, '--path', f'public/assets/story/cg/{image}.webp')
-        worker('export-video-pair', video_job_of(con, image), '--target-root', TARGET_ROOT, '--stem', f'public/assets/story/video/{image}')
+        image = image_job_of(con, cid, scene)
+        stem = asset_stem(cid, scene)
+        worker('export', image, '--target-root', TARGET_ROOT, '--path', f'public/assets/story/cg/{stem}.webp')
+        worker('export-video-pair', video_job_of(con, image), '--target-root', TARGET_ROOT, '--stem', f'public/assets/story/video/{stem}')
 
 
 def main(argv):

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "bonus-ara-yoga-v2-video-v2",
+      "character": "ara",
+      "scene": "yoga",
+      "parent_job": "bonus-ara-yoga-v2",
+      "seed": 509020267000,
+      "angle": "low wide angle across the mat",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a red crop top and black yoga leggings",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 21-year-old woman (아라) in the same outfit. Subtle ambient motion only: calm slow breathing, potted plant leaves stirring softly in the breeze, warm sunrise light shimmering gently, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Outdoor rooftop: no curtains, petals or smoke.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ara-yoga-v2--be7a6120734b18b88d792bf36a4c7306c4f82b447844e269b36448020fa6826c\\source.png",
+          "sha256": "56942d3b7811a2d494da7ca81590c071782d4874cc596555b2793f0608c69b66"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "bonus-sakura-casual-video-v2",
+      "character": "sakura",
+      "scene": "casual",
+      "parent_job": "bonus-sakura-casual",
+      "seed": 509020267000,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "see prompt",
+      "expression": "see prompt",
+      "outfit": "a cream knit sweater, a long pleated skirt and a small crossbody bag",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (사쿠라) in the same outfit. Subtle ambient motion only: a thin wisp of steam rising from the latte, soft window light shifting gently, hair stirring slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Indoor scene: absolutely no falling petals, cherry blossoms, snow, leaves or smoke.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-sakura-casual--4fd109720286f86f73d04700505206a827283562b69f3d5ee2a3a3ed742f5952\\source.png",
+          "sha256": "e0aa8b8818c326163e6cac940b0b1b1b8c2e818e578125d3b8b1faf30d6eb16b"
+        }
+      }
+    }
+  ]
+}

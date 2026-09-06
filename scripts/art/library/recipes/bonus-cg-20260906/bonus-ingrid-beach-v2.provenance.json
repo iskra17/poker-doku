@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "provider": "gpt-image-2",
+  "tool": "codex exec image_gen (gpt-5.5 orchestrator)",
+  "batch": "bonus-cg-2026-09-06",
+  "scope": "bonus",
+  "character": "ingrid",
+  "scene": "beach",
+  "age": 22,
+  "prompt": "Wearing a black sporty bikini with a short board-shorts bottom, she carries a surfboard under one arm walking out of the surf, hair soaked and slicked back, grinning with adrenaline; full-body three-quarter from a low angle, gaze off-frame at the waves, overcast Nordic beach with dramatic light. Rendering: clean cel-shaded anime finish exactly matching the other characters in the set — flat stylized skin tones with simple two-tone shading, softly stylized (not photorealistic) muscle definition, minimal wet-skin specular highlights, anime facial proportions.",
+  "prompt_file": "C:/code/claude/poker-doku-art/bonus-cg/prompts/ingrid.txt",
+  "content_rules": "Tasteful and non-explicit. Adult characters only (ages 19-27). Standard beach swimwear, sportswear and everyday outfits in leisure/sport/daily contexts. Natural adult proportions, no suggestive posing, no nudity, no lingerie, no text/logo/watermark.",
+  "references": [
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/ingrid-showcase.png",
+      "sha256": "00337881be6840941964a4202bdc128d01336d786d2119002bdb7f557e846f0d"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-a.png",
+      "sha256": "085b7751e224702bd69d97b3b362162ecf93ff0d26da2d3be4506490622e974c"
+    },
+    {
+      "path": "C:/code/claude/poker-doku-art/bonus-cg/ref/style-b.png",
+      "sha256": "596a1ab48e3fde2ba08dbec3432b458e8e38d522deb2d63a77558582ddf47b87"
+    }
+  ],
+  "original": {
+    "path": "C:/code/claude/poker-doku-art/bonus-cg/out/ingrid/beach.png",
+    "sha256": "c9fc7898265a2f07db591cff7ed2d1ba73efb87d4b0c4c4aba067a8b761c0696",
+    "width": 1024,
+    "height": 1536
+  }
+}

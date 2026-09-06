@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-gym-v2",
+  "character": "ingrid",
+  "scene": "gym",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-gym-v2.png",
+    "sha256": "99328454d2df5e06d91c8caf7ed5ca8c2f66a125a8eeaef2229bb096ed0b36c4"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-gym-v2.provenance.json",
+    "sha256": "da38cd0f257d5c86362507f279db5d890ac662bc45bc77f095ce05cfe947a4fa"
+  },
+  "prompt": "Wearing a black sports bra and grey joggers, she slams a battle rope with both arms, hair flying, teeth bared in a fierce grin; medium side shot, gaze forward, gritty industrial gym with hanging lights. Rendering: clean cel-shaded anime finish exactly matching the other characters in the set — flat stylized skin tones with simple two-tone shading, softly stylized (not photorealistic) muscle definition, minimal wet-skin specular highlights, anime facial proportions.",
+  "angle": "medium shot from the side or three-quarter",
+  "gaze": "forward",
+  "expression": "see prompt",
+  "outfit": "a black sports bra and grey joggers"
+}

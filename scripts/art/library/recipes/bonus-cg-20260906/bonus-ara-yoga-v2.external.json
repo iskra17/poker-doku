@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ara-yoga-v2",
+  "character": "ara",
+  "scene": "yoga",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ara-yoga-v2.png",
+    "sha256": "56942d3b7811a2d494da7ca81590c071782d4874cc596555b2793f0608c69b66"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ara-yoga-v2.provenance.json",
+    "sha256": "c6c0b399ae1e5e20c34ed9557699cdd625b9297b7ab13f2a5e0423951a195daa"
+  },
+  "prompt": "Wearing a red crop top and black yoga leggings, she holds a tree pose on a black mat — one foot pressed to her inner thigh, both palms joined at her chest — looking slightly annoyed at how hard it is, twin tails loosened; three-quarter front view at eye level, full body, both arms fully visible and in natural proportion with no foreshortening, rooftop yoga deck at sunrise with city skyline.",
+  "angle": "low wide angle across the mat",
+  "gaze": "see prompt",
+  "expression": "see prompt",
+  "outfit": "a red crop top and black yoga leggings"
+}

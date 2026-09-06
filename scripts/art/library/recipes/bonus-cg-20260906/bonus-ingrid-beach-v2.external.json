@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "source_type": "external-image",
+  "provider": "gpt-image-2",
+  "id": "bonus-ingrid-beach-v2",
+  "character": "ingrid",
+  "scene": "beach",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "source": {
+    "path": "D:/AI-Image-Video/input/pd-bonus-ingrid-beach-v2.png",
+    "sha256": "c9fc7898265a2f07db591cff7ed2d1ba73efb87d4b0c4c4aba067a8b761c0696"
+  },
+  "provenance": {
+    "path": "C:/code/claude/poker-doku/scripts/art/library/recipes/bonus-cg-20260906/bonus-ingrid-beach-v2.provenance.json",
+    "sha256": "e8b0dc941345d17b77ea6ec736ea2c0122c63b20a80d1edf0264a1bcbfcdfacb"
+  },
+  "prompt": "Wearing a black sporty bikini with a short board-shorts bottom, she carries a surfboard under one arm walking out of the surf, hair soaked and slicked back, grinning with adrenaline; full-body three-quarter from a low angle, gaze off-frame at the waves, overcast Nordic beach with dramatic light. Rendering: clean cel-shaded anime finish exactly matching the other characters in the set — flat stylized skin tones with simple two-tone shading, softly stylized (not photorealistic) muscle definition, minimal wet-skin specular highlights, anime facial proportions.",
+  "angle": "full-body or three-quarter, low horizon",
+  "gaze": "off-frame at the waves",
+  "expression": "see prompt",
+  "outfit": "a black sporty bikini with a short board-shorts bottom"
+}

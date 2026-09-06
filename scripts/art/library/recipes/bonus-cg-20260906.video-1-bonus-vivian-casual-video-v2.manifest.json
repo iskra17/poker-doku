@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 1,
+  "jobs": [
+    {
+      "id": "bonus-vivian-casual-video-v2",
+      "character": "vivian",
+      "scene": "casual",
+      "parent_job": "bonus-vivian-casual",
+      "seed": 509020267000,
+      "angle": "over-the-shoulder or environmental wide",
+      "gaze": "at something off-frame",
+      "expression": "see prompt",
+      "outfit": "a chic black turtleneck, a camel coat and a beret",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 26-year-old woman (비비안) in the same outfit. Subtle ambient motion only: light rain drizzle drifting past, wet cobblestone reflections shimmering softly, a faint wisp of steam from the espresso cup, hair stirring slightly, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Rainy street scene: absolutely no falling petals, cherry blossoms, snow, leaves or smoke.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-vivian-casual--070761156e1154b3f9bff1deea005d5047017b45b4a5bc73c628d890dbaddb2c\\source.png",
+          "sha256": "701637663667af7a41e54c9b38ba20d7528b2ad8320c5638ce33ec98c6708fb0"
+        }
+      }
+    }
+  ]
+}

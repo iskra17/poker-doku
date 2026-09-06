@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "scope": "bonus",
+  "target_root": "C:/code/claude/poker-doku/.worktrees/bonus-cg-assets",
+  "recipe": "h3-fl2v-bonus.recipe.json",
+  "output_root": "D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906",
+  "approval_document": "docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md",
+  "authorized_jobs": 2,
+  "jobs": [
+    {
+      "id": "bonus-ingrid-beach-v2-video",
+      "character": "ingrid",
+      "scene": "beach",
+      "parent_job": "bonus-ingrid-beach-v2",
+      "seed": 509020268000,
+      "angle": "full-body or three-quarter, low horizon",
+      "gaze": "off-frame at the waves",
+      "expression": "see prompt",
+      "outfit": "a black sporty bikini with a short board-shorts bottom",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (잉그리드) in the same outfit. Subtle ambient motion only: gentle water sparkle and small waves, hair and fabric stirring in the sea breeze, a single slow blink. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Keep the clean cel-shaded anime finish of the source; no photorealistic skin.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ingrid-beach-v2--b77132dc83c4dc461bc08e7e75ae14f298ed78497c376bd2e778494301dede69\\source.png",
+          "sha256": "c9fc7898265a2f07db591cff7ed2d1ba73efb87d4b0c4c4aba067a8b761c0696"
+        }
+      }
+    },
+    {
+      "id": "bonus-ingrid-gym-v2-video",
+      "character": "ingrid",
+      "scene": "gym",
+      "parent_job": "bonus-ingrid-gym-v2",
+      "seed": 509020268001,
+      "angle": "medium shot from the side or three-quarter",
+      "gaze": "forward",
+      "expression": "see prompt",
+      "outfit": "a black sports bra and grey joggers",
+      "prompt": "Animate the exact supplied premium anime event illustration with its fine linework, detailed fabric, luminous layered hair and softly painted cinematic lighting fully preserved. One adult 22-year-old woman (잉그리드) in the same outfit. Subtle ambient motion only: subtle breathing, a faint sway of loose hair, a single slow blink, soft light flicker. Hands, fingers, held objects and the pose remain fixed. Camera completely locked, no pan, zoom, shake or parallax. No extra people, no letters, captions, new objects, costume change or detail simplification. Preserve facial identity and anatomy throughout. Return naturally to the exact original pose and expression at the end for a seamless gentle ambient loop. Keep the clean cel-shaded anime finish of the source; no photorealistic skin.",
+      "inputs": {
+        "reference": {
+          "path": "D:\\AI-Image-Video\\output\\poker-doku-library\\bonus-cg-20260906\\external-images\\bonus-ingrid-gym-v2--96e93ed1786be46083a59a2d5fd572d4afcb2c19fbbd44cddb9628cc93b60d9d\\source.png",
+          "sha256": "99328454d2df5e06d91c8caf7ed5ca8c2f66a125a8eeaef2229bb096ed0b36c4"
+        }
+      }
+    }
+  ]
+}
