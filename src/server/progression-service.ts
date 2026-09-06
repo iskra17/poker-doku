@@ -758,7 +758,7 @@ export class ProgressionService {
       input.chapterId,
       input.firstClear ? undefined : input.runId,
     );
-    return this.repository.getProgressionEvent(eventId) !== undefined;
+    return this.repository.getProgressionEvent(eventId) !== null;
   }
 
   /** 오늘의 수련 문제 3개 완료 — 출제 히로인 인연 +5/일, 도장 XP 없음. 하루 1회 멱등. */

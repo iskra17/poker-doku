@@ -59,7 +59,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every(key => allowed.includes(key));
 }
 
-const RUN_MODES: readonly StoryRunMode[] = ['full', 'exam'];
+const RUN_MODES: readonly StoryRunMode[] = ['full', 'exam', 'graduation'];
 
 export function parseStartStoryChapterRequest(input: unknown): ParseResult<StartStoryChapterRequest> {
   if (!isRecord(input) || !hasOnlyKeys(input, ['chapterId', 'mode'])) return fail();

@@ -12,6 +12,7 @@ import { type StoryCurriculum, STORY_CURRICULUM } from '@/lib/story/curriculum';
  *   (`player-action`의 expectedHandNumber 계약과 동형 → 'stale-state').
  * - 성공한 명령마다 `emit(profileId, view)`로 story-update를 보낸다.
  */
+import { eventLog } from './event-log';
 import { hashSeed } from '../lib/poker/seeded-rng';
 import type { RealtimeErrorCode } from '../lib/realtime/protocol';
 import { STORY_CHAPTERS } from '../lib/story/chapters';
@@ -24,10 +25,13 @@ import type {
   ChapterGrade,
   ChapterId,
   DrillSlot,
+  Scene,
   Step,
+  StoryBelt,
   StoryHeroineId,
   StoryTeacherId,
 } from '../lib/story/types';
+import { resolveSngStructure } from './sng-structures';
 import { isStoryHeroineId, REVIEW_SLOT_TEMPLATE_ID } from '../lib/story/types';
 import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
@@ -309,6 +313,29 @@ export interface StoryRun {
   liveResults: LiveStepSummary[];
   /** 데일리 전용 — 출제 히로인·날짜 */
   daily: { kstDate: string; teacherId: StoryHeroineId | null } | null;
+  /**
+   * 영속하지 않는 런타임 플래그 — 씬 `requiresFlags` 평가에만 쓴다
+   * (`partner`, `graduation:outcome`). 저장 플래그·flagsDelta보다 우선한다.
+   */
+  runtimeFlags: Record<string, string>;
+  /** 시작 시점의 띠 — 결산의 `beltAwarded`가 "이 완주로 올랐는가"를 판정하는 기준 */
+  beltAtStart: StoryBelt;
+  /** 졸업 대결의 확정 순위 (엔진 → 어댑터 요약에서만 온다) */
+  graduation: { place: number; entrants: number } | null;
+  /** 에필로그 전에 **한 번 고정**하는 순위 영수증 — 재시도는 항상 같은 값을 쓴다 */
+  pendingGraduation: StoryGraduationReceipt | null;
+  /** 결산 입력 고정 — first/replay 판정이 재시도에서 뒤집혀 replay XP가 다시 나가지 않게 */
+  pendingCompletion: {
+    firstClear: boolean;
+    grade: ChapterGrade;
+    dojoXpMilli: number;
+    affinity: Array<{ characterId: StoryHeroineId; milli: number }>;
+    badgeId: string | null;
+    flags: Record<string, string>;
+  } | null;
+  /** 저장 실패로 대기 중인 단계 — 'graduation'은 순위 영수증, 'completion'은 결산 커밋 */
+  persistPending: 'graduation' | 'completion' | null;
+  persistAttempts: number;
   startedAt: number;
   updatedAt: number;
 }
@@ -328,10 +355,31 @@ export function kstDay(now: number): { date: string; fromMs: number; toMsExclusi
   };
 }
 
+/** 저장 실패 관측 — 운영 로그에만 남기고 사용자에겐 재시도 안내만 보낸다 */
+function eventLogPersistFailure(run: StoryRun, stage: 'graduation' | 'completion', error: unknown): void {
+  eventLog.log('story-step', {
+    playerId: run.profileId,
+    data: {
+      runId: run.runId,
+      event: 'persist-failed',
+      stage,
+      chapterId: run.chapter.id,
+      reason: error instanceof Error ? error.message : 'unknown',
+    },
+  });
+}
+
 let runCounter = 0;
 function defaultRunId(): string {
   runCounter += 1;
   return `story_${Date.now().toString(36)}_${runCounter.toString(36)}`;
+}
+
+/** 졸업 모드가 진입하는 스텝 — 토너먼트 스파링 · 에필로그 씬 · 결산 */
+function isGraduationStep(step: Step): boolean {
+  if (step.kind === 'result') return true;
+  if (step.kind === 'sparring') return !!step.table.tournament;
+  return step.kind === 'scene' && step.graduation === 'epilogue';
 }
 
 function emptySummary(hintPenalty = 0.5): StoryRun['drillSummary'] {
@@ -344,8 +392,12 @@ interface SparringCheckpoint {
   consumedByRunId: string | null;
 }
 export const SPARRING_RETRY_TTL_MS = 10 * 60_000;
+/** 순위·결산 저장 실패 자동 재시도 간격/횟수 (사용자 [다시 시도]와 병행) */
+export const PERSIST_RETRY_MS = 10_000;
+export const PERSIST_RETRY_MAX = 6;
 
 export class StoryRunCoordinator {
+  private readonly persistTimers = new Map<string, NodeJS.Timeout>();
   private readonly retries = new Map<string, SparringCheckpoint>();
   private readonly terminals = new Map<string, StoryRun>();
   private readonly runs = new Map<string, StoryRun>();
@@ -456,7 +508,10 @@ export class StoryRunCoordinator {
   }
 
   dispose(): void {
-    for (const profileId of this.runs.keys()) this.liveAdapter?.abandon(profileId);
+    for (const profileId of this.runs.keys()) {
+      this.clearPersistTimer(profileId);
+      this.liveAdapter?.abandon(profileId);
+    }
     this.runs.clear();
     this.retries.clear();
     this.terminals.clear();
@@ -532,6 +587,8 @@ export class StoryRunCoordinator {
     if (this.sweepExpired().has(profileId)) return true;
     const run = this.runs.get(profileId) ?? this.terminals.get(profileId);
     if (!run) return false;
+    // 재접속은 저장 재시도의 기회이기도 하다 — 성공하면 그 경로가 최신 뷰를 이미 보냈다
+    if (run.persistPending && this.retryPersist(run)) return true;
     this.deps.emit(profileId, this.buildView(run));
     return true;
   }
@@ -561,11 +618,26 @@ export class StoryRunCoordinator {
       return { ok: false, code: 'story-locked', message: '없는 챕터예요.' };
     }
     const completed = this.completedSet(this.deps.repository.listProgress(profileId));
+    // '졸업 대결만 재도전'은 **완료 기록**이 있어야 열린다 — 운영자 우회보다 먼저 검사한다
+    if (mode === 'graduation') {
+      if (!chapter.graduation) {
+        return { ok: false, code: 'action-rejected', message: '졸업 대결이 없는 챕터예요.' };
+      }
+      if (!completed.has(chapter.id)) {
+        return { ok: false, code: 'story-locked', message: '졸업 시험을 한 번 완주해야 졸업 대결만 다시 도전할 수 있어요.' };
+      }
+      if (this.liveAdapter?.hasSession(profileId)) {
+        return { ok: false, code: 'story-busy', message: '진행 중인 테이블을 마친 뒤 다시 시도해 주세요.' };
+      }
+    }
     // 운영자는 잠긴 챕터도 바로 연다 (QA·검수 경로 — 해금 그래프는 그대로, 권한만 우회)
     if (!options.operator && !isChapterUnlocked(chapter, completed)) {
       return { ok: false, code: 'story-locked', message: '아직 열리지 않은 챕터예요. 이전 챕터를 먼저 끝내 주세요.' };
     }
     if (mode === 'exam') {
+      if (chapter.examDisabled) {
+        return { ok: false, code: 'action-rejected', message: '이 수업은 실력 확인으로 통과할 수 없어요.' };
+      }
       if (!chapter.steps.some(step => step.kind === 'drill-set')) {
         return { ok: false, code: 'action-rejected', message: '이 챕터엔 실력 확인 문제가 없어요.' };
       }
@@ -591,9 +663,17 @@ export class StoryRunCoordinator {
       result: null,
       liveResults: [],
       daily: null,
+      runtimeFlags: {},
+      beltAtStart: this.currentBelt(profileId),
+      graduation: null,
+      pendingGraduation: null,
+      pendingCompletion: null,
+      persistPending: null,
+      persistAttempts: 0,
       startedAt: now,
       updatedAt: now,
     };
+    run.runtimeFlags.partner = run.partnerId ?? 'miyako';
     this.clearRetry(profileId);
     this.runs.set(profileId, run);
     try {
@@ -668,6 +748,13 @@ export class StoryRunCoordinator {
       result: null,
       liveResults: [],
       daily: { kstDate: day.date, teacherId },
+      runtimeFlags: {},
+      beltAtStart: this.currentBelt(profileId),
+      graduation: null,
+      pendingGraduation: null,
+      pendingCompletion: null,
+      persistPending: null,
+      persistAttempts: 0,
       startedAt: now,
       updatedAt: now,
     };
@@ -704,6 +791,15 @@ export class StoryRunCoordinator {
     const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
     if (!checked.ok) return checked;
     const run = checked.value;
+    // 저장 대기 중이면 [다시 시도]만 받는다 — 고정된 같은 입력으로 재커밋한다
+    if (run.persistPending) {
+      if (request.target === 'next' || request.target === 'resume') {
+        return this.retryPersist(run)
+          ? { ok: true, value: undefined }
+          : { ok: false, code: 'server-error', message: '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' };
+      }
+      return { ok: false, code: 'action-rejected', message: '결과를 저장하는 중이에요.' };
+    }
     const step = run.chapter.steps[run.stepIndex];
     switch (step.kind) {
       case 'scene':
@@ -740,7 +836,9 @@ export class StoryRunCoordinator {
         break;
       }
       case 'result':
-        this.finishRun(run);
+        if (!this.finishRun(run)) {
+          return { ok: false, code: 'server-error', message: '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' };
+        }
         this.deps.emit(profileId, this.buildView(run));
         return { ok: true, value: undefined };
     }
@@ -781,7 +879,9 @@ export class StoryRunCoordinator {
         break;
       }
       case 'result':
-        this.finishRun(run);
+        if (!this.finishRun(run)) {
+          return { ok: false, code: 'server-error', message: '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' };
+        }
         this.deps.emit(profileId, this.buildView(run));
         return { ok: true, value: undefined };
     }
@@ -970,6 +1070,9 @@ export class StoryRunCoordinator {
     }
     this.runs.delete(profileId);
     this.clearRetry(profileId);
+    // 확정된 순위 영수증·자격은 이미 저장돼 보존된다 — 포기는 완료 기록·XP·인연·칩만 없앤다
+    this.clearPersistTimer(profileId);
+    run.persistPending = null;
     run.phase = 'ended';
     run.result = null;
     this.deps.emit(profileId, this.buildView(run));
@@ -979,6 +1082,7 @@ export class StoryRunCoordinator {
   /** 프로필 폐기·로그아웃 — 런을 조용히 버린다 (emit 없음) */
   clearProfile(profileId: string): void {
     this.clearRetry(profileId);
+    this.clearPersistTimer(profileId);
     this.runs.delete(profileId);
     this.liveAdapter?.abandon(profileId);
   }
@@ -990,6 +1094,12 @@ export class StoryRunCoordinator {
   private completeLiveStep(profileId: string, runId: string, summary: LiveStepSummary): void {
     const run = this.runs.get(profileId);
     if (!run || run.runId !== runId || !['live-play', 'live-hold'].includes(run.phase)) return;
+    const current = run.chapter.steps[run.stepIndex];
+    // 졸업 대결: 통과 판정은 순위가 한다 — 스파링 재도전 체크포인트를 만들지 않는다
+    if (current?.kind === 'sparring' && current.table.tournament) {
+      this.completeGraduationStep(run, summary);
+      return;
+    }
     const failed = run.mode === 'full' && run.chapter.steps[run.stepIndex]?.kind === 'sparring'
       && (summary.primaryObjectivesMet === false || summary.outcome === 'failed');
     const checkpoint = failed ? structuredClone(run) : null;
@@ -1011,6 +1121,105 @@ export class StoryRunCoordinator {
     if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
   }
 
+  /**
+   * 졸업 대결 종료 — 순위를 **에필로그 전에** 확정 저장한다.
+   * 저장에 성공해야 런타임 플래그(에필로그 분기)를 세우고 다음 스텝으로 넘어간다.
+   * 순위가 없으면(포기·폭주 가드) 결과 없는 실패 결산으로 끝낸다.
+   */
+  private completeGraduationStep(run: StoryRun, summary: LiveStepSummary): void {
+    run.liveResults.push(summary);
+    run.updatedAt = this.now();
+    if (!summary.tournament) {
+      // 순위 없이 끝났다 — 완료 기록·보상 없이 결산만 보여 준다(허브에서 다시 도전)
+      this.computeResult(run);
+      this.endRun(run);
+      this.deps.emit(run.profileId, this.buildView(run));
+      return;
+    }
+    run.graduation = { place: summary.tournament.place, entrants: summary.tournament.entrants };
+    run.pendingGraduation ??= {
+      runId: run.runId,
+      place: summary.tournament.place,
+      entrants: summary.tournament.entrants,
+      mode: run.mode === 'graduation' ? 'graduation' : 'full',
+      source: summary.tournament.source,
+      finishedAt: this.now(),
+    };
+    if (!this.persistGraduation(run)) return;
+    this.enterStep(run, run.stepIndex + 1);
+    if (this.runs.has(run.profileId)) this.deps.emit(run.profileId, this.buildView(run));
+  }
+
+  /**
+   * 순위 영수증 저장 — 성공하면 에필로그 분기 플래그를 세운다.
+   * 실패하면 런을 'live-hold'(holdReason 'persist')로 잡아 두고 자동·수동 재시도를 기다린다.
+   */
+  private persistGraduation(run: StoryRun): boolean {
+    const receipt = run.pendingGraduation;
+    if (!receipt) return true;
+    const rewards = this.deps.rewards;
+    if (rewards?.recordGraduation) {
+      try {
+        // 메서드를 떼어내 호출하지 않는다 — 클래스 구현 포트의 this 바인딩이 끊긴다
+        rewards.recordGraduation(run.profileId, receipt);
+      } catch (error) {
+        this.holdForPersist(run, 'graduation', error);
+        return false;
+      }
+    }
+    run.persistPending = null;
+    run.persistAttempts = 0;
+    this.clearPersistTimer(run.profileId);
+    const place = receipt.place;
+    run.runtimeFlags['graduation:outcome'] = place === 1 ? 'champion' : place <= 3 ? 'itm' : 'out';
+    return true;
+  }
+
+  /** 저장 실패 상태로 전환 — 뷰를 다시 보내고 자동 재시도를 예약한다 */
+  private holdForPersist(run: StoryRun, stage: 'graduation' | 'completion', error: unknown): void {
+    run.persistPending = stage;
+    if (stage === 'graduation') run.phase = 'live-hold';
+    run.updatedAt = this.now();
+    eventLogPersistFailure(run, stage, error);
+    this.schedulePersistRetry(run);
+    this.deps.emit(run.profileId, this.buildView(run));
+  }
+
+  private schedulePersistRetry(run: StoryRun): void {
+    this.clearPersistTimer(run.profileId);
+    if (run.persistAttempts >= PERSIST_RETRY_MAX) return;
+    run.persistAttempts += 1;
+    const timer = setTimeout(() => {
+      this.persistTimers.delete(run.profileId);
+      if (this.runs.get(run.profileId) !== run) return;
+      this.retryPersist(run);
+    }, PERSIST_RETRY_MS);
+    timer.unref?.();
+    this.persistTimers.set(run.profileId, timer);
+  }
+
+  private clearPersistTimer(profileId: string): void {
+    const timer = this.persistTimers.get(profileId);
+    if (timer) clearTimeout(timer);
+    this.persistTimers.delete(profileId);
+  }
+
+  /** [다시 시도]/자동 재시도 — 고정된 같은 입력으로만 다시 커밋한다 */
+  private retryPersist(run: StoryRun): boolean {
+    if (run.persistPending === 'graduation') {
+      if (!this.persistGraduation(run)) return false;
+      this.enterStep(run, run.stepIndex + 1);
+      if (this.runs.has(run.profileId)) this.deps.emit(run.profileId, this.buildView(run));
+      return true;
+    }
+    if (run.persistPending === 'completion') {
+      if (!this.finishRun(run)) return false;
+      this.deps.emit(run.profileId, this.buildView(run));
+      return true;
+    }
+    return true;
+  }
+
   /** hold/재개/목표 진행 등 — 현재 뷰 재전송 */
   private refreshLive(profileId: string): void {
     const run = this.runs.get(profileId);
@@ -1024,6 +1233,31 @@ export class StoryRunCoordinator {
 
   // ---------------------------------------------------------------------------
   // 내부: 스텝 진입 / 드릴 서빙
+
+  /**
+   * 씬 `requiresFlags` 평가 — 저장 플래그 → `flagsDelta` → 런타임 플래그 순으로 덮어쓴다.
+   * 런타임 플래그(partner·graduation:outcome)는 절대 영속하지 않는다.
+   */
+  private sceneMatches(run: StoryRun, scene: Scene): boolean {
+    const required = scene.requiresFlags;
+    if (!required || Object.keys(required).length === 0) return true;
+    const flags = {
+      ...this.deps.repository.getFlags(run.profileId),
+      ...run.flagsDelta,
+      ...run.runtimeFlags,
+    };
+    return Object.entries(required).every(([key, value]) => flags[key] === value);
+  }
+
+  private currentBelt(profileId: string): StoryBelt {
+    const rows = this.deps.repository.listProgress(profileId);
+    return deriveBelt(
+      this.chapters,
+      this.completedSet(rows),
+      this.deps.repository.getFlags(profileId),
+      this.deps.curriculum ?? STORY_CURRICULUM,
+    );
+  }
 
   private checkRun(profileId: string, runId: string, expectedStepIndex: number): CoordinatorResult<StoryRun> {
     const run = this.runs.get(profileId);
@@ -1043,6 +1277,16 @@ export class StoryRunCoordinator {
       const step = steps[cursor];
       // 실력 확인: 드릴 세트와 결산만 — 씬·레슨·라이브 스텝은 인덱스를 유지한 채 건너뛴다(클라는 stepIndex로 데이터를 찾는다)
       if (run.mode === 'exam' && step.kind !== 'drill-set' && step.kind !== 'result') {
+        cursor += 1;
+        continue;
+      }
+      // 졸업 대결만 재도전: 토너먼트 스파링 · 에필로그 씬 · 결산만 (같은 인덱스 규약)
+      if (run.mode === 'graduation' && !isGraduationStep(step)) {
+        cursor += 1;
+        continue;
+      }
+      // 씬 분기는 **서버가** 판정한다 — 조건이 맞지 않는 씬 스텝은 그대로 건너뛴다
+      if (step.kind === 'scene' && !this.sceneMatches(run, step.scene)) {
         cursor += 1;
         continue;
       }
@@ -1285,13 +1529,15 @@ export class StoryRunCoordinator {
   // ---------------------------------------------------------------------------
   // 내부: 결산 / 데일리
 
-  private finishRun(run: StoryRun): void {
-    this.computeResult(run);
+  /** 결산 확정 — 저장에 실패하면 런을 'result' 단계에 남기고 false (재시도 = 같은 advance) */
+  private finishRun(run: StoryRun): boolean {
+    if (!this.computeResult(run)) return false;
     this.clearRetry(run.profileId);
     this.endRun(run);
+    return true;
   }
 
-  private computeResult(run: StoryRun): void {
+  private computeResult(run: StoryRun): boolean {
     const now = this.now();
     const summary = run.drillSummary;
     const drillScore = scoreDrillSet(summary.outcomes, summary.hintPenalty);
@@ -1315,9 +1561,12 @@ export class StoryRunCoordinator {
     const liveScore = liveScores.length > 0 ? liveScores.reduce((sum, score) => sum + score, 0) / liveScores.length : null;
     const grade = gradeChapter({ drillScore, hintsUsed: summary.hintsUsed, liveScore });
     // 실력 확인은 드릴 점수만으로 판정 — 라이브 스텝이 없어 primary가 null이라 chapterPassed로는 항상 통과해 버린다
-    const passed = run.mode === 'exam'
-      ? examPassed(drillScore)
-      : chapterPassed({ drillCompleted: true, primaryObjectivesMet });
+    // 졸업 챕터는 **엔진이 확정한 순위**가 통과 조건이다 (행동 목표·라이브 점수는 등급에만 쓴다)
+    const passed = run.chapter.graduation
+      ? run.graduation !== null
+      : run.mode === 'exam'
+        ? examPassed(drillScore)
+        : chapterPassed({ drillCompleted: true, primaryObjectivesMet });
     const liveResult: ChapterResultView['live'] = sparring.length === 0
       ? null
       : {
@@ -1362,37 +1611,81 @@ export class StoryRunCoordinator {
         nextChapterId: null,
         beltAwarded: null,
       };
+      return true;
     } else {
       const rowsBefore = this.deps.repository.listProgress(run.profileId);
       const before = rowsBefore.find(row => row.chapterId === run.chapter.id);
-      const beltBefore = deriveBelt(this.chapters, this.completedSet(rowsBefore), this.deps.repository.getFlags(run.profileId), this.deps.curriculum ?? STORY_CURRICULUM);
-      const firstClear = passed && (before?.completions ?? 0) === 0;
+      const beltBefore = run.beltAtStart;
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
       let transitions: StoryAffinityTransitionRecord[] = [];
       let extra: ReturnType<StoryRunCoordinator['reconcileRewards']> = null;
-      if (passed) {
+      // 졸업 대결만 재도전: 완료 기록·XP·인연·칩 없음 — 확정된 순위 영수증만 남고 카탈로그는 reconcile이 자기 치유
+      if (passed && run.mode === 'graduation') {
+        extra = this.reconcileRewards(run.profileId, run.chapter.id, [], now);
+      } else if (passed) {
         // 「퍼펙트」는 선택지 플래그와 함께 통과 시에만 영속된다(미통과 런의 플래그는 버려지는 기존 규약)
         if (drillResult.perfect) run.flagsDelta[PERFECT_SET_FLAG] = '1';
-        this.deps.repository.recordCompletion(run.profileId, run.chapter.id, grade, now);
-        if (Object.keys(run.flagsDelta).length > 0) this.deps.repository.setFlags(run.profileId, run.flagsDelta, now);
-        grant = firstClear ? firstClearRewards(run.chapter, grade, run.partnerId) : replayRewards(run.chapter, grade);
-        if (this.deps.rewards) {
-          const outcome = this.deps.rewards.completeChapter({
-            profileId: run.profileId,
-            chapterId: run.chapter.id,
-            runId: run.runId,
-            firstClear,
-            grade,
-            dojoXpMilli: grant.dojoXpMilli,
-            affinity: grant.affinity,
-            completedAt: now,
-          });
-          if (outcome.duplicate) grant = { dojoXpMilli: 0, affinity: [], badgeId: null };
-          else transitions = outcome.affinityTransitions ?? [];
-          // 카탈로그 보상은 방금 영속된 completions/best_grade/플래그에서 reconcile — XP 트랜잭션과 분리·각자 멱등
-          extra = this.reconcileRewards(run.profileId, run.chapter.id, transitions, now);
+        // first/replay 판정과 지급액을 **첫 계산 때 고정** — 재시도에서 뒤집혀 replay XP가 다시 나가지 않게
+        run.pendingCompletion ??= (() => {
+          const firstClearNow = (before?.completions ?? 0) === 0;
+          const rewards = firstClearNow
+            ? firstClearRewards(run.chapter, grade, run.partnerId)
+            : replayRewards(run.chapter, grade);
+          return { firstClear: firstClearNow, grade, ...rewards, flags: { ...run.flagsDelta } };
+        })();
+        const pending = run.pendingCompletion;
+        grant = { dojoXpMilli: pending.dojoXpMilli, affinity: pending.affinity, badgeId: pending.badgeId };
+        const rewards = this.deps.rewards;
+        try {
+          if (rewards?.completeChapterAtomic) {
+            const outcome = rewards.completeChapterAtomic({
+              profileId: run.profileId,
+              chapterId: run.chapter.id,
+              runId: run.runId,
+              firstClear: pending.firstClear,
+              grade: pending.grade,
+              dojoXpMilli: pending.dojoXpMilli,
+              affinity: pending.affinity,
+              completedAt: now,
+              flags: pending.flags,
+              ...(run.pendingGraduation ? { graduation: run.pendingGraduation } : {}),
+            });
+            if (outcome.duplicate) grant = { dojoXpMilli: 0, affinity: [], badgeId: null };
+            else transitions = outcome.affinityTransitions ?? [];
+          } else {
+            // 원자 포트가 없는 환경(테스트 fake·보상 비활성) — 기존 2단계 경로
+            this.deps.repository.recordCompletion(run.profileId, run.chapter.id, pending.grade, now);
+            if (Object.keys(pending.flags).length > 0) {
+              this.deps.repository.setFlags(run.profileId, pending.flags, now);
+            }
+            if (this.deps.rewards) {
+              const outcome = this.deps.rewards.completeChapter({
+                profileId: run.profileId,
+                chapterId: run.chapter.id,
+                runId: run.runId,
+                firstClear: pending.firstClear,
+                grade: pending.grade,
+                dojoXpMilli: pending.dojoXpMilli,
+                affinity: pending.affinity,
+                completedAt: now,
+              });
+              if (outcome.duplicate) grant = { dojoXpMilli: 0, affinity: [], badgeId: null };
+              else transitions = outcome.affinityTransitions ?? [];
+            }
+          }
+          // 카탈로그 보상은 방금 **커밋된** completions/best_grade/플래그에서 reconcile — 별도 호출이라
+          // 여기서 실패해도 완료 기록은 남고, 재시도는 duplicate 경로라 완료 횟수·XP를 다시 늘리지 않는다
+          if (this.deps.rewards) extra = this.reconcileRewards(run.profileId, run.chapter.id, transitions, now);
+        } catch (error) {
+          // 커밋/자기 치유 실패 — 결산을 만들지 않고 'result' 단계에 남긴다(같은 고정 입력으로 재시도)
+          this.holdForPersist(run, 'completion', error);
+          return false;
         }
+        run.persistPending = null;
+        run.persistAttempts = 0;
+        this.clearPersistTimer(run.profileId);
       }
+      const firstClear = run.pendingCompletion?.firstClear ?? false;
       if (!passed) {
         // 실패는 지급/자기 치유를 실행하지 않고 실제 보유만 읽는다.
         const granted = new Set((this.deps.rewards?.preview?.(run.profileId) ?? [])
@@ -1427,11 +1720,26 @@ export class StoryRunCoordinator {
         reviewNotesAdded: summary.wrongSlots,
         nextChapterId: nextChapter(this.chapters, completed)?.id ?? null,
         beltAwarded: beltAfter !== beltBefore ? beltAfter : null,
+        ...(run.chapter.graduation && run.graduation
+          ? {
+            graduation: {
+              place: run.graduation.place,
+              entrants: run.graduation.entrants,
+              itm: run.graduation.place <= 3,
+              champion: run.graduation.place === 1,
+              blackBelt: beltAfter === 'black',
+              mode: run.mode === 'graduation' ? 'graduation' as const : 'full' as const,
+            },
+          }
+          : {}),
       };
     }
+    return true;
   }
 
   private endRun(run: StoryRun): void {
+    this.clearPersistTimer(run.profileId);
+    run.persistPending = null;
     run.phase = 'ended';
     run.drill = null;
     run.updatedAt = this.now();
@@ -1554,6 +1862,39 @@ export class StoryRunCoordinator {
     };
   }
 
+  /**
+   * 순위 저장 대기 뷰 — 어댑터 세션은 이미 끝났으므로 코디네이터가 합성한다.
+   * 확정된 순위를 그대로 보여 주고 [다시 시도]만 남긴다.
+   */
+  private persistLiveView(run: StoryRun): StoryLiveView {
+    const step = run.chapter.steps[run.stepIndex];
+    const sparring = step?.kind === 'sparring' ? step : null;
+    const structure = resolveSngStructure(sparring?.table.tournament?.sngStructureId);
+    const last = run.liveResults[run.liveResults.length - 1];
+    return {
+      roomId: null,
+      tag: '대결',
+      hold: true,
+      holdReason: 'persist',
+      interruptId: null,
+      objectives: [],
+      handsPlayed: last?.handsPlayed ?? 0,
+      maxHands: sparring?.maxHands ?? 0,
+      minHands: null,
+      lastReview: null,
+      botThoughts: [],
+      pendingQuiz: null,
+      tournament: {
+        alive: 0,
+        entrants: run.graduation?.entrants ?? 0,
+        heroPlace: run.graduation?.place ?? null,
+        level: 1,
+        smallBlind: structure.levels[0].smallBlind,
+        bigBlind: structure.levels[0].bigBlind,
+      },
+    };
+  }
+
   private buildView(run: StoryRun): StoryRunView {
     const step: Step = run.chapter.steps[run.stepIndex];
     return {
@@ -1566,9 +1907,11 @@ export class StoryRunCoordinator {
       phase: run.phase,
       context: { partnerId: run.partnerId, teacherId: this.resolveTeacherRef(run, run.chapter.teacher) },
       drill: run.drill ? this.buildDrillView(run.drill) : null,
-      live: ['live-play', 'live-hold'].includes(run.phase)
-        ? this.liveAdapter?.view(run.profileId) ?? null
-        : null,
+      live: run.persistPending === 'graduation'
+        ? this.persistLiveView(run)
+        : ['live-play', 'live-hold'].includes(run.phase)
+          ? this.liveAdapter?.view(run.profileId) ?? null
+          : null,
       result: run.result,
       startedAt: run.startedAt,
       updatedAt: run.updatedAt,
