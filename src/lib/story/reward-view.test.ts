@@ -20,6 +20,31 @@ function result(overrides: Partial<ChapterResultView> = {}): ChapterResultView {
 }
 
 describe('reward reveal plan', () => {
+  it('졸업 대결만 재도전은 등급 스탬프·드릴 통계 단계를 빼고 순위 카드만 남긴다', () => {
+    const plan = buildRewardRevealPlan(result({
+      chapterId: 'act4-ch12',
+      mode: 'graduation',
+      grade: 'B',
+      drill: { answered: 0, correct: 0, bestStreak: 0, hintsUsed: 0, score: 0, slots: 0, finalCorrect: 0, perfect: false, retrySkipped: false },
+      rewards: { firstClear: false, dojoXpMilli: 0, affinity: [], badgeId: null, items: [], chips: 0, cutscene: null, unlockedScenes: [], next: [] },
+      nextChapterId: null,
+      graduation: { place: 1, entrants: 6, itm: true, champion: true, blackBelt: true, mode: 'graduation' },
+    }), STORY_CHAPTERS);
+    expect(plan.graduationOnly).toBe(true);
+    expect(plan.stages).toEqual(['done']);
+    expect(plan.items).toEqual([]);
+    expect(plan.chips).toBe(0);
+  });
+
+  it('full 모드 졸업 결산은 기존 단계를 그대로 쓴다', () => {
+    const plan = buildRewardRevealPlan(result({
+      chapterId: 'act4-ch12',
+      graduation: { place: 2, entrants: 6, itm: true, champion: false, blackBelt: false, mode: 'full' },
+    }), STORY_CHAPTERS);
+    expect(plan.graduationOnly).toBe(false);
+    expect(plan.stages.slice(0, 2)).toEqual(['stamp', 'stats']);
+  });
+
   it('uses server rewards verbatim when present and orders stages by presence', () => {
     const plan = buildRewardRevealPlan(result({
       rewards: {

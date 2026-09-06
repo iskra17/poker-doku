@@ -198,6 +198,20 @@ describe('LiveTableAdapter 졸업 대결', () => {
     expect(chipTotal(roomId)).toBe(6 * GRADUATION_STARTING_STACK);
   });
 
+  it('올인으로 칩이 0인 좌석도 남은 인원에 센다', () => {
+    const roomId = enter();
+    const state = manager.getRoom(roomId)!.engine.state;
+    state.isHandInProgress = true;
+    const hero = state.players.find(player => player.id === PROFILE)!;
+    hero.chips = 0;
+    hero.status = 'all-in';
+    expect(adapter.view(PROFILE)!.tournament).toMatchObject({ alive: 6, entrants: 6, heroPlace: null });
+    // 핸드가 끝나고도 칩이 없으면(순위 확정 전) 다음 핸드 전까지는 생존자가 아니다
+    state.isHandInProgress = false;
+    hero.status = 'folded';
+    expect(adapter.view(PROFILE)!.tournament!.alive).toBe(5);
+  });
+
   it('첫 딜 전 방 소실은 room-lost 보존, 첫 딜 뒤 방 소실은 순위 없는 종료다', () => {
     const before = enter();
     expect(manager.disposeRoom(before, 'idle')).toBe(true);

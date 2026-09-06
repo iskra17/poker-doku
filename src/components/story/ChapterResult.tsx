@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { getChapter } from '@/lib/story/chapters';
+import { useStoryStore } from '@/lib/store/story-store';
 import type { ChapterResultView } from '@/lib/story/views';
 import RewardReveal from './RewardReveal';
 
@@ -63,6 +64,12 @@ function hasCollectible(result: ChapterResultView): boolean {
 export default function ChapterResult({ result, onClose, onNextChapter, onRetry, onRetrySparring, pending = false, onFullCourse, onOpenGallery, onGraduationRetry }: ChapterResultProps) {
   const chapter = getChapter(result.chapterId);
   const graduationChapter = !!chapter?.graduation;
+  // '졸업 대결만 재도전'은 durable 완료가 있어야 서버가 열어 준다 — 완료 전 결산에서 버튼을 노출하면
+  // 눌러도 story-locked로 거절된다. 이번 런에서 순위가 확정됐으면(=완료 커밋) 진행도 갱신 전에도 허용.
+  const completions = useStoryStore(state => (
+    state.progress?.chapters.find(row => row.chapterId === result.chapterId)?.completions ?? 0
+  ));
+  const canRetryGraduation = graduationChapter && (completions > 0 || !!result.graduation);
   const next = result.nextChapterId ? getChapter(result.nextChapterId) : undefined;
   const daily = result.chapterId === 'daily';
   const exam = result.mode === 'exam';
@@ -104,7 +111,7 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry,
               처음부터
             </button>
           )}
-          {graduationChapter && onGraduationRetry && (
+          {canRetryGraduation && onGraduationRetry && (
             <button type="button" disabled={pending} onClick={onGraduationRetry} className="flex-1 rounded-xl border border-gilded/40 bg-gilded/10 py-2.5 text-sm font-bold text-gilded disabled:opacity-50">
               다시 졸업 대결
             </button>

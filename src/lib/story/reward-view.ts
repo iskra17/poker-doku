@@ -22,6 +22,11 @@ export interface RewardRevealPlan {
   unlockedScenes: StoryUnlockedSceneView[];
   /** 서버 보상 라인 없이 카탈로그에서 파생했는가 */
   fallback: boolean;
+  /**
+   * '졸업 대결만 재도전' 결산 — 드릴을 풀지 않았고 완료 기록·XP·인연도 늘지 않는다.
+   * 등급 스탬프·드릴 통계·"통과하면 보상이 열려요" 문구를 빼고 순위 카드만 남긴다.
+   */
+  graduationOnly: boolean;
 }
 
 export const STAGE_TIMING_MS = Object.freeze({
@@ -73,14 +78,15 @@ export function buildRewardRevealPlan(result: ChapterResultView, chapters: reado
     ? []
     : (rewards.next ?? nextStoryRewards(chapters, granted, result.chapterId));
 
-  const stages: RevealStage[] = ['stamp', 'stats'];
+  const graduationOnly = result.mode === 'graduation';
+  const stages: RevealStage[] = graduationOnly ? [] : ['stamp', 'stats'];
   if (items.length > 0 || chips > 0) stages.push('items');
   if (cutscene) stages.push('cutscene');
   if (belt) stages.push('belt');
   if (next.length > 0) stages.push('next');
   stages.push('done');
 
-  return { stages, items, chips, cutscene, belt, next, unlockedScenes: rewards.unlockedScenes ?? [], fallback };
+  return { stages, items, chips, cutscene, belt, next, unlockedScenes: rewards.unlockedScenes ?? [], fallback, graduationOnly };
 }
 
 /** 스테이지 자동 진행 지연 — 탭이 없을 때 다음 단계로 넘어가는 시간 (items는 카드 수에 비례) */

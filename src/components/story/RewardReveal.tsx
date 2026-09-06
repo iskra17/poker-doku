@@ -121,22 +121,34 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
       role="presentation"
       aria-live="polite"
     >
+      {/* 졸업 대결만 재도전 — 등급·드릴 통계는 이 런에 없다. 순위 카드는 결산 헤더가 그린다. */}
+      {plan.graduationOnly && (
+        <p className="mt-2 rounded-xl border border-mystic/25 bg-mystic/5 p-2 text-center text-[11px] text-ink-dim">
+          순위만 기록돼요 — 수련 보상은 첫 완주 때 이미 받았어요.
+        </p>
+      )}
+
       {/* 스탬프 */}
-      <motion.p
-        initial={reduced ? false : { scale: 2, opacity: 0, rotate: -10 }}
-        animate={{ scale: 1, opacity: 1, rotate: -6 }}
-        transition={{ type: 'spring', stiffness: 260, damping: 18 }}
-        className={`mt-2 mb-3 h-20 text-center text-6xl font-black leading-none ${GRADE_COLOR[result.grade]}`}
-        aria-label={`등급 ${result.grade}`}
-      >
-        {result.grade}
-      </motion.p>
-      <p className={`text-center text-sm font-bold ${result.passed ? 'text-cyber' : 'text-blossom'}`}>{verdict}</p>
-      {result.drill.perfect && (
-        <p className="mt-1 text-center text-[11px] font-black tracking-widest text-gilded">★ PERFECT ★ 첫 시도 무오답</p>
+      {!plan.graduationOnly && (
+        <>
+          <motion.p
+            initial={reduced ? false : { scale: 2, opacity: 0, rotate: -10 }}
+            animate={{ scale: 1, opacity: 1, rotate: -6 }}
+            transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+            className={`mt-2 mb-3 h-20 text-center text-6xl font-black leading-none ${GRADE_COLOR[result.grade]}`}
+            aria-label={`등급 ${result.grade}`}
+          >
+            {result.grade}
+          </motion.p>
+          <p className={`text-center text-sm font-bold ${result.passed ? 'text-cyber' : 'text-blossom'}`}>{verdict}</p>
+          {result.drill.perfect && (
+            <p className="mt-1 text-center text-[11px] font-black tracking-widest text-gilded">★ PERFECT ★ 첫 시도 무오답</p>
+          )}
+        </>
       )}
 
       {/* 통계 + 목표 */}
+      {!plan.graduationOnly && (
       <motion.div initial={false} animate={{ opacity: reached('stats') ? 1 : 0, y: reached('stats') ? 0 : 6 }} transition={{ duration: reduced ? 0 : 0.35 }}>
         <dl className="mt-3 grid grid-cols-3 gap-2 text-center text-[11px]">
           <div className="rounded-xl border border-mystic/20 bg-elevated/50 p-2">
@@ -183,6 +195,7 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
           {result.reviewNotesAdded > 0 && <p className="text-ink-dim">복습 노트에 {result.reviewNotesAdded}문 추가</p>}
         </div>
       </motion.div>
+      )}
 
       {/* 보상 카드 */}
       {cards.length > 0 && reached('items') && (

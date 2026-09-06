@@ -599,8 +599,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const structure = resolveSngStructure(session.tournament?.sngStructureId);
     const tournament = state?.tournament;
     const hero = state?.players.find(player => player.id === session.profileId);
+    // 생존 = 칩>0 ∨ (핸드 중 active/all-in) — 올인으로 칩이 0인 좌석도 아직 살아 있다 (MTT isAlive 계약과 동일)
     const alive = state
-      ? state.players.filter(player => !player.pendingRemoval && !player.finishPlace && player.chips > 0).length
+      ? state.players.filter(player => !player.pendingRemoval && !player.finishPlace && (
+        player.chips > 0
+        || (state.isHandInProgress && (player.status === 'active' || player.status === 'all-in'))
+      )).length
       : 0;
     return {
       alive,

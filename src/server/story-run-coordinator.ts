@@ -786,20 +786,16 @@ export class StoryRunCoordinator {
       if (!options.operator) {
         return { ok: false, code: 'action-rejected', message: '건너뛰기는 운영자만 쓸 수 있어요.' };
       }
+      // 저장 대기는 **운영자 스킵보다 먼저** 막는다 — 영수증 없이 끝나면 순위·자격이 통째로 유실된다
+      const pending = this.checkRun(profileId, request.runId, request.expectedStepIndex);
+      if (pending.ok && pending.value.persistPending) return this.persistGate(pending.value);
       return this.skipStep(profileId, request);
     }
     const checked = this.checkRun(profileId, request.runId, request.expectedStepIndex);
     if (!checked.ok) return checked;
     const run = checked.value;
     // 저장 대기 중이면 [다시 시도]만 받는다 — 고정된 같은 입력으로 재커밋한다
-    if (run.persistPending) {
-      if (request.target === 'next' || request.target === 'resume') {
-        return this.retryPersist(run)
-          ? { ok: true, value: undefined }
-          : { ok: false, code: 'server-error', message: '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' };
-      }
-      return { ok: false, code: 'action-rejected', message: '결과를 저장하는 중이에요.' };
-    }
+    if (run.persistPending) return this.persistGate(run);
     const step = run.chapter.steps[run.stepIndex];
     switch (step.kind) {
       case 'scene':
@@ -1202,6 +1198,16 @@ export class StoryRunCoordinator {
     const timer = this.persistTimers.get(profileId);
     if (timer) clearTimeout(timer);
     this.persistTimers.delete(profileId);
+  }
+
+  /**
+   * 저장 대기 중 들어온 진행 명령 — 항상 같은 고정 입력으로 재시도만 한다.
+   * 성공 전에는 어떤 명령(운영자 스킵 포함)도 스텝을 넘기거나 런을 끝내지 못한다.
+   */
+  private persistGate(run: StoryRun): CoordinatorResult {
+    return this.retryPersist(run)
+      ? { ok: true, value: undefined }
+      : { ok: false, code: 'server-error', message: '결과를 저장하지 못했어요. 잠시 후 다시 시도해 주세요.' };
   }
 
   /** [다시 시도]/자동 재시도 — 고정된 같은 입력으로만 다시 커밋한다 */
@@ -1619,9 +1625,18 @@ export class StoryRunCoordinator {
       let grant = { dojoXpMilli: 0, affinity: [] as Array<{ characterId: StoryHeroineId; milli: number }>, badgeId: null as string | null };
       let transitions: StoryAffinityTransitionRecord[] = [];
       let extra: ReturnType<StoryRunCoordinator['reconcileRewards']> = null;
-      // 졸업 대결만 재도전: 완료 기록·XP·인연·칩 없음 — 확정된 순위 영수증만 남고 카탈로그는 reconcile이 자기 치유
+      // 졸업 대결만 재도전: 완료 기록·XP·인연·칩 없음 — 확정된 순위 영수증만 남고 카탈로그는 reconcile이 자기 치유.
+      // reconcile 실패도 완료 경로와 같은 대기 상태로 잡아 자동·수동 재시도를 태운다.
       if (passed && run.mode === 'graduation') {
-        extra = this.reconcileRewards(run.profileId, run.chapter.id, [], now);
+        try {
+          extra = this.reconcileRewards(run.profileId, run.chapter.id, [], now);
+        } catch (error) {
+          this.holdForPersist(run, 'completion', error);
+          return false;
+        }
+        run.persistPending = null;
+        run.persistAttempts = 0;
+        this.clearPersistTimer(run.profileId);
       } else if (passed) {
         // 「퍼펙트」는 선택지 플래그와 함께 통과 시에만 영속된다(미통과 런의 플래그는 버려지는 기존 규약)
         if (drillResult.perfect) run.flagsDelta[PERFECT_SET_FLAG] = '1';

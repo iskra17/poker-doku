@@ -427,6 +427,32 @@ describe('Ch12 졸업 런', () => {
     expect(ctx.latest().stepKind).toBe('scene');
   });
 
+  it('영수증 저장 대기 중에는 운영자 스킵도 통과시키지 않는다', () => {
+    const ctx = setup();
+    playToSparring(ctx);
+    ctx.rewards.failGraduation = 3;
+    ctx.live.finish(1);
+    const held = ctx.latest();
+    expect(held.phase).toBe('live-hold');
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const view = ctx.latest();
+      expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'skip' }, { operator: true }))
+        .toMatchObject({ ok: false, code: 'server-error' });
+      expect(ctx.coordinator.getActiveRun(PROFILE)?.persistPending).toBe('graduation');
+      expect(ctx.rewards.receipts).toEqual([]);
+      expect(ctx.latest().result).toBeNull();
+    }
+
+    // 저장이 성공해야 비로소 다음 스텝으로 넘어간다
+    ctx.rewards.failGraduation = 0;
+    const view = ctx.latest();
+    expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'skip' }, { operator: true }).ok).toBe(true);
+    expect(ctx.rewards.receipts).toHaveLength(1);
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.persistPending).toBeNull();
+    expect(ctx.latest().stepKind).toBe('scene');
+  });
+
   it('결산 트랜잭션 실패는 결과를 만들지 않고, 재시도는 완료 1회·XP 1회로 끝난다', () => {
     const ctx = setup();
     playToSparring(ctx);
@@ -541,6 +567,32 @@ describe('졸업 대결만 재도전', () => {
     expect(ctx.repository.rows.find(row => row.chapterId === 'act4-ch12')!.completions).toBe(completionsBefore);
     expect(ctx.rewards.receipts.map(item => item.mode)).toEqual(['full', 'graduation']);
     expect(ctx.repository.flags[GRADUATION_CHAMPION_FLAG]).toBe('1');
+  });
+
+  it('졸업 결산의 reconcile 실패도 저장 대기로 잡고 재시도로 복구한다', () => {
+    const ctx = setup();
+    completeOnce(ctx);
+    ctx.coordinator.start(PROFILE, 'act4-ch12', 'graduation');
+    ctx.live.finish(2);
+    for (let guard = 0; guard < 12 && ctx.latest().stepKind === 'scene'; guard += 1) {
+      const view = ctx.latest();
+      ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' });
+    }
+    const resultStep = ctx.latest();
+    expect(resultStep.stepKind).toBe('result');
+    const receiptsBefore = ctx.rewards.receipts.length;
+
+    ctx.rewards.failReconcile = 1;
+    expect(ctx.coordinator.advance(PROFILE, { runId: resultStep.runId, expectedStepIndex: resultStep.stepIndex, target: 'next' }))
+      .toMatchObject({ ok: false, code: 'server-error' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.persistPending).toBe('completion');
+    expect(ctx.latest().result).toBeNull();
+
+    expect(ctx.coordinator.advance(PROFILE, { runId: resultStep.runId, expectedStepIndex: resultStep.stepIndex, target: 'next' }).ok).toBe(true);
+    expect(ctx.latest().result!.passed).toBe(true);
+    // 순위 영수증은 에필로그 전에 이미 저장된 그대로 — 결산 재시도로 늘어나지 않는다
+    expect(ctx.rewards.receipts).toHaveLength(receiptsBefore);
+    expect(ctx.repository.flags[BLACK_BELT_FLAG]).toBe('1');
   });
 
   it('운영자 스킵 출처는 영수증 source로 남고 모드는 실제 런 모드다', () => {
