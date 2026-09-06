@@ -668,8 +668,16 @@ npx tsc --noEmit
   단조 플래그, 6위 재도전에도 회수 없음). 졸업 대결만 재도전은 `StoryRunMode 'graduation'` — 토너먼트 스파링·에필로그
   씬·결산만 진입하고 완료 기록·XP·인연·칩 없이 순위만 기록한다. Ch12는 실력 확인(exam) 없음. 브라우저 QA(완주·재접속·
   자리비움 복귀·ITM 분기·재도전)와 다음 시작점은 `docs/superpowers/handoffs/2026-09-06-r4-complete-handoff.md`. **미배포**.
-  다음 구현은 보너스 이벤트 CG 50장 게임 연결(`docs/superpowers/plans/2026-09-06-bonus-cg-integration-plan.md` —
-  사용자 검수 확정 → 원장 export → Opus 배치). 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상은 후순위다.
+  **보너스 이벤트 CG 50장 연결 완료(2026-09-06, R5)**: 사용자 검수 50/50 → 원장 export(`public/assets/story/{cg,video}/bonus-<id>-<scene>.*`)
+  → 카탈로그 `line:'bonus'`(`src/lib/story/rewards/bonus-cg.ts`, 트리거 `affinity-level`/`dojo-level` — 히로인 6명 인연 4/8/12/16/20,
+  미야코·유즈키·린·잉그리드 도장 10/20/30/40/50, 장면 casual→sing→yoga→gym→beach) + v39 INSERT(비히로인 `character_id NULL`).
+  자격 판정의 레벨은 `StoryRewardService`가 **같은 트랜잭션에서** `ProgressionRepository.getSnapshotInTransaction`으로 읽는다
+  (`ProgressionService.getSnapshot` 주입 금지 — 중첩 트랜잭션으로 기존 지급까지 실패). 프로필 부재(`PROGRESSION_PROFILE_NOT_FOUND`)만
+  레벨 0, 다른 오류는 전파(롤백). 즉시 반영 reconcile은 cash/practice `completeHand`·SnG `completeSng` **커밋 이후**에만(실패는
+  `story-reward-reconcile-failed` 이벤트로 격리), 스토리 결산·데일리·getProgress 호출처 불변. 기록실 `bonus` 섹션·설정 `showBonusCg`
+  (persist v5, 기록실·인연 탭·결산 플랜 생성 전 적용)·`VIDEO_AVAILABLE` 50 id. 계획 `docs/superpowers/plans/2026-09-06-bonus-cg-integration-plan.md`
+  §6, 검토 `reviews/2026-09-06-bonus-cg-{plan,impl}-astra.md`. 검토 화면 `scripts/art/bonus-cg/review-page.mjs`+`review-serve.mjs`.
+  하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상은 후순위다.
   새 영상은 `scripts/art/story-video.md`의 H3 절차와 영속 큐(`scripts/art/library-worker.py`)에 연결한다.
 - MTT: 디렉터 콘솔·`/admin` 토너먼트 탭·wallet·영속 예약·레이트 레지·감사 기록은 이미 구현됐다.
   이를 ‘Phase 2 전체 신규 개발’로 다시 계획하지 않는다. 공개 재개는 별도 완주·복구/정산 검증과

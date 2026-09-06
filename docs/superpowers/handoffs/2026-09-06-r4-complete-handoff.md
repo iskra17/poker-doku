@@ -61,3 +61,14 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
 2. ~~approve-videos → export → 커밋 → main ff~~ 완료(`d569ec0`).
 3. Opus 구현 배치(워크트리 `.worktrees/bonus-cg-integration`)를 연결 계획대로 실행 → Astra 경계 검토(자격 판정·토글·NEW 기준선) → 총괄 통합.
 4. push/deploy는 사용자 지시 때만. 후순위: 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상.
+
+## 5. 보너스 CG 게임 연결(R5) 완료 — 2026-09-06
+
+- Astra 계획 검토 7건 → 계획 §6 반영(`7bb0fa6`) → Opus 구현 5커밋(`3b18b44`·`318f32f`·`91c51d1`·`1beead2`·`7765cd5`) → Astra 구현 검토(P1 0·P2 1·P3 1 + 테스트 공백)
+  → 수정 `102bdc3` → main ff 병합, main `npm run build`·lint·tsc 통과, 전체 Vitest 224파일 2,794 통과.
+- 브라우저 QA(dev, 프로필 벚꽃부엉이#8799에 사쿠라 인연 Lv.4·도장 Lv.10 부여): 기록실 열기만으로 reconcile이 영수증 5건
+  (`story-affinity:sakura:4` 1 + `story-dojo:10` 4)과 인벤토리 마커를 만들고 보너스 탭 5/50·NEW 5 표시, 잠금 힌트 「사쿠라 인연 Lv.8」/「도장 Lv.20」,
+  운영자 미리보기 50/50(실제 획득 불변), 설정 「보너스 CG 표시」 OFF→보너스 탭 소멸·ON→복구, 뷰어는 `bonus-<id>-<scene>.webm` `<video>`를 마운트한다.
+  **주의**: 자동화 브라우저는 백그라운드 창(`document.hidden`)이라 CgStage의 1.5초 canplay 폴백이 발동해 정지 CG로 떨어졌다(기존 이벤트 CG도 동일) —
+  전면 탭에서 루프 재생을 한 번 눈으로 확인할 것. 인연 탭(AffinityTab) 보너스 목록 게이트는 단위 테스트·Astra 확인만.
+- 미배포·미push. 다음 후보: 배포(사용자 지시), 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상(후순위).
