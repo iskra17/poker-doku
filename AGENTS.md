@@ -662,11 +662,15 @@ npx tsc --noEmit
   질문30초→해설 최대10초 뒤 원래 턴 재개, 보류 중 액션/타임칩 거절. 끊김은 기존 자동 체크/폴드,
   무효화된 미응답은 점수 분모에서 제외한다. 최종 기회 cap은 새 opt-in 목표만 적용하고 기회0은 null이다.
   갈색 펠트의 런타임 CSS 변수는 :root에 둔다. @theme 사용 감지에만 맡기면 실제 색 선언이 빠질 수 있다.
-- 사용자 결정: 이번 세션은 Ch8·9와 아트 연결까지 종료한다. 다음 구현은 Ch10~12 실제 졸업 SnG이며
-  `docs/superpowers/handoffs/2026-09-06-fable-orchestration.md`부터 읽는다. Fable 검토 후 총괄 확정 설계는
-  `docs/superpowers/specs/2026-09-05-act3-act4-design.md`. 완료된 기획·검토를 처음부터 반복하지 않는다.
-  하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상은 후순위다. 기존 영상49클립은 존재하며
-  새 영상은 `scripts/art/story-video.md`의 H3 절차와 새 영속 큐에 연결한다.
+- R4 완료(2026-09-06): Ch10·11(4막 스파링, `any-k-of` 체크리스트 목표, `'*review'` 복습 슬롯, MDF·SnG 드릴)과
+  Ch12 실제 6인 졸업 SnG를 main `87f47d3`에 병합했다. 졸업 구조는 `src/server/sng-structures.ts`(졸업 1,000칩/2분 레벨,
+  표준 1,500/3분 불변), 순위 영수증은 `story_graduations`(v38, 에필로그 전 선저장, `belt:black`·`graduation:champion`
+  단조 플래그, 6위 재도전에도 회수 없음). 졸업 대결만 재도전은 `StoryRunMode 'graduation'` — 토너먼트 스파링·에필로그
+  씬·결산만 진입하고 완료 기록·XP·인연·칩 없이 순위만 기록한다. Ch12는 실력 확인(exam) 없음. 브라우저 QA(완주·재접속·
+  자리비움 복귀·ITM 분기·재도전)와 다음 시작점은 `docs/superpowers/handoffs/2026-09-06-r4-complete-handoff.md`. **미배포**.
+  다음 구현은 보너스 이벤트 CG 50장 게임 연결(`docs/superpowers/plans/2026-09-06-bonus-cg-integration-plan.md` —
+  사용자 검수 확정 → 원장 export → Opus 배치). 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상은 후순위다.
+  새 영상은 `scripts/art/story-video.md`의 H3 절차와 영속 큐(`scripts/art/library-worker.py`)에 연결한다.
 - MTT: 디렉터 콘솔·`/admin` 토너먼트 탭·wallet·영속 예약·레이트 레지·감사 기록은 이미 구현됐다.
   이를 ‘Phase 2 전체 신규 개발’로 다시 계획하지 않는다. 공개 재개는 별도 완주·복구/정산 검증과
   사용자 판단 뒤에 진행한다. 리엔트리·9-max·추가 상품은 필요성을 별도 확인한다.
