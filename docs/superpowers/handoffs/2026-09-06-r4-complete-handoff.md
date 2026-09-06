@@ -39,7 +39,10 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
 - 계획·도구: `docs/superpowers/plans/2026-09-06-bonus-cg-pipeline.md`(`19c88e9`), `scripts/art/bonus-cg/*`, 라이브러리 원장 scope `'bonus'`.
 - 산출: 원화 50장(GPT Image 2, 스테이징 `C:/code/claude/poker-doku-art/bonus-cg/out/<id>/<scene>.png`, 사쿠라 gym은 v2 재생성) + H3 루프 50개
   (원장 `D:/AI-Image-Video/output/poker-doku-library/bonus-cg-20260906`, 린 요가는 `bonus-lin-yoga-video-v4` — v1~v3 반려). 웹 인코딩 전부 2.5MB 이내.
-- 원장 상태: 이미지 50 approved(총괄 1차 검수 — provisional), 영상 50 generated, 3 rejected. **사용자 최종 검수 전 approve-videos/export/등록 금지.**
+- **사용자 검수 완료(2026-09-06)**: 1차 승인 42·반려 8 → 루프만 재생성 4(사쿠라·아라·하나·비비안 일상, v2는 여전히 꽃잎 → v3에서 꽃잎·입자·김 단어를 아예 빼고
+  긍정 문장만 지시해 해결), 원화 재생성 4(아라 요가 나무 자세, 클로이 일상 정면 셀카, 잉그리드 해변·헬스장 셀 셰이딩 큐 — `BONUS_IMAGE_SUFFIX=v2`). 최종 50/50 승인.
+  원장: 이미지 50 exported·4 rejected, 영상 50 exported·15 rejected. **export 완료 → main 병합 `d569ec0`**(webp 50 + mp4/webm 100, 78MB, 전부 2.5MB 이내,
+  파일명은 `asset_stem`으로 접미 없음). 잉그리드 2건은 검토 화면 저장 상태에 승인 기록이 없었으나 사용자 메시지로 승인 확정.
 - 이번 배치에 커밋한 도구 변경: 계획 JSON(사쿠라 gym 문구), `ledger_bonus.py`(`BONUS_SEED_OFFSET`/`BONUS_VIDEO_EXTRA`/`BONUS_MOTION_OVERRIDE`,
   `video_job_of` — 원장에서 최신 비반려 video job을 찾아 approve-videos/export가 `-v4` 같은 재생성 id를 자동 사용), `video-sheets.sh`(진행 중 클립 ffprobe 스킵),
   `video-montage.mjs`, 영수증 `recipes/bonus-cg-20260906/`(50×external+provenance), 영상 매니페스트 7개.
@@ -53,9 +56,8 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
 
 ## 4. 다음 시작점
 
-1. 사용자의 반려 목록(「캐릭터:장면」)을 받는다. 반려는 원장 `review <job> rejected --sha256 <hash>` → 원화 재생성(`build-prompts.mjs` → `run-wave.sh` → `collect-outputs.mjs`)
+1. ~~사용자의 반려 목록~~ 완료. 이후 반려는 검토 화면(`review-page.mjs`)에서 받는다. 반려는 원장 `review <job> rejected --sha256 <hash>` → 원화 재생성(`build-prompts.mjs` → `run-wave.sh` → `collect-outputs.mjs`)
    → `receipts`/`approve` → `video-manifest`(환경변수 변형) → `run --watch`. 야외 장면 재생성 시 모션 큐에서 실내 소품(커튼·김)을 뺀다(`BONUS_MOTION_OVERRIDE`).
-2. 확정되면 포터블 파이썬으로 `ledger_bonus.py approve-videos <전체>` → `export <전체>`(`.worktrees/bonus-cg-assets`, 브랜치 `feat/bonus-cg-assets`)
-   → 50쌍 커밋 → main ff.
+2. ~~approve-videos → export → 커밋 → main ff~~ 완료(`d569ec0`).
 3. Opus 구현 배치(워크트리 `.worktrees/bonus-cg-integration`)를 연결 계획대로 실행 → Astra 경계 검토(자격 판정·토글·NEW 기준선) → 총괄 통합.
 4. push/deploy는 사용자 지시 때만. 후순위: 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상.
