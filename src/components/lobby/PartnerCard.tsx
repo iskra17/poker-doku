@@ -17,7 +17,7 @@ import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
-import { chapterNumber, partnerCtaDecision } from '@/lib/story/story-hub-rules';
+import { chapterNumber, partnerCtaDecision, recommendChapter } from '@/lib/story/story-hub-rules';
 
 const LAST_VISIT_PREFIX = 'poker-doku-last-visit:';
 const REUNION_GAP_MS = 3 * 24 * 60 * 60 * 1000;
@@ -40,7 +40,7 @@ function readAndTouchLastVisit(profileId: string, now: number): number | null {
  * 대사는 전부 수기 스크립트 (partner-dialogue) — AI 미사용.
  */
 interface PartnerCardProps {
-  /** 스토리 CTA — 로비 '수련 스토리' 탭으로 전환 (허브가 [시작]을 그린다) */
+  /** 스토리 CTA — 첫 방문은 추천 챕터를 바로 열고, 진행 중이면 허브에서 이어간다 */
   onOpenStory?: () => void;
 }
 
@@ -48,6 +48,8 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const profile = useProfileStore(state => state.profile);
   const progression = useProgressionStore(state => state.snapshot);
   const storyProgress = useStoryStore(state => state.progress);
+  const storyPending = useStoryStore(state => state.pending);
+  const startChapter = useStoryStore(state => state.startChapter);
   const rooms = useGameStore(state => state.rooms);
   const pendingRoomId = useGameStore(state => state.pendingRoomId);
   const [talkLine, setTalkLine] = useState<string | null>(null);
@@ -84,6 +86,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
     progress: onOpenStory ? storyProgress : null,
     chapterOrder: chapterId => chapterNumber(STORY_CHAPTERS, chapterId),
   });
+  const recommendation = storyProgress ? recommendChapter(STORY_CHAPTERS, storyProgress) : null;
   const firstTime = (progression?.profile.completedHands ?? 0) === 0;
   const storyCta = cta.kind === 'story-start' || cta.kind === 'story-continue';
 
@@ -101,6 +104,13 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
       return;
     }
     if (storyCta) {
+      // 첫 방문에는 허브의 추천 카드를 한 번 더 누르게 하지 않는다. activeRun이 있으면
+      // partnerCtaDecision이 story-continue를 반환하므로 보존 중인 런을 절대 재시작하지 않는다.
+      if (cta.kind === 'story-start' && recommendation?.chapterId && !storyProgress?.activeRun) {
+        onOpenStory?.();
+        void startChapter(recommendation.chapterId);
+        return;
+      }
       onOpenStory?.();
       return;
     }
@@ -151,11 +161,13 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
           <button
             type="button"
             onClick={handleCta}
-            disabled={!!pendingRoomId || (!preservedRoom && !storyCta && !practiceRoom)}
+            disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
             className="rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50"
           >
             {pendingRoomId
               ? '입장 중…'
+              : storyPending
+                ? '수련 여는 중…'
               : storyCta || preservedRoom
                 ? cta.label
                 : firstTime

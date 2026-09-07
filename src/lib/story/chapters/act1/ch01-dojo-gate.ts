@@ -10,6 +10,7 @@
  */
 import type { Chapter } from '../../types';
 import { guidedSituation, guidedStageSituation } from '../helpers';
+import { FIRST_DRILL_CLEAR_STEP_ID } from '../../story-milestones';
 
 export const CH01: Chapter = {
   id: 'act1-ch01',
@@ -41,15 +42,9 @@ export const CH01: Chapter = {
           {
             kind: 'say',
             speaker: 'miyako',
-            text: '이 도장에서는 칩을 따는 법보다 카드를 읽는 법을 먼저 배워요. 오늘 배울 건 네 가지 — 족보 순서, 네 가지 액션, 네 개의 스트리트, 그리고 자리 이름이에요.',
+            text: '오늘은 칩보다 카드를 읽는 법부터 배워요. 먼저 족보 순서 하나만 눈에 익히고, 바로 두 문제를 풀어 볼게요♪',
             expression: 'neutral',
             bg: 'dojo-table',
-          },
-          {
-            kind: 'say',
-            speaker: 'miyako',
-            text: '그리고 첫날은 혼자 앉히지 않는 게 우리 도장 규칙이랍니다♪ 수련생님 옆자리에 앉아 줄 분을 소개할게요.',
-            expression: 'happy',
           },
           {
             kind: 'say',
@@ -94,21 +89,67 @@ export const CH01: Chapter = {
       },
     },
 
-    // ───────────────────────────────────────────── 개념 카드 + 함께 풀기
+    // ───────────────────────────────────────────── 첫 카드 읽기 — 첫 2~3분
     {
       kind: 'lesson',
-      id: 'act1-ch01:lesson',
-      title: '포커의 첫 네 가지',
+      id: 'act1-ch01:lesson-foundation',
+      title: '첫 카드 읽기',
       blocks: [
         {
           kind: 'text',
           speaker: 'miyako',
-          text: '카드 네 장만 기억하면 돼요. 외우려 하지 마시고, 그냥 눈에 익히세요♪',
+          text: '처음에는 전부 외우지 않아도 돼요. 오늘은 누가 더 높은 족보인지 읽는 감각만 잡아 볼게요♪',
         },
         {
           kind: 'concept-card',
           title: '족보의 순서',
           body: '다섯 장으로 만든 족보의 높낮이를 겨루는 게임이에요. 로열 스트레이트 플러시 → 스트레이트 플러시 → 포카드 → 풀하우스 → 플러시 → 스트레이트 → 트리플 → 투페어 → 원페어 → 하이카드 순이랍니다.',
+        },
+      ],
+    },
+
+    // ───────────────────────────────────────────── 첫 드릴 2문 (D-RANK)
+    {
+      kind: 'drill-set',
+      id: 'act1-ch01:drills',
+      title: '첫 수련 문제 · 핸드 랭킹',
+      teacher: 'miyako',
+      drills: [
+        { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
+        { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
+      ],
+      hintPenalty: 0.5,
+    },
+
+    // ───────────────────────────────────────────── 첫 드릴 완료 — 서버가 세트를 닫은 뒤에만 진입
+    {
+      kind: 'scene',
+      id: FIRST_DRILL_CLEAR_STEP_ID,
+      scene: {
+        id: FIRST_DRILL_CLEAR_STEP_ID,
+        lines: [
+          {
+            kind: 'say',
+            speaker: 'miyako',
+            text: '첫 두 문제를 끝까지 풀었어요♪ 이제 수련생님 손으로 족보를 읽는 감각이 생겼네요. 다음은 테이블에서 쓰는 언어예요.',
+            expression: 'happy',
+            bg: 'dojo-table',
+            effect: 'sfx:reward',
+          },
+        ],
+      },
+    },
+
+    // ───────────────────────────────────────────── 나머지 개념 + 함께 풀기
+    {
+      kind: 'lesson',
+      id: 'act1-ch01:lesson-table-language',
+      title: '다음 수련: 테이블의 언어',
+      blocks: [
+        {
+          kind: 'text',
+          speaker: 'miyako',
+          text: '좋아요. 이제 액션과 스트리트, 자리를 한 번에 연결해 볼게요. 방금 배운 족보 읽기도 다시 등장한답니다♪',
         },
         {
           kind: 'concept-card',
@@ -150,15 +191,13 @@ export const CH01: Chapter = {
       ],
     },
 
-    // ───────────────────────────────────────────── 드릴 6문 (D-RANK 5 · D-POS 1)
+    // ───────────────────────────────────────────── 나머지 드릴 4문 (D-RANK 3 · D-POS 1)
     {
       kind: 'drill-set',
-      id: 'act1-ch01:drills',
-      title: '첫 수련 문제',
+      id: 'act1-ch01:drills-follow-up',
+      title: '다음 수련 문제',
       teacher: 'miyako',
       drills: [
-        { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
-        { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
         { templateId: 'rank-best-hand', seedPolicy: 'per-run' },
         { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
         { templateId: 'rank-best-hand', seedPolicy: 'per-run' },

@@ -92,10 +92,30 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry,
       <RewardReveal key={`${result.chapterId}:${result.grade}:${result.passed}`} result={result} onDone={() => setDone(true)} />
 
       {done && (
-        <div className="mt-3 flex flex-wrap gap-2" aria-busy={pending}>
-          <button type="button" disabled={pending} onClick={onClose} className="flex-1 rounded-xl border border-mystic/30 py-2.5 text-sm font-bold text-ink-dim">
-            허브로
-          </button>
+        <>
+          {result.passed && next && onNextChapter && (
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => onNextChapter(next.id)}
+              className="mt-3 w-full rounded-2xl border border-cyber/35 bg-gradient-to-br from-cyber/10 via-mystic/10 to-blossom/10 p-4 text-left shadow-[0_0_28px_rgba(74,222,128,0.08)] transition-transform hover:scale-[1.01] disabled:opacity-50"
+              aria-label={`다음 수련 ${next.title}`}
+            >
+              <span className="text-[10px] font-black tracking-widest text-cyber">NEXT TRAINING</span>
+              <span className="mt-1 block text-base font-black text-ink">다음 수련 · {next.title}</span>
+              <span className="mt-1 block text-xs leading-relaxed text-ink-dim">
+                배운 내용 · {chapter?.subtitle ?? '기본기'}
+                <br />
+                다음 목표 · {next.subtitle || '다음 단계'}
+              </span>
+              <span className="mt-2 block text-[11px] font-bold text-mystic">약 {next.estimatedMinutes}분 · 이어서 시작하기 →</span>
+            </button>
+          )}
+
+          <div className="mt-3 flex flex-wrap gap-2" aria-busy={pending}>
+            <button type="button" disabled={pending} onClick={onClose} className="flex-1 rounded-xl border border-mystic/30 py-2.5 text-sm font-bold text-ink-dim">
+              허브로
+            </button>
           {!result.passed && exam && onFullCourse && (
             <button type="button" disabled={pending} onClick={onFullCourse} className="flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white">
               수업 듣기
@@ -116,12 +136,8 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry,
               다시 졸업 대결
             </button>
           )}
-          {result.passed && next && onNextChapter && (
-            <button type="button" disabled={pending} onClick={() => onNextChapter(next.id)} className="flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white">
-              다음: {next.title}
-            </button>
-          )}
-        </div>
+          </div>
+        </>
       )}
       {done && onOpenGallery && hasCollectible(result) && (
         <button type="button" disabled={pending} onClick={onOpenGallery} className="mt-2 w-full rounded-xl border border-gilded/40 bg-gilded/10 py-2 text-xs font-bold text-gilded">

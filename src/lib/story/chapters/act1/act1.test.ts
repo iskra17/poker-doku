@@ -114,8 +114,7 @@ function stepKinds(chapter: Chapter): Step['kind'][] {
 }
 
 function drillCount(chapter: Chapter): number {
-  const step = chapter.steps.find(candidate => candidate.kind === 'drill-set');
-  return step?.kind === 'drill-set' ? step.drills.length : -1;
+  return chapter.steps.reduce((count, step) => count + (step.kind === 'drill-set' ? step.drills.length : 0), 0);
 }
 
 function presetHandCount(chapter: Chapter): number {
@@ -143,11 +142,12 @@ describe('1막 챕터 데이터', () => {
     }
   });
 
-  it('A6 템플릿 순서(scene → lesson → drill-set → practice-table → sparring → scene → result)를 지킨다', () => {
+  it('A6 템플릿 순서를 지킨다', () => {
     for (const chapter of ACT1) {
-      expect(stepKinds(chapter)).toEqual([
-        'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result',
-      ]);
+      const expected = chapter.id === 'act1-ch01'
+        ? ['scene', 'lesson', 'drill-set', 'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result']
+        : ['scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result'];
+      expect(stepKinds(chapter)).toEqual(expected);
       for (const step of chapter.steps) expect(step.id.startsWith(`${chapter.id}:`)).toBe(true);
     }
   });

@@ -9,6 +9,7 @@ import { getChapter } from '@/lib/story/chapters';
 import { setMusicScene } from '@/lib/sound/music-manager';
 import { drillPerfectCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
 import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
+import { isFirstDrillClearMilestone } from '@/lib/story/story-milestones';
 import { useGameStore } from '@/lib/store/game-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -17,6 +18,7 @@ import DrillCard from './DrillCard';
 import LessonPage from './LessonPage';
 import ScenePlayer from './ScenePlayer';
 import StoryCutIn from './StoryCutIn';
+import FirstDrillClearSheet from './FirstDrillClearSheet';
 import MasqueradePanel from './live/MasqueradePanel';
 
 const noopSubscribe = () => () => {};
@@ -84,6 +86,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const title = run?.chapterId === 'daily' ? '오늘의 수련 문제' : (chapter?.title ?? run?.chapterId ?? '수련 스토리');
   const step = run && chapter ? chapter.steps[run.stepIndex] : undefined;
   const partnerId = run?.context.partnerId ?? null;
+  const firstDrillClear = isFirstDrillClearMilestone(run, step?.id);
 
   const finishScene = async (chosen: Record<string, string>) => {
     // 선택은 서버 플래그로 남긴다 (실패해도 진행은 막지 않음 — 정답 없는 선택지)
@@ -184,7 +187,16 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
               </div>
             )}
 
-            {run.phase === 'scene' && step?.kind === 'scene' && (
+            {firstDrillClear && (
+              <FirstDrillClearSheet
+                teacherId={run.context.teacherId}
+                partnerId={partnerId}
+                pending={pending}
+                onContinue={() => void advance()}
+              />
+            )}
+
+            {run.phase === 'scene' && step?.kind === 'scene' && !firstDrillClear && (
               <div className="w-full max-w-md">
                 <ScenePlayer
                   key={`${run.runId}:${step.id}`}

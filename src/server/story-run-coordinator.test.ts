@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { hashSeed } from '@/lib/poker/seeded-rng';
+import { CH01 } from '@/lib/story/chapters/act1/ch01-dojo-gate';
 import { CH10 } from '@/lib/story/chapters/act4/ch10-storm-call';
 import { makeChapter, makeChapterChain, makeScene, curriculumFor } from '@/lib/story/test-fixtures';
 import { REVIEW_SLOT_TEMPLATE_ID, type Chapter, type StoryTeacherId } from '@/lib/story/types';
@@ -480,6 +481,47 @@ describe('drill set flow', () => {
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
     expect(latest().result).toMatchObject({ passed: true, grade: 'S', drill: { perfect: true, slots: 2, finalCorrect: 2 } });
     expect(repository.getFlags(PROFILE)).toMatchObject({ 'badge:perfect-set': '1' });
+  });
+});
+
+describe('Ch1 first drill milestone', () => {
+  it('holds a full run at the server-confirmed milestone and keeps exam coverage at six slots', () => {
+    const full = setup([CH01]);
+    const { coordinator, latest, repository } = full;
+    expect(coordinator.start(PROFILE, 'act1-ch01')).toMatchObject({ ok: true });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
+    expect(latest()).toMatchObject({ stepIndex: 2, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
+
+    answerCurrent(full, true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    answerCurrent(full, true);
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
+    expect(latest()).toMatchObject({
+      stepIndex: 3,
+      stepKind: 'scene',
+      phase: 'scene',
+      result: null,
+    });
+    expect(repository.completions).toHaveLength(0);
+
+    const exam = setup([CH01]);
+    expect(exam.coordinator.start(PROFILE, 'act1-ch01', 'exam')).toMatchObject({ ok: true });
+    expect(exam.latest()).toMatchObject({ stepIndex: 2, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
+    let view = exam.latest();
+    for (let set = 0; set < 2; set += 1) {
+      const slots = view.drill!.total;
+      for (let slot = 0; slot < slots; slot += 1) {
+        const stepIndex = view.stepIndex;
+        answerCurrent(exam, true);
+        exam.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: stepIndex, target: 'next' });
+        view = exam.latest();
+      }
+      if (set === 0) expect(view).toMatchObject({ stepIndex: 5, stepKind: 'drill-set', phase: 'drill', drill: { total: 4 } });
+    }
+    expect(view).toMatchObject({ stepIndex: 9, stepKind: 'result', phase: 'result' });
+    exam.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' });
+    expect(exam.latest().result?.drill.slots).toBe(6);
   });
 });
 
