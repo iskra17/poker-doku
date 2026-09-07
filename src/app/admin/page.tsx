@@ -4,6 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import TournamentCreateForm, {
   type TournamentCreateDraft,
 } from '@/components/tournament/TournamentCreateForm';
+import AdminDevicesPanel from '@/components/admin/AdminDevicesPanel';
+import {
+  buildAdminSessionBody,
+  getAdminRequestErrorMessage,
+} from '@/components/admin/admin-auth';
 import { useDialogFocus } from '@/lib/hooks/use-dialog-focus';
 
 /**
@@ -151,6 +156,13 @@ interface TableHandDetail {
 interface SecuritySummary {
   windowHours: number;
   counts: Record<string, number>;
+}
+
+interface AdminSessionView {
+  principal: { kind: 'backoffice-admin'; id: string; expiresAt: number };
+  csrfToken: string;
+  expiresAt: number;
+  remembered: boolean;
 }
 
 // MTT 토너먼트 탭 — /api/admin/tournaments (Phase 2)
@@ -415,6 +427,14 @@ export default function AdminPage() {
   const [csrfToken, setCsrfToken] = useState<string | null>(null);
   const [sessionLoading, setSessionLoading] = useState(true);
   const [tokenInput, setTokenInput] = useState('');
+  const [rememberDevice, setRememberDevice] = useState(false);
+  const [deviceName, setDeviceName] = useState('');
+  const [remembered, setRemembered] = useState(false);
+  const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+  const [logoutPending, setLogoutPending] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const [seenFeedbackId, setSeenFeedbackId] = useState(() => {
     if (typeof window === 'undefined') return 0;
     return parseInt(window.localStorage.getItem(FEEDBACK_SEEN_KEY) ?? '0', 10) || 0;
@@ -453,6 +473,9 @@ export default function AdminPage() {
     if (response.status === 401 || response.status === 403) {
       setAuthFailed(true);
       setCsrfToken(null);
+      setRemembered(false);
+      setSessionExpiresAt(null);
+      setLoginError(getAdminRequestErrorMessage(response.status, 'session'));
       return null;
     }
     if (!response.ok) return null;
@@ -477,6 +500,9 @@ export default function AdminPage() {
     if (response.status === 401 || response.status === 403) {
       setAuthFailed(true);
       setCsrfToken(null);
+      setRemembered(false);
+      setSessionExpiresAt(null);
+      setLoginError(getAdminRequestErrorMessage(response.status, 'session'));
       return { status: response.status, body: null };
     }
     let parsed: T | null = null;
@@ -634,15 +660,44 @@ export default function AdminPage() {
       cache: 'no-store',
       signal: controller.signal,
     }).then(async response => {
-      if (!response.ok) {
+      if (response.status === 401) {
         setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError(null);
         return;
       }
-      const body = await response.json() as { csrfToken: string };
+      if (!response.ok) {
+        setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError(getAdminRequestErrorMessage(response.status, 'session'));
+        return;
+      }
+      const body = await response.json() as AdminSessionView;
+      if (!body.csrfToken || !Number.isFinite(body.expiresAt)) {
+        setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError('운영 세션 응답을 확인하지 못했어요. 잠시 후 다시 시도해주세요.');
+        return;
+      }
       setCsrfToken(body.csrfToken);
+      setRemembered(body.remembered === true);
+      setSessionExpiresAt(body.expiresAt);
       setAuthFailed(false);
+      setLoginError(null);
     }).catch(() => {
-      if (!controller.signal.aborted) setAuthFailed(true);
+      if (!controller.signal.aborted) {
+        setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError(getAdminRequestErrorMessage(null, 'session'));
+      }
     }).finally(() => {
       if (!controller.signal.aborted) setSessionLoading(false);
     });
@@ -745,35 +800,81 @@ export default function AdminPage() {
     const value = tokenInput.trim();
     if (!value) return;
     setSessionLoading(true);
+    setLoginError(null);
+    setLogoutError(null);
     try {
       const response = await fetch('/api/admin/session', {
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token: value }),
+        body: JSON.stringify(buildAdminSessionBody(value, rememberDevice, deviceName)),
       });
       if (!response.ok) {
         setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError(getAdminRequestErrorMessage(response.status, 'login'));
         return;
       }
-      const body = await response.json() as { csrfToken: string };
+      const body = await response.json() as AdminSessionView;
+      if (!body.csrfToken || !Number.isFinite(body.expiresAt)) {
+        setAuthFailed(true);
+        setCsrfToken(null);
+        setRemembered(false);
+        setSessionExpiresAt(null);
+        setLoginError('운영 세션 응답을 확인하지 못했어요. 잠시 후 다시 시도해주세요.');
+        return;
+      }
       setCsrfToken(body.csrfToken);
+      setRemembered(body.remembered === true);
+      setSessionExpiresAt(body.expiresAt);
       setTokenInput('');
+      setDeviceName('');
       setAuthFailed(false);
+      setLoginError(null);
+    } catch {
+      setAuthFailed(true);
+      setLoginError(getAdminRequestErrorMessage(null, 'login'));
     } finally {
       setSessionLoading(false);
     }
   };
 
   const logout = async () => {
-    await fetch('/api/admin/session', {
-      method: 'DELETE',
-      credentials: 'same-origin',
-      headers: { 'x-csrf-token': csrfToken ?? '' },
-    });
-    setCsrfToken(null);
-    setAuthFailed(true);
+    if (!csrfToken || logoutPending) return;
+    setLogoutPending(true);
+    setLogoutError(null);
+    try {
+      const response = await fetch('/api/admin/session', {
+        method: 'DELETE',
+        credentials: 'same-origin',
+        headers: { 'x-csrf-token': csrfToken },
+      });
+      if (!response.ok) {
+        setLogoutError(getAdminRequestErrorMessage(response.status, 'logout'));
+        return;
+      }
+      setCsrfToken(null);
+      setRemembered(false);
+      setSessionExpiresAt(null);
+      setAuthFailed(true);
+      setDevicesOpen(false);
+    } catch {
+      setLogoutError(getAdminRequestErrorMessage(null, 'logout'));
+    } finally {
+      setLogoutPending(false);
+    }
   };
+
+  const handleSessionExpired = useCallback(() => {
+    setCsrfToken(null);
+    setRemembered(false);
+    setSessionExpiresAt(null);
+    setAuthFailed(true);
+    setDevicesOpen(false);
+    setLoginError(getAdminRequestErrorMessage(401, 'session'));
+  }, []);
 
   if (sessionLoading && !csrfToken) {
     return (
@@ -790,23 +891,66 @@ export default function AdminPage() {
           <h1 className="text-lg font-bold text-mystic mb-1">운영 백오피스</h1>
           <p className="text-xs text-ink-dim mb-4">
             운영 토큰을 입력하세요. 토큰은 로그인 요청에만 사용되고 저장되지 않습니다.
-            {authFailed && <span className="text-blossom"> — 토큰이 올바르지 않아요.</span>}
+            {loginError && <span className="text-blossom"> — {loginError}</span>}
           </p>
-          <input
-            type="password"
-            value={tokenInput}
-            onChange={event => setTokenInput(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') void applyToken(); }}
-            placeholder="운영 토큰"
-            className="w-full rounded-xl border border-mystic/20 bg-elevated/70 p-3 text-sm text-ink outline-none focus:border-blossom/50"
-          />
-          <button
-            type="button"
-            onClick={() => void applyToken()}
-            className="mt-3 w-full rounded-xl bg-blossom/20 border border-blossom/50 py-2 text-sm font-bold text-blossom hover:bg-blossom/30"
+          <form
+            onSubmit={event => {
+              event.preventDefault();
+              void applyToken();
+            }}
           >
-            접속
-          </button>
+            <input
+              type="password"
+              value={tokenInput}
+              onChange={event => setTokenInput(event.target.value)}
+              placeholder="운영 토큰"
+              autoComplete="off"
+              disabled={sessionLoading}
+              className="w-full rounded-xl border border-mystic/20 bg-elevated/70 p-3 text-sm text-ink outline-none focus:border-blossom/50 disabled:opacity-60"
+            />
+            <label className="mt-3 flex items-start gap-2 text-xs text-ink">
+              <input
+                type="checkbox"
+                checked={rememberDevice}
+                onChange={event => setRememberDevice(event.target.checked)}
+                disabled={sessionLoading}
+                className="mt-0.5 accent-blossom"
+              />
+              <span>
+                <span className="font-bold">이 기기에서 90일간 로그인 유지</span>
+                <span className="mt-1 block text-[11px] leading-snug text-ink-dim">
+                  선택하면 이 브라우저의 로그인 자격이 접속할 때마다 자동 연장됩니다. 운영 토큰은 저장하지 않아요.
+                </span>
+              </span>
+            </label>
+            {rememberDevice && (
+              <label className="mt-3 block text-xs text-ink">
+                기기 이름 <span className="text-ink-dim">(선택)</span>
+                <input
+                  type="text"
+                  value={deviceName}
+                  onChange={event => setDeviceName(event.target.value.slice(0, 80))}
+                  placeholder="예: 사무실 노트북"
+                  maxLength={80}
+                  disabled={sessionLoading}
+                  className="mt-1 w-full rounded-xl border border-mystic/20 bg-elevated/70 p-3 text-sm text-ink outline-none focus:border-blossom/50 disabled:opacity-60"
+                />
+                <span className="mt-1 block text-right text-[10px] text-ink-dim">{deviceName.length}/80</span>
+              </label>
+            )}
+            {loginError && (
+              <p role="alert" className="mt-3 rounded-lg border border-blossom/40 bg-blossom/10 px-3 py-2 text-[11px] leading-snug text-blossom">
+                {loginError}
+              </p>
+            )}
+            <button
+              type="submit"
+              disabled={sessionLoading || !tokenInput.trim()}
+              className="mt-3 w-full rounded-xl border border-blossom/50 bg-blossom/20 py-2 text-sm font-bold text-blossom hover:bg-blossom/30 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {sessionLoading ? '접속 중…' : '접속'}
+            </button>
+          </form>
         </div>
       </main>
     );
@@ -834,19 +978,43 @@ export default function AdminPage() {
               </button>
             )}
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-ink-dim">
-            {lastError
-              ? <span className="text-blossom">{lastError}</span>
+          <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-ink-dim">
+            {lastError ? <span className="text-blossom">{lastError}</span> : logoutError
+              ? <span className="text-blossom">{logoutError}</span>
               : `${REFRESH_MS / 1000}초마다 갱신 · 마지막 ${timeAgo(updatedAt)}`}
+            {remembered && (
+              <span className="rounded-full border border-cyber/40 bg-cyber/10 px-2 py-0.5 font-bold text-cyber">
+                이 기기 로그인 유지
+                {sessionExpiresAt ? ` · ${fmtTime(sessionExpiresAt)} 만료` : ''}
+              </span>
+            )}
             <button
               type="button"
-              onClick={() => void logout()}
+              aria-expanded={devicesOpen}
+              aria-controls="admin-devices-panel"
+              onClick={() => setDevicesOpen(prev => !prev)}
               className="rounded border border-mystic/25 px-2 py-1 hover:text-ink"
             >
-              로그아웃
+              {devicesOpen ? '등록 기기 닫기' : '등록 기기'}
+            </button>
+            <button
+              type="button"
+              disabled={logoutPending}
+              onClick={() => void logout()}
+              className="rounded border border-mystic/25 px-2 py-1 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {logoutPending ? '로그아웃 중…' : '로그아웃'}
             </button>
           </div>
         </header>
+
+        {devicesOpen && (
+          <AdminDevicesPanel
+            csrfToken={csrfToken}
+            onCurrentDeviceRevoked={handleSessionExpired}
+            onSessionExpired={handleSessionExpired}
+          />
+        )}
 
         <nav className="flex flex-wrap gap-1 rounded-xl border border-mystic/20 bg-panel/85 p-1">
           {TABS.map(tab => (
