@@ -59,3 +59,16 @@ type DeviceList = {devices: Array<{id:string; name:string; createdAt:number; las
 
 Astra가 기획·통합, Fable 5.1이 설계/최종 인증 경계 리뷰, Opus가 서버/DB/회귀, Luna Max가 UI를 맡는다.
 동시 작업자 최대 2명. 전체 테스트와 작업자 테스트를 겹치지 않는다. 이번 요청은 구현·검증·로컬 통합이며 push/배포는 별도 지시 때만.
+
+## Fable 설계 검토 반영
+
+- 영속 로그인은 기존 세션 Map에 저장하지 않는다. DB 검증을 건너뛰는 캐시 금지. 변경 레이트리밋 Map만 별도로 둔다.
+- 행에 현재 운영 토큰의 `source_scope`를 별도로 저장하며 목록·유효 등록 수·기기 id 해제 모두 그 스코프로 제한한다.
+  공개 기기 id·CSRF는 등록 시 별도 생성·영속, 공개 id 또는 lookup hash만으로는 인증하지 않는다.
+- 만료 연장은 `UPDATE ... WHERE expires_at > now AND lookup_key = ... RETURNING ...` 조건부 갱신.
+  0행이면 미인증, 원문 쿠키는 HTTP Set-Cookie로만 처리한다.
+- 로그인 성공 시 기존 쿠키의 영속 행을 새 등록과 같은 트랜잭션에서 교체한다. 실패한 로그인은 기존 자격에 영향 없음.
+  상한 검사·등록도 같은 트랜잭션. 미선택 재로그인도 성공한 뒤 기존 영속 행을 폐기한다.
+- DB 오류로 해제하지 못했으면 503으로 실패를 알리고 로그인 UI를 성공처럼 지우지 않는다. 서버에서 미폐기인데 성공처럼
+  쿠키만 제거하는 동작은 채택하지 않는다. 사용자 이름은 trim·제어문자 거부·최대80, 빈 이름 기본값 `등록된 브라우저`.
+- production `index.ts`가 AdminSessionManager를 별도로 생성·주입하므로 `http-handler.ts` 기본 생성자와 **둘 다** repository를 연결한다.

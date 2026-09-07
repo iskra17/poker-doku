@@ -1,16 +1,35 @@
 import {
   createHash,
+  createHmac,
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import {
+  AdminDeviceLimitError,
+  type AdminDeviceCredential,
+  type AdminDeviceRepository,
+} from './admin-device-repository';
 
 export const ADMIN_SESSION_COOKIE = 'poker_doku_admin';
 
 const SESSION_TTL_MS = 2 * 60 * 60 * 1_000;
+/** 등록 기기 유지 기간 — 접속할 때마다 이 값으로 다시 채운다 (2026-09-08 확정). */
+export const ADMIN_DEVICE_TTL_MS = 90 * 24 * 60 * 60 * 1_000;
 const LOGIN_WINDOW_MS = 10 * 60 * 1_000;
 const LOGIN_LIMIT = 5;
 const MUTATION_WINDOW_MS = 60 * 1_000;
 const MUTATION_LIMIT = 30;
+/**
+ * 영속 자격 쿠키 접두사 — 이 값이 붙은 쿠키는 **절대** 메모리 세션 Map을 거치지 않고
+ * 매 요청 DB를 확인한다. 원격 해제·만료가 다음 요청부터 바로 먹히게 하는 장치다.
+ */
+const DEVICE_CREDENTIAL_PREFIX = 'pdv1.';
+const DEVICE_LOOKUP_INFO = 'poker-doku/admin-trusted-device/lookup/v1';
+const DEVICE_SCOPE_INFO = 'poker-doku/admin-trusted-device/scope/v1';
+const DEFAULT_DEVICE_NAME = '등록된 브라우저';
+const MAX_DEVICE_NAME_LENGTH = 80;
+const MAX_DEVICE_ID_LENGTH = 128;
+const DEVICE_NAME_FORBIDDEN = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u;
 
 export interface AdminPrincipal {
   readonly kind: 'backoffice-admin';
@@ -18,17 +37,26 @@ export interface AdminPrincipal {
   readonly expiresAt: number;
 }
 
+export type AdminLoginFailureReason =
+  | 'invalid-credentials'
+  | 'rate-limited'
+  | 'unavailable'
+  | 'device-limit'
+  | 'invalid-device-name';
+
 export type AdminLoginResult =
   | {
     readonly ok: true;
     readonly principal: AdminPrincipal;
     readonly csrfToken: string;
     readonly expiresAt: number;
+    /** HTTP Set-Cookie 헤더 전용 — JSON 응답이나 로그에 담지 않는다. */
     readonly setCookie: string;
+    readonly remembered: boolean;
   }
   | {
     readonly ok: false;
-    readonly reason: 'invalid-credentials' | 'rate-limited' | 'unavailable';
+    readonly reason: AdminLoginFailureReason;
     readonly retryAfterMs?: number;
   };
 
@@ -36,13 +64,54 @@ export interface AdminSessionView {
   readonly principal: AdminPrincipal;
   readonly csrfToken: string;
   readonly expiresAt: number;
+  readonly remembered: boolean;
 }
+
+export type AdminAuthFailureReason = 'unauthenticated' | 'unavailable';
+
+export type AdminSessionResult =
+  | {
+    readonly ok: true;
+    readonly view: AdminSessionView;
+    /** 등록 기기의 만료 연장분 — 쿠키 값은 그대로 두고 수명만 다시 채운다. */
+    readonly setCookie?: string;
+  }
+  | { readonly ok: false; readonly reason: AdminAuthFailureReason };
+
+export type AdminAuthResult =
+  | { readonly ok: true; readonly principal: AdminPrincipal }
+  | { readonly ok: false; readonly reason: AdminAuthFailureReason };
+
+export interface AdminDeviceView {
+  readonly id: string;
+  readonly name: string;
+  readonly createdAt: number;
+  readonly lastUsedAt: number;
+  readonly expiresAt: number;
+  readonly current: boolean;
+}
+
+export type AdminDeviceListResult =
+  | { readonly ok: true; readonly devices: readonly AdminDeviceView[] }
+  | { readonly ok: false; readonly reason: AdminAuthFailureReason };
+
+export type AdminDeviceRevokeResult =
+  | { readonly ok: true; readonly current: boolean }
+  | {
+    readonly ok: false;
+    readonly reason: AdminAuthFailureReason | 'not-found';
+  };
+
+export type AdminLogoutResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: 'unavailable' };
 
 export type AdminSessionErrorKind =
   | 'unauthenticated'
   | 'origin'
   | 'csrf'
-  | 'rate-limited';
+  | 'rate-limited'
+  | 'unavailable';
 
 export class AdminSessionError extends Error {
   readonly kind: AdminSessionErrorKind;
@@ -68,6 +137,45 @@ export interface AdminSessionManagerOptions {
   sourceToken?: string;
   production: boolean;
   randomSecret?: () => string;
+  /**
+   * 등록 기기 저장소. 프로덕션(index.ts)과 http-handler 기본 생성자 **둘 다** 연결해야
+   * 90일 유지 기능이 조용히 사라지지 않는다.
+   */
+  devices?: AdminDeviceRepository;
+}
+
+export interface AdminLoginOptions {
+  readonly rememberDevice?: boolean;
+  readonly deviceName?: string;
+  /** 로그인 요청이 들고 온 쿠키 — 같은 브라우저의 옛 자격을 폐기/교체하는 데만 쓴다. */
+  readonly cookieHeader?: string;
+}
+
+type ResolvedAdminSession =
+  | { readonly kind: 'memory'; readonly record: AdminSessionRecord }
+  | {
+    readonly kind: 'device';
+    readonly credential: AdminDeviceCredential;
+    readonly lookupKey: string;
+    readonly rawCredential: string;
+  };
+
+type ResolvedAdminSessionResult =
+  | { readonly ok: true; readonly session: ResolvedAdminSession }
+  | { readonly ok: false; readonly reason: AdminAuthFailureReason };
+
+/**
+ * 등록 기기 이름 정규화 — 인증 요소가 아니라 표시용이다.
+ * trim 후 제어/서식 문자를 거부하고 80자를 넘으면 거절, 빈 값은 한국어 기본 이름.
+ */
+export function normalizeAdminDeviceName(raw: string | undefined): string | null {
+  if (raw === undefined) return DEFAULT_DEVICE_NAME;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return DEFAULT_DEVICE_NAME;
+  if (trimmed.length > MAX_DEVICE_NAME_LENGTH) return null;
+  if (DEVICE_NAME_FORBIDDEN.test(trimmed)) return null;
+  return trimmed;
 }
 
 export interface AdminOriginRequest {
@@ -88,21 +196,44 @@ export interface AdminOriginRequest {
  */
 export class AdminSessionManager {
   readonly #sourceTokenDigest: Buffer | null;
+  /** 원본 운영 토큰에서 파생한 조회 키 재료 — 토큰 원문은 보관하지 않는다. */
+  readonly #deviceLookupSecret: Buffer | null;
+  /** 현재 원본 토큰 세대를 가리키는 스코프 — 목록/상한/해제를 이 안으로 가둔다. */
+  readonly #sourceScope: string | null;
   readonly #production: boolean;
   readonly #randomSecret: () => string;
+  readonly #devices: AdminDeviceRepository | null;
   readonly #sessions = new Map<string, AdminSessionRecord>();
   readonly #loginAttempts = new Map<string, number[]>();
+  /** 영속 자격은 세션 Map에 담지 않으므로 변경 레이트리밋만 따로 센다. */
+  readonly #deviceMutationAttempts = new Map<string, number[]>();
 
   constructor(options: AdminSessionManagerOptions) {
     this.#sourceTokenDigest = options.sourceToken
       ? digest(options.sourceToken)
       : null;
+    this.#deviceLookupSecret = options.sourceToken
+      ? createHmac('sha256', options.sourceToken)
+        .update(DEVICE_LOOKUP_INFO)
+        .digest()
+      : null;
+    this.#sourceScope = options.sourceToken
+      ? createHmac('sha256', options.sourceToken)
+        .update(DEVICE_SCOPE_INFO)
+        .digest('hex')
+      : null;
     this.#production = options.production;
     this.#randomSecret = options.randomSecret
       ?? (() => randomBytes(32).toString('base64url'));
+    this.#devices = options.devices ?? null;
   }
 
-  login(rawToken: string, clientKey: string, now: number): AdminLoginResult {
+  login(
+    rawToken: string,
+    clientKey: string,
+    now: number,
+    options: AdminLoginOptions = {},
+  ): AdminLoginResult {
     this.#prune(now);
     const attempts = this.#recentAttempts(
       this.#loginAttempts.get(clientKey) ?? [],
@@ -126,48 +257,191 @@ export class AdminSessionManager {
       return { ok: false, reason: 'invalid-credentials' };
     }
 
-    const token = this.#uniqueSecret();
-    const csrfToken = this.#uniqueSecret();
-    const expiresAt = now + SESSION_TTL_MS;
-    const principal: AdminPrincipal = Object.freeze({
-      kind: 'backoffice-admin',
-      id: `admin_${this.#uniqueSecret()}`,
-      expiresAt,
-    });
-    this.#sessions.set(token, {
-      token,
-      csrfToken,
-      principal,
-      expiresAt,
-      mutationAttempts: [],
-    });
-    return {
-      ok: true,
-      principal,
-      csrfToken,
-      expiresAt,
-      setCookie: this.#sessionCookie(token),
-    };
+    // 자격 검증을 통과한 뒤에만 기존 쿠키를 손댄다 — 실패한 로그인은 아무것도 폐기하지 않는다.
+    const presented = readSessionToken(options.cookieHeader);
+    const presentedLookupKey = presented !== null
+      && presented.startsWith(DEVICE_CREDENTIAL_PREFIX)
+      ? this.#lookupKey(presented)
+      : null;
+
+    if (options.rememberDevice !== true) {
+      if (presented !== null && presentedLookupKey === null) {
+        this.#sessions.delete(presented);
+      }
+      if (presentedLookupKey !== null) {
+        if (!this.#devices || !this.#sourceScope) {
+          return { ok: false, reason: 'unavailable' };
+        }
+        try {
+          this.#devices.revokeByLookupKey(presentedLookupKey, this.#sourceScope);
+        } catch {
+          return { ok: false, reason: 'unavailable' };
+        }
+      }
+      return this.#issueMemorySession(now);
+    }
+
+    if (!this.#devices || !this.#sourceScope) {
+      return { ok: false, reason: 'unavailable' };
+    }
+    const name = normalizeAdminDeviceName(options.deviceName);
+    if (name === null) return { ok: false, reason: 'invalid-device-name' };
+
+    const credential = `${DEVICE_CREDENTIAL_PREFIX}${this.#randomSecret()}`;
+    const expiresAt = now + ADMIN_DEVICE_TTL_MS;
+    const principalId = `admin_${this.#randomSecret()}`;
+    try {
+      const record = this.#devices.register({
+        id: `device_${this.#randomSecret()}`,
+        lookupKey: this.#lookupKey(credential)!,
+        sourceScope: this.#sourceScope,
+        csrfToken: this.#randomSecret(),
+        principalId,
+        name,
+        createdAt: now,
+        expiresAt,
+        ...(presentedLookupKey === null
+          ? {}
+          : { replacesLookupKey: presentedLookupKey }),
+      });
+      if (presented !== null && presentedLookupKey === null) {
+        this.#sessions.delete(presented);
+      }
+      return {
+        ok: true,
+        principal: devicePrincipal(record),
+        csrfToken: record.csrfToken,
+        expiresAt: record.expiresAt,
+        setCookie: this.#deviceCookie(credential),
+        remembered: true,
+      };
+    } catch (error) {
+      if (error instanceof AdminDeviceLimitError) {
+        return { ok: false, reason: 'device-limit' };
+      }
+      return { ok: false, reason: 'unavailable' };
+    }
   }
 
   authenticate(
     cookieHeader: string | undefined,
     now: number,
   ): AdminPrincipal | null {
-    const record = this.#session(cookieHeader, now);
-    return record?.principal ?? null;
+    const result = this.authenticateSession(cookieHeader, now);
+    return result.ok ? result.principal : null;
   }
 
-  getSessionView(
+  /** 저장소 장애를 401로 뭉개지 않기 위한 결과형 인증 — 조회 라우트가 쓴다. */
+  authenticateSession(
     cookieHeader: string | undefined,
     now: number,
-  ): AdminSessionView | null {
-    const record = this.#session(cookieHeader, now);
-    if (!record) return null;
+  ): AdminAuthResult {
+    const resolved = this.#resolve(cookieHeader, now);
+    if (!resolved.ok) return resolved;
+    return { ok: true, principal: principalOf(resolved.session) };
+  }
+
+  /**
+   * GET /api/admin/session — 등록 기기는 유효 행 조건부 UPDATE로만 만료를 연장한다.
+   * 0행이면 미인증이고, 쿠키 값과 CSRF는 회전하지 않는다(다중 탭 안전).
+   */
+  getSession(
+    cookieHeader: string | undefined,
+    now: number,
+  ): AdminSessionResult {
+    const resolved = this.#resolve(cookieHeader, now);
+    if (!resolved.ok) return resolved;
+    if (resolved.session.kind === 'memory') {
+      const record = resolved.session.record;
+      return {
+        ok: true,
+        view: {
+          principal: record.principal,
+          csrfToken: record.csrfToken,
+          expiresAt: record.expiresAt,
+          remembered: false,
+        },
+      };
+    }
+
+    try {
+      const renewed = this.#devices!.renew(
+        resolved.session.lookupKey,
+        this.#sourceScope!,
+        now,
+        now + ADMIN_DEVICE_TTL_MS,
+      );
+      if (!renewed) return { ok: false, reason: 'unauthenticated' };
+      return {
+        ok: true,
+        view: {
+          principal: devicePrincipal(renewed),
+          csrfToken: renewed.csrfToken,
+          expiresAt: renewed.expiresAt,
+          remembered: true,
+        },
+        setCookie: this.#deviceCookie(resolved.session.rawCredential),
+      };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
+  listDevices(
+    cookieHeader: string | undefined,
+    now: number,
+  ): AdminDeviceListResult {
+    const resolved = this.#resolve(cookieHeader, now);
+    if (!resolved.ok) return resolved;
+    if (!this.#devices || !this.#sourceScope) {
+      return { ok: false, reason: 'unavailable' };
+    }
+    const currentId = resolved.session.kind === 'device'
+      ? resolved.session.credential.id
+      : null;
+    try {
+      return {
+        ok: true,
+        devices: this.#devices.list(this.#sourceScope, now).map(device => ({
+          ...device,
+          current: device.id === currentId,
+        })),
+      };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+  }
+
+  /** 기기 해제 — 다른 기기는 그 기기의 다음 요청부터, 현재 기기는 쿠키까지 즉시 정리한다. */
+  revokeDevice(
+    cookieHeader: string | undefined,
+    deviceId: string,
+    now: number,
+  ): AdminDeviceRevokeResult {
+    const resolved = this.#resolve(cookieHeader, now);
+    if (!resolved.ok) return resolved;
+    if (!this.#devices || !this.#sourceScope) {
+      return { ok: false, reason: 'unavailable' };
+    }
+    if (
+      typeof deviceId !== 'string'
+      || deviceId.length === 0
+      || deviceId.length > MAX_DEVICE_ID_LENGTH
+    ) {
+      return { ok: false, reason: 'not-found' };
+    }
+    try {
+      if (!this.#devices.revokeById(deviceId, this.#sourceScope)) {
+        return { ok: false, reason: 'not-found' };
+      }
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
+    this.#deviceMutationAttempts.delete(deviceId);
     return {
-      principal: record.principal,
-      csrfToken: record.csrfToken,
-      expiresAt: record.expiresAt,
+      ok: true,
+      current: resolved.session.kind === 'device'
+        && resolved.session.credential.id === deviceId,
     };
   }
 
@@ -178,40 +452,60 @@ export class AdminSessionManager {
     requestOrigin?: string;
     now: number;
   }): AdminPrincipal {
-    const record = this.#session(input.cookieHeader, input.now);
-    if (!record) throw new AdminSessionError('unauthenticated');
+    const resolved = this.#resolve(input.cookieHeader, input.now);
+    if (!resolved.ok) throw new AdminSessionError(resolved.reason);
+    const session = resolved.session;
 
     if (!isExactAdminOrigin(input.origin, input.requestOrigin)) {
       throw new AdminSessionError('origin');
     }
+    const csrfToken = session.kind === 'memory'
+      ? session.record.csrfToken
+      : session.credential.csrfToken;
     if (
       typeof input.csrfHeader !== 'string'
-      || !constantTimeSecretEqual(input.csrfHeader, record.csrfToken)
+      || !constantTimeSecretEqual(input.csrfHeader, csrfToken)
     ) {
       throw new AdminSessionError('csrf');
     }
 
-    record.mutationAttempts = this.#recentAttempts(
-      record.mutationAttempts,
+    const attempts = this.#recentAttempts(
+      session.kind === 'memory'
+        ? session.record.mutationAttempts
+        : this.#deviceMutationAttempts.get(session.credential.id) ?? [],
       input.now,
       MUTATION_WINDOW_MS,
     );
-    if (record.mutationAttempts.length >= MUTATION_LIMIT) {
+    if (session.kind === 'memory') session.record.mutationAttempts = attempts;
+    else this.#deviceMutationAttempts.set(session.credential.id, attempts);
+    if (attempts.length >= MUTATION_LIMIT) {
       throw new AdminSessionError(
         'rate-limited',
-        Math.max(
-          1,
-          record.mutationAttempts[0] + MUTATION_WINDOW_MS - input.now,
-        ),
+        Math.max(1, attempts[0] + MUTATION_WINDOW_MS - input.now),
       );
     }
-    record.mutationAttempts.push(input.now);
-    return record.principal;
+    attempts.push(input.now);
+    return principalOf(session);
   }
 
-  logout(cookieHeader: string | undefined): void {
+  /**
+   * 로그아웃 — 영속 자격은 DB에서 실제로 지워야 성공이다. 저장소 실패를 성공처럼
+   * 처리하면 쿠키만 사라지고 서버에는 자격이 남으므로 호출자가 503으로 알린다.
+   */
+  logout(cookieHeader: string | undefined): AdminLogoutResult {
     const token = readSessionToken(cookieHeader);
-    if (token) this.#sessions.delete(token);
+    if (token === null) return { ok: true };
+    if (!token.startsWith(DEVICE_CREDENTIAL_PREFIX)) {
+      this.#sessions.delete(token);
+      return { ok: true };
+    }
+    if (!this.#devices || !this.#sourceScope) return { ok: true };
+    try {
+      this.#devices.revokeByLookupKey(this.#lookupKey(token)!, this.#sourceScope);
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: 'unavailable' };
+    }
   }
 
   clearCookie(): string {
@@ -235,30 +529,100 @@ export class AdminSessionManager {
   close(): void {
     this.#sessions.clear();
     this.#loginAttempts.clear();
+    this.#deviceMutationAttempts.clear();
   }
 
-  #session(
+  #issueMemorySession(now: number): AdminLoginResult {
+    const token = this.#uniqueSecret();
+    const csrfToken = this.#uniqueSecret();
+    const expiresAt = now + SESSION_TTL_MS;
+    const principal: AdminPrincipal = Object.freeze({
+      kind: 'backoffice-admin',
+      id: `admin_${this.#uniqueSecret()}`,
+      expiresAt,
+    });
+    this.#sessions.set(token, {
+      token,
+      csrfToken,
+      principal,
+      expiresAt,
+      mutationAttempts: [],
+    });
+    return {
+      ok: true,
+      principal,
+      csrfToken,
+      expiresAt,
+      setCookie: this.#sessionCookie(token),
+      remembered: false,
+    };
+  }
+
+  /**
+   * 쿠키 하나를 세션으로 해석한다. 영속 자격은 캐시 없이 매번 DB를 확인하므로
+   * 원격 해제·만료·원본 토큰 회전이 바로 다음 요청에 반영된다.
+   */
+  #resolve(
     cookieHeader: string | undefined,
     now: number,
-  ): AdminSessionRecord | null {
+  ): ResolvedAdminSessionResult {
     const token = readSessionToken(cookieHeader);
-    if (!token) return null;
+    if (token === null) return { ok: false, reason: 'unauthenticated' };
+
+    if (token.startsWith(DEVICE_CREDENTIAL_PREFIX)) {
+      const lookupKey = this.#lookupKey(token);
+      if (lookupKey === null || !this.#devices || !this.#sourceScope) {
+        return { ok: false, reason: 'unauthenticated' };
+      }
+      let credential: AdminDeviceCredential | null;
+      try {
+        credential = this.#devices.findActive(
+          lookupKey,
+          this.#sourceScope,
+          now,
+        );
+      } catch {
+        return { ok: false, reason: 'unavailable' };
+      }
+      if (!credential) return { ok: false, reason: 'unauthenticated' };
+      return {
+        ok: true,
+        session: { kind: 'device', credential, lookupKey, rawCredential: token },
+      };
+    }
+
     const record = this.#sessions.get(token);
-    if (!record) return null;
+    if (!record) return { ok: false, reason: 'unauthenticated' };
     if (record.expiresAt <= now) {
       this.#sessions.delete(token);
-      return null;
+      return { ok: false, reason: 'unauthenticated' };
     }
-    return record;
+    return { ok: true, session: { kind: 'memory', record } };
+  }
+
+  /** 원본 운영 토큰 세대에 묶인 조회 키 — 토큰이 없으면 어떤 영속 자격도 해석할 수 없다. */
+  #lookupKey(credential: string): string | null {
+    if (!this.#deviceLookupSecret) return null;
+    return createHmac('sha256', this.#deviceLookupSecret)
+      .update(credential)
+      .digest('hex');
   }
 
   #sessionCookie(token: string): string {
+    return this.#cookie(token, SESSION_TTL_MS);
+  }
+
+  #deviceCookie(credential: string): string {
+    return this.#cookie(credential, ADMIN_DEVICE_TTL_MS);
+  }
+
+  #cookie(value: string, ttlMs: number): string {
     return [
-      `${ADMIN_SESSION_COOKIE}=${token}`,
+      `${ADMIN_SESSION_COOKIE}=${value}`,
       'HttpOnly',
       'SameSite=Strict',
       'Path=/api/admin',
-      `Max-Age=${Math.floor(SESSION_TTL_MS / 1_000)}`,
+      `Max-Age=${Math.floor(ttlMs / 1_000)}`,
       ...(this.#production ? ['Secure'] : []),
     ].join('; ');
   }
@@ -287,7 +651,26 @@ export class AdminSessionManager {
       if (recent.length === 0) this.#loginAttempts.delete(clientKey);
       else this.#loginAttempts.set(clientKey, recent);
     }
+    for (const [deviceId, attempts] of this.#deviceMutationAttempts) {
+      const recent = this.#recentAttempts(attempts, now, MUTATION_WINDOW_MS);
+      if (recent.length === 0) this.#deviceMutationAttempts.delete(deviceId);
+      else this.#deviceMutationAttempts.set(deviceId, recent);
+    }
   }
+}
+
+function devicePrincipal(credential: AdminDeviceCredential): AdminPrincipal {
+  return Object.freeze({
+    kind: 'backoffice-admin' as const,
+    id: credential.principalId,
+    expiresAt: credential.expiresAt,
+  });
+}
+
+function principalOf(session: ResolvedAdminSession): AdminPrincipal {
+  return session.kind === 'memory'
+    ? session.record.principal
+    : devicePrincipal(session.credential);
 }
 
 function digest(value: string): Buffer {

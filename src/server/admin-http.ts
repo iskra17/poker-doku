@@ -3,6 +3,7 @@ import type { UrlWithParsedQuery } from 'node:url';
 import {
   AdminSessionError,
   type AdminPrincipal,
+  type AdminSessionErrorKind,
   type AdminSessionManager,
   isExactAdminOrigin,
   resolveAdminRequestOrigin,
@@ -47,6 +48,7 @@ import type {
  * - GET /api/admin/hands     — 테이블 정본 핸드 목록 (room=/profile=/limit=/before=)
  * - GET /api/admin/hands/:id — 전역 핸드 ID로 정본 상세 (전체 홀카드 — 핸드 감사 전용)
  * - GET /api/admin/security  — 최근 신호 이벤트 타입별 집계 (hours=, 기본 24)
+ * - GET/DELETE /api/admin/devices — 90일 로그인 유지로 등록한 기기 목록/해제 (현재 원본 토큰 스코프 한정)
  * - GET/POST /api/admin/config — 런타임 게임 설정 조회/변경 (핫 컨피그 — 레지스트리 메타 포함,
  *   변경은 config-change 이벤트로 감사 기록)
  *
@@ -214,16 +216,26 @@ function boundedInteger(
     : fallback;
 }
 
+function adminSessionErrorStatus(kind: AdminSessionErrorKind): number {
+  switch (kind) {
+    case 'unauthenticated':
+      return 401;
+    case 'rate-limited':
+      return 429;
+    case 'unavailable':
+      // 저장소 장애를 403/401로 뭉개면 UI가 "잘못된 토큰"으로 오인시킨다.
+      return 503;
+    default:
+      return 403;
+  }
+}
+
 function sendAdminSessionError(res: ServerResponse, error: unknown): void {
   if (!(error instanceof AdminSessionError)) {
     send(res, 500, { error: 'internal-error' });
     return;
   }
-  const status = error.kind === 'unauthenticated'
-    ? 401
-    : error.kind === 'rate-limited'
-      ? 429
-      : 403;
+  const status = adminSessionErrorStatus(error.kind);
   send(
     res,
     status,
@@ -242,13 +254,23 @@ async function handleAdminSession(
   now: () => number,
 ): Promise<void> {
   if (req.method === 'GET' || req.method === 'HEAD') {
-    const view = sessions.getSessionView(req.headers.cookie, now());
-    if (!view) {
+    // 등록 기기는 여기서 만료를 90일로 다시 채운다 — 쿠키 값·CSRF는 그대로다.
+    const result = sessions.getSession(req.headers.cookie, now());
+    if (!result.ok) {
       drainRequest(req);
-      send(res, 401, { error: 'unauthenticated' });
+      send(
+        res,
+        result.reason === 'unavailable' ? 503 : 401,
+        { error: result.reason },
+      );
       return;
     }
-    send(res, 200, view);
+    send(
+      res,
+      200,
+      result.view,
+      result.setCookie === undefined ? {} : { 'set-cookie': result.setCookie },
+    );
     return;
   }
 
@@ -269,17 +291,35 @@ async function handleAdminSession(
     const rawToken = isRecord(body) && typeof body.token === 'string'
       ? body.token
       : null;
-    if (!rawToken) {
+    const rememberDevice = isRecord(body) ? body.rememberDevice : undefined;
+    const deviceName = isRecord(body) ? body.deviceName : undefined;
+    if (
+      !rawToken
+      || (rememberDevice !== undefined && typeof rememberDevice !== 'boolean')
+      || (deviceName !== undefined && typeof deviceName !== 'string')
+    ) {
       send(res, 400, { error: 'invalid-body' });
       return;
     }
-    const result = sessions.login(rawToken, clientAddress(req), now());
+    const result = sessions.login(rawToken, clientAddress(req), now(), {
+      ...(rememberDevice === undefined ? {} : { rememberDevice }),
+      ...(deviceName === undefined ? {} : { deviceName }),
+      ...(req.headers.cookie === undefined
+        ? {}
+        : { cookieHeader: req.headers.cookie }),
+    });
     if (!result.ok) {
+      if (result.reason === 'invalid-device-name') {
+        send(res, 400, { error: 'invalid-body' });
+        return;
+      }
       const status = result.reason === 'rate-limited'
         ? 429
         : result.reason === 'unavailable'
           ? 503
-          : 401;
+          : result.reason === 'device-limit'
+            ? 409
+            : 401;
       send(
         res,
         status,
@@ -297,7 +337,9 @@ async function handleAdminSession(
         principal: result.principal,
         csrfToken: result.csrfToken,
         expiresAt: result.expiresAt,
+        remembered: result.remembered,
       },
+      // 자격 원문은 오직 Set-Cookie 헤더로만 나간다 (JSON 본문·로그 금지).
       { 'set-cookie': result.setCookie },
     );
     return;
@@ -317,7 +359,12 @@ async function handleAdminSession(
       sendAdminSessionError(res, error);
       return;
     }
-    sessions.logout(req.headers.cookie);
+    const loggedOut = sessions.logout(req.headers.cookie);
+    if (!loggedOut.ok) {
+      // 서버에서 폐기하지 못했으면 쿠키만 지우고 성공처럼 보이게 하지 않는다.
+      send(res, 503, { error: loggedOut.reason });
+      return;
+    }
     res.writeHead(204, {
       'cache-control': 'no-store',
       'set-cookie': sessions.clearCookie(),
@@ -419,20 +466,21 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
 
     let principal: AdminPrincipal;
     if (req.method === 'GET' || req.method === 'HEAD') {
-      const authenticated = options.adminSessions.authenticate(
+      const authenticated = options.adminSessions.authenticateSession(
         req.headers.cookie,
         now(),
       );
-      if (!authenticated) {
+      if (!authenticated.ok) {
         drainRequest(req);
+        const status = authenticated.reason === 'unavailable' ? 503 : 401;
         if (tournamentAdminPath) {
-          sendTournament(401, { error: 'unauthenticated' });
+          sendTournament(status, { error: authenticated.reason });
         } else {
-          send(res, 401, { error: 'unauthenticated' });
+          send(res, status, { error: authenticated.reason });
         }
         return true;
       }
-      principal = authenticated;
+      principal = authenticated.principal;
     } else {
       try {
         principal = options.adminSessions.requireMutation({
@@ -447,11 +495,7 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         drainRequest(req);
         if (tournamentAdminPath) {
           const status = error instanceof AdminSessionError
-            ? error.kind === 'unauthenticated'
-              ? 401
-              : error.kind === 'rate-limited'
-                ? 429
-                : 403
+            ? adminSessionErrorStatus(error.kind)
             : 500;
           sendTournament(
             status,
@@ -474,6 +518,68 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         }
         return true;
       }
+    }
+
+    if (pathname === '/api/admin/devices') {
+      // 등록 기기 목록/해제 — 인증·origin·CSRF는 위 공통 게이트에서 이미 강제했다.
+      if (req.method === 'GET' || req.method === 'HEAD') {
+        const listed = options.adminSessions.listDevices(
+          req.headers.cookie,
+          now(),
+        );
+        if (!listed.ok) {
+          drainRequest(req);
+          send(
+            res,
+            listed.reason === 'unavailable' ? 503 : 401,
+            { error: listed.reason },
+          );
+          return true;
+        }
+        send(res, 200, { devices: listed.devices });
+        return true;
+      }
+      if (req.method === 'DELETE') {
+        drainRequest(req);
+        const deviceId = one(query.id);
+        if (
+          deviceId === undefined
+          || deviceId.length === 0
+          || deviceId.length > 128
+        ) {
+          send(res, 400, { error: 'invalid-id' });
+          return true;
+        }
+        const revoked = options.adminSessions.revokeDevice(
+          req.headers.cookie,
+          deviceId,
+          now(),
+        );
+        if (!revoked.ok) {
+          send(
+            res,
+            revoked.reason === 'unavailable'
+              ? 503
+              : revoked.reason === 'not-found'
+                ? 404
+                : 401,
+            { error: revoked.reason },
+          );
+          return true;
+        }
+        res.writeHead(204, {
+          'cache-control': 'no-store',
+          // 현재 기기를 해제했으면 이 브라우저의 쿠키도 같이 만료시킨다.
+          ...(revoked.current
+            ? { 'set-cookie': options.adminSessions.clearCookie() }
+            : {}),
+        });
+        res.end();
+        return true;
+      }
+      drainRequest(req);
+      send(res, 405, { error: 'method-not-allowed', allow: 'GET, DELETE' });
+      return true;
     }
 
     if (pathname === '/api/admin/promotion-fund') {

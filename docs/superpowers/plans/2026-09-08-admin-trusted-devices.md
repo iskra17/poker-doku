@@ -11,7 +11,7 @@
 ## 1. 서버/DB — Opus 소유
 
 Files: `src/server/admin-session.ts`, 새 `admin-device-repository.ts`, `admin-http.ts`, `http-handler.ts`,
-`persistence/migrations.ts`(v40), `persistence/database.test.ts`, 관련 신규/기존 admin 테스트.
+`index.ts` production 주입, `persistence/migrations.ts`(v40), `persistence/database.test.ts`, 관련 신규/기존 admin 테스트.
 
 - [ ] 실패 회귀부터 작성: 실제 임시 DB로 login rememberDevice 후 manager 재생성 시 authenticate 성공, 일반 세션은 소멸.
   `expect(restarted.authenticate(cookie, now + 3 * 3600000)).not.toBeNull()`; 일반 세션은 `toBeNull()`.

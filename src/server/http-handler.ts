@@ -7,6 +7,7 @@ import {
   type AdminTournamentCommands,
   type AdminRuntimeSnapshot,
 } from './admin-http';
+import { AdminDeviceRepository } from './admin-device-repository';
 import { AdminSessionManager } from './admin-session';
 import { eventLog } from './event-log';
 import type { GameConfigService } from './game-config/service';
@@ -197,6 +198,9 @@ export function createHttpRequestHandler(
         adminSessions: options.adminSessions ?? new AdminSessionManager({
           sourceToken: debugToken,
           production,
+          // 프로덕션은 index.ts가 주입한 매니저를 쓰지만, 기본 생성 경로에도
+          // 저장소를 연결해야 등록 기기 기능이 조용히 빠지지 않는다.
+          devices: new AdminDeviceRepository(options.database),
         }),
         promotionFunds: options.promotionFunds
           ?? new PromotionFundRepository(options.database),

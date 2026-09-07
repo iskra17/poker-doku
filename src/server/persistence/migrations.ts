@@ -7185,6 +7185,33 @@ export const migrations: readonly Migration[] = [
         ('story-bonus-cg-ingrid-beach', 'cg', NULL, NULL, NULL);
     `,
   },
+  {
+    version: 40,
+    name: 'admin_trusted_devices',
+    sql: `
+      -- 운영 백오피스 "이 기기에서 90일간 로그인 유지" 옵트인 자격 (2026-09-08).
+      --  · 쿠키 원문·운영 토큰은 저장하지 않는다. lookup_key는 원본 운영 토큰에서 파생한 키로
+      --    쿠키 자격을 HMAC-SHA256한 값이라 토큰이 회전/제거되면 옛 쿠키를 조회할 수 없다.
+      --  · source_scope는 같은 원본 토큰 세대를 가리키는 별도 해시 — 목록/상한/해제는 전부 이 스코프 안에서만.
+      --  · id는 공개 식별자, csrf_token은 등록 시 별도 생성한 값이며 둘 다 인증 수단이 아니다
+      --    (쿠키 자격 없이 id나 lookup_key만으로는 어떤 요청도 통과하지 못한다).
+      --  · 만료 판정은 expires_at > now 조건부 조회/갱신으로만 하며 폐기된 행을 되살리지 않는다.
+      CREATE TABLE admin_trusted_devices (
+        id TEXT PRIMARY KEY CHECK (length(id) BETWEEN 1 AND 128),
+        lookup_key TEXT NOT NULL UNIQUE CHECK (length(lookup_key) BETWEEN 1 AND 128),
+        source_scope TEXT NOT NULL CHECK (length(source_scope) BETWEEN 1 AND 128),
+        csrf_token TEXT NOT NULL CHECK (length(csrf_token) BETWEEN 1 AND 256),
+        principal_id TEXT NOT NULL CHECK (length(principal_id) BETWEEN 1 AND 128),
+        name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 80),
+        created_at INTEGER NOT NULL CHECK (created_at >= 0),
+        last_used_at INTEGER NOT NULL CHECK (last_used_at >= created_at),
+        expires_at INTEGER NOT NULL CHECK (expires_at > created_at)
+      ) STRICT;
+
+      CREATE INDEX idx_admin_trusted_devices_scope
+        ON admin_trusted_devices (source_scope, expires_at);
+    `,
+  },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -5,6 +5,7 @@ import next from 'next';
 import { Server } from 'socket.io';
 import type { ClientToServerEvents, ServerToClientEvents } from '../lib/realtime/protocol';
 import { createHttpRequestHandler } from './http-handler';
+import { AdminDeviceRepository } from './admin-device-repository';
 import { AdminSessionManager } from './admin-session';
 import { ArenaHttpDataService } from './arena-http';
 import { ArenaMetrics } from './arena-metrics';
@@ -551,6 +552,8 @@ async function listen(): Promise<void> {
   adminSessionManager = new AdminSessionManager({
     sourceToken: process.env.DEBUG_LOG_TOKEN,
     production: !dev,
+    // 90일 등록 기기 자격은 SQLite에 산다 — 프로덕션 주입 경로에도 반드시 연결한다.
+    devices: new AdminDeviceRepository(database),
   });
   const profileConcurrencyGate = new TransientHttpConcurrencyGate(4);
 
