@@ -464,6 +464,8 @@ export default function AdminPage() {
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   // 커서 페이지네이션 중(더 보기 사용)에는 폴링이 목록을 되감지 않게 한다
   const handsPagedRef = useRef(false);
+  // React state는 같은 이벤트 루프 안에서 아직 갱신되지 않을 수 있어 별도 동기 잠금을 둔다.
+  const loginPendingRef = useRef(false);
 
   const api = useCallback(async <T,>(path: string): Promise<T | null> => {
     const response = await fetch(path, {
@@ -797,8 +799,10 @@ export default function AdminPage() {
   };
 
   const applyToken = async () => {
+    if (loginPendingRef.current || sessionLoading) return;
     const value = tokenInput.trim();
     if (!value) return;
+    loginPendingRef.current = true;
     setSessionLoading(true);
     setLoginError(null);
     setLogoutError(null);
@@ -837,6 +841,7 @@ export default function AdminPage() {
       setAuthFailed(true);
       setLoginError(getAdminRequestErrorMessage(null, 'login'));
     } finally {
+      loginPendingRef.current = false;
       setSessionLoading(false);
     }
   };
@@ -979,9 +984,12 @@ export default function AdminPage() {
             )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2 text-[11px] text-ink-dim">
-            {lastError ? <span className="text-blossom">{lastError}</span> : logoutError
-              ? <span className="text-blossom">{logoutError}</span>
+            {lastError
+              ? <span className="text-blossom">{lastError}</span>
               : `${REFRESH_MS / 1000}초마다 갱신 · 마지막 ${timeAgo(updatedAt)}`}
+            {logoutError && (
+              <span role="alert" className="text-blossom">{logoutError}</span>
+            )}
             {remembered && (
               <span className="rounded-full border border-cyber/40 bg-cyber/10 px-2 py-0.5 font-bold text-cyber">
                 이 기기 로그인 유지
