@@ -1,5 +1,8 @@
 # 2026-09-06 R4(4막) 완료 · 보너스 CG 파이프라인 인계 — Fable 총괄
 
+> 최신 역할·Git·배포 상태는 [2026-09-08 Astra 총괄 인계](2026-09-08-astra-orchestration.md)를 따른다.
+> 아래 서두의 push/배포 없음은 초기 작성 시점 기록이며, 최종 R5 완료·v87 배포는 §5에 기록돼 있다.
+
 > 총괄 Claude Fable 5.1(`claude-fable-5-1`). 구현 Claude Opus(`claude-opus-5`, Agent 도구 `model: "opus"`), 검토 GPT 6 Astra
 > (`codex exec -m gpt-6-astra -c model_reasoning_effort="high" -s read-only`). 이전 시작점: [2026-09-06-fable-orchestration.md](2026-09-06-fable-orchestration.md).
 > 이번 세션은 **배포·push 없음**(사용자 지시 없었음). main HEAD `87f47d3` + 이 인계 배치.
@@ -59,7 +62,7 @@ QA 데이터는 dev SQLite(`data/poker-doku.sqlite`)에만 있다. dev 서버는
 1. ~~사용자의 반려 목록~~ 완료. 이후 반려는 검토 화면(`review-page.mjs`)에서 받는다. 반려는 원장 `review <job> rejected --sha256 <hash>` → 원화 재생성(`build-prompts.mjs` → `run-wave.sh` → `collect-outputs.mjs`)
    → `receipts`/`approve` → `video-manifest`(환경변수 변형) → `run --watch`. 야외 장면 재생성 시 모션 큐에서 실내 소품(커튼·김)을 뺀다(`BONUS_MOTION_OVERRIDE`).
 2. ~~approve-videos → export → 커밋 → main ff~~ 완료(`d569ec0`).
-3. Opus 구현 배치(워크트리 `.worktrees/bonus-cg-integration`)를 연결 계획대로 실행 → Astra 경계 검토(자격 판정·토글·NEW 기준선) → 총괄 통합.
+3. ~~Opus 구현 배치(워크트리 `.worktrees/bonus-cg-integration`) 연결·경계 검토·총괄 통합~~ 완료. 최종 결과는 §5.
 4. push/deploy는 사용자 지시 때만. 후순위: 하드 모드·파트너별 Ch1 변주·2막 질문권·추가 의상.
 
 ## 5. 보너스 CG 게임 연결(R5) 완료 — 2026-09-06
