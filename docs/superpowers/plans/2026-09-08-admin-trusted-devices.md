@@ -1,5 +1,12 @@
 # Admin Trusted Devices Implementation Plan
 
+**완료 기록 (2026-09-08):** 구현 커밋 `ae38095`·`f62c6d6`·`3a888db`를 로컬 main에 통합했다.
+Fable 최종 검토 P1/P2 없음. 전체 테스트 2,848 통과·2 스킵(`--maxWorkers=2`), build·tsc 통과,
+lint 오류 없음(기존 engine 미사용 변수 경고 1개). 최초 병렬 검사에서 기존 migration 테스트가 시간 초과해
+해당 파일 단독 및 낮은 병렬도로 재검증했다. Edge에서 90일 쿠키·새로고침·서버 재시작 후 복원·기기 해제·
+로그아웃을 확인했다. push/운영 배포는 하지 않았다. 아래는 최초 작업 계획이며, 이후 작은 변경은 사용자
+비용·속도 지시에 따라 구현자 1명과 관련 검사로 마무리한다.
+
 > **For agentic workers:** Use superpowers:subagent-driven-development. User has selected 90 days and authorized implementation.
 
 **Goal:** 선택한 브라우저만 백오피스 로그인을 90일간 유지하며 재접속 시 자동 연장한다.
