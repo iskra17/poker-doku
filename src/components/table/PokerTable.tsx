@@ -51,7 +51,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
       title: '딜러 버튼',
       seatIndex: dealerSeatIndex,
       show: dealerSeatIndex >= 0 && gameState.players.length >= 2,
-      color: 'from-yellow-100 to-gilded border-yellow-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(255,215,106,0.45)]',
+      color: 'bg-gilded border-gilded shadow-sm',
       textSize: isMobile ? 'text-[11px]' : 'text-[13px]',
     },
     {
@@ -59,7 +59,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
       title: '스몰 블라인드',
       seatIndex: sbSeatIndex,
       show: showBlindButtons && sbSeatIndex >= 0 && sbSeatIndex !== dealerSeatIndex,
-      color: 'from-cyan-100 to-cyber border-cyan-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(107,228,255,0.45)]',
+      color: 'bg-cyber border-cyber shadow-sm',
       textSize: isMobile ? 'text-[8px]' : 'text-[10px]',
     },
     {
@@ -67,7 +67,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
       title: '빅 블라인드',
       seatIndex: bbSeatIndex,
       show: showBlindButtons && bbSeatIndex >= 0 && bbSeatIndex !== dealerSeatIndex,
-      color: 'from-pink-100 to-blossom border-pink-500/80 shadow-[0_2px_8px_rgba(0,0,0,0.6),0_0_12px_rgba(255,126,182,0.45)]',
+      color: 'bg-blossom border-blossom shadow-sm',
       textSize: isMobile ? 'text-[8px]' : 'text-[10px]',
     },
   ];
@@ -87,7 +87,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
     ? 'radial-gradient(ellipse, transparent 55%, color-mix(in srgb, var(--final-accent) 38%, transparent) 100%)'
     : story
       ? `radial-gradient(ellipse, transparent 60%, color-mix(in srgb, ${storyRail} 30%, transparent) 100%)`
-      : 'radial-gradient(ellipse, transparent 60%, rgba(139, 92, 246, 0.3) 100%)';
+      : 'none';
   const railBackground = finalTable
     ? `linear-gradient(180deg,
         color-mix(in srgb, var(--final-highlight) 20%, var(--final-rail-top)) 0%,
@@ -106,17 +106,17 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
     ? 'inset 0 2px 5px color-mix(in srgb, var(--final-highlight) 42%, transparent), inset 0 -7px 14px rgba(0,0,0,0.58), 0 0 42px color-mix(in srgb, var(--final-accent) 26%, transparent)'
     : story
       ? `inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px color-mix(in srgb, ${storyRail} 20%, transparent)`
-      : 'inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px rgba(167,139,250,0.15)';
+      : 'inset 0 2px 4px rgba(255,255,255,0.08), inset 0 -6px 12px rgba(0,0,0,0.35)';
   const feltBackground = finalTable
     ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
     : story
       ? `radial-gradient(ellipse at 50% 68%, ${storyFeltHi} 0%, ${storyFeltLo} 58%, var(--color-story-abyss) 100%)`
-      : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 58%, #0c0925 100%)';
+      : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 70%, var(--color-abyss) 100%)';
   const feltShadow = finalTable
     ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
     : story
       ? `inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px color-mix(in srgb, ${storyRail} 10%, transparent)`
-      : 'inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px rgba(255,126,182,0.07)';
+      : 'inset 0 10px 24px rgba(0,0,0,0.3)';
 
   return (
     <div className="relative z-10 w-full h-full">
@@ -141,7 +141,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
             left: '4%', right: '4%', top: 'calc(11% + 14px)', bottom: 'calc(5% - 14px)',
             background: finalTable
               ? 'linear-gradient(180deg, var(--final-rail-bottom) 0%, color-mix(in srgb, black 45%, var(--final-rail-bottom)) 80%)'
-              : 'linear-gradient(180deg, var(--color-elevated) 0%, #0c0925 70%)',
+              : 'linear-gradient(180deg, var(--color-elevated) 0%, var(--color-abyss) 70%)',
             boxShadow: finalTable
               ? '0 12px 30px rgba(0,0,0,0.72), 0 0 30px color-mix(in srgb, var(--final-accent) 18%, transparent)'
               : '0 10px 26px rgba(0,0,0,0.6)',
@@ -231,7 +231,7 @@ export default function PokerTable({ finalTable = false, storyTheme = false }: {
               transition={{ type: 'spring', stiffness: 300, damping: 26 }}
             >
               <div
-                className={`rounded-full bg-gradient-to-b text-black font-black flex items-center justify-center border-2
+                className={`rounded-full text-abyss font-bold flex items-center justify-center border-2
                   ${btn.color} ${isMobile ? 'w-6 h-6' : 'w-7 h-7'} ${btn.textSize}`}
                 title={btn.title}
               >

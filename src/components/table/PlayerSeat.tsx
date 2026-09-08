@@ -239,7 +239,7 @@ export default function PlayerSeat({
               onClick={toggleChipDisplayMode}
               title="칩 ↔ BB 표기 전환"
               className={`block w-full font-semibold cursor-pointer select-none tabular-nums
-                ${isBusted ? 'text-red-400' : 'text-yellow-300'} ${compact ? 'text-[11px]' : 'text-xs'}`}
+                ${isBusted ? 'text-red-400' : 'text-gilded'} text-xs`}
             >
               {isBusted
                 ? (player.finishPlace ? `${player.finishPlace}위 탈락` : '탈락')

@@ -110,6 +110,9 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
             </Button>
           </div>
         )}
+        {!economy.rescue.eligible && (economy.rescue.reason === 'cooldown' || economy.rescue.reason === 'daily-limit') && (
+          <p className="mt-2 text-xs text-ink-dim">{getRescueStatusText(economy.rescue, 0)}</p>
+        )}
         {error && <p className="mt-2 text-center text-xs text-blossom">{error}</p>}
         {progressionError && <p className="mt-2 text-center text-xs text-blossom">{progressionError}</p>}
       </div>

@@ -107,13 +107,13 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
       </div>
 
       {recommendation && (
-        <p className="mb-2 line-clamp-1 rounded-lg border border-blossom/30 bg-panel/60 px-3 py-2 text-sm text-ink" aria-label="추천 수련">
+        <p className="mb-1 px-1 text-xs leading-relaxed text-ink-dim" aria-label="추천 수련">
           <span className="font-bold text-blossom">추천 수련</span> · {recommendationCopy(recommendation)}
         </p>
       )}
 
-      <details className="mb-2 rounded-lg border border-white/10 bg-panel/60">
-        <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-bold text-ink-dim">
+      <details className="mb-2">
+        <summary className="min-h-11 cursor-pointer content-center px-1 text-xs text-ink-dim">
           실력 확인 안내
         </summary>
         <p className="px-3 pb-3 text-sm leading-relaxed text-ink-dim">

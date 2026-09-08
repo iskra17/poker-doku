@@ -70,7 +70,6 @@ export default function ChapterCard({
   const outfitId = useOutfitId(teacherId);
   const locked = state === 'locked';
   const grade = progress.bestGrade;
-  const measuredSkills = skills.filter(skill => skill.pct !== null);
   const weakSkills = skills.filter(skill => skill.pct !== null && skill.total >= WEAKNESS_MIN_ATTEMPTS && skill.pct < WEAKNESS_MAX_PCT);
   const hasRewardDetails = walletReward > 0 || rewardHints.length > 0;
 
@@ -123,23 +122,15 @@ export default function ChapterCard({
               보상 · {rewardHints[0]}
             </p>
           )}
-          {skills.length > 0 && (
-            <details className="mt-1.5 rounded-lg border border-white/10 bg-abyss/20">
-              <summary className="flex min-h-11 cursor-pointer items-center justify-between gap-2 px-2 text-xs font-bold text-ink-dim">
-                <span>유형 {skills.length}개 · {measuredSkills.length > 0 ? `측정 ${measuredSkills.length}개` : '아직 측정 전'}</span>
-                {weakSkills.length > 0 && <span className="text-blossom">보강 {weakSkills.length}개</span>}
+          {(skills.length > 0 || hasRewardDetails) && (
+            <details className="mt-1">
+              <summary className="min-h-11 cursor-pointer content-center text-xs text-ink-dim">
+                수련 유형·보상 상세
               </summary>
-              <div className="flex flex-wrap gap-1 px-2 pb-2" aria-label="다루는 유형과 정확도">
+              <div className="mb-2 flex flex-wrap gap-1" aria-label="다루는 유형과 정확도">
                 {skills.map(skill => <SkillChip key={skill.category} skill={skill} />)}
               </div>
-            </details>
-          )}
-          {hasRewardDetails && (
-            <details className="mt-1.5 rounded-lg border border-gilded/20 bg-abyss/20">
-              <summary className="flex min-h-11 cursor-pointer items-center px-2 text-xs font-bold text-gilded">
-                보상 보기
-              </summary>
-              <div className="space-y-1 px-2 pb-2 text-sm leading-relaxed text-ink-dim">
+              <div className="space-y-1 pb-2 text-sm leading-relaxed text-ink-dim">
                 {walletReward > 0 && <p>첫 완주 · 지갑 칩 +{walletReward.toLocaleString('ko-KR')}</p>}
                 {rewardHints.map(hint => <p key={hint}>· {hint}</p>)}
               </div>
@@ -156,8 +147,8 @@ export default function ChapterCard({
             type="button"
             onClick={onStart}
             disabled={pending}
-            className={`min-h-11 min-w-[7rem] flex-1 whitespace-nowrap rounded-lg px-3 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50 ${
-              state === 'in-progress' ? 'bg-blossom' : 'bg-blossom'
+            className={`min-h-11 min-w-[7rem] flex-1 whitespace-nowrap rounded-lg border px-3 text-sm font-bold transition-colors disabled:opacity-50 ${
+              state === 'in-progress' || recommended ? 'border-blossom bg-blossom text-abyss hover:bg-blossom-hot' : 'border-ink/25 text-ink hover:bg-elevated'
             }`}
           >
             {state === 'in-progress' ? '이어하기' : state === 'completed' ? '다시' : '시작'}
