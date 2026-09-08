@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { useGameStore } from '@/lib/store/game-store';
 import { useWeeklyDojoStore } from '@/lib/store/weekly-dojo-store';
@@ -11,18 +11,18 @@ import type {
 } from '@/lib/weekly-dojo/types';
 
 /**
- * 주간 도장 — 아레나 안의 비동기 주간 도전 패널.
+ * 주간 도전 — 아레나 안의 비동기 주간 도전 패널.
  *
- * 자급자족 컴포넌트다: 소켓 바인딩·조회·시작/포기까지 이 안에서 끝나므로 부모(ArenaLobby)는
- * `<WeeklyDojoPanel />` 한 줄만 렌더하면 되고, 아레나 시즌 활성 여부와도 무관하다.
+ * 소켓 바인딩과 최초 조회는 앱 수명주기 컴포넌트가 맡고, 이 패널은 서버 뷰와 명령만 그린다.
  * 화면에 나오는 점수·순위·진행도는 전부 서버 뷰 그대로이며 여기서 계산하지 않는다.
  */
 
 const FINISH_LABELS: Record<string, string> = {
   'max-hands': '20핸드 완주',
   bust: '파산',
-  forfeit: '중간 종료',
+  forfeit: '포기 · -100BB',
   'table-short': '상대 소진',
+  recovery: '복구 종료',
 };
 
 function formatBB(value: number): string {
@@ -35,7 +35,6 @@ function daysLeft(view: WeeklyDojoView): number {
 }
 
 export default function WeeklyDojoPanel() {
-  const socket = useGameStore(state => state.socket);
   const connected = useGameStore(state => state.connected);
   const currentRoomId = useGameStore(state => state.currentRoomId);
   const view = useWeeklyDojoStore(state => state.view);
@@ -43,16 +42,6 @@ export default function WeeklyDojoPanel() {
   const pending = useWeeklyDojoStore(state => state.pending);
   const error = useWeeklyDojoStore(state => state.error);
   const [confirmingForfeit, setConfirmingForfeit] = useState(false);
-
-  useEffect(() => {
-    if (!socket) return;
-    return useWeeklyDojoStore.getState().bindSocket(socket);
-  }, [socket]);
-
-  useEffect(() => {
-    if (!socket || !connected) return;
-    useWeeklyDojoStore.getState().refresh();
-  }, [socket, connected]);
 
   const startAttempt = (): void => {
     setConfirmingForfeit(false);
@@ -69,11 +58,11 @@ export default function WeeklyDojoPanel() {
         aria-labelledby="weekly-dojo-title"
         className="rounded-2xl border border-mystic/25 bg-panel/90 p-4"
       >
-        <h3 id="weekly-dojo-title" className="text-base font-bold text-ink">주간 도장</h3>
+        <h3 id="weekly-dojo-title" className="text-base font-bold text-ink">주간 도전</h3>
         <p aria-live="polite" className="mt-2 text-sm text-ink-dim">
           {loadState === 'error'
-            ? error ?? '주간 도장 정보를 불러오지 못했어요.'
-            : '주간 도장 기록을 불러오는 중이에요…'}
+            ? error ?? '주간 도전 정보를 불러오지 못했어요.'
+            : '주간 도전 기록을 불러오는 중이에요…'}
         </p>
         {loadState === 'error' && (
           <button
@@ -105,12 +94,9 @@ export default function WeeklyDojoPanel() {
       className="rounded-2xl border border-mystic/25 bg-panel/90 p-4"
     >
       <div className="flex items-baseline justify-between gap-3">
-        <h3 id="weekly-dojo-title" className="text-base font-bold text-ink">주간 도장</h3>
+        <h3 id="weekly-dojo-title" className="text-base font-bold text-ink">주간 도전</h3>
         <p className="text-xs text-ink-dim">{daysLeft(view)}일 남음</p>
       </div>
-      <p className="mt-1 text-xs text-ink-dim">
-        같은 봇 5명과 100BB로 {view.rules.maxHands}핸드씩, 주 {view.rules.attemptsPerWeek}회.
-      </p>
 
       <dl className="mt-3 grid grid-cols-2 gap-2">
         <div className="rounded-xl bg-elevated p-3">
@@ -141,8 +127,8 @@ export default function WeeklyDojoPanel() {
         type="button"
         onClick={startAttempt}
         disabled={pending || capped || atMyTable || !connected}
-        aria-label={`주간 도장 ${ctaLabel}`}
-        className="mt-3 w-full rounded-xl border border-blossom/45 bg-blossom/12 px-4 py-2.5 text-sm font-bold text-ink disabled:opacity-50"
+        aria-label={`주간 도전 ${ctaLabel}`}
+        className="mt-3 min-h-11 w-full rounded-xl bg-blossom px-4 py-2.5 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
       >
         {pending ? '준비 중…' : ctaLabel}
       </button>
@@ -156,14 +142,14 @@ export default function WeeklyDojoPanel() {
                   type="button"
                   onClick={forfeitAttempt}
                   disabled={pending}
-                  className="flex-1 rounded-xl border border-blossom/45 bg-elevated px-3 py-2 text-xs font-bold text-blossom disabled:opacity-50"
+                  className="min-h-11 flex-1 rounded-xl bg-blossom px-3 py-2 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
                 >
-                  {live.handsPlayed}핸드까지로 기록 닫기
+                  포기하고 -100BB로 확정
                 </button>
                 <button
                   type="button"
                   onClick={() => setConfirmingForfeit(false)}
-                  className="rounded-xl border border-mystic/25 bg-elevated px-3 py-2 text-xs font-bold text-ink-dim"
+                  className="min-h-11 rounded-xl border border-mystic/25 bg-elevated px-3 py-2 text-sm font-bold text-ink-dim"
                 >
                   취소
                 </button>
@@ -174,9 +160,9 @@ export default function WeeklyDojoPanel() {
                 type="button"
                 onClick={() => setConfirmingForfeit(true)}
                 disabled={pending}
-                className="w-full rounded-xl border border-mystic/25 bg-elevated px-3 py-2 text-xs font-bold text-ink-dim disabled:opacity-50"
+                className="min-h-11 w-full rounded-xl border border-mystic/25 bg-elevated px-3 py-2 text-sm font-bold text-ink-dim disabled:opacity-50"
               >
-                {live.slot}번째 도전 지금 마치기 · {live.handsPlayed}/{view.rules.maxHands}핸드
+                {live.slot}번째 도전 포기 · {live.handsPlayed}/{view.rules.maxHands}핸드
               </button>
             )}
         </div>
@@ -192,21 +178,21 @@ export default function WeeklyDojoPanel() {
       )}
 
       <details className="mt-3 rounded-xl bg-elevated p-3">
-        <summary className="cursor-pointer text-xs font-bold text-ink">규칙 자세히</summary>
-        <ul className="mt-2 space-y-1 text-xs text-ink-dim">
+        <summary className="flex min-h-11 cursor-pointer items-center text-sm font-bold text-ink">규칙 자세히</summary>
+        <ul className="mt-2 space-y-1 text-sm leading-relaxed text-ink-dim">
           <li>
-            시작 {view.rules.startingChips.toLocaleString()}칩({view.rules.startingBB}BB) ·
+            시작 {view.rules.startingBB}BB({view.rules.startingChips.toLocaleString()}칩) ·
             블라인드 {view.rules.smallBlind}/{view.rules.bigBlind} ·
-            한 도전 최대 {view.rules.maxHands}핸드
+            한 도전 최대 {view.rules.maxHands}핸드 · 주 {view.rules.attemptsPerWeek}회
           </li>
-          <li>지갑 칩·경기권을 쓰지 않고, 공식 아레나 점수에도 반영되지 않아요.</li>
-          <li>도전을 시작하면 순번이 먼저 확정돼요. 중간에 나가도 이미 끝난 핸드는 남아요.</li>
-          <li>점수는 끝난 핸드 기준 순 BB의 합계예요. 3회를 모두 마쳐야 순위에 들어가요.</li>
-          <li>같은 점수는 공동 순위예요. 카드는 매번 새로 섞여요.</li>
+          <li>같은 봇 5명과 고정 라인업으로 진행하며, 지갑 칩·경기권·공식 아레나 점수와 무관해요.</li>
+          <li>나가면 도전은 잠시 멈추고 같은 기록으로 이어할 수 있어요. 포기는 별도 확인 후 잔여 스택을 반납하고 -100BB로 기록하며 슬롯을 소모해요.</li>
+          <li>3회 기록의 순 BB 합계로 순위를 정하고, 3회를 모두 마친 사람끼리는 공동 순위예요.</li>
+          <li>카드는 매번 새로 섞여요.</li>
           <li>
             상대(고정 {view.rules.lineupVersion}): {view.rules.lineup.map(seat => seat.name).join(' · ')}
           </li>
-          <li>60핸드는 실력을 가리기엔 짧은 표본이에요. 주간 기록으로 즐겨 주세요.</li>
+          <li>총 60핸드는 실력을 가리기엔 짧은 표본이에요. 주간 기록으로 즐겨 주세요.</li>
         </ul>
       </details>
 
@@ -227,7 +213,7 @@ function AttemptChip({ attempt }: { attempt: WeeklyDojoAttemptView }): React.Rea
       <span className="block text-xs text-ink-dim">{attempt.slot}회차</span>
       <span className="mt-0.5 block text-xs font-bold">{label}</span>
       {attempt.finishReason && (
-        <span className="mt-0.5 block text-[11px] text-ink-dim">
+        <span className="mt-0.5 block text-xs text-ink-dim">
           {FINISH_LABELS[attempt.finishReason] ?? attempt.finishReason}
         </span>
       )}

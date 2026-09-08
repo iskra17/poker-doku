@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { PokerClientSocket } from '@/lib/realtime/protocol';
 import type { WeeklyDojoView } from '@/lib/weekly-dojo/types';
 import { createWeeklyDojoStore } from './weekly-dojo-store';
@@ -40,25 +40,32 @@ interface FakeSocket {
   connected: boolean;
   emitted: { event: string; payload?: unknown }[];
   handlers: Map<string, (payload: unknown) => void>;
+  acks: { event: string; ack: (response: unknown) => void }[];
   respondWith: unknown;
+  autoAck: boolean;
   emit(event: string, ...args: unknown[]): void;
   on(event: string, handler: (payload: unknown) => void): void;
   off(event: string, handler: (payload: unknown) => void): void;
 }
 
-function fakeSocket(connected = true): FakeSocket {
+function fakeSocket(connected = true, autoAck = true): FakeSocket {
   const socket: FakeSocket = {
     connected,
     emitted: [],
     handlers: new Map(),
+    acks: [],
     respondWith: { ok: true, data: VIEW },
+    autoAck,
     emit(event, ...args) {
       const ack = args.find(arg => typeof arg === 'function') as
         | ((response: unknown) => void)
         | undefined;
       const payload = args.find(arg => typeof arg !== 'function');
       socket.emitted.push({ event, payload });
-      ack?.(socket.respondWith);
+      if (ack) {
+        socket.acks.push({ event, ack });
+        if (socket.autoAck) ack(socket.respondWith);
+      }
     },
     on(event, handler) {
       socket.handlers.set(event, handler);
@@ -91,6 +98,26 @@ describe('weekly dojo store', () => {
     expect(socket.handlers.has('weekly-dojo-update')).toBe(false);
   });
 
+  it('ignores an older refresh response after a newer refresh or push update', () => {
+    const store = createWeeklyDojoStore();
+    const socket = fakeSocket(true, false);
+    store.getState().bindSocket(bind(socket));
+
+    store.getState().refresh();
+    store.getState().refresh();
+    expect(socket.acks).toHaveLength(2);
+
+    socket.acks[1].ack({ ok: true, data: { ...VIEW, completedCount: 2 } });
+    expect(store.getState().view?.completedCount).toBe(2);
+    socket.acks[0].ack({ ok: true, data: VIEW });
+    expect(store.getState().view?.completedCount).toBe(2);
+
+    store.getState().refresh();
+    socket.handlers.get('weekly-dojo-update')?.({ ...VIEW, completedCount: 3 });
+    socket.acks[2].ack({ ok: true, data: { ...VIEW, completedCount: 1 } });
+    expect(store.getState().view?.completedCount).toBe(3);
+  });
+
   it('surfaces a rejection message without inventing a result', async () => {
     const store = createWeeklyDojoStore();
     const socket = fakeSocket();
@@ -106,6 +133,62 @@ describe('weekly dojo store', () => {
     expect(store.getState().error).toBe('이번 주 도전 3회를 모두 사용했어요.');
     expect(store.getState().pending).toBe(false);
     expect(store.getState().view).toBeNull();
+  });
+
+  it('ignores a late old command ack after reset and allows the next start', async () => {
+    const store = createWeeklyDojoStore();
+    const socket = fakeSocket(true, false);
+    store.getState().bindSocket(bind(socket));
+
+    const oldStart = store.getState().start();
+    expect(store.getState().pending).toBe(true);
+    store.getState().reset();
+    expect(await oldStart).toBeNull();
+    expect(store.getState().pending).toBe(false);
+
+    const nextStart = store.getState().start();
+    expect(store.getState().pending).toBe(true);
+    socket.acks[0].ack({ ok: false, code: 'server-error', message: '오래된 응답' });
+    expect(store.getState().pending).toBe(true);
+    expect(store.getState().error).toBeNull();
+    socket.acks[1].ack({ ok: true, data: { attemptId: 'a2', roomId: 'r2', slot: 2, resumed: false } });
+    await expect(nextStart).resolves.toEqual({ attemptId: 'a2', roomId: 'r2', slot: 2, resumed: false });
+  });
+
+  it('times out a command ack and releases the pending lock', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = createWeeklyDojoStore();
+      const socket = fakeSocket(true, false);
+      store.getState().bindSocket(bind(socket));
+
+      const command = store.getState().start();
+      expect(store.getState().pending).toBe(true);
+      vi.advanceTimersByTime(10_000);
+      await expect(command).resolves.toBeNull();
+      expect(store.getState().pending).toBe(false);
+      expect(store.getState().error).toContain('응답이 지연');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('cleans up on disconnect so a reconnect can start a fresh command', async () => {
+    const store = createWeeklyDojoStore();
+    const socket = fakeSocket(true, false);
+    store.getState().bindSocket(bind(socket));
+
+    const oldStart = store.getState().start();
+    socket.connected = false;
+    socket.handlers.get('disconnect')?.(undefined);
+    await expect(oldStart).resolves.toBeNull();
+    expect(store.getState().pending).toBe(false);
+    expect(store.getState().error).toContain('연결이 끊겨');
+
+    socket.connected = true;
+    const nextStart = store.getState().start();
+    socket.acks[1].ack({ ok: true, data: { attemptId: 'a3', roomId: 'r3', slot: 3, resumed: true } });
+    await expect(nextStart).resolves.toEqual({ attemptId: 'a3', roomId: 'r3', slot: 3, resumed: true });
   });
 
   it('never emits while offline and reports the disconnect', async () => {
