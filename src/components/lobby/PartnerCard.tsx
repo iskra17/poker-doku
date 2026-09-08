@@ -182,7 +182,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             onClick={handleCta}
             disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
             data-tour="lobby-start"
-            className="min-h-11 min-w-[7.5rem] flex-1 rounded-xl bg-blossom px-3 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
+            className="min-h-11 min-w-[7rem] flex-1 rounded-xl bg-blossom px-3 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
           >
             {pendingRoomId
               ? '입장 중…'
@@ -211,7 +211,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
               onClick={beginnerGuideVisible ? dismissBeginnerGuide : showBeginnerGuide}
               aria-label={beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내 다시 보기'}
               data-guide-toggle="lobby"
-              className="min-h-11 min-w-[4.5rem] shrink-0 rounded-lg border border-white/15 px-2 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink"
+              className="min-h-11 min-w-[4rem] shrink-0 rounded-lg border border-white/15 px-2 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink"
             >
               {beginnerGuideVisible ? '안내 닫기' : '초보 안내'}
             </button>
