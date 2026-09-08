@@ -93,6 +93,7 @@ describe('WeeklyDojoService', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     service.shutdown();
     manager.shutdown();
     database.close();
@@ -149,6 +150,65 @@ describe('WeeklyDojoService', () => {
 
   const driveHands = (roomId: string, attemptId: string, target: number) =>
     driveUntil(roomId, () => attemptRow(attemptId).handsPlayed >= target);
+
+  function openBlindHand() {
+    service.shutdown();
+    service = buildService({maxHands:6});
+    const opened = start();
+    const engine = manager.getRoom(opened.roomId)!.engine;
+    engine.state.dealerIndex = 3;
+    engine.startHand();
+    while (engine.state.players[engine.state.activePlayerIndex]?.id !== HERO) {
+      const actor = engine.state.players[engine.state.activePlayerIndex];
+      expect(manager.processPlayerAction(opened.roomId,actor.id,'call')).toBe(true);
+    }
+    return {...opened,engine};
+  }
+
+  it('preserves a resumable checkpoint when disconnect grace expires mid-hand', async () => {
+    const {roomId,attemptId} = openBlindHand();
+    online = false;
+    manager.handleDisconnect(roomId,HERO);
+    expect(manager.handleGraceExpired(roomId,HERO)).toBe(true);
+    await tick(120_000);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    const saved = attemptRow(attemptId);
+    expect(saved.status).toBe('live');
+    expect(saved.handsPlayed).toBe(1);
+    expect(parseWeeklyDojoCheckpoint(saved.checkpointJson)).not.toBeNull();
+    online = true;
+    const resumed = start();
+    expect(resumed.attemptId).toBe(attemptId);
+    expect(tablePool(resumed.roomId)).toBe(TABLE_POOL);
+  });
+
+  it('retries a failed mid-close boundary before releasing the room', async () => {
+    const {roomId,attemptId} = openBlindHand();
+    manager.processPlayerAction(roomId,HERO,'check');
+    const chips = heroSeat(roomId)!.chips;
+    vi.spyOn(repository,'recordHandBoundary').mockImplementationOnce(() => { throw new Error('write unavailable'); });
+    expect(service.leaveTable(HERO).ok).toBe(false);
+    await tick(120_000);
+    const saved = attemptRow(attemptId);
+    expect(saved.status).toBe('live');
+    expect(saved.committedChips).toBe(chips);
+    expect(saved.handsPlayed).toBe(1);
+    expect(parseWeeklyDojoCheckpoint(saved.checkpointJson)).not.toBeNull();
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    expect(start().attemptId).toBe(attemptId);
+  });
+
+  it('does not dispose an unresolved all-in when the close watchdog fires', async () => {
+    const {roomId,attemptId,engine} = openBlindHand();
+    expect(manager.processPlayerAction(roomId,HERO,'all-in')).toBe(true);
+    const stalled = vi.spyOn(engine,'processAction').mockReturnValue({valid:false,handComplete:false});
+    expect(service.leaveTable(HERO).ok).toBe(true);
+    await tick(61_000);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    expect(engine.state.isHandInProgress).toBe(true);
+    expect(attemptRow(attemptId).handsPlayed).toBe(0);
+    stalled.mockRestore();
+  });
 
   it('opens a private table with the fixed lineup and hides it from the lobby', () => {
     const { roomId, slot } = start();
@@ -213,6 +273,42 @@ describe('WeeklyDojoService', () => {
 
   // --- 핵심: 진행 중 핸드의 손실은 지울 수 없다 -------------------------------
 
+  it('keeps a normally folded blind when leaving before the bots finish', async () => {
+    service.shutdown();
+    service = buildService({maxHands:6});
+    const {roomId,attemptId} = start();
+    const engine = manager.getRoom(roomId)!.engine;
+    // Put the hero in the BB and call around to them without random bot choices.
+    engine.state.dealerIndex = 3;
+    engine.startHand();
+    expect(engine.state.bigBlindId).toBe(HERO);
+    while (engine.state.players[engine.state.activePlayerIndex]?.id !== HERO) {
+      const actor = engine.state.players[engine.state.activePlayerIndex];
+      expect(manager.processPlayerAction(roomId,actor.id,'call')).toBe(true);
+    }
+    expect(manager.processPlayerAction(roomId,HERO,'fold')).toBe(true);
+    expect(heroSeat(roomId)?.status).toBe('folded');
+    expect(engine.state.isHandInProgress).toBe(true);
+    const chips = heroSeat(roomId)!.chips;
+    expect(chips).toBe(1_980);
+    const result = service.leaveTable(HERO);
+    expect(result.ok && result.value.status).toBe('closing');
+    expect(attemptRow(attemptId).handsPlayed).toBe(1);
+    expect(attemptRow(attemptId).committedChips).toBe(chips);
+    expect(service.leaveTable(HERO).ok).toBe(true);
+    expect(manager.getRoom(roomId)).toBeDefined();
+    await tick(120_000);
+    expect(manager.getRoom(roomId)).toBeUndefined();
+    const saved = attemptRow(attemptId);
+    expect(saved.status).toBe('live');
+    expect(saved.handsPlayed).toBe(1);
+    expect(parseWeeklyDojoCheckpoint(saved.checkpointJson)).not.toBeNull();
+    const resumed = start();
+    expect(resumed.attemptId).toBe(attemptId);
+    expect(heroSeat(resumed.roomId)?.chips).toBe(chips);
+    expect(tablePool(resumed.roomId)).toBe(TABLE_POOL);
+  });
+
   it('persists the live-hand loss when the player leaves mid hand', async () => {
     service.shutdown();
     service = buildService({ maxHands: 6 });
@@ -274,7 +370,7 @@ describe('WeeklyDojoService', () => {
     expect(row.finishReason).toBe('forfeit');
     // 진행 중이던 핸드의 기여금은 그대로 손실로 남는다
     expect(row.committedChips).toBe(stackAtForfeit);
-    expect(row.scoreMilliBB).toBe((stackAtForfeit - 2_000) * 50);
+    expect(row.scoreMilliBB).toBe(-100_000);
     expect(row.handsPlayed).toBe(1);
     expect(manager.getRoom(roomId)).toBeUndefined();
   });
@@ -445,8 +541,9 @@ describe('WeeklyDojoService', () => {
     const row = attemptRow(attemptId);
     // 시작 스택으로 봇을 리필해 이어가지 않는다 — 그 자리에서 손실을 확정한다
     expect(row.status).toBe('completed');
-    expect(row.finishReason).toBe('forfeit');
+    expect(row.finishReason).toBe('recovery');
     expect(row.committedChips).toBe(1_500);
+    expect(row.scoreMilliBB).toBe(-25_000);
   });
 
   it('holds at the hand boundary while the player is away instead of letting bots burn hands', async () => {
@@ -461,6 +558,12 @@ describe('WeeklyDojoService', () => {
     expect(row.status).toBe('live');
     expect(row.handsPlayed).toBeLessThan(row.maxHands);
     expect(service.isHeld(roomId)).toBe(true);
+    expect(service.getView(HERO).live?.paused).toBe(true);
+    manager.handleReconnect(roomId,HERO);
+    expect(service.start(HERO).ok).toBe(true);
+    expect(service.isHeld(roomId)).toBe(false);
+    expect(service.getView(HERO).live?.paused).toBe(false);
+    expect(await driveHands(roomId,attemptId,row.handsPlayed+1)).toBe(true);
   });
 
   it('ignores a repeated hand-end callback for the same hand', () => {

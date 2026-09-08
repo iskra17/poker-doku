@@ -214,13 +214,13 @@ describe('WeeklyDojoRepository', () => {
 
     const done = repository.completeAttempt({ attemptId, reason: 'forfeit', at: T0 + 20 });
     expect(done.status).toBe('completed');
-    // (1240 - 2000) / 20 = -38BB → -38,000 milli-BB
-    expect(done.status === 'completed' && done.attempt.scoreMilliBB).toBe(-38_000);
+    // Forfeit surrenders the remaining stack; it cannot lock in an early score.
+    expect(done.status === 'completed' && done.attempt.scoreMilliBB).toBe(-100_000);
     expect(done.status === 'completed' && done.attempt.finishReason).toBe('forfeit');
 
     const again = repository.completeAttempt({ attemptId, reason: 'bust', at: T0 + 30 });
     expect(again.status).toBe('already-completed');
-    expect(again.status === 'already-completed' && again.attempt.scoreMilliBB).toBe(-38_000);
+    expect(again.status === 'already-completed' && again.attempt.scoreMilliBB).toBe(-100_000);
     expect(again.status === 'already-completed' && again.attempt.finishReason).toBe('forfeit');
 
     // 완료된 시도에는 더 이상 핸드도 에폭도 붙지 않는다
@@ -261,6 +261,17 @@ describe('WeeklyDojoRepository', () => {
     expect(rowCount(database, 'chip_ledger')).toBe(0);
     expect(rowCount(database, 'seat_escrows')).toBe(0);
     expect(walletBalance(database, HERO)).toBe(0);
+  });
+
+  it.each([2_000,3_000])('surrenders a %i-chip attempt on forfeit, including zero hands', chips => {
+    const attemptId = reserveId();
+    if (chips !== 2_000) {
+      repository.beginRoomEpoch(attemptId,T0);
+      boundary(attemptId,{hand:1,chips});
+    }
+    const done = repository.completeAttempt({attemptId,reason:'forfeit',at:T0+20});
+    expect(done.status === 'completed' && done.attempt.scoreMilliBB).toBe(-100_000);
+    expect(done.status === 'completed' && done.attempt.committedChips).toBe(chips);
   });
 
   it('removes attempts and hand boundaries when the profile is deleted', () => {

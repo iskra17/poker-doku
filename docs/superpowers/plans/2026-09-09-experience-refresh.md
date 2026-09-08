@@ -36,7 +36,7 @@ Approved by user: implement the recommended direction across UI, contextual tuto
 - Actual private6-max practice competition, starting100BB, BB20, maximum20hands/session, first3sessions perKSTweek. Fixed versioned fivebot lineup/difficulty and secure fresh deck.
 - No wallet/ticket/MMR effect. Score netBB, first3 completed required for ranking, equal scores share rank. Mark uncertainty of short samples in rules.
 - Durable attempt reservation beforeplay, one liveattempt/profile, hand-boundary checkpoint and idempotent settlement. Reconnect/serverrestart resumes last committed boundary. Ordinaryquit cannot erase a losinghand. No rebuy/topup/foreignjoin/publicroomlisting.
-- Pause at boundary whenaway, explicitforfeit completes atboundary. KST rollover and cap remain server-owned. Migration42 after root41.
+- Pause at boundary when away, resume the saved bot stacks and dealer anchor. Explicit forfeit surrenders the remaining stack (-100BB); zero-hand forfeits also consume a slot. Server recovery failures use the last committed score. KST rollover and cap remain server-owned. Migration42 after root41.
 - Authenticated bounded/rate-limited sockets and standalone WeeklyDojoPanel in Arena; works independently of official Arena enabledflag.
 - Test cap, ties, bust,20hands, rejoin/restart, duplicate callbacks, rollover, wallet isolation and untrusted inputs.
 

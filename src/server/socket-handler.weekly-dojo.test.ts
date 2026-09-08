@@ -253,8 +253,8 @@ describe('weekly dojo socket events', () => {
     const closed = h.weeklyDojoRepository.findAttempt(attemptId)!;
     expect(closed.status).toBe('completed');
     expect(closed.finishReason).toBe('forfeit');
-    // 한 핸드도 확정되지 않았으니 시작 스택 그대로 = 0BB
-    expect(closed.scoreMilliBB).toBe(0);
+    // Explicit forfeit consumes the slot and surrenders the full starting stack.
+    expect(closed.scoreMilliBB).toBe(-100_000);
 
     const next = await startDojo(client);
     expect(next.ok && next.data?.slot).toBe(2);

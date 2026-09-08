@@ -3885,7 +3885,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
     expect(marker).toEqual({ alias: 'v1-marker-alias' });
     expect(index).toEqual({
@@ -3914,7 +3914,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
     expect(database.tableNames()).toContain('cash_hand_settlements');
     expect(database.db.prepare(`
@@ -3962,7 +3962,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
   });
 
@@ -4008,7 +4008,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
     expect(database.db.prepare(`
       SELECT alias FROM profiles WHERE id = 'v1-marker'
@@ -4320,7 +4320,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema
@@ -4580,7 +4580,7 @@ describe('PokerDatabase migrations', () => {
       { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 },
       { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 },
       { version: 27 }, { version: 28 }, { version: 29 },
-      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 42 },
+      { version: 30 }, { version: 31 }, { version: 32 }, { version: 33 }, { version: 34 }, { version: 35 }, { version: 36 }, { version: 37 }, { version: 38 }, { version: 39 }, { version: 40 }, { version: 41 }, { version: 42 },
     ]);
     const table = database.db.prepare(`
       SELECT sql FROM sqlite_schema

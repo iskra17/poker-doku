@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { PokerClientSocket } from '@/lib/realtime/protocol';
 import { useGameStore } from './game-store';
 
-function socketRespondingWith(ack: { ok: true } | { ok: false; message: string }) {
+function socketRespondingWith(ack: { ok: true; data?: {status:'reserved'|'left'} } | { ok: false; message: string }) {
   const emit = vi.fn((event: string, _payload: unknown, callback: (value: typeof ack) => void) => {
     if (event === 'leave-room') callback(ack);
   });
@@ -25,6 +25,13 @@ afterEach(() => {
 });
 
 describe('game store leave acknowledgement', () => {
+  it('keeps the table until room-lost when leaving awaits hand settlement', async () => {
+    const {socket} = socketRespondingWith({ok:true,data:{status:'reserved'}});
+    useGameStore.setState({socket,connected:true,currentRoomId:'weekly-table'});
+    expect(await useGameStore.getState().leaveRoom()).toBe(false);
+    expect(useGameStore.getState().currentRoomId).toBe('weekly-table');
+    expect(useGameStore.getState().tableNotice).toContain('기록한 뒤');
+  });
   it('signals only a replaced socket as requiring a fresh connection', () => {
     useGameStore.setState({ connectionState: 'connected' });
     expect(useGameStore.getState().needsFreshConnection()).toBe(false);

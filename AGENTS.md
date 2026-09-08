@@ -423,32 +423,40 @@ npx tsc --noEmit
     버전을 확정 경계와 **같은 트랜잭션**에 저장하고 재개 때 그대로 복원한다. 없으면 재개마다 봇 5명이
     시작 스택으로 리필되고 버튼이 처음으로 돌아가 **칩 풀·상대 조건·블라인드 순서가 리셋**된다.
     파서는 `lib/weekly-dojo/checkpoint.ts`이고 깨졌거나 비어 있으면(핸드를 친 시도인데 스냅샷 없음)
-    **시작 스택으로 리필하지 않고** 그 자리에서 포기로 확정한다.
+    **시작 스택으로 리필하지 않고** `recovery` 사유로 저장된 스택까지 확정한다. 서버 복구 실패를
+    사용자 포기와 혼동해 −100BB를 부과하지 말 것.
   - **런타임**: `WeeklyDojoService`는 `LiveTableAdapter`(스토리)와 **같은 병렬 훅 패턴**
     (`WeeklyDojoRoomHooks` — 일반화 금지). 인메모리 세션은 **방이 살아 있는 동안만** 존재하고,
     방이 사라지면(나가기·끊김·hold 상한 10분·서버 재시작) DB의 live 시도가 유일한 진실이라
     「이어하기」가 **확정 스택·체크포인트**로 새 방을 연다(시작 스택으로 되돌리지 말 것 — 손실이 사라진다).
     종료는 20핸드/파산/상대 소진/명시적 포기뿐이다. 부재(끊김·턴 타임아웃 마킹)면 `beforeHand`가
-    hold — 자리를 비운 사이 봇끼리 남은 핸드를 소진하지 못한다.
+    hold — 자리를 비운 사이 봇끼리 남은 핸드를 소진하지 못한다. `live.paused`와 테이블의 [도전 계속]이
+    `weekly-dojo-start`로 away hold를 해제한다. 연결만 복구됐다고 자동으로 다음 핸드를 시작하지 않는다.
   - **진행 중 핸드는 나가기/포기로 지울 수 없다**(핵심 공정성 계약): 히어로가 그 핸드에 기여한 채
     떠나면 `RoomManager.foldWeeklyDojoHero()`(엔진 `processLeave` 폴드 + 완료/턴 재개 경로 유지)로
     **즉시 폴드**시키고 "기여금 전액 포기" 경계를 먼저 영속한 뒤에야 방을 닫는다. 자리비움 자동 처리는
     무료 체크를 고를 수 있어 "떠난 사람이 계속 플레이"하게 되므로 그 경로에 맡기지 말 것.
-    올인이라 팟 지분이 살아 있으면 런아웃이 끝날 때까지 기다렸다 닫는다(`closeIntent`, 상한 60초).
-    grace 만료·서버 주도 회수는 `onPlayerLeave`가 같은 경계를 남긴다. 연타(나가기/포기 반복)는 멱등이고
+    이미 폴드한 좌석도 이번 핸드의 손실을 기록하고 봇 핸드 종료까지 방을 유지해 체크포인트를 채운다.
+    올인이라 팟 지분이 살아 있으면 런아웃이 끝날 때까지 기다렸다 닫는다(`closeIntent`, 60초마다 재확인,
+    미확정 팟 강제 폐기 금지). grace 만료는 `onGraceExpired`가 같은 pause 경로로 보내고,
+    서버 강제 제거의 마지막 가드는 `onPlayerLeave`다. 연타(나가기/포기 반복)는 멱등이고
     포기만 의도를 승격한다. **진짜 서버 크래시만** 미확정 핸드를 롤백한다.
     영속 실패는 성공으로 보고하지 않는다 — 완료가 DB에 커밋된 뒤에만 ack가 성공이고, 실패는
     hold + 재시도(시도는 live로 남는다).
   - **방 계약**: `RoomConfig.weeklyDojoAttemptId`(서버 전용) 표식. `isPrivateSoloRoom`
     (스토리 ∪ 주간 도장) 가드가 로비 목록·초대 코드·봇 재충원·탑업/리바이·자리비움·나가기 예약·
-    파산 30초 회수·grace 좌석 보존을 함께 막는다. 타인 입장은 room-not-found(존재 비노출),
+    파산 30초 회수를 함께 막는다. 타인 입장은 room-not-found(존재 비노출),
     다른 방 착석 중에는 시작 거절(좌석·뱅크롤 이중화 차단). 나가기(leave-room)는 **테이블만** 닫고
-    기록은 live로 남으며, 기록을 닫는 것은 `weekly-dojo-forfeit`뿐이다.
+    기록은 live로 남는다. 명시적 `weekly-dojo-forfeit`는 잔여 스택 반납(−100BB)으로 슬롯을 완료한다.
+    0핸드 포기에도 예외를 두지 않는다. 정상 완주·파산·상대 소진·서버 복구 종료는 실제 확정 스택으로 계산한다.
   - **프로토콜**: `get-weekly-dojo`/`weekly-dojo-start`/`weekly-dojo-forfeit`(레이트리밋
     `weeklyDojo` 10/5s · `weeklyDojoStart` 3/10s) + 서버 push `weekly-dojo-update`,
     room-lost reason `'weekly-dojo-end'`(story-end과 같이 조용한 정리). 순위는 **3시도를 모두
     끝낸 프로필만**(미완료는 진행 기록), 동점은 공동 순위(먼저 시작한 사람이 이기지 않는다).
-    UI는 `components/arena/WeeklyDojoPanel.tsx`(자급자족 — ArenaLobby가 한 줄로 렌더, 시즌 비활성에도 노출).
+    `WeeklyDojoLifecycle`이 로비/테이블 공통 소켓 미러를 소유하고 프로필 변경 때 초기화한다.
+    `WeeklyDojoPanel`은 아레나 [주간 도전]에 표시하며 공식전 시즌 비활성에도 노출한다.
+    공개 스냅샷의 `weeklyDojo`는 모드 boolean뿐이다. 초대·탑업·리바이·자리비움 UI를 숨길 때 사용하며
+    비공개 시도 ID/체크포인트를 게임 스냅샷에 추가하지 않는다.
     포기/나가기 ack는 `status: 'closed' | 'left' | 'closing'` — 'closing'은 남은 핸드를 마무리하는 중이라
     leave-room은 `'reserved'`로 내려 좌석을 유지한다.
     회귀: `weekly-dojo-repository.test.ts` · `weekly-dojo-service.test.ts` ·

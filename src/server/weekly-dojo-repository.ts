@@ -318,7 +318,7 @@ export class WeeklyDojoRepository {
         return { status: 'already-completed', attempt: current };
       }
       const score = netMilliBB(
-        current.committedChips,
+        input.reason === 'forfeit' ? 0 : current.committedChips,
         current.startingChips,
         current.bigBlind,
       );

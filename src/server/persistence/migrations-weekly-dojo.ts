@@ -44,7 +44,7 @@ export const WEEKLY_DOJO_MIGRATION = {
       score_milli_bb INTEGER,
       finish_reason TEXT CHECK (
         finish_reason IS NULL
-        OR finish_reason IN ('max-hands','bust','forfeit','table-short')
+        OR finish_reason IN ('max-hands','bust','forfeit','recovery','table-short')
       ),
       started_at INTEGER NOT NULL CHECK (started_at > 0),
       updated_at INTEGER NOT NULL CHECK (updated_at >= started_at),

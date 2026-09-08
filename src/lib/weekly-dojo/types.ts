@@ -53,6 +53,8 @@ export interface WeeklyDojoLiveView {
   readonly netBB: number;
   /** 이 시도가 시작된 주 — 주가 바뀌었으면 먼저 끝내야 새 주 시도가 열린다 */
   readonly weekKey: string;
+  /** An away hold can be resumed through the real start command. */
+  readonly paused: boolean;
 }
 
 export interface WeeklyDojoView {

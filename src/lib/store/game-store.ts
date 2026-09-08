@@ -488,6 +488,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
           resolve(false);
           return;
         }
+        if (ack.data?.status === 'reserved') {
+          set({tableNotice:'이번 핸드의 결과를 기록한 뒤 로비로 돌아가요.'});
+          resolve(false);
+          return;
+        }
         clearJoinTimeout();
         clearActionAckTimeout();
         set({

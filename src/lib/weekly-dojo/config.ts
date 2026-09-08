@@ -55,12 +55,14 @@ export type WeeklyDojoFinishReason =
   | 'max-hands'
   | 'bust'
   | 'forfeit'
+  | 'recovery'
   | 'table-short';
 
 export const WEEKLY_DOJO_FINISH_REASONS: readonly WeeklyDojoFinishReason[] = Object.freeze([
   'max-hands',
   'bust',
   'forfeit',
+  'recovery',
   'table-short',
 ] as const);
 

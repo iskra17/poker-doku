@@ -286,6 +286,7 @@ export interface StoryRoomHooks {
  * 자리를 비운 사이 봇끼리 남은 핸드를 소진해 기록이 망가지는 경로를 차단한다.
  */
 export interface WeeklyDojoRoomHooks {
+  onGraceExpired(roomId: string, playerId: string): boolean;
   isHeld(roomId: string): boolean;
   beforeHand(roomId: string, engine: PokerEngine): 'deal' | 'hold';
   /** 항상 true — 주간 도장 핸드는 도장 XP·일일 미션에 적립하지 않는다 */
@@ -2734,6 +2735,10 @@ export class RoomManager {
     if (!room || !player) {
       this.leaveRoom(roomId, playerId);
       return false;
+    }
+    if (this.isWeeklyDojoRoom(room) && this.weeklyDojoHooks) {
+      player.disconnectGraceDeadline = undefined;
+      return this.weeklyDojoHooks.onGraceExpired(roomId, playerId);
     }
     const isSng = this.isTournamentRoom(room); // SnG/MTT 공통: 좌석 무조건 보존
     const sittingOut = player.sitOutNext || player.status === 'sitting-out';

@@ -138,7 +138,7 @@ interface WeeklySession {
   pendingFinish: WeeklyDojoFinishReason | null;
   persistenceError: boolean;
   finishTimer: NodeJS.Timeout | null;
-  /** closeIntent가 핸드 종료를 기다리는 상한 타이머 (봇 핸드가 멈춰도 방이 남지 않게) */
+  /** Check settlement again without discarding an unresolved pot. */
   closeTimer: NodeJS.Timeout | null;
   disposing: boolean;
 }
@@ -146,8 +146,7 @@ interface WeeklySession {
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
 /**
- * 종료 의도를 걸고 남은 핸드가 끝나기를 기다리는 상한. 넘기면 방을 강제로 닫는다 —
- * 히어로의 경계는 이미 영속돼 있으므로 손실은 남고, 체크포인트만 비어 재개가 막힌다.
+ * Watchdog interval for closing rooms. A live all-in still owns a pot share and must finish.
  */
 const CLOSE_TIMEOUT_MS = 60_000;
 const LEADERBOARD_TOP = 5;
@@ -214,6 +213,22 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
   start(profileId: string): WeeklyDojoResult<WeeklyDojoStartValue> {
     const existing = this.#sessions.get(profileId);
     if (existing?.roomId) {
+      if (existing.closeIntent || existing.persistenceError || existing.pendingFinish) {
+        return {ok:false,code:'action-rejected',message:'기록을 정리하는 중이에요. 잠시 기다려 주세요.'};
+      }
+      if (existing.holdReason === 'away') {
+        const hero = this.#options.roomManager.getRoom(existing.roomId)?.engine.state.players
+          .find(player => player.id === profileId);
+        if (!this.#options.hero.isOnline(profileId) || !hero || hero.isDisconnected || hero.pendingRemoval) {
+          return {ok:false,code:'action-rejected',message:'테이블에 다시 연결한 뒤 이어할 수 있어요.'};
+        }
+        hero.sitOutNext = false;
+        hero.sitOutAuto = undefined;
+        if (hero.status === 'sitting-out') hero.status = 'waiting';
+        this.#clearHold(existing);
+        this.#options.roomManager.resumeRoom(existing.roomId);
+        this.#events?.onChanged(profileId);
+      }
       return {
         ok: true,
         value: {
@@ -402,6 +417,7 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
               live.bigBlind,
             )),
             weekKey: live.weekKey,
+            paused: session?.holdReason === 'away',
           }
         : null,
       completedCount,
@@ -574,6 +590,14 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
     });
   }
 
+  /** Grace expiry follows ordinary pause settlement, retaining all-in pot ownership. */
+  onGraceExpired(roomId: string, playerId: string): boolean {
+    const session = this.#byRoom.get(roomId);
+    if (!session || session.profileId !== playerId) return false;
+    this.#closeSession(session, 'leave');
+    return this.#byRoom.has(roomId);
+  }
+
   onRoomDisposed(roomId: string): void {
     const session = this.#byRoom.get(roomId);
     if (!session) return;
@@ -603,7 +627,10 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
       return { ok: true, value: { attemptId: session.attemptId, status: 'closing' } };
     }
     const settled = this.#settleLiveHand(session);
-    if (settled === 'error') return PERSISTENCE_ERROR;
+    if (settled === 'error') {
+      session.closeIntent = intent;
+      return PERSISTENCE_ERROR;
+    }
     if (settled === 'pending') {
       // 남은 핸드가 끝나면 onHandComplete가 이 의도를 실행한다 (상한 타이머로 강제 종료 보장)
       session.closeIntent = intent;
@@ -651,26 +678,35 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
     const room = this.#options.roomManager.getRoom(roomId);
     if (!room) return 'settled';
     const state = room.engine.state;
-    if (!state.isHandInProgress) return 'settled';
     const hero = state.players.find(player => player.id === session.profileId);
-    if (!hero || hero.pendingRemoval) return 'settled';
-    if (session.lastRecordedHand === state.handNumber) return 'settled';
+    if (!hero) return 'settled';
+    if (!state.isHandInProgress) {
+      const record = room.engine.getCompletedHandRecord();
+      if (record?.handNumber === state.handNumber && record.players.some(player => player.id === hero.id)) {
+        const result = this.#commitBoundary(session, room.engine, state.handNumber, Math.max(0, hero.chips));
+        if (result === 'error') { this.#markPersistenceError(session); return 'error'; }
+      }
+      return 'settled';
+    }
+    if (session.lastRecordedHand === state.handNumber) return 'pending';
     // 이번 핸드에 딜인되지 않았다면(자리비움 등) 잃을 것도 없다
-    if (hero.status !== 'active' && hero.status !== 'all-in') return 'settled';
+    if (hero.status === 'waiting' || hero.status === 'sitting-out') return 'settled';
     // 올인은 아직 팟을 딸 수 있다 — 결과 전에 닫으면 승리를 지우게 되므로 런아웃을 기다린다
     if (hero.status === 'all-in') return 'pending';
 
     const handNumber = state.handNumber;
-    if (state.players[state.activePlayerIndex]?.id === hero.id) {
+    if (hero.status === 'active' && state.players[state.activePlayerIndex]?.id === hero.id) {
       this.#options.roomManager.processPlayerAction(roomId, hero.id, 'fold');
-    } else {
+    } else if (hero.status === 'active') {
       // 턴이 아니어도 즉시 폴드시킨다 — 자동 처리 경로는 무료 체크를 고를 수 있어
       // "떠난 사람이 계속 플레이해 팟을 따는" 상태가 되고, 그러면 기록한 스택과 테이블
       // 칩 풀이 어긋난다 (재개 시 복원 상태가 깨진다).
       this.#options.roomManager.foldWeeklyDojoHero(roomId, hero.id);
     }
     // 폴드로 핸드가 즉시 끝났다면 onHandComplete가 이미 경계를 기록했다
-    if (session.lastRecordedHand === handNumber) return 'settled';
+    if (session.lastRecordedHand === handNumber) {
+      return state.isHandInProgress ? 'pending' : 'settled';
+    }
     const current = this.#options.roomManager.getRoom(roomId);
     if (!current) return 'settled';
     const settledHero = current.engine.state.players
@@ -699,7 +735,7 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
     if (session.lastRecordedHand === state.handNumber) return;
     const hero = state.players.find(player => player.id === session.profileId);
     if (!hero) return;
-    if (hero.status !== 'active' && hero.status !== 'all-in') return;
+    if (hero.status !== 'active' && hero.status !== 'all-in' && hero.status !== 'folded') return;
     const outcome = this.#commitBoundary(
       session,
       engine,
@@ -717,6 +753,10 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
   #executeClose(session: WeeklySession): boolean {
     const intent = session.closeIntent;
     if (!intent) return true;
+    if (session.roomId && this.#options.roomManager.getRoom(session.roomId)?.engine.state.isHandInProgress) {
+      this.#armCloseTimeout(session);
+      return false;
+    }
     this.#clearCloseTimeout(session);
     if (intent === 'forfeit' && !this.#complete(session.attemptId, 'forfeit')) {
       this.#markPersistenceError(session);
@@ -790,7 +830,7 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
           handsPlayed: attempt.handsPlayed,
         },
       });
-      return this.#complete(attempt.id, 'forfeit') ? 'closed' : 'error';
+      return this.#complete(attempt.id, 'recovery') ? 'closed' : 'error';
     }
     return 'resumable';
   }
@@ -1040,11 +1080,23 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
         return;
       }
       if (session.closeIntent) {
+        const settled = this.#settleLiveHand(session);
+        if (settled === 'error') { this.#scheduleRetry(session); return; }
         session.persistenceError = false;
+        if (settled === 'pending') {
+          this.#setHold(session, 'closing');
+          this.#armCloseTimeout(session);
+          return;
+        }
         if (!this.#executeClose(session)) this.#scheduleRetry(session);
         return;
       }
       session.persistenceError = false;
+      this.#clearHold(session);
+      const roomId = session.roomId;
+      if (roomId && !this.#options.roomManager.getRoom(roomId)?.engine.state.isHandInProgress) {
+        if (this.onHandComplete(roomId) === 'continue') this.#options.roomManager.resumeRoom(roomId);
+      }
       this.#events?.onChanged(session.profileId);
     }, this.#retryDelayMs);
   }
@@ -1109,6 +1161,11 @@ export class WeeklyDojoService implements WeeklyDojoRoomHooks {
         playerId: session.profileId,
         data: { event: 'close-timeout', attemptId: session.attemptId },
       });
+      // A watchdog cannot discard a still-live all-in or an incomplete checkpoint.
+      if (this.#settleLiveHand(session) !== 'settled') {
+        this.#armCloseTimeout(session);
+        return;
+      }
       this.#executeClose(session);
     }, CLOSE_TIMEOUT_MS);
   }
