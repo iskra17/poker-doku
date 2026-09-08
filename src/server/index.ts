@@ -42,6 +42,7 @@ import {
 import { eventLog } from './event-log';
 import { OpsEventRepository, shouldPersistOpsEvent } from './ops-log';
 import { StoryRepository } from './story-repository';
+import { WeeklyDojoRepository } from './weekly-dojo-repository';
 import { StoryRewardRepository } from './story-reward-repository';
 import { StoryRewardService } from './story-reward-service';
 import { ProfileManager } from './profile-manager';
@@ -112,6 +113,7 @@ let gameConfigService: GameConfigService | undefined;
 let progressionService: ProgressionService | undefined;
 let handHistoryService: HandHistoryService | undefined;
 let storyRepository: StoryRepository | undefined;
+let weeklyDojoRepository: WeeklyDojoRepository | undefined;
 let storyRewardService: StoryRewardService | undefined;
 let backupManager: BackupManager | undefined;
 let backupScheduler: DailyBackupScheduler | undefined;
@@ -226,6 +228,8 @@ function initializePersistenceAndRecover(): void {
     // 보너스 CG(v39) 레벨 트리거 — 같은 트랜잭션 안에서 읽는 리포지토리만 주입한다(ProgressionService 금지: 중첩 트랜잭션)
     progressionRepository,
   });
+  // 주간 도장(v42) — 지갑/아레나 MMR과 분리된 주간 도전 기록
+  weeklyDojoRepository = new WeeklyDojoRepository(database);
   handHistoryService = new HandHistoryService(new HandHistoryRepository(database), {
     // 테이블 정본 기록(전역 핸드 ID) — 백오피스 핸드 감사(/api/admin/hands*)의 데이터 소스
     tableHands: new TableHandRepository(database),
@@ -694,6 +698,7 @@ async function listen(): Promise<void> {
     handHistory: handHistoryService,
     storyRepository,
     storyRewards: storyRewardService,
+    weeklyDojo: weeklyDojoRepository,
     ...(arenaService
       ? {
         arena: {

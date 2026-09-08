@@ -370,9 +370,11 @@ export const useGameStore = create<GameStore>((set, get) => ({
     socket.on('room-lost', data => {
       clearJoinTimeout();
       clearActionAckTimeout();
-      // 스토리 라이브 스텝이 정상 종료되면 서버가 방을 내리고 곧바로 다음 스텝의 story-update를
-      // 보낸다 — 사고가 아니므로 로비 토스트(joinError)를 띄우지 않는다. 방 상태 정리는 동일.
-      const storyEnd = data?.reason === 'story-end';
+      // 스토리 라이브 스텝/주간 도장이 정상 종료되면 서버가 방을 내리고 곧바로 다음 상태
+      // (story-update·weekly-dojo-update)를 보낸다 — 사고가 아니므로 로비 토스트(joinError)를
+      // 띄우지 않는다. 방 상태 정리는 동일.
+      const quietEnd = data?.reason === 'story-end'
+        || data?.reason === 'weekly-dojo-end';
       set({
         currentRoomId: null,
         pendingRoomId: null,
@@ -383,7 +385,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         gameState: null,
         chatMessages: [],
         tableNotice: null,
-        joinError: storyEnd ? null : (data?.message ?? '게임 연결이 초기화되어 로비로 돌아왔어요.'),
+        joinError: quietEnd ? null : (data?.message ?? '게임 연결이 초기화되어 로비로 돌아왔어요.'),
         joinErrorCode: null,
       });
     });

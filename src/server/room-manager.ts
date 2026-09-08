@@ -186,6 +186,7 @@ export type RoomDisposeReason =
   | 'late-reg-rollback'
   | 'mtt-start-rollback'
   | 'story-end'
+  | 'weekly-dojo-end'
   | 'shutdown';
 
 export type NextHandGateResult =
@@ -274,6 +275,26 @@ export interface StoryRoomHooks {
   onRoomDisposed?(roomId: string, reason: RoomDisposeReason): void;
 }
 
+/**
+ * 주간 도장(Weekly Dojo) 훅 — `WeeklyDojoService`가 setWeeklyDojoHooks로 주입한다.
+ * `StoryRoomHooks`/`MttRoomHooks`와 **같은 병렬 패턴**이며 일반화하지 않는다(참조가 많은
+ * 기존 경로를 공통화하면 회귀 위험이 크다). 모든 호출은 `isWeeklyDojoRoom(room)`
+ * (= config.weeklyDojoAttemptId 존재) 가드 뒤에서만 일어나므로 일반 방 실행 경로는 불변이다.
+ *
+ * 좌석 계약: 히어로 좌석은 서버 타이머(미납 BB·방치·파산 30초)로 회수하지 않는다. 대신
+ * 히어로가 딜인 불가(끊김·턴 타임아웃 마킹)면 `beforeHand`가 'hold'로 핸드 경계에서 멈춘다 —
+ * 자리를 비운 사이 봇끼리 남은 핸드를 소진해 기록이 망가지는 경로를 차단한다.
+ */
+export interface WeeklyDojoRoomHooks {
+  isHeld(roomId: string): boolean;
+  beforeHand(roomId: string, engine: PokerEngine): 'deal' | 'hold';
+  /** 항상 true — 주간 도장 핸드는 도장 XP·일일 미션에 적립하지 않는다 */
+  skipHandProgression(roomId: string): boolean;
+  onHandComplete(roomId: string): 'continue' | 'hold' | 'gone';
+  onPlayerLeave(roomId: string, playerId: string): void;
+  onRoomDisposed?(roomId: string, reason: RoomDisposeReason): void;
+}
+
 export interface RoomManagerRuntimeStats {
   rooms: number;
   chatRooms: number;
@@ -353,6 +374,7 @@ export class RoomManager {
   private dialogue = new DialogueManager(new AIDialogue());
   private mttHooks?: MttRoomHooks;
   private storyHooks?: StoryRoomHooks;
+  private weeklyDojoHooks?: WeeklyDojoRoomHooks;
   private onUpdate: (roomId: string, engine: PokerEngine) => void;
   private onChat: (roomId: string, message: ChatMessage) => void;
   /** 좌석 구성이 서버 내부에서 바뀔 때(자동 정리 등) 로비 목록 재브로드캐스트 훅 */
@@ -399,6 +421,25 @@ export class RoomManager {
     return !!room.config.storyChapterId;
   }
 
+  /** 주간 도장 훅 주입 — WeeklyDojoService가 생성 후 연결한다 (스토리와 동일 패턴) */
+  setWeeklyDojoHooks(hooks: WeeklyDojoRoomHooks): void {
+    this.weeklyDojoHooks = hooks;
+  }
+
+  /** 주간 도장 방 — 수명주기·hold·기록이 WeeklyDojoService 소유인 개인 전용 방 */
+  private isWeeklyDojoRoom(room: { config: RoomConfig }): boolean {
+    return !!room.config.weeklyDojoAttemptId;
+  }
+
+  /**
+   * 개인 전용(히어로 1명 + 고정 봇) 방 — 스토리 라이브 스텝과 주간 도장.
+   * 로비 목록·초대·타인 입장·봇 재충원·탑업·자리비움·나가기 예약·서버 좌석 회수를 공유로 막는다.
+   * 진행 판정(hold/핸드 종료)은 각자의 훅이 따로 소유한다.
+   */
+  private isPrivateSoloRoom(room: { config: RoomConfig }): boolean {
+    return this.isStoryRoom(room) || this.isWeeklyDojoRoom(room);
+  }
+
   /**
    * 스토리 봇의 표시 identity 갱신 (가면 벗기기) — 얼굴(name/avatar)만 바꾸고
    * 행동 축(personalityId)·좌석·칩·액션 상태는 건드리지 않는다. 스토리 방 전용이며
@@ -433,6 +474,7 @@ export class RoomManager {
   private orchestratorHeld(roomId: string, room: { config: RoomConfig }): boolean {
     if (this.isMttRoom(room)) return !!this.mttHooks?.isHeld(roomId);
     if (this.isStoryRoom(room)) return !!this.storyHooks?.isHeld(roomId);
+    if (this.isWeeklyDojoRoom(room)) return !!this.weeklyDojoHooks?.isHeld(roomId);
     return false;
   }
 
@@ -474,6 +516,19 @@ export class RoomManager {
     } else if (config.storyRunId || config.storyHandTag || config.botThinkScale !== undefined) {
       // 스토리 전용 필드는 storyChapterId 없이는 무효 — 비스토리 방 실행 경로 불변 보장
       throw new Error('Story-only room config fields require storyChapterId');
+    }
+    if (config.weeklyDojoAttemptId !== undefined) {
+      // 스토리 방과 같은 fail-closed 규칙 — 훅 없이 열면 hold·기록·라인업 고정이 전부 빠진 채
+      // 일반 캐시 방처럼 굴러간다. 지갑/토너먼트/아레나 방과는 절대 겸할 수 없다.
+      if (!this.weeklyDojoHooks) throw new Error('Weekly dojo room requires weekly dojo hooks');
+      if (config.economyMode !== 'practice') throw new Error('Weekly dojo room must be practice economy');
+      if (config.tableType !== 'bots') throw new Error('Weekly dojo room must be a bots table');
+      if (config.gameMode !== undefined && config.gameMode !== 'cash') {
+        throw new Error('Weekly dojo room must be a cash table');
+      }
+      if (config.storyChapterId || config.competitionMode || config.tournamentId) {
+        throw new Error('Weekly dojo room cannot be combined with other room kinds');
+      }
     }
     if (config.sngStructureId !== undefined) {
       if (!isSngStructureId(config.sngStructureId)) {
@@ -533,8 +588,10 @@ export class RoomManager {
       sngStructure: resolveSngStructure(normalizedConfig.sngStructureId),
     });
     this.chatHistory.set(id, []);
-    // 스토리 방은 초대 코드를 발급하지 않는다 — 히어로 전용이라 코드로 방 id가 드러나면 안 된다
-    if (!normalizedConfig.storyChapterId) this.invites.issue('room', id);
+    // 개인 전용 방(스토리·주간 도장)은 초대 코드를 발급하지 않는다 — 코드로 방 id가 드러나면 안 된다
+    if (!this.isPrivateSoloRoom({ config: normalizedConfig })) {
+      this.invites.issue('room', id);
+    }
     return id;
   }
 
@@ -750,6 +807,10 @@ export class RoomManager {
     if (this.isStoryRoom(room)) {
       this.storyHooks?.onRoomDisposed?.(roomId, reason);
     }
+    // 주간 도장도 같은 계약 — 서비스의 시도 상태는 소켓 통지와 별개다
+    if (this.isWeeklyDojoRoom(room)) {
+      this.weeklyDojoHooks?.onRoomDisposed?.(roomId, reason);
+    }
     return true;
   }
 
@@ -801,8 +862,8 @@ export class RoomManager {
       if (room.config.competitionMode) return;
       // MTT 테이블은 로비 방 목록에 노출하지 않는다 — 토너먼트 엔티티(별도 목록)로만 보인다
       if (room.config.tournamentId) return;
-      // 스토리 라이브 스텝 방은 히어로 전용 — 목록·초대·직접 입장 대상이 아니다
-      if (room.config.storyChapterId) return;
+      // 개인 전용 방(스토리 라이브 스텝·주간 도장)은 목록·초대·직접 입장 대상이 아니다
+      if (this.isPrivateSoloRoom(room)) return;
       const tournament = room.engine.state.tournament;
       const seat = forPlayerId
         ? room.engine.state.players.find(p => p.id === forPlayerId && !p.pendingRemoval)
@@ -925,8 +986,8 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room) return false;
     if (this.isWalletSng(room)) return false;
-    // 스토리 방 라인업은 어댑터가 고정한다 — 방장 봇 충원은 좌석/성향 계획을 깨뜨린다
-    if (this.isStoryRoom(room)) return false;
+    // 개인 전용 방 라인업은 서비스가 고정한다 — 방장 봇 충원은 좌석/성향 계획을 깨뜨린다
+    if (this.isPrivateSoloRoom(room)) return false;
     const tournament = room.engine.state.tournament;
     if (!tournament || tournament.entrants > 0 || tournament.finished) return false;
 
@@ -1143,6 +1204,10 @@ export class RoomManager {
     // 스토리: 히어로 좌석 제거(grace 만료 회수·abandon)를 어댑터가 인지 — 뒤이어 빈 방 즉시 dispose
     if (this.isStoryRoom(room)) {
       this.storyHooks?.onPlayerLeave(roomId, playerId);
+    }
+    // 주간 도장: 좌석 제거를 서비스가 인지 (시도는 live로 남고 「이어하기」가 잇는다)
+    if (this.isWeeklyDojoRoom(room)) {
+      this.weeklyDojoHooks?.onPlayerLeave(roomId, playerId);
     }
 
     const wasInProgress = room.engine.state.isHandInProgress;
@@ -1602,7 +1667,7 @@ export class RoomManager {
       // 다음 입장자가 깨끗한 테이블에서 시작하게 한다 (안 그러면 isHandInProgress로 얼어붙음)
       this.resetRoomToIdle(roomId);
       if (roomsChanged) this.onRoomsChanged?.();
-    } else if (room.config.gameMode === 'sng' || this.isStoryRoom(room)) {
+    } else if (room.config.gameMode === 'sng' || this.isPrivateSoloRoom(room)) {
       // SnG는 모든 휴먼이 떠나면 즉시 정리 (결과 보존 계약은 finishedRoomTimers가 별도 담당).
       // 스토리 방도 즉시 정리 — 히어로 없는 스토리 방은 의미가 없고, 10분 보존·대기 리셋은
       // 어댑터의 run 상태(live-hold room-lost)와 어긋난다.
@@ -1765,7 +1830,8 @@ export class RoomManager {
     const room = this.rooms.get(roomId);
     if (!room || room.engine.state.isHandInProgress) return;
     if (room.engine.state.tournament) return; // SnG 탈락 봇 좌석은 순위 표시용으로 보존
-    if (this.isStoryRoom(room)) return; // 스토리 라인업은 고정 — 파산 봇 리필/교체는 어댑터 beforeHand 소관
+    // 개인 전용 방 라인업은 고정 — 파산 봇 리필/교체는 각 서비스의 beforeHand 소관
+    if (this.isPrivateSoloRoom(room)) return;
 
     const bustedBots = room.engine.state.players.filter(
       p => p.type === 'bot' && p.chips <= 0 && !p.pendingRemoval,
@@ -1917,6 +1983,13 @@ export class RoomManager {
       this.onUpdate(roomId, room.engine);
       return;
     }
+    // 주간 도장: 20핸드 도달·파산·부재(끊김/턴 타임아웃)면 핸드 경계에서 멈춘다 —
+    // 자리를 비운 사이 봇끼리 남은 핸드를 소진해 기록이 망가지지 않게 한다
+    const weeklyDojoRoom = this.isWeeklyDojoRoom(room);
+    if (weeklyDojoRoom && this.weeklyDojoHooks?.beforeHand(roomId, room.engine) === 'hold') {
+      this.onUpdate(roomId, room.engine);
+      return;
+    }
 
     const walletCash = this.isWalletCash(room);
     // 2초 예약 뒤 최종 인원을 다시 본다. 아래 checkpoint→startHand 구간에는 await가 없어
@@ -1933,7 +2006,12 @@ export class RoomManager {
     // '연습' 프리셋 스텝 핸드는 핸드 XP·일일 미션에 적립하지 않는다 — captureHandStart와
     // completeHand를 함께 건너뛴다 (한쪽만 건너뛰면 런타임 hand context가 고아로 남는다)
     const storySkipsProgression = storyRoom && !!this.storyHooks?.skipHandProgression(roomId);
-    const tracksProgression = room.config.competitionMode === undefined && !storySkipsProgression;
+    // 주간 도장 핸드도 도장 XP·일일 미션에 적립하지 않는다 (경제·진행도와 완전 분리)
+    const weeklySkipsProgression = weeklyDojoRoom
+      && !!this.weeklyDojoHooks?.skipHandProgression(roomId);
+    const tracksProgression = room.config.competitionMode === undefined
+      && !storySkipsProgression
+      && !weeklySkipsProgression;
     const captureProgressionHand = (): void => {
       if (!tracksProgression) return;
       this.options.progression?.captureHandStart({
@@ -2330,7 +2408,8 @@ export class RoomManager {
   private scheduleBustReclaims(roomId: string): void {
     const room = this.rooms.get(roomId);
     if (!room || this.isTournamentRoom(room)) return;
-    if (this.isStoryRoom(room)) return; // 스토리 히어로 파산은 회수가 아니라 어댑터의 실패 분기
+    // 개인 전용 방의 히어로 파산은 좌석 회수가 아니라 서비스의 종료 분기다
+    if (this.isPrivateSoloRoom(room)) return;
 
     let armed = false;
     for (const p of room.engine.state.players) {
@@ -2373,6 +2452,8 @@ export class RoomManager {
     // 다만 졸업 SnG는 부재 중에도 딜인·블라인드가 계속 나가므로 [게임 복귀]만은 열어 둔다
     // (진행 중 active/all-in 상태는 아래 복귀 분기가 그대로 보존한다).
     if (this.isStoryRoom(room) && !sittingOut) return false;
+    // 주간 도장은 자리비움 자체가 없다 — 부재는 beforeHand hold, 이탈은 서비스 단일 경로
+    if (this.isWeeklyDojoRoom(room)) return false;
     if (sittingOut) {
       // --- 게임 복귀 ---
       player.sitOutNext = false;
@@ -2425,7 +2506,8 @@ export class RoomManager {
   sitOutAndLeave(roomId: string, playerId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
-    if (this.isStoryRoom(room)) return; // 스토리 방 이탈은 abandon-story 단일 경로 (소켓 계층도 거절)
+    // 개인 전용 방 이탈은 각 서비스의 단일 경로다 (소켓 계층도 거절)
+    if (this.isPrivateSoloRoom(room)) return;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingRemoval) return;
 
@@ -2476,7 +2558,11 @@ export class RoomManager {
       }
       return 'cleared';
     }
-    if (this.isTournamentRoom(room) || room.config.competitionMode || this.isStoryRoom(room)) {
+    if (
+      this.isTournamentRoom(room)
+      || room.config.competitionMode
+      || this.isPrivateSoloRoom(room)
+    ) {
       return 'rejected';
     }
 
@@ -2523,8 +2609,8 @@ export class RoomManager {
     if (room.config.gameMode === 'sng' || room.config.gameMode === 'mtt') {
       return { status: 'not-cash' };
     }
-    // 스토리 방 스택은 어댑터 소유(프리셋 스택 보정·스파링 netBB) — 탑업 불가
-    if (this.isStoryRoom(room)) return { status: 'not-cash' };
+    // 개인 전용 방 스택은 서비스 소유(프리셋 보정·주간 도장 확정 스택) — 탑업/리바이 불가
+    if (this.isPrivateSoloRoom(room)) return { status: 'not-cash' };
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.type !== 'human' || player.pendingRemoval) {
       return { status: 'no-seat' };
@@ -2554,7 +2640,7 @@ export class RoomManager {
   /** 예약 취소 (모달에서 무르기) */
   cancelCashTopUp(roomId: string, playerId: string): boolean {
     const room = this.rooms.get(roomId);
-    if (!room || this.isStoryRoom(room)) return false;
+    if (!room || this.isPrivateSoloRoom(room)) return false;
     const player = room.engine.state.players.find(p => p.id === playerId);
     if (!player || player.pendingTopUpTarget === undefined) return false;
     player.pendingTopUpTarget = undefined;
@@ -2658,7 +2744,7 @@ export class RoomManager {
     const busted = player.chips <= 0 && !inHandAlive;
     // 스토리 방: grace 만료 = 좌석 회수 → 빈 방 즉시 dispose → 어댑터가 run을 live-hold(room-lost)로
     // 보존해 허브 「이어하기」가 새 방으로 재개한다 (자리비움 보존·5분 방치 유예는 스토리에 없다)
-    const keep = isSng || (sittingOut && !busted && !this.isStoryRoom(room));
+    const keep = isSng || (sittingOut && !busted && !this.isPrivateSoloRoom(room));
     if (!keep) {
       return !this.leaveRoom(roomId, playerId);
     }
@@ -3110,6 +3196,32 @@ export class RoomManager {
     this.dialogue.shutdown();
   }
 
+  /**
+   * 주간 도장 히어로를 **턴과 무관하게 즉시 폴드**시킨다 (이탈/포기 확정 직후 전용).
+   *
+   * 자리비움 자동 처리(autoAct)는 무료 체크가 가능하면 체크를 고르므로, 떠난 사람이 계속
+   * 플레이해 팟을 따 가는 결과가 나온다 — 그러면 서비스가 기록한 "기여금 포기" 스택과 실제
+   * 테이블 칩 풀이 어긋난다. 엔진의 이탈 폴드(processLeave)를 그대로 쓰되 완료/턴 재개
+   * 경로는 RoomManager가 유지한다. 주간 도장 방에서만 동작한다.
+   */
+  foldWeeklyDojoHero(roomId: string, playerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room || !this.isWeeklyDojoRoom(room)) return false;
+    if (!room.engine.state.isHandInProgress) return false;
+    const player = room.engine.state.players.find(p => p.id === playerId);
+    if (!player || player.pendingRemoval) return false;
+    if (player.status !== 'active' && player.status !== 'all-in') return false;
+
+    const { handComplete } = room.engine.processLeave(playerId);
+    this.onUpdate(roomId, room.engine);
+    if (handComplete) {
+      this.handleCompletedHand(roomId);
+    } else {
+      this.startPlayerLoop(roomId);
+    }
+    return true;
+  }
+
   /** 스토리 퀴즈 뒤 같은 히어로 턴만 재개한다. 새 핸드를 만들지 않는다. */
   resumeHeroTurn(roomId: string): boolean {
     const room = this.rooms.get(roomId);
@@ -3438,7 +3550,14 @@ export class RoomManager {
     // 뒤쪽 분기만으로는 막지 못한다 (startNewHand의 captureHandStart 생략과 짝)
     const storySkipsProgression = this.isStoryRoom(room)
       && !!this.storyHooks?.skipHandProgression(roomId);
-    if (settlementOk && !state.tournament && !storySkipsProgression) {
+    const weeklySkipsProgression = this.isWeeklyDojoRoom(room)
+      && !!this.weeklyDojoHooks?.skipHandProgression(roomId);
+    if (
+      settlementOk
+      && !state.tournament
+      && !storySkipsProgression
+      && !weeklySkipsProgression
+    ) {
       try {
         this.options.progression?.completeHand({
           roomId,
@@ -3491,6 +3610,15 @@ export class RoomManager {
     // 아니라 어댑터의 실패 분기다. 히어로가 나가 빈 방이면 leaveRoom 경로가 이미 dispose했다.
     if (this.isStoryRoom(room)) {
       const verdict = this.storyHooks?.onHandComplete(roomId) ?? 'continue';
+      if (verdict === 'continue' && this.rooms.has(roomId)) {
+        this.scheduleNextHand(roomId);
+      }
+      return;
+    }
+    // 주간 도장: 확정 핸드 경계 기록·종료 판정은 서비스가 하고 진행 여부만 지시한다.
+    // 나가기 예약·파산 30초 회수·착석 핸드오프 경로는 타지 않는다 (개인 전용 방).
+    if (this.isWeeklyDojoRoom(room)) {
+      const verdict = this.weeklyDojoHooks?.onHandComplete(roomId) ?? 'continue';
       if (verdict === 'continue' && this.rooms.has(roomId)) {
         this.scheduleNextHand(roomId);
       }

@@ -26,6 +26,7 @@ import type {
   StoryQuizReceipt,
   StoryRunView,
 } from '../story/views';
+import type { WeeklyDojoView } from '../weekly-dojo/types';
 import type {
   LateRegistrationPolicy,
   PrizePoolPolicy,
@@ -528,8 +529,14 @@ export interface ServerToClientEvents {
   'tournament-seat-assigned': (data: TournamentSeatAssigned) => void;
   'table-move': (data: TableMovePayload) => void;
   'room-joined': (data: RoomJoinedPayload) => void;
-  /** reason 'story-end' = 수련 라이브 스텝 방 정리(곧 story-update가 다음 스텝을 실어 온다) — 클라는 안내 토스트 없이 조용히 방 상태만 비운다 */
-  'room-lost': (data?: { message?: string; reason?: 'story-end' }) => void;
+  /**
+   * reason 'story-end' = 수련 라이브 스텝 방 정리(곧 story-update가 다음 스텝을 실어 온다),
+   * 'weekly-dojo-end' = 주간 도장 테이블 정리(곧 weekly-dojo-update가 결과를 실어 온다).
+   * 둘 다 클라는 안내 토스트 없이 조용히 방 상태만 비운다.
+   */
+  'room-lost': (
+    data?: { message?: string; reason?: 'story-end' | 'weekly-dojo-end' },
+  ) => void;
   'room-created': (data: { roomId: string }) => void;
   'game-update': (data: GameUpdatePayload) => void;
   'game-update-public': (data: GameUpdatePayload) => void;
@@ -548,6 +555,8 @@ export interface ServerToClientEvents {
   'arena-state-replay': (data: ArenaStateReplay) => void;
   /** 스토리 런 개인 스냅샷 — 방 무관. 드릴 인스턴스는 정답 제거 투영만 실린다 */
   'story-update': (view: StoryRunView) => void;
+  /** 주간 도장 개인 스냅샷 — 규칙·내 3시도·순위표. 서버가 계산한 값만 실린다 */
+  'weekly-dojo-update': (view: WeeklyDojoView) => void;
 }
 
 export interface ClientToServerEvents {
@@ -621,6 +630,35 @@ export interface ClientToServerEvents {
   'abandon-story': (data: unknown, ack?: AckCallback) => void;
   /** 진행 요약(허브) — HTTP GET /api/story와 같은 뷰 */
   'get-story-progress': (ack?: AckCallback<StoryProgressView>) => void;
+  // --- 주간 도장 (아레나 안의 비동기 주간 도전) ---
+  /** 개인 스냅샷 요청 — 점수·완료 판정은 서버 전용이라 클라가 보낼 payload가 없다 */
+  'get-weekly-dojo': (ack?: AckCallback<WeeklyDojoView>) => void;
+  /** 시작 또는 이어하기 — 진행 중 시도가 있으면 그 시도를 잇는다(새 번호를 뽑지 않는다) */
+  'weekly-dojo-start': (
+    dataOrAck?: unknown,
+    ack?: AckCallback<WeeklyDojoStartAck>,
+  ) => void;
+  /**
+   * 명시적 포기 — 진행 중 핸드를 먼저 확정한 뒤 기록을 닫고 시도 하나를 소비한다.
+   * status 'closed' = 완료가 DB에 커밋됨, 'closing' = 올인 런아웃을 기다리는 중
+   * (끝나면 weekly-dojo-update가 결과를 싣는다).
+   */
+  'weekly-dojo-forfeit': (
+    dataOrAck?: unknown,
+    ack?: AckCallback<WeeklyDojoCloseAck>,
+  ) => void;
+}
+
+export interface WeeklyDojoStartAck {
+  attemptId: string;
+  roomId: string;
+  slot: number;
+  resumed: boolean;
+}
+
+export interface WeeklyDojoCloseAck {
+  attemptId: string;
+  status: 'closed' | 'left' | 'closing';
 }
 
 export type {

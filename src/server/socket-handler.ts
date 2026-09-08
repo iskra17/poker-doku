@@ -17,12 +17,16 @@ import type {
   AckCallback,
   ClientToServerEvents,
   PublicTournamentSummary,
+  RealtimeErrorCode,
   RegisterTournamentCommand,
   RegisterTournamentResult,
   ServerToClientEvents,
   TournamentListPayload,
   TournamentDetailView,
+  WeeklyDojoCloseAck,
+  WeeklyDojoStartAck,
 } from '../lib/realtime/protocol';
+import type { WeeklyDojoView } from '../lib/weekly-dojo/types';
 import {
   isRecord,
   parseCreateRoomRequest,
@@ -36,6 +40,8 @@ import { SOCKET_RATE_LIMITS, SocketRateLimiter } from './socket-rate-limit';
 import { StoryRunCoordinator, type CoordinatorResult } from './story-run-coordinator';
 import type { StoryRewardService } from './story-reward-service';
 import { LiveTableAdapter } from './story-live-adapter';
+import { WeeklyDojoService } from './weekly-dojo-service';
+import type { WeeklyDojoRepository } from './weekly-dojo-repository';
 import { operatorAccessFromSet, resolveOperatorAccess } from './operator-access';
 import type { StoryRepository } from './story-repository';
 import {
@@ -386,6 +392,8 @@ export interface SocketRuntimeOptions {
   storyRewards?: StoryRewardService;
   /** 챕터 레지스트리 오버라이드 (테스트 픽스처용 — 기본 STORY_CHAPTERS) */
   storyChapters?: readonly Chapter[];
+  /** 주간 도장 영속 — 주어지면 WeeklyDojoService를 켜고 weekly-dojo-* 이벤트를 받는다 */
+  weeklyDojo?: WeeklyDojoRepository;
   arena?: {
     service: ArenaService;
     matchIdFactory?: () => string;
@@ -407,6 +415,8 @@ export interface SocketRuntime {
   refreshAvatar: (profileId: string, avatarId: string) => void;
   /** 수련 스토리 진행 요약 (GET /api/story 늦은 바인딩) — 스토리 비활성이면 null */
   storyProgress: (profileId: string) => StoryProgressView | null;
+  /** 주간 도장 런타임 (비활성이면 undefined) — 관측/종료용 */
+  weeklyDojo?: WeeklyDojoService;
   startArena: () => void;
   close: () => Promise<ArenaMatchmakerCloseReport>;
 }
@@ -473,6 +483,7 @@ export function setupSocketHandlers(
     handHistory,
     storyRepository,
     storyRewards,
+    weeklyDojo: weeklyDojoRepository,
     arena,
   } = options;
   const sessions = new SessionManager();
@@ -815,6 +826,12 @@ export function setupSocketHandlers(
               message: '수련 테이블을 정리했어요 — 이야기를 이어갈게요.',
               reason: 'story-end',
             });
+          } else if (reason === 'weekly-dojo-end') {
+            // 주간 도장 테이블 정리 — 곧이어 weekly-dojo-update가 결과/진행 상태를 실어 온다
+            socket?.emit('room-lost', {
+              message: '주간 도장 테이블을 정리했어요.',
+              reason: 'weekly-dojo-end',
+            });
           }
           session.roomId = null;
           sessions.releaseIfIdle(session);
@@ -823,82 +840,128 @@ export function setupSocketHandlers(
     },
   );
 
-  // 라이브 스텝 어댑터 (Phase 1b) — 코디네이터가 있을 때만. 히어로 착석은 소켓 계층이 담당한다:
+  // 개인 전용 테이블(수련 스토리 라이브 스텝·주간 도장)의 히어로 착석은 소켓 계층이 담당한다:
   // Player 구성(별칭·아바타·코스메틱) → joinRoom → 세션 roomId 교체·socket.join → room-joined.
-  // hold는 어댑터가 착석 전에 세팅하므로 joinRoom의 tryStartGame이 핸드를 시작하지 않는다.
+  // hold는 호출자(어댑터/서비스)가 착석 전에 세팅하므로 joinRoom의 tryStartGame이 핸드를
+  // 시작하지 않는다. `tag`는 이벤트 로그 구분용이며 착석 규칙 자체는 두 경로가 동일하다.
+  const soloHeroOnline = (profileId: string): boolean => {
+    const current = sessions.getByPlayerId(profileId);
+    return !!current?.socketId
+      && io.sockets.sockets.get(current.socketId)?.connected === true;
+  };
+  const seatSoloHero = (
+    profileId: string,
+    roomId: string,
+    seat: { seatIndex: number; chips: number },
+    tag: 'story' | 'weekly-dojo',
+  ): boolean => {
+    const targetSession = sessions.getByPlayerId(profileId);
+    const targetSocket = targetSession?.socketId
+      ? io.sockets.sockets.get(targetSession.socketId)
+      : undefined;
+    const room = roomManager.getRoom(roomId);
+    if (!targetSession || !targetSocket || !room) return false;
+    const alias = targetSocket.data.profileAlias;
+    const avatar = targetSocket.data.profileAvatarId;
+    if (!alias || !avatar) return false;
+    let publicCosmetics: Player['publicCosmetics'];
+    if (progression) {
+      try {
+        publicCosmetics = buildPublicCosmetics(progression.getSnapshot(profileId, avatar));
+      } catch {
+        return false;
+      }
+    }
+    // 1세션 1테이블 — 다른 방의 보존 좌석은 먼저 정리한다 (commitRoomMembership과 동일 규칙)
+    const previousRoomId = targetSession.roomId;
+    if (previousRoomId && previousRoomId !== roomId) {
+      if (!roomManager.leaveRoom(previousRoomId, profileId)) return false;
+      targetSocket.leave(previousRoomId);
+      targetSession.roomId = null;
+    }
+    if (!roomManager.leaveAllSeatsExcept(profileId, roomId)) return false;
+    const player: Player = {
+      id: profileId,
+      name: alias,
+      type: 'human',
+      avatar,
+      chips: seat.chips,
+      seatIndex: seat.seatIndex,
+      holeCards: [],
+      currentBet: 0,
+      totalContributed: 0,
+      status: 'waiting',
+      hasActed: false,
+      timeBankChips: 1,
+      ...(publicCosmetics ? { publicCosmetics } : {}),
+    };
+    if (!roomManager.joinRoom(roomId, player)) return false;
+    targetSession.roomId = roomId;
+    targetSocket.join(roomId);
+    eventLog.log('join-room:seated', {
+      roomId,
+      playerId: profileId,
+      data: {
+        seat: seat.seatIndex,
+        chips: seat.chips,
+        ...(tag === 'story' ? { story: true } : { weeklyDojo: true }),
+      },
+    });
+    targetSocket.emit('room-joined', {
+      roomId,
+      gameState: {
+        ...room.engine.getPublicState(profileId),
+        turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
+      },
+      chatHistory: roomManager.getChatHistory(roomId),
+    });
+    return true;
+  };
+
+  // 라이브 스텝 어댑터 (Phase 1b) — 코디네이터가 있을 때만.
   const storyLiveAdapter = storyCoordinator
     ? new LiveTableAdapter({
       roomManager,
       hero: {
-        isOnline: profileId => {
-          const current = sessions.getByPlayerId(profileId);
-          return !!current?.socketId && io.sockets.sockets.get(current.socketId)?.connected === true;
-        },
-        seatHero: (profileId, roomId, seat) => {
-          const targetSession = sessions.getByPlayerId(profileId);
-          const targetSocket = targetSession?.socketId
-            ? io.sockets.sockets.get(targetSession.socketId)
-            : undefined;
-          const room = roomManager.getRoom(roomId);
-          if (!targetSession || !targetSocket || !room) return false;
-          const alias = targetSocket.data.profileAlias;
-          const avatar = targetSocket.data.profileAvatarId;
-          if (!alias || !avatar) return false;
-          let publicCosmetics: Player['publicCosmetics'];
-          if (progression) {
-            try {
-              publicCosmetics = buildPublicCosmetics(progression.getSnapshot(profileId, avatar));
-            } catch {
-              return false;
-            }
-          }
-          // 1세션 1테이블 — 다른 방의 보존 좌석은 먼저 정리한다 (commitRoomMembership과 동일 규칙)
-          const previousRoomId = targetSession.roomId;
-          if (previousRoomId && previousRoomId !== roomId) {
-            if (!roomManager.leaveRoom(previousRoomId, profileId)) return false;
-            targetSocket.leave(previousRoomId);
-            targetSession.roomId = null;
-          }
-          if (!roomManager.leaveAllSeatsExcept(profileId, roomId)) return false;
-          const player: Player = {
-            id: profileId,
-            name: alias,
-            type: 'human',
-            avatar,
-            chips: seat.chips,
-            seatIndex: seat.seatIndex,
-            holeCards: [],
-            currentBet: 0,
-            totalContributed: 0,
-            status: 'waiting',
-            hasActed: false,
-            timeBankChips: 1,
-            ...(publicCosmetics ? { publicCosmetics } : {}),
-          };
-          if (!roomManager.joinRoom(roomId, player)) return false;
-          targetSession.roomId = roomId;
-          targetSocket.join(roomId);
-          eventLog.log('join-room:seated', {
-            roomId,
-            playerId: profileId,
-            data: { seat: seat.seatIndex, chips: seat.chips, story: true },
-          });
-          targetSocket.emit('room-joined', {
-            roomId,
-            gameState: {
-              ...room.engine.getPublicState(profileId),
-              turnTimeRemaining: roomManager.getTurnTimeRemaining(roomId),
-            },
-            chatHistory: roomManager.getChatHistory(roomId),
-          });
-          return true;
-        },
+        isOnline: soloHeroOnline,
+        seatHero: (profileId, roomId, seat) => seatSoloHero(profileId, roomId, seat, 'story'),
       },
     })
     : undefined;
   if (storyCoordinator && storyLiveAdapter) {
     roomManager.setStoryHooks(storyLiveAdapter);
     storyCoordinator.setLiveAdapter(storyLiveAdapter);
+  }
+
+  // 주간 도장 — 영속 저장소가 주어질 때만 켠다. 아레나 시즌 활성 여부와 무관하다.
+  const weeklyDojo = weeklyDojoRepository
+    ? new WeeklyDojoService({
+      repository: weeklyDojoRepository,
+      roomManager,
+      hero: {
+        isOnline: soloHeroOnline,
+        seatHero: (profileId, roomId, seat) => (
+          seatSoloHero(profileId, roomId, seat, 'weekly-dojo')
+        ),
+      },
+    })
+    : undefined;
+  if (weeklyDojo) {
+    roomManager.setWeeklyDojoHooks(weeklyDojo);
+    weeklyDojo.bindEvents({
+      onChanged: profileId => {
+        const target = sessions.getByPlayerId(profileId);
+        const targetSocket = target?.socketId
+          ? io.sockets.sockets.get(target.socketId)
+          : undefined;
+        if (!targetSocket) return;
+        try {
+          targetSocket.emit('weekly-dojo-update', weeklyDojo.getView(profileId));
+        } catch {
+          // 조회 실패가 방 진행을 막지 않는다 — 다음 폴링/재접속이 복구한다
+        }
+      },
+    });
   }
 
   // 소켓별 개인화(등록 여부·내 테이블) 토너먼트 목록 브로드캐스트 — room-list와 같은 계약
@@ -1644,6 +1707,15 @@ export function setupSocketHandlers(
     restoreOrEvict();
     // 방 없는 스토리 런(드릴·VN 중 새로고침)도 복원 — 방 복원과 독립
     storyCoordinator?.resend(session.playerId);
+    // 주간 도장은 DB가 진실이라 재접속 때 스냅샷만 다시 보내면 된다 (진행 중 시도가 있으면
+    // 「이어하기」로 확정 스택에서 재개한다)
+    if (weeklyDojo) {
+      try {
+        socket.emit('weekly-dojo-update', weeklyDojo.getView(session.playerId));
+      } catch {
+        // 조회 실패는 접속을 막지 않는다 — 패널이 다시 요청한다
+      }
+    }
     socket.emit(
       'arena-queue-update',
       arenaMatchmaker?.getPublicState(session.playerId) ?? { status: 'idle' },
@@ -1685,6 +1757,7 @@ export function setupSocketHandlers(
         && !session.tournamentEngagement
         && !arenaMatchmaker?.hasBlockingParticipation(session.playerId)
         && !registeredTournament
+        && !weeklyDojo?.hasLiveRoom(session.playerId)
       ) {
         return false;
       }
@@ -1695,6 +1768,91 @@ export function setupSocketHandlers(
       });
       return true;
     };
+
+    // --- 주간 도장: 방 무관 개인 도전 (소유권 → 레이트리밋 → 서비스) ---
+    const weeklyDojoUnavailable = <T>(ack?: AckCallback<T>): boolean => {
+      if (weeklyDojo) return false;
+      ack?.({
+        ok: false,
+        code: 'server-error',
+        message: '주간 도장을 지금은 사용할 수 없어요.',
+      });
+      return true;
+    };
+    const replyWeeklyDojo = <T>(
+      ack: AckCallback<T> | undefined,
+      result: { ok: true; value: T } | { ok: false; code: RealtimeErrorCode; message: string },
+    ): void => {
+      if (result.ok) ack?.({ ok: true, data: result.value });
+      else ack?.({ ok: false, code: result.code, message: result.message });
+    };
+    /**
+     * 다른 테이블·토너먼트·아레나·수련 런에 묶여 있으면 도전을 시작하지 않는다 —
+     * 착석 포트가 기존 좌석을 회수하면 두 개의 살아 있는 좌석/뱅크롤이 생긴다.
+     * 이미 내 주간 도장 테이블에 앉아 있는 경우는 예외(같은 방으로의 재진입).
+     */
+    const rejectWeeklyDojoStartWhileBusy = <T>(ack?: AckCallback<T>): boolean => {
+      const myRoomId = weeklyDojo?.currentRoomId(session.playerId) ?? null;
+      const busy = (!!session.roomId && session.roomId !== myRoomId)
+        || !!session.tournamentEngagement
+        || !!arenaMatchmaker?.hasBlockingParticipation(session.playerId)
+        || !!storyCoordinator?.getActiveRun(session.playerId);
+      if (!busy) return false;
+      ack?.({
+        ok: false,
+        code: 'action-rejected',
+        message: '테이블·토너먼트·아레나·수련을 먼저 마친 뒤 주간 도장을 시작할 수 있어요.',
+      });
+      return true;
+    };
+
+    socket.on('get-weekly-dojo', (...rawArgs: unknown[]) => {
+      const args = parsePayloadlessArgs<WeeklyDojoView>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (weeklyDojoUnavailable(ack)) return;
+      if (!ensureRateLimit('weeklyDojo', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      try {
+        ack?.({ ok: true, data: weeklyDojo!.getView(session.playerId) });
+      } catch {
+        ack?.({
+          ok: false,
+          code: 'server-error',
+          message: '주간 도장 정보를 불러오지 못했어요.',
+        });
+      }
+    });
+
+    socket.on('weekly-dojo-start', (...rawArgs: unknown[]) => {
+      const args = parseOptionalPayloadArgs<WeeklyDojoStartAck>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (weeklyDojoUnavailable(ack)) return;
+      if (!ensureRateLimit('weeklyDojoStart', '도전 시작 요청이 너무 빨라요.', ack)) return;
+      if (rejectWeeklyDojoStartWhileBusy(ack)) return;
+      replyWeeklyDojo(ack, weeklyDojo!.start(session.playerId));
+    });
+
+    socket.on('weekly-dojo-forfeit', (...rawArgs: unknown[]) => {
+      const args = parseOptionalPayloadArgs<WeeklyDojoCloseAck>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { ack } = args;
+      if (!ensureOwnership(ack)) return;
+      if (weeklyDojoUnavailable(ack)) return;
+      if (!ensureRateLimit('weeklyDojo', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      replyWeeklyDojo(ack, weeklyDojo!.forfeit(session.playerId));
+    });
 
     socket.on('get-story-progress', (...rawArgs: unknown[]) => {
       const args = parsePayloadlessArgs<StoryProgressView>(rawArgs);
@@ -2307,6 +2465,32 @@ export function setupSocketHandlers(
           return;
         }
       }
+      // 주간 도장 방도 직접 입장 불가 — 서비스가 앉힌 본인의 재입장(게임 복귀)만 허용한다.
+      // 목록에도 없는 방이라 존재를 드러내지 않고 room-not-found로 답한다.
+      if (room.config.weeklyDojoAttemptId) {
+        const mySeat = room.engine.state.players.some(
+          p => p.id === session.playerId && !p.pendingRemoval,
+        );
+        if (!mySeat) {
+          eventLog.log('join-room:reject', {
+            roomId, playerId: session.playerId, data: { reason: 'weekly-dojo-room' },
+          });
+          ack?.({ ok: false, code: 'room-not-found', message: '방을 찾을 수 없어요.' });
+          return;
+        }
+      }
+      // 주간 도장 테이블에 앉아 있는 동안에는 다른 방에 앉지 않는다 (좌석/뱅크롤 이중화 차단)
+      if (
+        session.roomId !== roomId
+        && weeklyDojo?.hasLiveRoom(session.playerId)
+      ) {
+        ack?.({
+          ok: false,
+          code: 'action-rejected',
+          message: '주간 도장 중에는 다른 테이블에 앉을 수 없어요 — 먼저 테이블을 나가 주세요.',
+        });
+        return;
+      }
       // 스토리 라이브 스텝 방은 직접 입장 불가 — 어댑터가 앉힌 히어로 본인의 재입장(게임 복귀)만
       // 허용한다. 목록에도 없는 방이므로 존재를 드러내지 않고 room-not-found로 답한다.
       if (room.config.storyChapterId) {
@@ -2469,6 +2653,8 @@ export function setupSocketHandlers(
             room.config.gameMode !== 'sng'
             && room.config.gameMode !== 'mtt'
             && !room.config.storyChapterId // 스토리 방 파산은 리바이가 아니라 어댑터의 실패 분기
+            // 주간 도장 파산도 리바이가 아니라 시도 종료다 — 스택을 새로 받으면 기록이 무의미해진다
+            && !room.config.weeklyDojoAttemptId
             && seated.chips <= 0
             && !inLiveHand
           ) {
@@ -2989,6 +3175,32 @@ export function setupSocketHandlers(
             code: 'action-rejected',
             message: '수련 중에는 [수련 그만두기]로만 테이블을 나갈 수 있어요.',
           });
+          return;
+        }
+        // 주간 도장 방 나가기 = 테이블만 닫는다 (확정 기록은 live로 보존, 「이어하기」로 재개).
+        // 기록을 닫는 것은 명시적 포기(weekly-dojo-forfeit)뿐이다. 진행 중 핸드는 서비스가
+        // 먼저 확정하므로 "지는 판에서 나가기"로 손실을 지울 수 없다.
+        if (roomManager.getRoom(roomId)?.config.weeklyDojoAttemptId) {
+          const left = weeklyDojo?.leaveTable(session.playerId);
+          if (!left?.ok) {
+            ack?.({
+              ok: false,
+              code: left?.code ?? 'server-error',
+              message: left?.message ?? '테이블을 정리하지 못했어요.',
+            });
+            return;
+          }
+          if (left.value.status === 'closing') {
+            // 올인 런아웃이 끝나야 결과가 확정된다 — 좌석/세션을 그대로 두고 기다린다.
+            // 정리되면 서버가 room-lost와 weekly-dojo-update를 보낸다.
+            ack?.({ ok: true, data: { status: 'reserved' } });
+            return;
+          }
+          // disposeRoom → onRoomDisposed가 socket.leave·session.roomId 정리를 이미 마쳤다
+          socket.leave(roomId);
+          session.roomId = null;
+          broadcastRoomList();
+          ack?.({ ok: true, data: { status: 'left' } });
           return;
         }
         if (isReserveMode) {
@@ -3994,6 +4206,7 @@ export function setupSocketHandlers(
       if (roomId) roomManager.refreshPlayerAvatar(roomId, profileId, avatarId);
     },
     storyProgress: profileId => storyCoordinator?.getProgress(profileId) ?? null,
+    weeklyDojo,
     revokeProfile: profileId => {
       storyCoordinator?.clearProfile(profileId);
       const revoked = sessions.revokeProfile(profileId);
@@ -4015,6 +4228,7 @@ export function setupSocketHandlers(
       tournamentManager.shutdown();
       storyCoordinator?.dispose();
       storyLiveAdapter?.shutdown();
+      weeklyDojo?.shutdown();
       sessions.shutdown();
       roomManager.shutdown();
       return report;

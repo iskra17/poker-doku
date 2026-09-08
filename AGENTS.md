@@ -400,6 +400,60 @@ npx tsc --noEmit
     보상 CG 7종·인연 씬 24장·씬 CG 12장) — 새 CG를 추가하면 `VIDEO_AVAILABLE` 등록 전까지 정지 CG로 폴백한다.
     생성은 로컬 ComfyUI + MiniMax H3 fl2va(first_frame=last_frame=CG → 이음새 없는 4.4초 루프, Wan 2.2 다운로드 불필요) —
     절차·러너 `scripts/art/story-video.md`·`story-video-h3.py`. ⑤**BGM 라이브러리**는 아래 `src/lib/sound/` 참조.
+- **주간 도장 (Weekly Dojo, 2026-09-09)**: 아레나 안의 **비동기 주간 도전**. 기획
+  `docs/planning-ui-economy-arena-2026-09-09.md` §6. 휴먼 1명 + **고정 봇 5명**(마스코트
+  mochi/choco/luna/gumi/paeng, `WEEKLY_DOJO_LINEUP_VERSION` 'wd-v1' — 성향을 바꾸면 버전을 올릴 것),
+  10/20 · 시작 2,000칩(100BB) · 시도당 최대 20핸드 · KST 주당 3시도, 점수 = 순 BB 합계.
+  **지갑 칩·경기권·공식 아레나 MMR·도장 XP/일일 미션 어디에도 닿지 않는다**(`economyMode 'practice'`,
+  `skipHandProgression` 항상 true). 덱은 항상 엔진 기본 CSPRNG — 모두에게 같은 고정 시드를 재사용하면
+  먼저 플레이한 사람이 카드를 공유한다. 규칙은 `src/lib/weekly-dojo/config.ts`, 순수 계산(주 경계·
+  milli-BB 환산·공동 순위)은 `rules.ts`.
+  - **권위**: `WeeklyDojoRepository`(마이그레이션 **v42**, SQL 본문은 `persistence/migrations-weekly-dojo.ts`
+    별도 모듈)가 유일한 점수 소스다. 클라이언트는 점수·스택·완료·핸드 인덱스를 제출할 수 없다
+    (소켓 payload에 필드가 없고, `hand_index`는 저장소가 `hands_played + 1`로 직접 계산한다).
+    `weekly_dojo_attempts`는 **플레이 전에** 시도 번호를 예약하고(불리한 기록 버리고 다시 뽑기 차단),
+    `committed_chips`에 **마지막으로 확정된 핸드 경계**의 스택만 담는다.
+    핸드 키는 `(attempt_id, room_epoch, hand_number)` — **에폭 필수**: 방을 다시 열면 새 `PokerEngine`의
+    `handNumber`가 1부터 시작하므로 에폭이 없으면 재개 후 첫 핸드들이 이전 기록과 충돌해 조용히
+    무시되고(추가 핸드·손실 삭제), 에폭은 `beginRoomEpoch()`가 방보다 **먼저** durable하게 올린다.
+    `UNIQUE(attempt_id, hand_index)` + `hands_played >= max_hands` 거절(cap-reached)이 상한 초과 기록을 막는다.
+    부분 유니크 인덱스 `WHERE status='live'`로 프로필당 라이브 시도는 1개 — 주가 바뀌어도 유지되므로
+    **지난 주 시도를 끝내야 새 주 시도가 열린다**.
+  - **경계 체크포인트**(`checkpoint_json`, 서버 전용 — 공개 뷰 금지): 봇 좌석별 칩·딜러 앵커·라인업
+    버전을 확정 경계와 **같은 트랜잭션**에 저장하고 재개 때 그대로 복원한다. 없으면 재개마다 봇 5명이
+    시작 스택으로 리필되고 버튼이 처음으로 돌아가 **칩 풀·상대 조건·블라인드 순서가 리셋**된다.
+    파서는 `lib/weekly-dojo/checkpoint.ts`이고 깨졌거나 비어 있으면(핸드를 친 시도인데 스냅샷 없음)
+    **시작 스택으로 리필하지 않고** 그 자리에서 포기로 확정한다.
+  - **런타임**: `WeeklyDojoService`는 `LiveTableAdapter`(스토리)와 **같은 병렬 훅 패턴**
+    (`WeeklyDojoRoomHooks` — 일반화 금지). 인메모리 세션은 **방이 살아 있는 동안만** 존재하고,
+    방이 사라지면(나가기·끊김·hold 상한 10분·서버 재시작) DB의 live 시도가 유일한 진실이라
+    「이어하기」가 **확정 스택·체크포인트**로 새 방을 연다(시작 스택으로 되돌리지 말 것 — 손실이 사라진다).
+    종료는 20핸드/파산/상대 소진/명시적 포기뿐이다. 부재(끊김·턴 타임아웃 마킹)면 `beforeHand`가
+    hold — 자리를 비운 사이 봇끼리 남은 핸드를 소진하지 못한다.
+  - **진행 중 핸드는 나가기/포기로 지울 수 없다**(핵심 공정성 계약): 히어로가 그 핸드에 기여한 채
+    떠나면 `RoomManager.foldWeeklyDojoHero()`(엔진 `processLeave` 폴드 + 완료/턴 재개 경로 유지)로
+    **즉시 폴드**시키고 "기여금 전액 포기" 경계를 먼저 영속한 뒤에야 방을 닫는다. 자리비움 자동 처리는
+    무료 체크를 고를 수 있어 "떠난 사람이 계속 플레이"하게 되므로 그 경로에 맡기지 말 것.
+    올인이라 팟 지분이 살아 있으면 런아웃이 끝날 때까지 기다렸다 닫는다(`closeIntent`, 상한 60초).
+    grace 만료·서버 주도 회수는 `onPlayerLeave`가 같은 경계를 남긴다. 연타(나가기/포기 반복)는 멱등이고
+    포기만 의도를 승격한다. **진짜 서버 크래시만** 미확정 핸드를 롤백한다.
+    영속 실패는 성공으로 보고하지 않는다 — 완료가 DB에 커밋된 뒤에만 ack가 성공이고, 실패는
+    hold + 재시도(시도는 live로 남는다).
+  - **방 계약**: `RoomConfig.weeklyDojoAttemptId`(서버 전용) 표식. `isPrivateSoloRoom`
+    (스토리 ∪ 주간 도장) 가드가 로비 목록·초대 코드·봇 재충원·탑업/리바이·자리비움·나가기 예약·
+    파산 30초 회수·grace 좌석 보존을 함께 막는다. 타인 입장은 room-not-found(존재 비노출),
+    다른 방 착석 중에는 시작 거절(좌석·뱅크롤 이중화 차단). 나가기(leave-room)는 **테이블만** 닫고
+    기록은 live로 남으며, 기록을 닫는 것은 `weekly-dojo-forfeit`뿐이다.
+  - **프로토콜**: `get-weekly-dojo`/`weekly-dojo-start`/`weekly-dojo-forfeit`(레이트리밋
+    `weeklyDojo` 10/5s · `weeklyDojoStart` 3/10s) + 서버 push `weekly-dojo-update`,
+    room-lost reason `'weekly-dojo-end'`(story-end과 같이 조용한 정리). 순위는 **3시도를 모두
+    끝낸 프로필만**(미완료는 진행 기록), 동점은 공동 순위(먼저 시작한 사람이 이기지 않는다).
+    UI는 `components/arena/WeeklyDojoPanel.tsx`(자급자족 — ArenaLobby가 한 줄로 렌더, 시즌 비활성에도 노출).
+    포기/나가기 ack는 `status: 'closed' | 'left' | 'closing'` — 'closing'은 남은 핸드를 마무리하는 중이라
+    leave-room은 `'reserved'`로 내려 좌석을 유지한다.
+    회귀: `weekly-dojo-repository.test.ts` · `weekly-dojo-service.test.ts` ·
+    `socket-handler.weekly-dojo.test.ts` · `lib/weekly-dojo/rules.test.ts` ·
+    `lib/weekly-dojo/checkpoint.test.ts` · `store/weekly-dojo-store.test.ts`.
 - **운영자 모드 (QA·검수용 비밀 경로, 2026-09-03)**: 서버 세션 capability `operator`가 단일 권한 소스 —
   `src/server/operator-access.ts`(`OPERATOR_PROFILE_IDS` ∪ `TOURNAMENT_OPERATOR_PROFILE_IDS`, **production이 아니고 둘 다 비면
   전원 운영자**·production에서 비면 아무도 아님, 테스트는 `operatorProfileIds` 옵션/하네스 `grantOperator`). 서버가 운영자에게

@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { STORY_REWARD_SUPPLEMENTS_SQL } from './story-reward-supplements';
+import { WEEKLY_DOJO_MIGRATION } from './migrations-weekly-dojo';
 
 export interface Migration {
   version: number;
@@ -7214,6 +7215,8 @@ export const migrations: readonly Migration[] = [
     `,
   },
   { version: 41, name: 'story_reward_chip_supplements', sql: STORY_REWARD_SUPPLEMENTS_SQL },
+  // 주간 도장 (Weekly Dojo) — SQL 본문은 별도 모듈에 둔다 (병합 시 버전만 옮기면 되게)
+  WEEKLY_DOJO_MIGRATION,
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

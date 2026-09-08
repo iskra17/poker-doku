@@ -304,6 +304,13 @@ export interface RoomConfig {
   storyHandTag?: 'practice' | 'sparring';
   /** 봇 사고 지연 배율 (1 = 기본, 0.5 = 두 배 빠름) — 스토리 방 연출용, 서버 전용 */
   botThinkScale?: number;
+  /**
+   * 주간 도장 방 표식 — 세팅되면 RoomManager가 주간 도장 훅(WeeklyDojoRoomHooks) 경로를 탄다:
+   * 로비 목록·초대 코드 없음, 타인 입장 거절, 봇 재충원/탑업/자리비움/나가기 예약 거절,
+   * 히어로 좌석의 서버 타이머 회수 없음. 서버 전용 (getPublicState는 config를 노출하지 않는다).
+   * 값은 이 방이 담당하는 시도 id — 방 1개 = 시도 1개.
+   */
+  weeklyDojoAttemptId?: string;
 }
 
 export interface Room {

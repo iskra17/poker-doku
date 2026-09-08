@@ -25,6 +25,7 @@ import {
 } from './http-rate-limit';
 import { openPokerDatabase } from './persistence/database';
 import { StoryRepository } from './story-repository';
+import { WeeklyDojoRepository } from './weekly-dojo-repository';
 import type { Chapter } from '../lib/story/types';
 import { PROFILE_COOKIE_NAME } from './profile-http';
 import { ProfileManager, type ProfileKdf } from './profile-manager';
@@ -74,6 +75,8 @@ export interface SocketTestHarness {
   profileManager: ProfileManager;
   /** 수련 스토리 영속 — 테스트가 완료 기록·플래그를 시드해 후속 모드를 열 때 쓴다 */
   storyRepository: StoryRepository;
+  /** 주간 도장 영속 — 테스트가 시도 기록을 시드/검증할 때 쓴다 */
+  weeklyDojoRepository: WeeklyDojoRepository;
   createProfile: (input?: { avatarId?: string }) => Promise<TestProfileCredential>;
   recoverProfile: (recoveryWords: string) => Promise<TestProfileCredential | null>;
   connect: (
@@ -139,6 +142,7 @@ export async function createSocketTestHarness(
   const economyRepository = new EconomyRepository(database);
   const economyService = new EconomyService(economyRepository);
   const storyRepository = new StoryRepository(database);
+  const weeklyDojoRepository = new WeeklyDojoRepository(database);
   const economyRuntime = new EconomyRuntime(economyService);
   const progressionRepository = new ProgressionRepository(database);
   const progressionService = new ProgressionService(database, progressionRepository);
@@ -262,6 +266,7 @@ export async function createSocketTestHarness(
       chapters: options.storyChapters,
     }),
     storyChapters: options.storyChapters,
+    weeklyDojo: weeklyDojoRepository,
     ...(arenaService
       ? {
         arena: {
@@ -418,6 +423,7 @@ export async function createSocketTestHarness(
       };
     }),
     storyRepository,
+    weeklyDojoRepository,
     recentEvents: () => eventLog.recent(),
     walletState: profileId => {
       const row = database.db.prepare(`

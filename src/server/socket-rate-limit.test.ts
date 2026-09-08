@@ -21,6 +21,8 @@ describe('소켓 sliding-window 제한', () => {
       chat: { limit: 1, windowMs: 700 },
       story: { limit: 10, windowMs: 5_000 },
       storyStart: { limit: 2, windowMs: 10_000 },
+      weeklyDojo: { limit: 10, windowMs: 5_000 },
+      weeklyDojoStart: { limit: 3, windowMs: 10_000 },
     });
   });
 

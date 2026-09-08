@@ -15,6 +15,10 @@ export const SOCKET_RATE_LIMITS = {
   story: { limit: 10, windowMs: 5_000 },
   // 챕터/데일리 시작은 run 생성 비용이 있어 별도 저빈도 그룹
   storyStart: { limit: 2, windowMs: 10_000 },
+  // 주간 도장: 스냅샷 조회 + 포기 합산
+  weeklyDojo: { limit: 10, windowMs: 5_000 },
+  // 시작/이어하기는 방 생성 비용이 있어 별도 저빈도 그룹 (나가기→이어하기 왕복 여유로 3회)
+  weeklyDojoStart: { limit: 3, windowMs: 10_000 },
 } as const satisfies Record<string, SocketRateLimitRule>;
 
 export class SocketRateLimiter {
