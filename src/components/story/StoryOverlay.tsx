@@ -134,8 +134,8 @@ export default function StoryOverlay() {
         <PracticePromptBanner text={prompt} onDismiss={() => setPromptDismissed(stepKey)} />
       )}
 
-      {/* HUD는 중앙 테이블의 오른쪽 여백에 둔다. 모바일은 하단 도크 위까지만 차지하고,
-          데스크톱은 채팅 패널 앞의 별도 여백을 사용한다. */}
+      {/* 수련 중 데스크톱 채팅도 버튼으로 열어, 오른쪽 여백에는 미션을 표시한다.
+          모바일도 패널은 하단 액션 도크 위까지만 차지한다. */}
       <div className="pointer-events-none absolute inset-0 z-30">
         <div className="relative h-full w-full">
           {operator && (

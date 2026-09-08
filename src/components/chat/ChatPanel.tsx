@@ -4,7 +4,7 @@ import { useIsMobile } from '@/lib/hooks/use-mobile';
 import MobileChatPanel from './MobileChatPanel';
 import DesktopChatPanel from './DesktopChatPanel';
 
-export default function ChatPanel() {
+export default function ChatPanel({ compact = false }: { compact?: boolean }) {
   const isMobile = useIsMobile();
-  return isMobile ? <MobileChatPanel /> : <DesktopChatPanel />;
+  return isMobile || compact ? <MobileChatPanel /> : <DesktopChatPanel />;
 }

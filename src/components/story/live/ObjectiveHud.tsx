@@ -27,26 +27,19 @@ const TAG_STYLE: Record<'연습' | '대결', string> = {
 
 function ObjectiveRow({ line }: { line: ObjectiveHudLine }) {
   const achieved = line.achieved === true;
-  const ratio = line.target !== null && line.target > 0
-    ? Math.min(1, line.progress / line.target)
-    : achieved ? 1 : 0;
   // 체크리스트 항목은 부모(any-k-of) 바로 아래에 들여쓴다 — 각각이 통과 조건으로 읽히면 안 된다
   const child = line.group === 'checklist';
   const typeLabel = child ? '체크리스트' : line.primary ? '통과 조건' : '보너스';
   const detail = formatObjectiveDetailProgress(line);
   return (
-    <li className={`rounded-lg border border-mystic/20 bg-mystic/5 p-2 ${child ? 'ml-3' : ''}`}>
+    <li className={`rounded-lg border border-mystic/20 bg-mystic/5 p-1.5 md:p-2 ${child ? 'ml-3' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-1 text-[9px]">
-        <span className={child ? 'text-mystic' : line.primary ? 'font-bold text-blossom' : 'text-mystic'}>{typeLabel}</span>
-        <span className={achieved ? 'text-cyber' : 'text-ink-dim'}>
-          {achieved ? '✓ 달성' : line.achieved === null ? '판정 대기' : '미달성'}
+        <span className={child ? 'text-mystic' : line.primary ? 'font-bold text-blossom' : 'text-mystic'}>{typeLabel}{achieved ? ' ✓' : ''}</span>
+        <span className={detail ? 'tabular text-gilded' : achieved ? 'text-cyber' : 'text-ink-dim'}>
+          {detail ?? (achieved ? '달성' : line.achieved === null ? '판정 대기' : '미달성')}
         </span>
       </div>
       <p className={`mt-1 whitespace-normal break-words text-[11px] leading-relaxed ${achieved ? 'text-cyber' : 'text-ink'}`}>{line.label}</p>
-      {detail && <p className="mt-1 tabular text-[10px] text-gilded">{detail}</p>}
-      <div className="mt-1 h-1 overflow-hidden rounded-full bg-white/10" aria-hidden>
-        <span className={`block h-full rounded-full ${achieved ? 'bg-cyber' : 'bg-mystic'}`} style={{ width: `${Math.round(ratio * 100)}%` }} />
-      </div>
     </li>
   );
 }

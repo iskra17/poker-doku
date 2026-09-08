@@ -190,7 +190,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
                 finishPlace={myPlayer?.finishPlace}
               />
               <ActionLog />
-              <ChatPanel />
+              <ChatPanel compact={inStoryRoom} />
               {/* 승/패 컷인도 컨테이너 안 왼쪽(액션 로그 아래)에 — 광폭 화면에서 양끝으로
                   흩어지지 않게 (2026-07-22 유저 피드백). 승리 38% / 패배 62%로 스택 */}
               <WinnerCutIn isMobile={isMobile} />

@@ -29,6 +29,8 @@ export default function MobileChatPanel() {
       {/* Chat toggle button — 액션 독(불투명, z-30)보다 위에 떠야 가려지지 않는다 */}
       <button
         onClick={() => setIsOpen(!isOpen)}
+        aria-label={isOpen ? '채팅 닫기' : '채팅 열기'}
+        aria-expanded={isOpen}
         className="fixed right-3 z-30 w-10 h-10 rounded-full bg-purple-600/80 backdrop-blur-sm flex items-center justify-center text-white shadow-lg border border-purple-500/30"
         style={{ bottom: `calc(${ACTION_DOCK_HEIGHT + 12}px + var(--safe-bottom))` }}
       >
@@ -58,7 +60,7 @@ export default function MobileChatPanel() {
               exit={{ y: '100%' }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
               className="fixed bottom-0 left-0 right-0 z-40 bg-[#0d0818]/70 backdrop-blur-[2px] rounded-t-2xl border-t border-purple-500/20 flex flex-col pb-safe"
-              style={{ maxHeight: '60dvh' }}
+              style={{ maxHeight: `min(60dvh, calc(100dvh - ${ACTION_DOCK_HEIGHT + 64}px))`, bottom: `calc(${ACTION_DOCK_HEIGHT}px + var(--safe-bottom))` }}
             >
               {/* Handle */}
               <div className="flex justify-center py-2">
@@ -68,7 +70,7 @@ export default function MobileChatPanel() {
               {/* Header */}
               <div className="px-4 pb-2 flex items-center justify-between">
                 <h3 className="text-purple-300 font-bold text-sm">Chat</h3>
-                <button onClick={() => setIsOpen(false)} className="text-gray-400 text-lg">&times;</button>
+                <button onClick={() => setIsOpen(false)} aria-label="채팅 창 닫기" className="text-gray-400 text-lg">&times;</button>
               </div>
 
               {/* Messages */}
