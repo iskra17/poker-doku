@@ -990,6 +990,9 @@ export default function AdminPage() {
             {logoutError && (
               <span role="alert" className="text-blossom">{logoutError}</span>
             )}
+            <a href="/qa" className="rounded border border-gilded/40 bg-gilded/10 px-2 py-1 text-gilded hover:bg-gilded/20">
+              새 사용자 QA
+            </a>
             {remembered && (
               <span className="rounded-full border border-cyber/40 bg-cyber/10 px-2 py-0.5 font-bold text-cyber">
                 이 기기 로그인 유지

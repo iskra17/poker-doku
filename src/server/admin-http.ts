@@ -9,6 +9,7 @@ import {
   resolveAdminRequestOrigin,
 } from './admin-session';
 import { clientAddress } from './client-address';
+import { handleAdminQa } from './admin-qa-http';
 import { eventLog } from './event-log';
 import { FeedbackRepository } from './feedback-http';
 import { GAME_CONFIG_GROUP_LABELS } from './game-config/registry';
@@ -518,6 +519,11 @@ export function createAdminHttpHandler(options: AdminHttpOptions) {
         }
         return true;
       }
+    }
+
+    if (pathname === '/api/admin/qa') {
+      handleAdminQa(req, res, options.production);
+      return true;
     }
 
     if (pathname === '/api/admin/devices') {

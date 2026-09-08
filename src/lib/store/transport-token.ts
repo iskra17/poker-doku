@@ -1,3 +1,5 @@
+import { qaAwareStorage } from '../qa-browser';
+
 const STORAGE_KEY = 'poker-doku-session';
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{16,128}$/u;
 
@@ -70,9 +72,9 @@ export function createTransportTokenProvider({
 
 const browserProvider = createTransportTokenProvider({
   storage: {
-    getItem: key => typeof window === 'undefined' ? null : window.localStorage.getItem(key),
+    getItem: key => typeof window === 'undefined' ? null : qaAwareStorage().getItem(key),
     setItem: (key, value) => {
-      if (typeof window !== 'undefined') window.localStorage.setItem(key, value);
+      if (typeof window !== 'undefined') qaAwareStorage().setItem(key, value);
     },
   },
   randomUUID: () => {

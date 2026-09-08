@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
+import { qaAwareStorage } from '@/lib/qa-browser';
 
 const SEEN_KEY = 'poker-doku-coachmarks-v1';
 
 function alreadySeen(): boolean {
   try {
-    return window.localStorage.getItem(SEEN_KEY) === '1';
+    return qaAwareStorage().getItem(SEEN_KEY) === '1';
   } catch {
     return true; // 저장 불가 환경이면 매판 뜨는 것보다 안 뜨는 쪽이 낫다
   }
@@ -28,7 +29,7 @@ export default function Coachmarks({ chipMessage }: { chipMessage: string }) {
   const dismiss = () => {
     setVisible(false);
     try {
-      window.localStorage.setItem(SEEN_KEY, '1');
+      qaAwareStorage().setItem(SEEN_KEY, '1');
     } catch {
       // 저장 실패 시 이번 세션만 숨김
     }
