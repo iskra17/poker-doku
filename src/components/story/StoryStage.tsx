@@ -323,21 +323,19 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
 
 function ExamSkipCard({ pending, onSkip }: { pending: boolean; onSkip: () => void }) {
   return (
-    <aside className="w-full max-w-md rounded-xl border border-gilded/30 bg-gilded/5 p-3" aria-label="문제만 풀기 안내">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-bold text-gilded">설명은 건너뛰고 문제만 풀 수 있어요</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">85점 이상이면 첫 완료 보상을 받아요. 지금까지 푼 문제와 점수는 유지돼요.</p>
-        </div>
+    <details className="w-full max-w-md text-sm text-ink-dim" aria-label="문제만 풀기 안내">
+      <summary className="min-h-11 cursor-pointer content-center rounded-lg px-2">이미 아는 내용인가요?</summary>
+      <div className="space-y-2 px-2 pb-2">
+        <p className="text-xs leading-relaxed">문제만 풀어 85점 이상이면 첫 완료 보상을 받아요. 지금까지 푼 문제와 점수는 유지돼요.</p>
         <button
           type="button"
           onClick={onSkip}
           disabled={pending}
-          className="min-h-11 shrink-0 rounded-xl border border-gilded/50 bg-gilded/15 px-3 py-2 text-xs font-bold text-gilded transition hover:bg-gilded/25 focus-visible:outline-2 focus-visible:outline-gilded disabled:opacity-50"
+          className="min-h-11 rounded-lg border border-ink/20 px-3 py-2 text-sm text-ink hover:bg-elevated disabled:opacity-50"
         >
           설명 건너뛰고 문제만 풀기
         </button>
       </div>
-    </aside>
+    </details>
   );
 }

@@ -91,7 +91,7 @@ export default function DrillCard({
     const count = drill.retryOffer.count;
     return (
       <div className="flex w-full max-w-md flex-col gap-3" aria-label="재출제 선택">
-        <div className="flex items-center gap-2 text-[10px] text-ink-dim">
+        <div className="flex items-center gap-2 text-xs text-ink-dim">
           <span className="font-bold tracking-wider">문제 {drill.total}/{drill.total}</span>
           <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-valuenow={drill.total} aria-valuemin={0} aria-valuemax={drill.total}>
             <span className="block h-full rounded-full bg-mystic" style={{ width: '100%' }} />
@@ -118,7 +118,7 @@ export default function DrillCard({
             type="button"
             onClick={onRetry}
             disabled={pending}
-            className="flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50"
+            className="flex-1 rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
           >
             다시 풀기 {count}문
           </button>
@@ -138,7 +138,7 @@ export default function DrillCard({
         teacherColor={momentSpeaker?.color ?? null}
       />
       {/* 진행 바 + 콤보 — 첫 패스 분모는 불변, 재출제는 별도 카운터 */}
-      <div className="flex items-center gap-2 text-[10px] text-ink-dim">
+      <div className="flex items-center gap-2 text-xs text-ink-dim">
         <span className={`font-bold tracking-wider ${retry ? 'text-blossom' : ''}`}>
           {retry ? `재출제 ${retry.index + 1}/${retry.total}` : `문제 ${drill.index + 1}/${drill.total}`}
         </span>
@@ -205,7 +205,7 @@ export default function DrillCard({
       {hint && !answered && (
         <p className="rounded-xl border border-gilded/40 bg-gilded/10 px-3 py-2 text-xs text-ink" role="note">
           <span className="mr-1 font-bold text-gilded">힌트</span>{hint}
-          {!retry && <span className="ml-1 text-[10px] text-ink-dim">(이 문항은 ½점)</span>}
+          {!retry && <span className="ml-1 text-xs text-ink-dim">(이 문항은 ½점)</span>}
         </p>
       )}
 
@@ -240,7 +240,7 @@ export default function DrillCard({
             tone={lastResult.correct ? 'correct' : 'wrong'}
             text={lastResult.correct ? `${praise} ${lastResult.explanation.text}` : lastResult.explanation.text}
           />
-          <p className="text-[11px] text-ink-dim">
+          <p className="text-xs text-ink-dim">
             정답: <span className="font-bold text-ink">{describeCorrectAnswer(lastResult.correctAnswer)}</span>
           </p>
           <button
@@ -254,7 +254,7 @@ export default function DrillCard({
           </button>
         </>
       )}
-      <p className="sr-only">출제 {teacherId}</p>
+      <p className="sr-only">출제 {resolveSpeaker(teacherId, partnerId).name}</p>
     </div>
   );
 }

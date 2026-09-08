@@ -43,14 +43,14 @@ export default function LessonPage({ title, blocks, partnerId, onFinish, beginne
   if (!block) {
     return (
       <div className="w-full max-w-md rounded-2xl border border-mystic/25 bg-panel/90 p-4 text-center">
-        <button type="button" onClick={onFinish} className="rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2 text-sm font-bold text-white">다음</button>
+        <button type="button" onClick={onFinish} className="rounded-xl bg-blossom px-4 py-2 text-sm font-bold text-abyss">다음</button>
       </div>
     );
   }
 
   return (
     <div className="flex w-full max-w-md flex-col gap-3" aria-label={title}>
-      <div className="flex items-center justify-between text-[10px] text-ink-dim">
+      <div className="flex items-center justify-between text-xs text-ink-dim">
         <span className="font-bold tracking-wider">{title}</span>
         <div className="flex items-center gap-2">
           <span>{blockIndex + 1}/{blocks.length}</span>
@@ -69,7 +69,7 @@ export default function LessonPage({ title, blocks, partnerId, onFinish, beginne
       <motion.div key={blockIndex} initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.22 }}>
         {block.kind === 'concept-card' && (
           <article className="rounded-2xl border border-mystic/30 bg-panel/90 p-4">
-            <p className="text-[10px] font-bold tracking-widest text-mystic">개념 카드</p>
+            <p className="text-xs font-bold tracking-widest text-mystic">개념 카드</p>
             <h3 className="mt-1 text-base font-bold text-ink">{block.title}</h3>
             <p className="mt-2 text-sm leading-relaxed text-ink">{block.body}</p>
             {block.formula && (
@@ -107,7 +107,7 @@ function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pend
           </div>
         )}
         <div className="min-w-0 flex-1">
-          {who.name && <p className="text-[11px] font-bold" style={{ color: who.color ?? undefined }}>{who.name}</p>}
+          {who.name && <p className="text-xs font-bold" style={{ color: who.color ?? undefined }}>{who.name}</p>}
           <p className="text-sm leading-relaxed text-ink">{display}</p>
         </div>
       </div>
@@ -168,11 +168,11 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
         onDismiss={onDismissGuide}>
         {finished || feedback ? '읽었으면 다음 버튼을 눌러요.' : answerComplete ? '확인을 눌러 답을 살펴봐요.' : '내 카드와 보드를 보고 답을 골라요.'}
       </ContextGuide>}
-      <p className="text-[10px] font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
+      <p className="text-xs font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
       <div className="mt-2">
         <DrillTableView situation={merged} />
       </div>
-      <p className="mt-2 text-[11px] leading-relaxed text-ink-dim" aria-label="상황 설명">{intro}</p>
+      <p className="mt-2 text-xs leading-relaxed text-ink-dim" aria-label="상황 설명">{intro}</p>
       <div className="mt-2 flex gap-3">
         {who.artId && (
           <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-gilded/30">
@@ -180,7 +180,7 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-bold" style={{ color: who.color ?? undefined }}>{who.name}</p>
+          <p className="text-xs font-bold" style={{ color: who.color ?? undefined }}>{who.name}</p>
           <p className="text-sm leading-relaxed text-ink" aria-live="polite">{display}</p>
         </div>
       </div>
