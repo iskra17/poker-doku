@@ -55,14 +55,15 @@ describe('arena Korean lobby UI contract', () => {
     expect(result).not.toMatch(/상금|칩/);
   });
 
-  it('integrates three lobby choices, ticket status, and Arena tournament result', () => {
+  it('integrates four concise lobby choices, ticket status, and Arena tournament result', () => {
     const page = read('src/app/page.tsx');
     const economy = read('src/components/lobby/EconomyBar.tsx');
     const overlay = read('src/components/table/TournamentResultOverlay.tsx');
 
-    expect(page).toContain('일반 게임');
-    expect(page).toContain('포커 아레나');
-    expect(page).toContain('수련 과제');
+    expect(page).toContain("['games', '게임']");
+    expect(page).toContain("['story', '스토리']");
+    expect(page).toContain("['arena', '아레나']");
+    expect(page).toContain("['missions', '과제']");
     expect(page).toContain('<ArenaLobby');
     expect(economy).toContain('아레나 경기권');
     expect(overlay).toContain('ArenaResultSummary');

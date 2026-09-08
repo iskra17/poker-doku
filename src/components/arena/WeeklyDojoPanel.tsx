@@ -97,6 +97,7 @@ export default function WeeklyDojoPanel() {
         <h3 id="weekly-dojo-title" className="text-base font-bold text-ink">주간 도전</h3>
         <p className="text-xs text-ink-dim">{daysLeft(view)}일 남음</p>
       </div>
+      <p className="mt-1 text-xs text-ink-dim">{view.rules.startingBB}BB · {view.rules.maxHands}핸드 · 주 {view.rules.attemptsPerWeek}회 · 무료</p>
 
       <dl className="mt-3 grid grid-cols-2 gap-2">
         <div className="rounded-xl bg-elevated p-3">
@@ -187,7 +188,7 @@ export default function WeeklyDojoPanel() {
           </li>
           <li>같은 봇 5명과 고정 라인업으로 진행하며, 지갑 칩·경기권·공식 아레나 점수와 무관해요.</li>
           <li>나가면 도전은 잠시 멈추고 같은 기록으로 이어할 수 있어요. 포기는 별도 확인 후 잔여 스택을 반납하고 -100BB로 기록하며 슬롯을 소모해요.</li>
-          <li>3회 기록의 순 BB 합계로 순위를 정하고, 3회를 모두 마친 사람끼리는 공동 순위예요.</li>
+          <li>3회를 모두 마치면 순 BB 합계로 순위를 정해요. 같은 점수는 공동 순위예요.</li>
           <li>카드는 매번 새로 섞여요.</li>
           <li>
             상대(고정 {view.rules.lineupVersion}): {view.rules.lineup.map(seat => seat.name).join(' · ')}
