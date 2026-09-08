@@ -155,12 +155,12 @@ export default function RoomList({
       <div className="mb-2 flex flex-none items-center justify-between md:mb-3">
         <h2 className="text-base font-bold text-ink md:text-lg">테이블</h2>
         {PUBLIC_MTT_ENABLED && modeFilter === 'mtt' && canCreateTournament ? (
-          <Button variant="primary" size="sm" onClick={() => setMttCreateOpen(true)}>
+          <Button variant="secondary" size="sm" onClick={() => setMttCreateOpen(true)}>
             + 토너먼트 개설
           </Button>
         ) : modeFilter !== 'mtt' ? (
           <Button
-            variant="primary"
+            variant="secondary"
             size="sm"
             onClick={() => useGameStore.getState().setShowCreateRoom(true)}
           >
@@ -186,7 +186,12 @@ export default function RoomList({
             </div>
             <p className="mt-1 text-xs leading-relaxed text-ink-dim">{mySeatStatusLine(room)}</p>
           </div>
-          <Button variant="success" size="sm" className="shrink-0" onClick={() => onJoin(room.id)}>
+          <Button
+            variant="primary"
+            size="sm"
+            className="shrink-0 min-w-[5rem] whitespace-nowrap"
+            onClick={() => onJoin(room.id)}
+          >
             {room.mode !== 'sng' && (room.mySeat?.chips ?? 0) <= 0 ? '리바이' : '게임 복귀'}
           </Button>
         </motion.div>
@@ -212,9 +217,9 @@ export default function RoomList({
             </p>
           </div>
           <Button
-            variant="success"
+            variant="primary"
             size="sm"
-            className="shrink-0"
+            className="shrink-0 min-w-[5rem] whitespace-nowrap"
             onClick={() => joinRoom(t.mySeat!.roomId, 0, 0)}
           >
             게임 복귀
@@ -391,8 +396,9 @@ export default function RoomList({
 
             <Button
               // 내 좌석이 보존된 방은 잠금(시작된 SnG)/만석과 무관하게 복귀 가능
-              variant={room.mySeat ? 'success' : room.locked || isRoomFull(room) ? 'secondary' : 'success'}
+              variant={room.mySeat ? 'primary' : 'secondary'}
               size="sm"
+              className="shrink-0 min-w-[3.5rem] whitespace-nowrap px-2"
               disabled={!room.mySeat && (room.locked || isRoomFull(room))}
               onClick={() => onJoin(room.id)}
             >

@@ -1,9 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
-import CharacterImage from '@/components/characters/CharacterImage';
-import { getCharacterById } from '@/lib/characters';
-import { getChapter, STORY_CHAPTERS } from '@/lib/story/chapters';
+import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import {
   ACT_BELT,
   ACT_TITLE,
@@ -13,12 +11,9 @@ import {
   chapterSkills,
   recommendChapter,
   recommendationCopy,
-  teacherArtId,
-  teacherDisplayName,
 } from '@/lib/story/story-hub-rules';
-import { nextStoryRewards } from '@/lib/story/rewards/catalog';
+import { nextStoryRewards, STORY_REWARD_CATALOG } from '@/lib/story/rewards/catalog';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
-import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
@@ -29,7 +24,7 @@ import ReviewNotePanel from './ReviewNotePanel';
 
 /**
  * 수련 스토리 허브 — **비선형 수련 목록**(2026-09-03 피드백 ②).
- * 띠 헤더 → 추천 수련 카드(진행 중 > 약점 > 첫 방문 > 첫 순서) → 수련 목록(막별, 순서 강제 없음 —
+ * 띠 헤더 → 한 줄 추천 이유(진행 중 > 약점 > 첫 방문 > 첫 순서) → 수련 목록(막별, 순서 강제 없음 —
  * 카드마다 다루는 유형과 내 정확도를 칩으로 보여 "부족한 부분"부터 고르게 한다) → 오늘의 수련/복습 노트.
  * 데이터는 서버 진행 뷰(StoryProgressView)와 정적 챕터 레지스트리를 합쳐 그린다.
  */
@@ -46,11 +41,6 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null) as StoryHeroineId | null;
 
   const recommendation = progress ? recommendChapter(STORY_CHAPTERS, progress) : null;
-  const recommended = recommendation ? getChapter(recommendation.chapterId) : undefined;
-  const recommendedTeacherId = recommended?.teacher === 'partner' ? (partnerId ?? 'miyako') : (recommended?.teacher ?? 'miyako');
-  const recommendedTeacher = getCharacterById(teacherArtId(recommendedTeacherId));
-  const recommendedTeacherName = teacherDisplayName(recommendedTeacherId, id => getCharacterById(id)?.name);
-  const recommendedOutfit = useOutfitId(recommendedTeacherId);
 
   const acts = useMemo(() => {
     if (!progress) return [];
@@ -68,7 +58,14 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         chapter,
         row: byId.get(chapter.id)!,
         skills: chapterSkills(chapter, progress.drillStats),
-        // 이 챕터로 아직 못 받은 보상(칩 제외) — 첫 완주/S 조건 문구와 함께
+        walletReward: STORY_REWARD_CATALOG
+          .filter(item => {
+            if (item.kind !== 'chips' || granted.has(item.id)) return false;
+            const trigger = item.trigger;
+            return trigger.kind === 'chapter-first-clear' && trigger.chapterId === chapter.id;
+          })
+          .reduce((sum, item) => sum + (item.chipAmount ?? 0), 0),
+        // 이 챕터로 아직 못 받은 보상(지갑 칩 제외) — 첫 완주/S 조건 문구와 함께
         rewardHints: nextStoryRewards(STORY_CHAPTERS, granted, chapter.id, 2)
           .filter(item => item.trigger.kind !== 'act-complete')
           .map(item => `${item.name} (${item.trigger.kind === 'chapter-grade' ? 'S등급' : '첫 완주'})`),
@@ -89,14 +86,8 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   }
 
   const activeRun = progress.activeRun;
-  const recommendedRow = recommended ? progress.chapters.find(chapter => chapter.chapterId === recommended.id) : undefined;
-  const recommendedState = recommendedRow ? chapterCardState(recommendedRow, activeRun) : null;
-  const inProgress = recommendation?.reason === 'in-progress';
   // 다음 승급 안내: 미완료 챕터가 남은 가장 낮은 막
   const nextAct = acts.find(({ chapters }) => chapters.some(({ row }) => row.completions === 0))?.act ?? null;
-  const recommendedHints = recommended
-    ? acts.flatMap(({ chapters }) => chapters).find(({ chapter }) => chapter.id === recommended.id)?.rewardHints ?? []
-    : [];
 
   return (
     <section className="mx-auto mb-4 w-full max-w-4xl px-3 md:px-4" aria-labelledby="story-hub-title">
@@ -115,64 +106,31 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         </span>
       </div>
 
-      {/* 추천 수련 (담당 히로인 카드) — 순서 강제가 아니라 제안 */}
-      {recommendation && recommended && (
-        <div className="mb-2 rounded-xl border border-blossom/30 bg-panel/90 p-3" aria-label="추천 수련">
-          <div className="flex items-center gap-2.5">
-            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: `${recommendedTeacher?.color ?? '#fff'}55` }}>
-              <CharacterImage characterId={teacherArtId(recommendedTeacherId)} expression="happy" round={false} outfitId={recommendedOutfit} className="h-full w-full text-3xl" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-bold tracking-wide" style={{ color: recommendedTeacher?.color }}>
-                {inProgress ? '진행 중' : '추천 수련'} · CH{chapterNumber(STORY_CHAPTERS, recommended.id)} · {recommendedTeacherName}
-              </p>
-              <h3 className="truncate text-base font-bold text-ink">{recommended.title}</h3>
-              <p className="truncate text-sm text-ink-dim">{recommended.subtitle} · 약 {recommended.estimatedMinutes}분</p>
-              <p className="truncate text-xs text-ink-dim">
-                진행 {recommendedRow?.completions ?? 0}회 · {recommendedHints.length > 0 ? `보상 · ${recommendedHints.join(' · ')}` : '보상 수령 완료'}
-              </p>
-              <p className={`truncate text-xs ${recommendation.reason === 'weakness' ? 'text-blossom' : 'text-ink-dim'}`}>
-                {recommendationCopy(recommendation)}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col gap-1">
-              <button
-                type="button"
-                onClick={() => void startChapter(recommended.id)}
-                disabled={pending || (!!activeRun && !inProgress)}
-                className="min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
-              >
-                {inProgress ? '이어하기' : '시작'}
-              </button>
-              {recommendedState === 'available' && !recommended.examDisabled && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => void startChapter(recommended.id, 'exam')}
-                    disabled={pending || !!activeRun}
-                    title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
-                    className="min-h-11 rounded-xl border border-gilded/40 px-3 text-xs font-bold text-gilded transition-colors hover:bg-gilded/10 disabled:opacity-50"
-                  >
-                    문제만 풀기
-                  </button>
-                  <span className="text-center text-xs leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
+      {recommendation && (
+        <p className="mb-2 line-clamp-1 rounded-lg border border-blossom/30 bg-panel/60 px-3 py-2 text-sm text-ink" aria-label="추천 수련">
+          <span className="font-bold text-blossom">추천 수련</span> · {recommendationCopy(recommendation)}
+        </p>
       )}
+
+      <details className="mb-2 rounded-lg border border-white/10 bg-panel/60">
+        <summary className="flex min-h-11 cursor-pointer items-center px-3 text-sm font-bold text-ink-dim">
+          실력 확인 안내
+        </summary>
+        <p className="px-3 pb-3 text-sm leading-relaxed text-ink-dim">
+          문제만 풀기는 설명과 힌트를 건너뛰고 문제 세트만 풉니다. 85점 이상이면 첫 완료로 기록되고, 미완료 챕터에서만 사용할 수 있어요.
+        </p>
+      </details>
 
       {error && <p className="mb-2 text-center text-xs text-blossom">{error}</p>}
 
       {/* 수련 목록 — 막별, 순서 강제 없음 */}
-      <div className="mb-2 space-y-3 rounded-xl border border-white/10 bg-panel/90 p-3" aria-label="수련 목록">
+      <div className="mb-2 space-y-3" aria-label="수련 목록">
         {acts.length === 0 && <p className="text-center text-xs text-ink-dim">챕터가 준비되는 중이에요.</p>}
         {acts.map(({ act, chapters }) => (
           <div key={act}>
             <h3 className="mb-1.5 text-sm font-bold text-mystic">{ACT_TITLE[act]}</h3>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-              {chapters.map(({ chapter, row, skills, rewardHints }) => (
+              {chapters.map(({ chapter, row, skills, walletReward, rewardHints }) => (
                 <ChapterCard
                   key={chapter.id}
                   number={chapterNumber(STORY_CHAPTERS, chapter.id) ?? 0}
@@ -180,6 +138,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                   progress={row}
                   state={chapterCardState(operator && !row.unlocked ? { ...row, unlocked: true } : row, activeRun)}
                   skills={skills}
+                  walletReward={walletReward}
                   rewardHints={rewardHints}
                   recommended={recommendation?.chapterId === chapter.id}
                   partnerId={partnerId}

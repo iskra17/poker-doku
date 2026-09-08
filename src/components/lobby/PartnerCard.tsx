@@ -134,44 +134,55 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   return (
     <section className="mx-auto mb-2 w-full max-w-4xl px-3 md:px-4" aria-label="파트너">
       <div className="rounded-xl border border-blossom/25 bg-panel/90 p-3">
-        <div className="flex items-center gap-2.5">
-        {/* 파트너 일러스트 — 탭하면 말을 건다(대사 순환), 길게 보고 싶으면 쇼케이스 */}
-        <motion.button
-          type="button"
-          onClick={() => setTalkLine(getPartnerLine(partnerId, 'lobby-talk', tier))}
-          onDoubleClick={() => setShowcaseOpen(true)}
-          aria-label={`${character.name}에게 말 걸기`}
-          title="탭: 말 걸기 · 더블탭: 크게 보기"
-          className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border"
-          style={{ borderColor: `${character.color}55` }}
-        >
-          <CharacterImage
-            characterId={partnerId}
-            expression={talkLine ? 'happy' : 'neutral'}
-            round={false}
-            skinId={progression?.equipment.skin}
-            outfitId={partnerOutfit}
-            className="h-full w-full text-3xl"
-          />
-        </motion.button>
+        <div className="flex items-start gap-2.5">
+          {/* 파트너 일러스트 — 탭하면 말을 건다(대사 순환), 길게 보고 싶으면 쇼케이스 */}
+          <button
+            type="button"
+            onClick={() => setTalkLine(getPartnerLine(partnerId, 'lobby-talk', tier))}
+            onDoubleClick={() => setShowcaseOpen(true)}
+            aria-label={`${character.name}에게 말 걸기`}
+            title="탭: 말 걸기 · 더블탭: 크게 보기"
+            className="relative h-[4.5rem] w-[4.5rem] shrink-0 overflow-hidden rounded-xl border"
+            style={{ borderColor: `${character.color}55` }}
+          >
+            <CharacterImage
+              characterId={partnerId}
+              expression={talkLine ? 'happy' : 'neutral'}
+              round={false}
+              skinId={progression?.equipment.skin}
+              outfitId={partnerOutfit}
+              className="h-full w-full text-3xl"
+            />
+          </button>
 
-        <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-1 text-sm font-bold" style={{ color: character.color }}>
-            {character.name}
-            <span className="font-normal text-ink-dim">· 인연 Lv.{affinityLevel}</span>
-            {hasTieredPartnerScript(partnerId) && tier === 2 && (
-              <span className="font-normal text-gilded">· 단짝</span>
+          <div className="min-w-0 flex-1">
+            <p className="flex flex-wrap items-center gap-1 text-sm font-bold" style={{ color: character.color }}>
+              {character.name}
+              <span className="font-normal text-ink-dim">· 인연 Lv.{affinityLevel}</span>
+              {hasTieredPartnerScript(partnerId) && tier === 2 && (
+                <span className="font-normal text-gilded">· 단짝</span>
+              )}
+            </p>
+            {speech && (
+              <motion.p
+                key={speech}
+                initial={{ opacity: 0, y: 3 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-1 line-clamp-2 text-sm leading-relaxed text-ink"
+              >
+                “{speech}”
+              </motion.p>
             )}
-          </p>
+          </div>
         </div>
 
-        <div className="flex shrink-0 flex-col items-stretch gap-1">
+        <div className="mt-2 flex flex-wrap items-stretch gap-1.5">
           <button
             type="button"
             onClick={handleCta}
             disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
             data-tour="lobby-start"
-            className="min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
+            className="min-h-11 min-w-[7.5rem] flex-1 rounded-xl bg-blossom px-3 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
           >
             {pendingRoomId
               ? '입장 중…'
@@ -189,38 +200,23 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
               type="button"
               onClick={joinPractice}
               disabled={!!pendingRoomId}
-              className="min-h-11 rounded-lg border border-white/15 px-3 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink disabled:opacity-50"
+              className="min-h-11 min-w-[4.75rem] shrink-0 rounded-lg border border-white/15 px-2 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink disabled:opacity-50"
             >
               자유 연습
             </button>
           )}
+          {beginnerGuideEligible && (
+            <button
+              type="button"
+              onClick={beginnerGuideVisible ? dismissBeginnerGuide : showBeginnerGuide}
+              aria-label={beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내 다시 보기'}
+              data-guide-toggle="lobby"
+              className="min-h-11 min-w-[4.5rem] shrink-0 rounded-lg border border-white/15 px-2 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink"
+            >
+              {beginnerGuideVisible ? '안내 닫기' : '초보 안내'}
+            </button>
+          )}
         </div>
-        </div>
-
-        {beginnerGuideEligible && (
-          <button
-            type="button"
-            onClick={beginnerGuideVisible ? dismissBeginnerGuide : showBeginnerGuide}
-            aria-label={beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내 다시 보기'}
-            data-guide-toggle="lobby"
-            className="mt-1 min-h-11 rounded-lg px-2 text-xs font-bold text-ink-dim underline decoration-dotted underline-offset-2 hover:text-ink"
-          >
-            {beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내'}
-          </button>
-        )}
-
-        {/* 대사 — 카드 전체 폭 사용 (좁은 화면에서 1줄 말줄임되던 문제: 행 분리로 폭 2배 확보,
-            자연 줄바꿈 + 극단 케이스만 3줄 클램프) */}
-        {speech && (
-          <motion.p
-            key={speech}
-            initial={{ opacity: 0, y: 3 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mt-2 line-clamp-3 text-sm leading-relaxed text-ink"
-          >
-            “{speech}”
-          </motion.p>
-        )}
       </div>
 
       <CharacterShowcaseModal
