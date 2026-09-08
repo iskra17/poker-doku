@@ -84,7 +84,7 @@ function Front({ card }: { card: RewardCardItem }) {
  * 위치 이동은 framer `style={{x,y}}`만(트랜스폼 클래스 혼용 금지 규칙).
  */
 export default function RewardItemCard({ card, flipped, reducedMotion, locked = null, onClick }: RewardItemCardProps) {
-  const name = card.kind === 'chips' ? '연습 칩' : card.item.name;
+  const name = card.kind === 'chips' ? '지갑 칩' : card.item.name;
   const kindLabel = card.kind === 'chips' ? REWARD_KIND_LABEL.chips : REWARD_KIND_LABEL[card.item.kind];
   const show = flipped || reducedMotion;
   return (

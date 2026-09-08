@@ -237,7 +237,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
       </div>
       {topUpOpen && <TopUpModal onClose={() => setTopUpOpen(false)} />}
       <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />
+      <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} onShowGuide={() => window.dispatchEvent(new Event('poker-doku:show-table-guide'))} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       {tournamentOpen && mttTournamentId && (
         <TournamentDetailModal

@@ -10,6 +10,7 @@ import {
   GameConfigValidationError,
 } from './service';
 import { cfg, initGameConfig, resetGameConfigForTest } from './live';
+import { LEGACY_RESCUE_COMPAT_SQL } from '../persistence/story-reward-supplements';
 
 describe('GameConfigService', () => {
   let database: PokerDatabase;
@@ -38,6 +39,27 @@ describe('GameConfigService', () => {
     expect(snapshot.every(view => !view.overridden)).toBe(true);
     expect(snapshot.find(view => view.key === 'economy.rescueTarget')?.value)
       .toBe(2_000);
+  });
+
+  it('preserves a valid legacy rescue target without making profile status invalid after migration', () => {
+    database.db.prepare('INSERT INTO game_config (key, value, updated_at) VALUES (?, ?, 123)')
+      .run('economy.rescueTarget', '1000');
+    database.db.exec(LEGACY_RESCUE_COMPAT_SQL);
+    const service = createService();
+    expect(service.get('economy.rescueThreshold')).toBe(800);
+    expect(service.get('economy.rescueTarget')).toBe(1000);
+    expect(() => service.set({ 'economy.dailyGrant': 1100 })).not.toThrow();
+    database.db.exec(LEGACY_RESCUE_COMPAT_SQL);
+    expect(database.db.prepare('SELECT count(*) AS count FROM game_config WHERE key = ?')
+      .get('economy.rescueThreshold')).toEqual({ count: 1 });
+  });
+
+  it('keeps explicit rescue thresholds and uses new defaults for an unconfigured database', () => {
+    database.db.exec(LEGACY_RESCUE_COMPAT_SQL);
+    expect(createService().get('economy.rescueThreshold')).toBe(2000);
+    database.db.exec("INSERT INTO game_config VALUES ('economy.rescueThreshold', '600', 123), ('economy.rescueTarget', '1000', 123)");
+    database.db.exec(LEGACY_RESCUE_COMPAT_SQL);
+    expect(createService().get('economy.rescueThreshold')).toBe(600);
   });
 
   it('prefers DB override over env default over code default', () => {
@@ -181,7 +203,7 @@ describe('live cfg() singleton', () => {
       expect(cfg('economy.rescueThreshold')).toBe(1_500);
 
       resetGameConfigForTest();
-      expect(cfg('economy.rescueThreshold')).toBe(800);
+      expect(cfg('economy.rescueThreshold')).toBe(2000);
     } finally {
       database.close();
     }

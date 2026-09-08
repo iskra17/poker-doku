@@ -126,7 +126,7 @@ function assertValidRescueRules(rules: RescueClaimRules): void {
   assertPositiveSafeInteger(rules.target);
   assertPositiveSafeInteger(rules.dailyLimit);
   assertPositiveSafeInteger(rules.cooldownMs);
-  if (rules.target <= rules.threshold) {
+  if (rules.target < rules.threshold) {
     throw new EconomyDomainError('ECONOMY_RULES_INVALID');
   }
 }

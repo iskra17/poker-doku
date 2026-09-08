@@ -8,6 +8,10 @@ import {
 const NOW = Date.parse('2026-07-15T15:00:00.000Z');
 
 describe('economy status formatting', () => {
+  it('does not advertise a stale hardcoded rescue threshold', () => {
+    expect(getRescueStatusText({ eligible: false, grantAmount: 0, remainingToday: 3, availableAt: null, reason: 'balance-threshold' }, NOW))
+      .toBe('지갑 잔액이 지원 기준보다 높아요');
+  });
   it('formats immediate, conditional, and future KST availability', () => {
     expect(formatEconomyAvailableAt(NOW, NOW)).toBe('지금 받을 수 있어요');
     expect(formatEconomyAvailableAt(null, NOW)).toBe('조건을 충족하면 받을 수 있어요');

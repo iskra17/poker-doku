@@ -42,7 +42,7 @@ export function getRescueStatusText(
     case 'active-escrow':
       return '참가 중인 좌석 칩을 먼저 정산해 주세요';
     case 'balance-threshold':
-      return '지갑 잔액이 800칩 미만일 때 받을 수 있어요';
+      return '지갑 잔액이 지원 기준보다 높아요';
     case 'cooldown':
       return `다음 지원 · ${formatEconomyAvailableAt(rescue.availableAt, now)}`;
     case 'daily-limit':

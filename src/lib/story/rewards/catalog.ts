@@ -78,27 +78,27 @@ export function isBonusStoryRewardId(id: string): boolean {
   return isBonusStoryReward(BY_ID.get(id));
 }
 
-export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.freeze([
+const ORIGINAL_STORY_REWARDS: readonly StoryRewardDefinition[] = Object.freeze([
   // ── Ch1 도장의 문
   def({ id: 'story-title-white-belt', kind: 'title', equipSlot: 'title', name: '백띠 수련생', description: '도장의 문을 지나온 사람의 칭호.', trigger: first('act1-ch01') }),
-  def({ id: 'story-chips-act1-ch01-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '첫 수련 축하금', description: '첫 챕터 완주 기념 연습 칩 500.', trigger: first('act1-ch01') }),
+  def({ id: 'story-chips-act1-ch01-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '첫 수련 축하금', description: '첫 챕터 완주 기념 지갑 칩 500.', trigger: first('act1-ch01') }),
   def({
     id: 'story-cg-act1-belt-white', kind: 'cg', equipSlot: null, name: '백띠 수여', description: '미야코가 백띠를 건네는 순간.',
     trigger: first('act1-ch01'), art: '/assets/story/cg/act1-belt-white.webp',
     cutscene: { kind: 'belt', characterId: 'miyako', title: '백띠 수여', caption: '수련생님, 오늘부터 백띠예요♪ 도장의 문을 지나오신 기념이랍니다.' },
   }),
   def({ id: 'story-cardback-dojo-crest', kind: 'card-back', equipSlot: 'card-back', name: '도장 문장 카드백', description: '도장 문장이 새겨진 카드 뒷면.', trigger: gradeS('act1-ch01') }),
-  def({ id: 'story-chips-act1-ch01-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '도장의 문 S등급 연습 칩 300.', trigger: gradeS('act1-ch01') }),
+  def({ id: 'story-chips-act1-ch01-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '도장의 문 S등급 지갑 칩 300.', trigger: gradeS('act1-ch01') }),
   // ── Ch2 기다림의 미학
   def({ id: 'story-outfit-sakura-dojo', kind: 'outfit', equipSlot: 'outfit', characterId: 'sakura', outfitId: 'dojo', name: '사쿠라 · 도복', description: '벚꽃 자수가 놓인 흰 도복. 로비·스토리 화면에서 입어요.', trigger: first('act1-ch02') }),
   def({ id: 'throwable-bouquet', kind: 'throwable', equipSlot: null, name: '꽃다발', description: '테이블 투척 아이템 — 축하할 때 던져요.', trigger: first('act1-ch02') }),
-  def({ id: 'story-chips-act1-ch02-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '기다림의 보상', description: '기다림의 미학 완주 연습 칩 500.', trigger: first('act1-ch02') }),
+  def({ id: 'story-chips-act1-ch02-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '기다림의 보상', description: '기다림의 미학 완주 지갑 칩 500.', trigger: first('act1-ch02') }),
   def({
     id: 'story-cg-act1-sakura-garden', kind: 'cg', equipSlot: null, characterId: 'sakura', name: '기다림의 뜰', description: '정원의 밤, 사쿠라가 카드 한 장을 내민다.',
     trigger: gradeS('act1-ch02'), art: '/assets/story/cg/act1-sakura-garden.webp',
     cutscene: { kind: 'event-cg', characterId: 'sakura', title: '기다림의 뜰', caption: '이, 이 카드… 오늘 당신이 폴드한 핸드들이에요. 저, 전부 세어 봤어요…' },
   }),
-  def({ id: 'story-chips-act1-ch02-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '기다림의 미학 S등급 연습 칩 300.', trigger: gradeS('act1-ch02') }),
+  def({ id: 'story-chips-act1-ch02-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '기다림의 미학 S등급 지갑 칩 300.', trigger: gradeS('act1-ch02') }),
   // ── Ch3 숫자는 거짓말을 안 해요 (보스 드라코)
   def({
     id: 'story-cg-act1-draco-boss', kind: 'cg', equipSlot: null, characterId: 'hana', name: '오즈로 겜블러를 잡다', description: '칩 더미 앞에서 시무룩한 드라코, 그 뒤의 하나.',
@@ -106,12 +106,12 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
     cutscene: { kind: 'boss-win', characterId: 'hana', title: '오즈로 겜블러를 잡다', caption: '값이 맞을 때만 콜했죠. 드라코의 오버벳은 통계에 남았고, 당신 칩은 남았어요.' },
   }),
   def({ id: 'story-cardback-yellow-belt', kind: 'card-back', equipSlot: 'card-back', name: '노란띠 카드백', description: '노란띠 무늬의 카드 뒷면.', trigger: first('act1-ch03') }),
-  def({ id: 'story-chips-act1-ch03-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '보스 격파 상금', description: '드라코를 오즈로 잡은 기념 연습 칩 500.', trigger: first('act1-ch03') }),
+  def({ id: 'story-chips-act1-ch03-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '보스 격파 상금', description: '드라코를 오즈로 잡은 기념 지갑 칩 500.', trigger: first('act1-ch03') }),
   def({ id: 'story-outfit-hana-lab', kind: 'outfit', equipSlot: 'outfit', characterId: 'hana', outfitId: 'lab', name: '하나 · 연구실 가운', description: '머리를 묶고 가운을 걸친 연구 모드. 로비·스토리 화면에서 입어요.', trigger: gradeS('act1-ch03') }),
-  def({ id: 'story-chips-act1-ch03-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '숫자는 거짓말을 안 해요 S등급 연습 칩 300.', trigger: gradeS('act1-ch03') }),
+  def({ id: 'story-chips-act1-ch03-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '숫자는 거짓말을 안 해요 S등급 지갑 칩 300.', trigger: gradeS('act1-ch03') }),
   // ── 1막 완주
   def({ id: 'story-felt-yellow-belt', kind: 'felt', equipSlot: 'felt', name: '노란띠 도장 펠트', description: '노란띠 색으로 물든 수련 테이블 펠트.', trigger: act(1) }),
-  def({ id: 'story-chips-act1-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '1막 수료금', description: '1막 세 수업 완주 연습 칩 1,000.', trigger: act(1) }),
+  def({ id: 'story-chips-act1-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '1막 수료금', description: '1막 세 수업 완주 지갑 칩 1,000.', trigger: act(1) }),
   def({
     id: 'story-cg-act1-belt-yellow', kind: 'cg', equipSlot: null, name: '노란띠 승급', description: '도장 문 앞 석양, 미야코와 노란띠.',
     trigger: act(1), art: '/assets/story/cg/act1-belt-yellow.webp',
@@ -119,14 +119,14 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   }),
   // ── Ch4 먼저 치는 사람 (2막, 2026-09-03 — v33)
   def({ id: 'story-title-first-steal', kind: 'title', equipSlot: 'title', name: '첫 스틸', description: '블라인드를 처음 훔친 사람의 칭호.', trigger: first('act2-ch04') }),
-  def({ id: 'story-chips-act2-ch04-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '스틸 상금', description: '먼저 치는 사람 완주 연습 칩 500.', trigger: first('act2-ch04') }),
+  def({ id: 'story-chips-act2-ch04-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '스틸 상금', description: '먼저 치는 사람 완주 지갑 칩 500.', trigger: first('act2-ch04') }),
   def({ id: 'story-outfit-ara-jersey', kind: 'outfit', equipSlot: 'outfit', characterId: 'ara', outfitId: 'jersey', name: '아라 · 게이밍 저지', description: '프로게이머 시절의 팀 저지와 헤드셋. 로비·스토리 화면에서 입어요.', trigger: gradeS('act2-ch04') }),
-  def({ id: 'story-chips-act2-ch04-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '먼저 치는 사람 S등급 연습 칩 300.', trigger: gradeS('act2-ch04') }),
+  def({ id: 'story-chips-act2-ch04-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '먼저 치는 사람 S등급 지갑 칩 300.', trigger: gradeS('act2-ch04') }),
   // ── Ch5 받을 건 받아야죠
   def({ id: 'story-title-value-artisan', kind: 'title', equipSlot: 'title', name: '밸류 장인', description: '받을 건 받아 내는 사람의 칭호.', trigger: first('act2-ch05') }),
-  def({ id: 'story-chips-act2-ch05-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '밸류 상금', description: '받을 건 받아야죠 완주 연습 칩 500.', trigger: first('act2-ch05') }),
+  def({ id: 'story-chips-act2-ch05-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '밸류 상금', description: '받을 건 받아야죠 완주 지갑 칩 500.', trigger: first('act2-ch05') }),
   def({ id: 'story-outfit-chloe-stream', kind: 'outfit', equipSlot: 'outfit', characterId: 'chloe', outfitId: 'stream', name: '클로이 · 스트리머 후디', description: '고양이 귀 헤드폰과 후디 — 방송 켤 때 입는 옷. 로비·스토리 화면에서 입어요.', trigger: gradeS('act2-ch05') }),
-  def({ id: 'story-chips-act2-ch05-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '받을 건 받아야죠 S등급 연습 칩 300.', trigger: gradeS('act2-ch05') }),
+  def({ id: 'story-chips-act2-ch05-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '받을 건 받아야죠 S등급 지갑 칩 300.', trigger: gradeS('act2-ch05') }),
   // ── Ch6 3벳의 온도 (보스 팽팽)
   def({
     id: 'story-cg-act2-paeng-boss', kind: 'cg', equipSlot: null, characterId: 'ara', name: '얼음을 녹이다', description: '칩 더미 위에서 시무룩한 팽팽, 그 뒤의 아라.',
@@ -134,16 +134,16 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
     cutscene: { kind: 'boss-win', characterId: 'ara', title: '얼음을 녹이다', caption: '온도만 맞으면 팽팽도 별거 아니야. …봤지? 3벳은 이렇게 하는 거야.' },
   }),
   def({ id: 'story-cardback-blue-belt', kind: 'card-back', equipSlot: 'card-back', name: '파란띠 카드백', description: '파란띠 무늬의 카드 뒷면.', trigger: first('act2-ch06') }),
-  def({ id: 'story-chips-act2-ch06-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '보스 격파 상금', description: '팽팽을 온도로 잡은 기념 연습 칩 500.', trigger: first('act2-ch06') }),
+  def({ id: 'story-chips-act2-ch06-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '보스 격파 상금', description: '팽팽을 온도로 잡은 기념 지갑 칩 500.', trigger: first('act2-ch06') }),
   def({
     id: 'story-cg-act2-ara-victory', kind: 'cg', equipSlot: null, characterId: 'ara', name: '서울의 불꽃', description: '옥상 야경 아래, 저지를 입은 아라의 승리 포즈.',
     trigger: gradeS('act2-ch06'), art: '/assets/story/cg/act2-ara-victory.webp',
     cutscene: { kind: 'event-cg', characterId: 'ara', title: '서울의 불꽃', caption: '…뭐야, 왜 봐. 흥, 오늘은 네가 잘한 거야. 다음엔 내가 이겨.' },
   }),
-  def({ id: 'story-chips-act2-ch06-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '3벳의 온도 S등급 연습 칩 300.', trigger: gradeS('act2-ch06') }),
+  def({ id: 'story-chips-act2-ch06-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '3벳의 온도 S등급 지갑 칩 300.', trigger: gradeS('act2-ch06') }),
   // ── 2막 완주
   def({ id: 'story-felt-blue-belt', kind: 'felt', equipSlot: 'felt', name: '파란띠 도장 펠트', description: '파란띠 색으로 물든 수련 테이블 펠트.', trigger: act(2) }),
-  def({ id: 'story-chips-act2-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '2막 수료금', description: '2막 세 수업 완주 연습 칩 1,000.', trigger: act(2) }),
+  def({ id: 'story-chips-act2-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '2막 수료금', description: '2막 세 수업 완주 지갑 칩 1,000.', trigger: act(2) }),
   def({
     id: 'story-cg-act2-belt-blue', kind: 'cg', equipSlot: null, name: '파란띠 승급', description: '저녁 도장 문 앞, 미야코와 파란띠.',
     trigger: act(2), art: '/assets/story/cg/act2-belt-blue.webp',
@@ -152,39 +152,58 @@ export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.fre
   // Ch7: no third-act reward until Ch8 and Ch9 are both registered and completed.
   // 3막 Ch8~9 / v36. Ch8의 S 전용 아트는 실제 공급 뒤 추가한다.
   def({ id: 'story-title-bluff-catcher', kind: 'title', equipSlot: 'title', name: '블러프 캐처', description: '호기심 대신 콜의 가격을 확인하는 수련생.', trigger: first('act3-ch08') }),
-  def({ id: 'story-chips-act3-ch08-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '리딩 수료금', description: '궁금하면 콜 첫 완주 연습 칩 500.', trigger: first('act3-ch08') }),
-  def({ id: 'story-chips-act3-ch08-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '궁금하면 콜 S등급 연습 칩 300.', trigger: gradeS('act3-ch08') }),
+  def({ id: 'story-chips-act3-ch08-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '리딩 수료금', description: '궁금하면 콜 첫 완주 지갑 칩 500.', trigger: first('act3-ch08') }),
+  def({ id: 'story-chips-act3-ch08-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '궁금하면 콜 S등급 지갑 칩 300.', trigger: gradeS('act3-ch08') }),
   def({ id: 'story-title-shadow-reader', kind: 'title', equipSlot: 'title', name: '그림자 읽는 사람', description: '액션의 순서와 남은 조합으로 함정을 읽는다.', trigger: first('act3-ch09') }),
-  def({ id: 'story-chips-act3-ch09-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '함정 돌파 상금', description: '그림자와 함정 첫 완주 연습 칩 500.', trigger: first('act3-ch09') }),
+  def({ id: 'story-chips-act3-ch09-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '함정 돌파 상금', description: '그림자와 함정 첫 완주 지갑 칩 500.', trigger: first('act3-ch09') }),
   def({ id: 'story-cg-act3-luna-analysis', kind: 'cg', equipSlot: null, characterId: 'elena', name: '칩 앞의 침묵', description: '루나와의 결정들을 엘레나와 다시 놓아 보는 시간.', trigger: first('act3-ch09'), art: getSceneCg('act3-ch09-analysis')?.src, cutscene: { kind: 'boss-win', characterId: 'elena', title: '함정 뒤의 이유', caption: '…결과를 지우면 네 선택이 보여. 오늘은 그 이유가 들렸어.' } }),
   def({ id: 'story-cg-act3-elena-snow', kind: 'cg', equipSlot: null, characterId: 'elena', name: '창밖의 흰 여백', description: '계절이 바뀐 도장의 창가, 엘레나와 첫눈을 바라본다.', trigger: gradeS('act3-ch09'), art: getSceneCg('act3-ch09-snow-window')?.src, cutscene: { kind: 'event-cg', characterId: 'elena', title: '창밖의 흰 여백', caption: '…다음 패가 없어도 조금 더 앉아 있고 싶었어.' } }),
-  def({ id: 'story-chips-act3-ch09-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '그림자와 함정 S등급 연습 칩 300.', trigger: gradeS('act3-ch09') }),
+  def({ id: 'story-chips-act3-ch09-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '그림자와 함정 S등급 지갑 칩 300.', trigger: gradeS('act3-ch09') }),
   def({ id: 'story-felt-brown-belt', kind: 'felt', equipSlot: 'felt', name: '갈색띠 도장 펠트', description: '3막 읽기 수련을 마친 갈색띠 테이블 펠트.', trigger: act(3) }),
-  def({ id: 'story-chips-act3-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '3막 수료금', description: '3막 세 수업 완주 연습 칩 1,000.', trigger: act(3) }),
+  def({ id: 'story-chips-act3-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '3막 수료금', description: '3막 세 수업 완주 지갑 칩 1,000.', trigger: act(3) }),
   def({ id: 'story-title-unmasker', kind: 'title', equipSlot: 'title', name: '가면 벗기기', description: '상대의 행동을 관찰하고 가면 퀴즈를 마쳤다.', trigger: first('act3-ch07') }),
-  def({ id: 'story-chips-act3-ch07-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '관찰 수료금', description: '가면무도회 첫 완주 연습 칩 500.', trigger: first('act3-ch07') }),
+  def({ id: 'story-chips-act3-ch07-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '관찰 수료금', description: '가면무도회 첫 완주 지갑 칩 500.', trigger: first('act3-ch07') }),
   def({ id: 'story-outfit-vivian-masquerade', kind: 'outfit', equipSlot: 'outfit', characterId: 'vivian', outfitId: 'masquerade', name: '비비안 · 가면무도회', description: '관찰의 밤을 기념하는 비비안의 무도회 의상.', trigger: gradeS('act3-ch07') }),
-  def({ id: 'story-chips-act3-ch07-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '가면무도회 S등급 연습 칩 300.', trigger: gradeS('act3-ch07') }),
+  def({ id: 'story-chips-act3-ch07-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '가면무도회 S등급 지갑 칩 300.', trigger: gradeS('act3-ch07') }),
   // ── 4막 Ch10~11 / v37. 새 CG·의상은 아트가 실제로 공급된 뒤에 추가한다(없는 파일 등록 금지).
   def({ id: 'story-title-storm-caller', kind: 'title', equipSlot: 'title', name: '폭풍의 콜', description: '배럴과 오버벳 앞에서 가격표를 읽는 수련생.', trigger: first('act4-ch10') }),
-  def({ id: 'story-chips-act4-ch10-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '콜다운 수료금', description: '폭풍 속의 콜 첫 완주 연습 칩 500.', trigger: first('act4-ch10') }),
-  def({ id: 'story-chips-act4-ch10-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '폭풍 속의 콜 S등급 연습 칩 300.', trigger: gradeS('act4-ch10') }),
+  def({ id: 'story-chips-act4-ch10-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '콜다운 수료금', description: '폭풍 속의 콜 첫 완주 지갑 칩 500.', trigger: first('act4-ch10') }),
+  def({ id: 'story-chips-act4-ch10-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '폭풍 속의 콜 S등급 지갑 칩 300.', trigger: gradeS('act4-ch10') }),
   def({ id: 'story-title-all-rounder', kind: 'title', equipSlot: 'title', name: '올라운더', description: '배운 것을 한 자리에서 모두 꺼내 쓴 수련생.', trigger: first('act4-ch11') }),
-  def({ id: 'story-chips-act4-ch11-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '종합 수련 수료금', description: '종합 수련 첫 완주 연습 칩 500.', trigger: first('act4-ch11') }),
-  def({ id: 'story-chips-act4-ch11-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '종합 수련 S등급 연습 칩 300.', trigger: gradeS('act4-ch11') }),
+  def({ id: 'story-chips-act4-ch11-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '종합 수련 수료금', description: '종합 수련 첫 완주 지갑 칩 500.', trigger: first('act4-ch11') }),
+  def({ id: 'story-chips-act4-ch11-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '종합 수련 S등급 지갑 칩 300.', trigger: gradeS('act4-ch11') }),
   // ── Ch12 졸업 시험 · 검은띠 (v38). 검은띠 코스메틱은 SVG/CSS라 아트 파일이 없다.
   def({ id: 'story-title-graduate', kind: 'title', equipSlot: 'title', name: '졸업생', description: '졸업 대결의 자리를 끝까지 지킨 수련생.', trigger: first('act4-ch12') }),
-  def({ id: 'story-chips-act4-ch12-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '졸업 수료금', description: '졸업 시험 첫 완주 연습 칩 500.', trigger: first('act4-ch12') }),
-  def({ id: 'story-chips-act4-ch12-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '졸업 시험 S등급 연습 칩 300.', trigger: gradeS('act4-ch12') }),
+  def({ id: 'story-chips-act4-ch12-first', kind: 'chips', equipSlot: null, chipAmount: 500, name: '졸업 수료금', description: '졸업 시험 첫 완주 지갑 칩 500.', trigger: first('act4-ch12') }),
+  def({ id: 'story-chips-act4-ch12-s', kind: 'chips', equipSlot: null, chipAmount: 300, name: 'S등급 보너스', description: '졸업 시험 S등급 지갑 칩 300.', trigger: gradeS('act4-ch12') }),
   def({ id: 'story-cardback-black-belt', kind: 'card-back', equipSlot: 'card-back', name: '검은띠 카드백', description: '검은띠 무늬의 카드 뒷면.', trigger: graduation('black-belt') }),
   def({ id: 'story-felt-black-belt', kind: 'felt', equipSlot: 'felt', name: '검은띠 도장 펠트', description: '검은띠 색으로 물든 수련 테이블 펠트.', trigger: graduation('black-belt') }),
-  def({ id: 'story-chips-act4-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '4막 수료금', description: '4막 세 수업 완주 연습 칩 1,000.', trigger: act(4) }),
+  def({ id: 'story-chips-act4-complete', kind: 'chips', equipSlot: null, chipAmount: 1_000, name: '4막 수료금', description: '4막 세 수업 완주 지갑 칩 1,000.', trigger: act(4) }),
   def({ id: 'story-title-master-deputy', kind: 'title', equipSlot: 'title', name: '사범대리', description: '졸업 대결에서 마지막까지 남은 사람의 칭호.', trigger: graduation('champion') }),
   // ── 플래그
   def({ id: 'story-title-perfect', kind: 'title', equipSlot: 'title', name: '퍼펙트', description: '드릴 세트를 첫 시도 무오답·힌트 없이 끝냈다.', trigger: { kind: 'flag', key: 'badge:perfect-set', label: '드릴 세트 퍼펙트' } }),
   def({ id: 'story-title-empty-note', kind: 'title', equipSlot: 'title', name: '빈 노트', description: '복습 노트를 졸업으로 비웠다.', trigger: { kind: 'flag', key: 'badge:empty-note', label: '복습 노트 비우기' } }),
   // ── 보너스 CG 라인 50장 (v39) — 인연/도장 레벨 해금. 정의는 `bonus-cg.ts`(순수 생성기)
   ...BONUS_CG_REWARDS,
+]);
+
+/** v41: preserve old amounts/receipts; the same entitlement grants a one-time difference to old and new players. */
+const CHIP_SUPPLEMENTS = ORIGINAL_STORY_REWARDS
+  .filter(item => item.kind === 'chips' && /^story-chips-act[1-4]-(ch\d{2}-(first|s)|complete)$/.test(item.id))
+  .map(item => {
+    const chipAmount = item.trigger.kind === 'chapter-grade' ? 200
+      : item.trigger.kind === 'act-complete' ? 1_000 : 500;
+    return def({
+      ...item,
+      id: `${item.id}-v2`,
+      chipAmount,
+      description: `${item.name} 추가 지갑 칩 ${chipAmount.toLocaleString('ko-KR')}.`,
+    });
+  });
+
+export const STORY_REWARD_CATALOG: readonly StoryRewardDefinition[] = Object.freeze([
+  ...ORIGINAL_STORY_REWARDS,
+  ...CHIP_SUPPLEMENTS,
 ]);
 
 const BY_ID: ReadonlyMap<string, StoryRewardDefinition> = new Map(STORY_REWARD_CATALOG.map(item => [item.id, item]));

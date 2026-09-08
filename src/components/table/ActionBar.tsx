@@ -374,7 +374,7 @@ export default function ActionBar() {
               [폴드] [체크|콜] [벳|레이즈]. 올인은 독립 버튼이 아니라 사이징이 스택 최대에
               도달했을 때(또는 최소 레이즈를 못 채우는 숏스택 푸시일 때) 우측 버튼이 올인으로
               전환되는 방식 — 색상도 관행대로 구분(폴드 무채색/콜 녹색/공격 액션 강조색). */}
-          <div className="flex items-center w-full gap-1.5">
+          <div className="flex items-center w-full gap-1.5" data-tour="table-actions">
             <Button variant="secondary" size="md" disabled={controlsDisabled} className="flex-1 min-w-0 !px-2 whitespace-nowrap text-sm" onClick={() => act('fold')}>
               폴드
             </Button>

@@ -44,7 +44,7 @@ export const REWARD_KIND_LABEL: Readonly<Record<StoryRewardKind, string>> = Obje
   outfit: '의상',
   cg: '이벤트 CG',
   throwable: '투척 아이템',
-  chips: '연습 칩',
+  chips: '지갑 칩',
 });
 
 /** 서버 보상 라인이 없을 때 — 이 결산으로 자격이 생겼을 카탈로그 항목(칩 포함) */

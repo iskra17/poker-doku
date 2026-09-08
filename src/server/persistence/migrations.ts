@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { STORY_REWARD_SUPPLEMENTS_SQL } from './story-reward-supplements';
 
 export interface Migration {
   version: number;
@@ -7212,6 +7213,7 @@ export const migrations: readonly Migration[] = [
         ON admin_trusted_devices (source_scope, expires_at);
     `,
   },
+  { version: 41, name: 'story_reward_chip_supplements', sql: STORY_REWARD_SUPPLEMENTS_SQL },
 ];
 
 export function validateMigrations(definitions: readonly Migration[]): void {

@@ -109,15 +109,15 @@ describe('reward reveal plan', () => {
   it('falls back to catalog-derived rewards (first clear, S grade, act completion) when the server line is absent', () => {
     const firstClear = deriveFallbackRewards(result(), STORY_CHAPTERS[0]);
     expect(firstClear.items.map(item => item.id)).toEqual(['story-title-white-belt', 'story-cg-act1-belt-white']);
-    expect(firstClear.chips).toBe(500);
+    expect(firstClear.chips).toBe(1_000);
 
     const sGrade = deriveFallbackRewards(result({ grade: 'S' }), STORY_CHAPTERS[0]);
     expect(sGrade.items.map(item => item.id)).toEqual(['story-title-white-belt', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest']);
-    expect(sGrade.chips).toBe(800);
+    expect(sGrade.chips).toBe(1_500);
 
     const actDone = deriveFallbackRewards(result({ chapterId: 'act1-ch03', beltAwarded: 'yellow' }), STORY_CHAPTERS[2]);
     expect(actDone.items.map(item => item.id)).toContain('story-felt-yellow-belt');
-    expect(actDone.chips).toBe(1_500);
+    expect(actDone.chips).toBe(3_000);
 
     // 재도전(첫 완주 아님)·미통과·데일리는 카탈로그 파생 없음
     expect(deriveFallbackRewards(result({ rewards: { firstClear: false, dojoXpMilli: 20_000, affinity: [], badgeId: null } }), STORY_CHAPTERS[0]).items).toEqual([]);

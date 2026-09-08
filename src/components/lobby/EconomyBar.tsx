@@ -80,7 +80,7 @@ export default function EconomyBar({ onOpenSettings }: EconomyBarProps) {
               <span className="px-1 text-xs text-ink-dim">오늘 무료 칩 받음</span>
             ) : (
               <Button
-                variant="primary"
+                variant="secondary"
                 size="sm"
                 disabled={busy}
                 onClick={() => void claimDaily()}

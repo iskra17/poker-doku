@@ -144,8 +144,6 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
           title="탭: 말 걸기 · 더블탭: 크게 보기"
           className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border"
           style={{ borderColor: `${character.color}55` }}
-          animate={{ y: [0, -2, 0] }}
-          transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
         >
           <CharacterImage
             characterId={partnerId}
@@ -173,7 +171,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             onClick={handleCta}
             disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
             data-tour="lobby-start"
-            className={`min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50 ${beginnerGuideVisible ? 'ring-2 ring-gilded ring-offset-2 ring-offset-panel' : ''}`}
+            className="min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
           >
             {pendingRoomId
               ? '입장 중…'

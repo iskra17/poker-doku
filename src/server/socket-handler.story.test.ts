@@ -244,12 +244,12 @@ describe('story socket events', () => {
     expect(rewards.items!.map(item => item.id)).toEqual([
       'story-title-white-belt', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest', 'story-title-perfect',
     ]);
-    expect(rewards.chips).toBe(800);
+    expect(rewards.chips).toBe(1500);
     expect(rewards.badgeId).toBe('story-title-white-belt');
     expect(rewards.cutscene).toMatchObject({ id: 'story-cg-act1-belt-white', kind: 'belt', characterId: 'miyako' });
     expect(rewards.next!.map(item => item.id)).toEqual(['story-felt-yellow-belt', 'story-cg-act1-belt-yellow']);
     expect(rewards.unlockedScenes).toEqual([]);
-    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
+    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 1500);
     // 지급 뒤 인벤토리가 담긴 progression-update가 한 번 더 온다(마지막 스냅샷이 최신)
     expect(progressions.at(-1)!.inventory.map(item => item.itemId)).toEqual(expect.arrayContaining([
       'story-title-white-belt', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest',
@@ -261,10 +261,11 @@ describe('story socket events', () => {
     expect(progress.data?.rewards?.filter(item => item.granted).map(item => item.id)).toEqual([
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
       'story-cardback-dojo-crest', 'story-chips-act1-ch01-s', 'story-title-perfect',
+      'story-chips-act1-ch01-first-v2', 'story-chips-act1-ch01-s-v2',
     ]);
     expect(progress.data?.rewards).toHaveLength(STORY_REWARD_CATALOG.length);
     // 재조회 reconcile은 무변경 — 지갑 그대로
-    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 800);
+    expect(h.walletState(profile.profile.id).balance).toBe(walletBefore + 1500);
   });
 
   it('abandon ends the run, and a replaced socket no longer controls it', async () => {

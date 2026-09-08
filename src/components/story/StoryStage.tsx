@@ -51,6 +51,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const startChapter = useStoryStore(state => state.startChapter);
   const storyProgress = useStoryStore(state => state.progress);
   const profileId = useProfileStore(state => state.profile?.id ?? null);
+  const connected = useGameStore(state => state.connected);
   const beginnerGuideDismissed = useBeginnerGuideDismissed(profileId);
 
   const visible = !!run && !run.live?.roomId;
@@ -106,7 +107,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
     })
     : { allowed: false as const, reason: 'wrong-phase' as const };
   const canSwitchToExamNow = examEligibility.allowed && !firstDrillClear;
-  const beginnerGuideEnabled = run?.chapterId === 'act1-ch01' && run.mode === 'full' && !beginnerGuideDismissed;
+  const beginnerGuideEnabled = connected && run?.chapterId === 'act1-ch01' && run.mode === 'full' && !beginnerGuideDismissed;
 
   const finishScene = async (chosen: Record<string, string>) => {
     // 선택은 서버 플래그로 남긴다 (실패해도 진행은 막지 않음 — 정답 없는 선택지)
@@ -251,6 +252,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 onSkip={() => void advance()}
                 pending={pending}
                 beginnerGuide={beginnerGuideEnabled}
+                onDismissGuide={() => profileId && setBeginnerGuideDismissed(profileId, true)}
               />
             )}
 
@@ -269,6 +271,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 onSkipRetry={() => void skipRetry()}
                 hintAllowed={run.mode !== 'exam'}
                 beginnerGuide={beginnerGuideEnabled}
+                onDismissGuide={() => profileId && setBeginnerGuideDismissed(profileId, true)}
               />
             )}
 

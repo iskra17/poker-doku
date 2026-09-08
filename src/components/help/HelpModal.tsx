@@ -124,23 +124,27 @@ function CardText({ card }: { card: string }) {
 interface HelpModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onShowGuide?: () => void;
 }
 
-export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
+export default function HelpModal({ isOpen, onClose, onShowGuide }: HelpModalProps) {
   const [tab, setTab] = useState<TabId>('ranks');
   const items = ITEM_TABS[tab];
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="도움말">
+      {onShowGuide && <button type="button" onClick={() => { onClose(); onShowGuide(); }} className="mb-3 min-h-11 w-full rounded-lg border border-ink/20 px-3 text-sm text-ink">
+        내 차례에 버튼 안내 보기
+      </button>}
       <div className="mb-3 flex flex-wrap gap-1.5">
         {TABS.map(t => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-bold transition-all ${
+            className={`min-h-11 rounded-lg px-2.5 py-1.5 text-xs font-bold transition-colors ${
               tab === t.id
-                ? 'bg-purple-600 text-white border border-purple-400'
-                : 'bg-gray-800/50 text-gray-400 border border-gray-700/30 hover:border-purple-500/30'
+                ? 'bg-blossom text-abyss border border-blossom'
+                : 'bg-panel text-ink-dim border border-ink/15 hover:border-blossom/40'
             }`}
           >
             {t.label}
@@ -151,14 +155,14 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
       <div className="max-h-[55dvh] space-y-1 overflow-y-auto pr-1">
         {tab === 'ranks' ? (
           <>
-            <p className="text-[11px] text-gray-500 mb-2">위에서 아래로 갈수록 약해져요. 홀카드 2장 + 커뮤니티 5장 중 베스트 5장으로 겨뤄요.</p>
+            <p className="text-xs text-ink-dim mb-2">위에서 아래로 갈수록 약해져요. 홀카드 2장 + 커뮤니티 5장 중 베스트 5장으로 겨뤄요.</p>
             {RANK_ROWS.map((row, i) => (
-              <div key={row.rank} className="flex items-center gap-2 bg-gray-800/30 rounded-lg px-2.5 py-1.5">
+              <div key={row.rank} className="flex items-center gap-2 bg-panel rounded-lg px-2.5 py-1.5">
                 <span className="text-gilded font-bold text-xs w-4 shrink-0 text-right">{i + 1}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline gap-2">
-                    <span className="text-white font-bold text-sm">{HAND_RANK_KO[row.rank]}</span>
-                    <span className="text-[10px] text-gray-500 truncate">{row.desc}</span>
+                    <span className="text-ink font-bold text-sm">{HAND_RANK_KO[row.rank]}</span>
+                    <span className="text-xs text-ink-dim truncate">{row.desc}</span>
                   </div>
                   <div className="flex gap-1.5 text-xs mt-0.5">
                     {row.example.map(c => <CardText key={c} card={c} />)}
@@ -169,9 +173,9 @@ export default function HelpModal({ isOpen, onClose }: HelpModalProps) {
           </>
         ) : (
           items?.map(g => (
-            <div key={g.term} className="bg-gray-800/30 rounded-lg px-2.5 py-1.5">
-              <span className="text-purple-300 font-bold text-sm">{g.term}</span>
-              <p className="text-xs text-gray-400 mt-0.5">{g.desc}</p>
+            <div key={g.term} className="bg-panel rounded-lg px-2.5 py-1.5">
+              <span className="text-ink font-bold text-sm">{g.term}</span>
+              <p className="text-xs text-ink-dim mt-0.5">{g.desc}</p>
             </div>
           ))
         )}

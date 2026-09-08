@@ -107,6 +107,7 @@ describe('story reward catalog', () => {
     const due = listStoryRewardsDue(done, new Set(['story-title-white-belt']));
     expect(due.map(item => item.id)).toEqual([
       'story-chips-act1-ch01-first', 'story-cg-act1-belt-white', 'story-cardback-dojo-crest', 'story-chips-act1-ch01-s',
+      'story-chips-act1-ch01-first-v2', 'story-chips-act1-ch01-s-v2',
     ]);
     expect(listStoryRewardsDue(state(), new Set())).toEqual([]);
   });

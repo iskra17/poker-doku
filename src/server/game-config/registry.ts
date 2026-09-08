@@ -88,7 +88,7 @@ export const GAME_CONFIG_REGISTRY = [
     min: 0,
     max: 100_000,
     unit: 'chips',
-    defaultValue: 800,
+    defaultValue: 2_000,
     applyMode: 'immediate',
     description: '지갑 잔액이 이 값 미만이면 구제(미야코의 재도전 지원) 수령 가능',
   },
@@ -327,8 +327,8 @@ export interface GameConfigCrossCheck {
 export const GAME_CONFIG_CROSS_CHECKS: readonly GameConfigCrossCheck[] = [
   {
     keys: ['economy.rescueTarget', 'economy.rescueThreshold'],
-    message: '구제 목표 잔액은 발동 기준 잔액보다 커야 합니다',
-    validate: get => get('economy.rescueTarget') > get('economy.rescueThreshold'),
+    message: '구제 목표 잔액은 발동 기준 잔액 이상이어야 합니다',
+    validate: get => get('economy.rescueTarget') >= get('economy.rescueThreshold'),
   },
 ];
 

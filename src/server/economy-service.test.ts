@@ -448,8 +448,8 @@ describe('EconomyRepository grant input boundaries', () => {
       code: 'ECONOMY_RULES_INVALID',
     },
     {
-      label: 'target at threshold',
-      rules: { target: 800 },
+      label: 'target below threshold',
+      rules: { target: 799 },
       code: 'ECONOMY_RULES_INVALID',
     },
     {
@@ -723,9 +723,9 @@ describe('EconomyService daily grant', () => {
 });
 
 describe('EconomyService rescue grant', () => {
-  it('qualifies at 799, reaches exactly 2000, and rejects a balance of 800', () => {
-    seedProfile('profile-1', 799);
-    seedProfile('profile-2', 800);
+  it('qualifies at 1999, reaches exactly 2000, and rejects a balance of 2000', () => {
+    seedProfile('profile-1', 1999);
+    seedProfile('profile-2', 2000);
     const at = Date.parse('2026-07-15T15:00:00.000Z');
     const service = new EconomyService(repository, () => at);
 
@@ -737,10 +737,10 @@ describe('EconomyService rescue grant', () => {
 
     expect(granted.transaction).toEqual({
       reason: 'RESCUE_GRANT',
-      delta: 1_201,
+      delta: 1,
     });
     expect(granted.profile.wallet.balance).toBe(2_000);
-    expect(walletBalance('profile-2')).toBe(800);
+    expect(walletBalance('profile-2')).toBe(2000);
     expect(rescueClaimCount('profile-1')).toBe(1);
     expect(rescueClaimCount('profile-2')).toBe(0);
   });

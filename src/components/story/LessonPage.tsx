@@ -12,6 +12,7 @@ import type { GuidedStage, LessonBlock, StoryHeroineId, StoryTeacherRef } from '
 import DrillAnswerInput from './DrillAnswerInput';
 import DrillTableView from './DrillTableView';
 import { resolveSpeaker } from './ScenePlayer';
+import ContextGuide from '@/components/onboarding/ContextGuide';
 
 interface LessonPageProps {
   title: string;
@@ -20,6 +21,7 @@ interface LessonPageProps {
   onFinish: () => void;
   /** 초보자가 현재 카드에서 다음에 할 일을 알 수 있게 하는 짧은 안내 */
   beginnerGuide?: boolean;
+  onDismissGuide?: () => void;
   /** 설명을 한 단계 건너뛸 때 서버 요청 중 중복 입력을 막는다 */
   pending?: boolean;
   onSkip?: () => void;
@@ -29,7 +31,7 @@ interface LessonPageProps {
  * 레슨 페이지 — 개념 카드(≤4장, 한 장씩 넘김) → 함께 풀기(단계식 입력, 점수 없음·즉시 정정).
  * 블록을 순서대로 하나씩 보여 주고, 마지막 블록이 끝나면 onFinish.
  */
-export default function LessonPage({ title, blocks, partnerId, onFinish, beginnerGuide = false, pending = false, onSkip }: LessonPageProps) {
+export default function LessonPage({ title, blocks, partnerId, onFinish, beginnerGuide = false, pending = false, onSkip, onDismissGuide }: LessonPageProps) {
   const [blockIndex, setBlockIndex] = useState(0);
   const block = blocks[blockIndex];
   const last = blockIndex >= blocks.length - 1;
@@ -73,28 +75,26 @@ export default function LessonPage({ title, blocks, partnerId, onFinish, beginne
             {block.formula && (
               <p className="mt-3 rounded-xl border border-gilded/40 bg-gilded/10 px-3 py-2 text-center font-mono text-sm font-bold text-gilded">{block.formula}</p>
             )}
-            {beginnerGuide && <BeginnerHint text={last ? '내용을 읽었으면 문제 풀러 가기 버튼을 눌러 주세요.' : '내용을 읽었으면 다음 카드 버튼을 눌러 주세요.'} />}
-            <button type="button" onClick={next} disabled={pending} className={`mt-4 w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : ''}`}>
+            {beginnerGuide && !pending && onDismissGuide && <ContextGuide target={'[data-tour="lesson-next"]'} onDismiss={onDismissGuide}>
+              {last ? '이제 문제를 직접 풀어 봐요.' : '읽었으면 다음 카드로 넘어가요.'}
+            </ContextGuide>}
+            <button data-tour="lesson-next" type="button" onClick={next} disabled={pending} className="mt-4 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50">
               {last ? '문제 풀러 가기' : '다음 카드'}
             </button>
           </article>
         )}
         {block.kind === 'text' && (
-          <TextBlock speaker={block.speaker} text={block.text} partnerId={partnerId} onNext={next} last={last} beginnerGuide={beginnerGuide} pending={pending} />
+          <TextBlock speaker={block.speaker} text={block.text} partnerId={partnerId} onNext={next} last={last} beginnerGuide={beginnerGuide} pending={pending} onDismissGuide={onDismissGuide} />
         )}
         {block.kind === 'guided' && (
-          <GuidedBlock key={blockIndex} teacher={block.teacher} intro={block.intro} situation={block.situation} stages={block.stages} partnerId={partnerId} onDone={next} last={last} beginnerGuide={beginnerGuide} pending={pending} />
+          <GuidedBlock key={blockIndex} teacher={block.teacher} intro={block.intro} situation={block.situation} stages={block.stages} partnerId={partnerId} onDone={next} last={last} beginnerGuide={beginnerGuide} pending={pending} onDismissGuide={onDismissGuide} />
         )}
       </motion.div>
     </div>
   );
 }
 
-function BeginnerHint({ text }: { text: string }) {
-  return <p className="mb-2 rounded-lg border border-gilded/35 bg-gilded/10 px-2.5 py-2 text-[11px] leading-relaxed text-ink" role="note" aria-label="초보 안내">{text}</p>;
-}
-
-function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pending }: { speaker: string; text: string; partnerId: StoryHeroineId | null; onNext: () => void; last: boolean; beginnerGuide: boolean; pending: boolean }) {
+function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pending, onDismissGuide }: { speaker: string; text: string; partnerId: StoryHeroineId | null; onNext: () => void; last: boolean; beginnerGuide: boolean; pending: boolean; onDismissGuide?: () => void }) {
   const who = resolveSpeaker(speaker, partnerId);
   const outfitId = useOutfitId(who.artId);
   const { display, done, skip } = useTypewriter(text, 22);
@@ -111,10 +111,10 @@ function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pend
           <p className="text-sm leading-relaxed text-ink">{display}</p>
         </div>
       </div>
-      {beginnerGuide && <BeginnerHint text={done
-        ? `대사를 읽었으면 ${last ? '문제 풀러 가기' : '다음'} 버튼을 눌러 주세요.`
-        : '아래 대사 완성 버튼을 누르면 설명이 한 번에 보여요.'} />}
-      <button type="button" onClick={done ? onNext : skip} disabled={pending} className={`mt-3 w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : ''}`}>
+      {beginnerGuide && !pending && onDismissGuide && <ContextGuide target={'[data-tour="lesson-next"]'} onDismiss={onDismissGuide}>
+        {done ? '읽었으면 다음으로 넘어가요.' : '누르면 대사가 한 번에 보여요.'}
+      </ContextGuide>}
+      <button data-tour="lesson-next" type="button" onClick={done ? onNext : skip} disabled={pending} className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50">
         {done ? (last ? '문제 풀러 가기' : '다음') : '대사 완성'}
       </button>
     </div>
@@ -126,7 +126,7 @@ function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pend
  * 예전엔 보드가 intro 문장에만 있어 2단계·오답 피드백 때 사라져 풀 수 없었다(2026-09-03 피드백 ①).
  * intro는 정적 한 줄로 항상 보이고, 말풍선은 이번 단계의 프롬프트/피드백만 담는다.
  */
-function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, last, beginnerGuide, pending }: {
+function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, last, beginnerGuide, pending, onDismissGuide }: {
   teacher: StoryTeacherRef;
   intro: string;
   situation: DrillSituation;
@@ -136,6 +136,7 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
   last: boolean;
   beginnerGuide: boolean;
   pending: boolean;
+  onDismissGuide?: () => void;
 }) {
   const [stageIndex, setStageIndex] = useState(0);
   const [answer, setAnswer] = useState<DrillAnswer | null>(null);
@@ -162,6 +163,11 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
 
   return (
     <div className="rounded-2xl border border-gilded/40 bg-panel/90 p-4" aria-label="함께 풀기">
+      {beginnerGuide && !pending && done && onDismissGuide && <ContextGuide
+        target={finished || feedback ? '[data-tour="guided-next"]' : answerComplete ? '[data-tour="guided-submit"]' : '[data-tour="guided-answer"]'}
+        onDismiss={onDismissGuide}>
+        {finished || feedback ? '읽었으면 다음 버튼을 눌러요.' : answerComplete ? '확인을 눌러 답을 살펴봐요.' : '내 카드와 보드를 보고 답을 골라요.'}
+      </ContextGuide>}
       <p className="text-[10px] font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
       <div className="mt-2">
         <DrillTableView situation={merged} />
@@ -181,15 +187,15 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
 
       {!finished && stage && !feedback && (
         <div className="mt-3">
-          {beginnerGuide && <BeginnerHint text="보드와 내 카드를 확인한 뒤, 답을 고르고 확인을 눌러 주세요." />}
-          <div className={beginnerGuide && !answerComplete ? 'rounded-xl ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : undefined}>
+          <div data-tour="guided-answer" role="group" aria-label="답 선택">
             <DrillAnswerInput spec={stage.answer} value={answer} onChange={setAnswer} />
           </div>
           <button
             type="button"
             onClick={submit}
+            data-tour="guided-submit"
             disabled={pending || !done || !answerComplete}
-            className={`mt-3 w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide && answerComplete ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : ''}`}
+            className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
           >
             확인
           </button>
@@ -197,14 +203,12 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
       )}
       {!finished && feedback && (
         <>
-        {beginnerGuide && <BeginnerHint text={feedback.correct
-          ? (stageIndex + 1 < stages.length ? '피드백을 읽었으면 다음 단계 버튼을 눌러 주세요.' : '피드백을 읽었으면 완료 버튼을 눌러 주세요.')
-          : '피드백을 읽었으면 다시 해 볼게요 버튼을 눌러 주세요.'} />}
         <button
           type="button"
+          data-tour="guided-next"
           onClick={feedback.correct ? proceed : () => setFeedback(null)}
           disabled={pending}
-          className={`mt-3 w-full rounded-xl py-2.5 text-sm font-bold text-white disabled:opacity-50 ${feedback.correct ? 'bg-cyber' : 'bg-blossom'} ${beginnerGuide ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : ''}`}
+          className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
         >
           {feedback.correct ? (stageIndex + 1 < stages.length ? '다음 단계' : '완료') : '다시 해 볼게요'}
         </button>
@@ -212,8 +216,7 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
       )}
       {finished && (
         <>
-        {beginnerGuide && <BeginnerHint text="함께 풀기를 마쳤어요. 다음으로 넘어가 주세요." />}
-        <button type="button" onClick={onDone} disabled={pending} className={`mt-3 w-full rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-panel' : ''}`}>
+        <button data-tour="guided-next" type="button" onClick={onDone} disabled={pending} className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50">
           {last ? '문제 풀러 가기' : '다음'}
         </button>
         </>

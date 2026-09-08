@@ -48,6 +48,31 @@ describe('StoryRewardService', () => {
     database.close();
   });
 
+  it('adds the same v2 difference once for a previously rewarded player without rewriting old receipts', () => {
+    stories.recordCompletion(HERO, 'act1-ch01', 'S', T0);
+    const rewards = new StoryRewardRepository(database);
+    const economy = new EconomyRepository(database);
+    database.transaction(() => {
+      for (const id of ['story-chips-act1-ch01-first', 'story-chips-act1-ch01-s']) {
+        const item = STORY_REWARD_CATALOG.find(row => row.id === id)!;
+        rewards.grantInTransaction(HERO, id, storyRewardSourceKey(item.trigger), T0);
+        economy.applyWalletDeltaInTransaction(HERO, item.chipAmount!, 'STORY_REWARD', `old:${id}`, id, T0);
+      }
+    });
+    const oldRows = ledger();
+    expect(service.reconcile(HERO, T0 + 1).chips).toBe(700);
+    expect(balance()).toBe(2_500);
+    expect(ledger().filter(row => String(row.idempotency_key).startsWith('old:'))).toEqual(oldRows);
+    expect(service.reconcile(HERO, T0 + 2).chips).toBe(0);
+    expect(ledger()).toHaveLength(4);
+  });
+
+  it('defines a finite 26,000 chip course budget while preserving the original 13,600', () => {
+    const chips = STORY_REWARD_CATALOG.filter(row => row.kind === 'chips');
+    expect(chips.reduce((sum, row) => sum + row.chipAmount!, 0)).toBe(26_000);
+    expect(chips.filter(row => !row.id.endsWith('-v2')).reduce((sum, row) => sum + row.chipAmount!, 0)).toBe(13_600);
+  });
+
   function ledger(profileId = HERO): Array<Record<string, unknown>> {
     return database.db.prepare(`
       SELECT reason, delta, ref_id, idempotency_key FROM chip_ledger
@@ -74,39 +99,45 @@ describe('StoryRewardService', () => {
     expect(first.granted.map(item => item.id)).toEqual(['story-title-white-belt', 'story-cg-act1-belt-white']);
     expect(first.granted[0]).toMatchObject({ kind: 'title', name: '백띠 수련생' });
     expect(first.granted[1]).toMatchObject({ kind: 'cg', art: '/assets/story/cg/act1-belt-white.webp' });
-    expect(first.chips).toBe(500);
-    expect(balance()).toBe(1_500);
+    expect(first.chips).toBe(1_000);
+    expect(balance()).toBe(2_000);
     expect(ledger()).toEqual([{
       reason: 'STORY_REWARD',
       delta: 500,
       ref_id: 'story-chips-act1-ch01-first',
       idempotency_key: 'story-reward:10:story-hero:27:story-chips-act1-ch01-first',
+    }, {
+      reason: 'STORY_REWARD', delta: 500, ref_id: 'story-chips-act1-ch01-first-v2',
+      idempotency_key: 'story-reward:10:story-hero:30:story-chips-act1-ch01-first-v2',
     }]);
     expect(inventoryIds()).toEqual(['story-cg-act1-belt-white', 'story-title-white-belt']);
     expect(service.grantedIds(HERO)).toEqual(new Set([
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
+      'story-chips-act1-ch01-first-v2',
     ]));
 
     // 재실행 — 새 지급·원장 없음
     expect(service.reconcile(HERO, T0 + 1_000)).toEqual({ granted: [], chips: 0 });
-    expect(ledger()).toHaveLength(1);
-    expect(balance()).toBe(1_500);
+    expect(ledger()).toHaveLength(2);
+    expect(balance()).toBe(2_000);
 
     // 최고 등급이 S로 오르면 S 보상만 추가된다
     stories.recordCompletion(HERO, 'act1-ch01', 'S', T0 + 2_000);
     const graded = service.reconcile(HERO, T0 + 2_000);
     expect(graded.granted.map(item => item.id)).toEqual(['story-cardback-dojo-crest']);
-    expect(graded.chips).toBe(300);
-    expect(balance()).toBe(1_800);
-    expect(ledger()).toHaveLength(2);
+    expect(graded.chips).toBe(500);
+    expect(balance()).toBe(2_500);
+    expect(ledger()).toHaveLength(4);
     expect(database.db.prepare(`
       SELECT item_id, source_key FROM story_rewards WHERE profile_id = ? ORDER BY granted_at, item_id
     `).all(HERO)).toEqual([
       { item_id: 'story-cg-act1-belt-white', source_key: 'story-chapter:act1-ch01:first' },
       { item_id: 'story-chips-act1-ch01-first', source_key: 'story-chapter:act1-ch01:first' },
+      { item_id: 'story-chips-act1-ch01-first-v2', source_key: 'story-chapter:act1-ch01:first' },
       { item_id: 'story-title-white-belt', source_key: 'story-chapter:act1-ch01:first' },
       { item_id: 'story-cardback-dojo-crest', source_key: 'story-chapter:act1-ch01:grade-S' },
       { item_id: 'story-chips-act1-ch01-s', source_key: 'story-chapter:act1-ch01:grade-S' },
+      { item_id: 'story-chips-act1-ch01-s-v2', source_key: 'story-chapter:act1-ch01:grade-S' },
     ]);
   });
 
@@ -126,10 +157,10 @@ describe('StoryRewardService', () => {
       'story-cg-act1-belt-yellow',
     ]);
     // 500 × 3 (첫 완주) + 1,000 (1막 완주)
-    expect(result.chips).toBe(2_500);
-    expect(balance()).toBe(3_500);
+    expect(result.chips).toBe(5_000);
+    expect(balance()).toBe(6_000);
     expect(ledger().every(row => row.reason === 'STORY_REWARD')).toBe(true);
-    expect(ledger()).toHaveLength(4);
+    expect(ledger()).toHaveLength(8);
 
     stories.setFlags(HERO, { [PERFECT_SET_FLAG]: '1' }, T0);
     expect(service.reconcile(HERO, T0).granted.map(item => item.id)).toEqual(['story-title-perfect']);
@@ -143,18 +174,18 @@ describe('StoryRewardService', () => {
     service = new StoryRewardService({ database, storyRepository: stories, rewardRepository: new StoryRewardRepository(database), economyRepository,
       economyService: new EconomyService(economyRepository, () => T0), chapters: STORY_CHAPTERS });
     stories.recordCompletion(HERO, 'act3-ch08', 'A', T0);
-    expect(service.reconcile(HERO, T0)).toMatchObject({ chips: 500, granted: [{ id: 'story-title-bluff-catcher' }] });
+    expect(service.reconcile(HERO, T0)).toMatchObject({ chips: 1000, granted: [{ id: 'story-title-bluff-catcher' }] });
     expect(service.reconcile(HERO, T0 + 1)).toEqual({ chips: 0, granted: [] });
     stories.recordCompletion(HERO, 'act3-ch08', 'S', T0 + 2);
-    expect(service.reconcile(HERO, T0 + 2)).toEqual({ chips: 300, granted: [] });
+    expect(service.reconcile(HERO, T0 + 2)).toEqual({ chips: 500, granted: [] });
     stories.recordCompletion(HERO, 'act3-ch09', 'S', T0 + 3);
     const ch9 = service.reconcile(HERO, T0 + 3);
-    expect(ch9.chips).toBe(800);
+    expect(ch9.chips).toBe(1500);
     expect(ch9.granted.map(item => item.id)).toEqual(['story-title-shadow-reader', 'story-cg-act3-luna-analysis', 'story-cg-act3-elena-snow']);
     expect(inventoryIds()).not.toContain('story-felt-brown-belt');
     stories.recordCompletion(HERO, 'act3-ch07', 'A', T0 + 4);
     const act3 = service.reconcile(HERO, T0 + 4);
-    expect(act3.chips).toBe(1500);
+    expect(act3.chips).toBe(3000);
     expect(inventoryIds()).toContain('story-felt-brown-belt');
     database.db.prepare(`INSERT INTO profile_cosmetics(profile_id, slot, item_id, updated_at) VALUES (?, 'felt', 'story-felt-brown-belt', ?)`).run(HERO, T0 + 5);
     expect(database.db.prepare(`SELECT item_id FROM profile_cosmetics WHERE profile_id = ? AND slot = 'felt'`).get(HERO)).toEqual({ item_id: 'story-felt-brown-belt' });
@@ -180,6 +211,7 @@ describe('StoryRewardService', () => {
     });
     expect(preview.filter(item => item.granted).map(item => item.id)).toEqual([
       'story-title-white-belt', 'story-chips-act1-ch01-first', 'story-cg-act1-belt-white',
+      'story-chips-act1-ch01-first-v2',
     ]);
   });
 
