@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { StoryRunView } from '@/lib/story/views';
+import type { StoryProgressView, StoryRunView } from '@/lib/story/views';
 import { createStoryStore } from './story-store';
 import { subscribeStoryWalletRefresh } from './story-wallet-refresh';
 
@@ -31,6 +31,28 @@ function setup() {
 }
 
 describe('story wallet settlement subscription', () => {
+  it('refreshes newly reconciled chip receipts on progress load once per profile', () => {
+    const {story,refresh,unsubscribe,setIdentity} = setup();
+    const progress = {
+      chapters:[],flags:{},belt:'white',nextChapterId:null,
+      drillStats:{total:0,correct:0,byCategory:{}},reviewQueue:0,activeRun:null,
+      daily:{available:false,done:0,total:3,date:'2026-09-09',teacherId:null},
+      rewards:[{
+        id:'chips-act1-ch01-first-v2',kind:'chips',name:'지갑 칩',description:'',chipAmount:500,
+        trigger:{kind:'chapter-first-clear',chapterId:'act1-ch01'},requirement:'',granted:true,
+      }],
+    } satisfies StoryProgressView;
+    story.setState({progress,progressStatus:'ready'});
+    expect(refresh).toHaveBeenCalledExactlyOnceWith({afterCurrent:true});
+    story.setState({progress:{...progress},pending:true});
+    expect(refresh).toHaveBeenCalledTimes(1);
+    setIdentity('p2');
+    story.getState().setProfileIdentity('p2');
+    story.setState({progress,progressStatus:'ready'});
+    expect(refresh).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
   it('refreshes chapter and daily chip settlements once even across resync and dismissal', () => {
     const {story,refresh,unsubscribe} = setup();
     const result = settled();

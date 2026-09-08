@@ -8,17 +8,29 @@ export function subscribeStoryWalletRefresh(
 ): () => void {
   let profileId = story.getState().profileId;
   const refreshedRuns = new Set<string>();
+  const refreshedChipReceipts = new Set<string>();
   return story.subscribe(state => {
     if (state.profileId !== profileId) {
       profileId = state.profileId;
       refreshedRuns.clear();
+      refreshedChipReceipts.clear();
+    }
+    const current = profile.getState();
+    if (!profileId || current.phase !== 'ready' || current.profile?.id !== profileId) return;
+    // Progress loading reconciles retroactive rewards before returning its receipts.
+    // Read the wallet after that transaction, including returning players with no active run.
+    const newReceipts = state.progressStatus === 'ready'
+      ? (state.progress?.rewards ?? []).filter(reward =>
+        reward.kind === 'chips' && reward.granted && !refreshedChipReceipts.has(reward.id))
+      : [];
+    if (newReceipts.length > 0) {
+      for (const reward of newReceipts) refreshedChipReceipts.add(reward.id);
+      void current.refresh({ afterCurrent: true });
     }
     const run = state.run;
     const result = run?.result;
     if (!profileId || !run || run.phase !== 'ended' || !result?.passed
         || (result.rewards.chips ?? 0) <= 0 || refreshedRuns.has(run.runId)) return;
-    const current = profile.getState();
-    if (current.phase !== 'ready' || current.profile?.id !== profileId) return;
     refreshedRuns.add(run.runId);
     void current.refresh({ afterCurrent: true });
   });
