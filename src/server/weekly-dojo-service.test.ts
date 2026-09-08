@@ -469,6 +469,28 @@ describe('WeeklyDojoService', () => {
     expect(attemptRow(attemptId).handsPlayed).toBe(rows.length);
   });
 
+  it('reconstructs a live attempt after all runtime services are restarted', async () => {
+    service.shutdown();
+    service = buildService({maxHands:6});
+    const {roomId,attemptId} = start();
+    expect(await driveHands(roomId,attemptId,2)).toBe(true);
+    const saved = attemptRow(attemptId);
+    const checkpoint = parseWeeklyDojoCheckpoint(saved.checkpointJson)!;
+    service.shutdown();
+    manager.shutdown();
+    repository = new WeeklyDojoRepository(database);
+    manager = new RoomManager(() => {},() => {});
+    service = buildService({maxHands:6});
+    const resumed = start();
+    expect(resumed.attemptId).toBe(attemptId);
+    expect(heroSeat(resumed.roomId)?.chips).toBe(saved.committedChips);
+    expect(dealerSeat(resumed.roomId)).toBe(checkpoint.dealerSeatIndex);
+    expect(tablePool(resumed.roomId)).toBe(TABLE_POOL);
+    expect(attemptRow(attemptId).handsPlayed).toBe(2);
+    expect(await driveHands(resumed.roomId,attemptId,3)).toBe(true);
+    expect(handRows(database,attemptId).map(hand => hand.handIndex)).toEqual([1,2,3]);
+  });
+
   it('restores bot stacks, the button and the chip pool on repeated resumes', async () => {
     service.shutdown();
     service = buildService({ maxHands: 8 });

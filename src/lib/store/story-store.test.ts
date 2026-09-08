@@ -205,6 +205,20 @@ describe('story-store', () => {
     expect(store.getState().run?.stepIndex).toBe(2);
   });
 
+  it('restores submitted feedback on resync and clears it for an unanswered question', () => {
+    const store = createStoryStore({fetch:vi.fn()});
+    const result: DrillResult = {
+      templateId:'odds-required-equity',seed:7,correct:true,
+      correctAnswer:{kind:'numeric',correct:25,tolerance:2,unit:'%',min:0,max:100},
+      explanation:{text:'정확해요.',speaker:'hana',facts:{pct:25}},
+      hintsUsed:0,streak:1,elapsedMs:1200,
+    };
+    store.getState().receiveRun(runFixture({drill:{...runFixture().drill!,lastResult:result}}));
+    expect(store.getState().lastDrillResult).toEqual(result);
+    store.getState().receiveRun(runFixture({drill:{...runFixture().drill!,index:1}}));
+    expect(store.getState().lastDrillResult).toBeNull();
+  });
+
   it('answerDrill converts cards to notation, stores the result and emits a game event', async () => {
     const store = createStoryStore({ fetch: vi.fn() });
     const { socket, emitted, fire } = makeSocket();

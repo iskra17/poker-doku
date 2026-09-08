@@ -96,7 +96,7 @@ export default function Home() {
       // 수련 스토리 라이브 스텝이 끝나 방이 닫힌 복귀는 이야기가 이어지는 중이므로(StoryStage가
       // 바로 에필로그를 그린다) 리캡 모달을 띄우지 않는다 — 결산은 ChapterResult가 담당한다.
       const recap = getSessionRecap();
-      if (recap.hands > 0 && !useStoryStore.getState().run) setSessionRecap(recap);
+      if (recap.hands > 0 && !prevState.gameState?.weeklyDojo && !useStoryStore.getState().run) setSessionRecap(recap);
     });
   }, [refresh]);
 
