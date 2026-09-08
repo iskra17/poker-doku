@@ -77,13 +77,13 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   }, [progress]);
 
   if (status === 'loading' && !progress) {
-    return <p className="p-6 text-center text-xs text-ink-dim">수련 기록을 불러오는 중…</p>;
+    return <p className="p-6 text-center text-sm text-ink-dim">수련 기록을 불러오는 중…</p>;
   }
   if (!progress) {
     return (
-      <div className="p-6 text-center text-xs text-ink-dim">
+      <div className="p-6 text-center text-sm text-ink-dim">
         <p>{error ?? '수련 스토리를 준비 중이에요.'}</p>
-        <button type="button" onClick={() => void load()} className="mt-2 rounded-lg border border-mystic/30 px-3 py-1 text-mystic">다시 시도</button>
+        <button type="button" onClick={() => void load()} className="mt-2 min-h-11 rounded-lg border border-mystic/30 px-3 text-sm font-bold text-mystic">다시 시도</button>
       </div>
     );
   }
@@ -94,38 +94,44 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const inProgress = recommendation?.reason === 'in-progress';
   // 다음 승급 안내: 미완료 챕터가 남은 가장 낮은 막
   const nextAct = acts.find(({ chapters }) => chapters.some(({ row }) => row.completions === 0))?.act ?? null;
+  const recommendedHints = recommended
+    ? acts.flatMap(({ chapters }) => chapters).find(({ chapter }) => chapter.id === recommended.id)?.rewardHints ?? []
+    : [];
 
   return (
     <section className="mx-auto mb-4 w-full max-w-4xl px-3 md:px-4" aria-labelledby="story-hub-title">
       {/* 띠 헤더 */}
-      <div className="mb-2 flex items-center justify-between rounded-2xl border border-gilded/30 bg-panel/85 px-4 py-2 backdrop-blur-sm">
+      <div className="mb-2 flex items-center justify-between rounded-xl border border-gilded/30 bg-panel/90 px-3 py-2.5">
         <div>
-          <h2 id="story-hub-title" className="text-sm font-bold text-ink">수련 스토리</h2>
-          <p className="text-[10px] text-ink-dim">
+          <h2 id="story-hub-title" className="text-base font-bold text-ink">수련 스토리</h2>
+          <p className="text-xs text-ink-dim">
             {nextAct
-              ? `원하는 수련부터 골라요 · ${ACT_TITLE[nextAct]}을 모두 마치면 ${BELT_LABEL[ACT_BELT[nextAct]]}`
+              ? `${ACT_TITLE[nextAct]} · 완료하면 ${BELT_LABEL[ACT_BELT[nextAct]]}`
               : '검은띠 과정 완료'}
           </p>
         </div>
-        <span className="rounded-full border border-gilded/50 bg-gilded/15 px-3 py-1 text-xs font-black text-gilded" aria-label={`현재 띠 ${BELT_LABEL[progress.belt]}`}>
+        <span className="rounded-lg border border-gilded/50 bg-gilded/15 px-3 py-1.5 text-sm font-black text-gilded" aria-label={`현재 띠 ${BELT_LABEL[progress.belt]}`}>
           {BELT_LABEL[progress.belt]}
         </span>
       </div>
 
       {/* 추천 수련 (담당 히로인 카드) — 순서 강제가 아니라 제안 */}
       {recommendation && recommended && (
-        <div className="mb-2 rounded-2xl border border-blossom/30 bg-panel/85 p-3 backdrop-blur-sm" aria-label="추천 수련">
-          <div className="flex items-center gap-3">
-            <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl border" style={{ borderColor: `${recommendedTeacher?.color ?? '#fff'}55` }}>
+        <div className="mb-2 rounded-xl border border-blossom/30 bg-panel/90 p-3" aria-label="추천 수련">
+          <div className="flex items-center gap-2.5">
+            <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl border" style={{ borderColor: `${recommendedTeacher?.color ?? '#fff'}55` }}>
               <CharacterImage characterId={teacherArtId(recommendedTeacherId)} expression="happy" round={false} outfitId={recommendedOutfit} className="h-full w-full text-3xl" />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="text-[10px] font-bold tracking-wider" style={{ color: recommendedTeacher?.color }}>
+              <p className="text-xs font-bold tracking-wide" style={{ color: recommendedTeacher?.color }}>
                 {inProgress ? '진행 중' : '추천 수련'} · CH{chapterNumber(STORY_CHAPTERS, recommended.id)} · {recommendedTeacherName}
               </p>
               <h3 className="truncate text-base font-bold text-ink">{recommended.title}</h3>
-              <p className="truncate text-[11px] text-ink-dim">{recommended.subtitle} · 약 {recommended.estimatedMinutes}분</p>
-              <p className={`truncate text-[10px] ${recommendation.reason === 'weakness' ? 'text-blossom' : 'text-ink-dim'}`}>
+              <p className="truncate text-sm text-ink-dim">{recommended.subtitle} · 약 {recommended.estimatedMinutes}분</p>
+              <p className="truncate text-xs text-ink-dim">
+                진행 {recommendedRow?.completions ?? 0}회 · {recommendedHints.length > 0 ? `보상 · ${recommendedHints.join(' · ')}` : '보상 수령 완료'}
+              </p>
+              <p className={`truncate text-xs ${recommendation.reason === 'weakness' ? 'text-blossom' : 'text-ink-dim'}`}>
                 {recommendationCopy(recommendation)}
               </p>
             </div>
@@ -134,7 +140,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                 type="button"
                 onClick={() => void startChapter(recommended.id)}
                 disabled={pending || (!!activeRun && !inProgress)}
-                className="rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg disabled:opacity-50"
+                className="min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50"
               >
                 {inProgress ? '이어하기' : '시작'}
               </button>
@@ -145,11 +151,11 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                     onClick={() => void startChapter(recommended.id, 'exam')}
                     disabled={pending || !!activeRun}
                     title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
-                    className="rounded-xl border border-gilded/40 px-3 py-1 text-[11px] font-bold text-gilded disabled:opacity-50"
+                    className="min-h-11 rounded-xl border border-gilded/40 px-3 text-xs font-bold text-gilded transition-colors hover:bg-gilded/10 disabled:opacity-50"
                   >
                     문제만 풀기
                   </button>
-                  <span className="text-center text-[9px] leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
+                  <span className="text-center text-xs leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
                 </>
               )}
             </div>
@@ -160,14 +166,11 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
       {error && <p className="mb-2 text-center text-xs text-blossom">{error}</p>}
 
       {/* 수련 목록 — 막별, 순서 강제 없음 */}
-      <div className="mb-2 space-y-3 rounded-2xl border border-mystic/20 bg-panel/85 p-3 backdrop-blur-sm" aria-label="수련 목록">
-        <p className="text-[10px] text-ink-dim">
-          순서는 자유예요. 칩의 정확도를 보고 부족한 유형부터 골라도 되고, 아는 내용은 [문제만 풀기]로 설명을 건너뛸 수 있어요. 85점 이상이면 첫 완료 보상을 받아요.
-        </p>
+      <div className="mb-2 space-y-3 rounded-xl border border-white/10 bg-panel/90 p-3" aria-label="수련 목록">
         {acts.length === 0 && <p className="text-center text-xs text-ink-dim">챕터가 준비되는 중이에요.</p>}
         {acts.map(({ act, chapters }) => (
           <div key={act}>
-            <h3 className="mb-1.5 text-[11px] font-bold text-mystic">{ACT_TITLE[act]}</h3>
+            <h3 className="mb-1.5 text-sm font-bold text-mystic">{ACT_TITLE[act]}</h3>
             <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
               {chapters.map(({ chapter, row, skills, rewardHints }) => (
                 <ChapterCard

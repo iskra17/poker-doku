@@ -12,16 +12,16 @@ interface ButtonProps {
 }
 
 const variants = {
-  primary: 'bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white shadow-lg shadow-purple-500/25',
-  secondary: 'bg-gray-700/50 hover:bg-gray-600/50 text-gray-200 border border-gray-600/50',
-  danger: 'bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white shadow-lg shadow-red-500/25',
-  success: 'bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white shadow-lg shadow-green-500/25',
+  primary: 'bg-blossom text-abyss hover:bg-blossom-hot',
+  secondary: 'border border-white/15 bg-elevated text-ink hover:border-blossom/45 hover:bg-panel',
+  danger: 'bg-[#a85f63] text-white hover:bg-[#bd7075]',
+  success: 'bg-cyber text-abyss hover:bg-[#8bcfc6]',
 };
 
 const sizes = {
-  sm: 'px-3 py-1.5 text-sm',
-  md: 'px-5 py-2.5 text-base',
-  lg: 'px-8 py-3 text-lg',
+  sm: 'min-h-11 px-3 text-sm',
+  md: 'min-h-11 px-5 text-base',
+  lg: 'min-h-12 px-8 text-lg',
 };
 
 export default function Button({
@@ -32,14 +32,14 @@ export default function Button({
   // emit이 죽는다 (2026-07-22 SnG 종료 모달 먹통 버그).
   return (
     <motion.button
-      whileHover={disabled ? {} : { scale: 1.05 }}
-      whileTap={disabled ? {} : { scale: 0.95 }}
+      whileHover={disabled ? {} : { scale: 1.01 }}
+      whileTap={disabled ? {} : { scale: 0.98 }}
       onClick={onClick ? () => onClick() : undefined}
       disabled={disabled}
       className={`
-        rounded-xl font-bold transition-all duration-200
+        rounded-xl font-bold transition-colors duration-200
         ${variants[variant]} ${sizes[size]}
-        ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
+        ${disabled ? 'cursor-not-allowed opacity-40' : 'cursor-pointer'}
         ${className}
       `}
     >

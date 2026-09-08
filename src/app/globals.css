@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #0a0614;
-  --foreground: #f4edff;
+  --background: #171412;
+  --foreground: #f4ede6;
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --safe-left: env(safe-area-inset-left, 0px);
@@ -16,19 +16,20 @@
   --color-story-felt-black-rail: #e7e2f2;
 }
 
-/* 디자인 토큰 — "미드나잇 사쿠라 네온"
-   bg-panel, text-blossom, border-cyber 같은 유틸리티가 자동 생성된다 */
+/* 디자인 토큰 — 따뜻한 다크 테이블
+   bg-panel, text-blossom, border-cyber 같은 유틸리티가 자동 생성된다.
+   블로섬/사이버/골드는 카드와 상태 의미를 유지하고, 배경과 패널만 중립 톤으로 둔다. */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --color-abyss: #0a0614;      /* 최심부 배경 */
-  --color-panel: #150c26;      /* 패널/카드 배경 */
-  --color-elevated: #1e1235;   /* 모달/시트 */
-  --color-blossom: #ff7eb6;    /* 주 액센트 핑크 */
-  --color-blossom-hot: #ff4f9a;/* 강조 핑크 */
-  --color-cyber: #6be4ff;      /* 보조 시안 */
-  --color-mystic: #a78bfa;     /* 퍼플 */
-  --color-gilded: #ffd76a;     /* 골드 — 칩/팟/승리 */
+  --color-abyss: #100d0b;      /* 최심부 배경 */
+  --color-panel: #211b17;      /* 패널/카드 배경 */
+  --color-elevated: #2c241e;   /* 모달/시트 */
+  --color-blossom: #d68189;    /* 주 액센트 — muted rose */
+  --color-blossom-hot: #e8999f;/* 강조 로즈 */
+  --color-cyber: #79bdb5;      /* 보조 청록 */
+  --color-mystic: #c7a68e;     /* 따뜻한 보조 액센트 */
+  --color-gilded: #e6bd68;     /* 골드 — 칩/팟/승리 */
   --color-felt-hi: #24204a;    /* 펠트 그라디언트 밝은 쪽 */
   --color-felt-lo: #141031;    /* 펠트 그라디언트 어두운 쪽 */
   --color-story-felt-hi: #1d3f3c; /* 수련 스토리 테이블 펠트 — 실전 캐시 테이블과 한눈에 구분되는 청록 */
@@ -42,8 +43,8 @@
   --color-rarity-rare: #58b7ff;   /* 희귀 */
   --color-rarity-epic: #c084fc;   /* 영웅 */
   --color-rarity-legend: #ffb347; /* 전설 */
-  --color-ink: #f4edff;        /* 본문 텍스트 */
-  --color-ink-dim: #b9a8d9;    /* 보조 텍스트 */
+  --color-ink: #f4ede6;        /* 본문 텍스트 */
+  --color-ink-dim: #c7b9ae;    /* 보조 텍스트 */
   --color-suit-red: #ff4f6e;   /* 카드 수트 — ♥ (2컬러에선 ♦도) */
   --color-suit-blue: #4fa3ff;  /* 카드 수트 — ♦ (4컬러) */
   --color-suit-green: #2fbe85; /* 카드 수트 — ♣ (4컬러) */
@@ -84,8 +85,15 @@ html, body {
   background: transparent;
 }
 .scrollbar-thin::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.3);
+  background: rgba(214, 129, 137, 0.42);
   border-radius: 4px;
+}
+
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-blossom);
+  outline-offset: 2px;
 }
 
 /* Range input styling */
@@ -104,10 +112,10 @@ input[type="range"]::-webkit-slider-thumb {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #ff4f9a, #a78bfa);
+  background: var(--color-blossom);
   cursor: pointer;
   border: 2px solid #fff;
-  box-shadow: 0 0 10px rgba(255, 79, 154, 0.5);
+  box-shadow: none;
 }
 @media (min-width: 768px) {
   input[type="range"]::-webkit-slider-thumb {
@@ -141,7 +149,7 @@ input[type="range"]::-webkit-slider-thumb {
 /* Background grid pattern */
 .bg-grid {
   background-image:
-    linear-gradient(rgba(139, 92, 246, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(139, 92, 246, 0.05) 1px, transparent 1px);
+    linear-gradient(rgba(214, 129, 137, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(214, 129, 137, 0.045) 1px, transparent 1px);
   background-size: 40px 40px;
 }

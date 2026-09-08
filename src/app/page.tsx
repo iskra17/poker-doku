@@ -30,7 +30,7 @@ import { useStoryStore } from '@/lib/store/story-store';
 import { subscribeStoryWalletRefresh } from '@/lib/store/story-wallet-refresh';
 
 const LOBBY_BG_STYLE: React.CSSProperties = {
-  backgroundImage: 'linear-gradient(rgba(10,6,20,0.82), rgba(10,6,20,0.92)), url(/assets/bg/lobby.webp)',
+  backgroundImage: 'linear-gradient(rgba(23,20,18,0.88), rgba(16,13,11,0.96)), url(/assets/bg/lobby.webp)',
   backgroundSize: 'cover',
   backgroundPosition: 'center',
 };
@@ -165,26 +165,25 @@ export default function Home() {
         onOpenGallery={() => setGalleryOpen(true)}
       />
       <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
-      <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-2 gap-2 px-3 md:grid-cols-4 md:px-4">
+      <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-4 gap-1.5 px-3 md:gap-2 md:px-4">
         {([
-          ['games', '일반 게임', '친구·봇과 자유롭게'],
-          ['story', '수련 스토리', '그녀와 배우는 기본기'],
-          ['arena', '포커 아레나', '시즌 공식 경쟁'],
-          ['missions', '수련 과제', '오늘의 성장 목표'],
-        ] as const).map(([value, title, description]) => (
+          ['games', '게임'],
+          ['story', '스토리'],
+          ['arena', '아레나'],
+          ['missions', '과제'],
+        ] as const).map(([value, title]) => (
           <button
             key={value}
             type="button"
             onClick={() => setLobbyView(value)}
             aria-pressed={lobbyView === value}
-            className={`rounded-2xl border p-2 text-left md:p-3 ${
+            className={`min-h-11 rounded-xl border px-2 py-2 text-center text-sm font-bold transition-colors md:px-3 ${
               lobbyView === value
-                ? 'border-blossom/50 bg-blossom/15'
-                : 'border-mystic/25 bg-panel/85'
+                ? 'border-blossom/60 bg-blossom/15 text-ink'
+                : 'border-white/10 bg-panel/85 text-ink-dim hover:border-blossom/35 hover:text-ink'
             }`}
           >
-            <span className="block text-sm font-bold text-ink">{title}</span>
-            <span className="mt-0.5 block text-[10px] text-ink-dim">{description}</span>
+            {title}
           </button>
         ))}
       </nav>

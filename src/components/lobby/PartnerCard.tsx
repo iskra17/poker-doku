@@ -133,8 +133,8 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
 
   return (
     <section className="mx-auto mb-2 w-full max-w-4xl px-3 md:px-4" aria-label="파트너">
-      <div className="rounded-2xl border border-blossom/25 bg-panel/85 p-3 backdrop-blur-sm">
-        <div className="flex items-center gap-3">
+      <div className="rounded-xl border border-blossom/25 bg-panel/90 p-3">
+        <div className="flex items-center gap-2.5">
         {/* 파트너 일러스트 — 탭하면 말을 건다(대사 순환), 길게 보고 싶으면 쇼케이스 */}
         <motion.button
           type="button"
@@ -142,7 +142,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
           onDoubleClick={() => setShowcaseOpen(true)}
           aria-label={`${character.name}에게 말 걸기`}
           title="탭: 말 걸기 · 더블탭: 크게 보기"
-          className="relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl border"
+          className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border"
           style={{ borderColor: `${character.color}55` }}
           animate={{ y: [0, -2, 0] }}
           transition={{ duration: 3.2, repeat: Infinity, ease: 'easeInOut' }}
@@ -158,13 +158,11 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
         </motion.button>
 
         <div className="min-w-0 flex-1">
-          <p className="flex items-center gap-1.5 text-xs font-bold" style={{ color: character.color }}>
+          <p className="flex flex-wrap items-center gap-1 text-sm font-bold" style={{ color: character.color }}>
             {character.name}
-            <span className="rounded-full bg-blossom/15 px-1.5 py-px text-[9px] font-bold text-blossom">
-              인연 Lv.{affinityLevel}
-            </span>
+            <span className="font-normal text-ink-dim">· 인연 Lv.{affinityLevel}</span>
             {hasTieredPartnerScript(partnerId) && tier === 2 && (
-              <span className="rounded-full bg-gilded/15 px-1.5 py-px text-[9px] font-bold text-gilded">단짝</span>
+              <span className="font-normal text-gilded">· 단짝</span>
             )}
           </p>
         </div>
@@ -174,8 +172,8 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             type="button"
             onClick={handleCta}
             disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
-            aria-describedby={beginnerGuideVisible ? 'beginner-guide-copy' : undefined}
-            className={`rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50 ${beginnerGuideVisible ? 'ring-2 ring-gilded ring-offset-2 ring-offset-panel' : ''}`}
+            data-tour="lobby-start"
+            className={`min-h-11 rounded-xl bg-blossom px-4 text-sm font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50 ${beginnerGuideVisible ? 'ring-2 ring-gilded ring-offset-2 ring-offset-panel' : ''}`}
           >
             {pendingRoomId
               ? '입장 중…'
@@ -193,7 +191,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
               type="button"
               onClick={joinPractice}
               disabled={!!pendingRoomId}
-              className="rounded-lg border border-mystic/30 px-2 py-1 text-[10px] font-bold text-ink-dim disabled:opacity-50"
+              className="min-h-11 rounded-lg border border-white/15 px-3 text-xs font-bold text-ink-dim transition-colors hover:border-blossom/35 hover:text-ink disabled:opacity-50"
             >
               자유 연습
             </button>
@@ -202,27 +200,15 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
         </div>
 
         {beginnerGuideEligible && (
-          beginnerGuideVisible ? (
-            <div id="beginner-guide-copy" className="mt-2 rounded-xl border border-gilded/40 bg-gilded/10 px-3 py-2 text-[11px] leading-relaxed text-ink" role="note" aria-label="초보 안내">
-              <p><span className="font-bold text-gilded">첫 수련 안내</span> · 첫 목표는 문제 2개를 풀고 완료하는 거예요. 위의 <span className="font-bold">첫 수련 시작</span>을 누르면 바로 시작해요.</p>
-              <button
-                type="button"
-                onClick={dismissBeginnerGuide}
-                className="mt-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-ink-dim underline decoration-dotted underline-offset-2 focus-visible:outline-2 focus-visible:outline-cyber"
-              >
-                안내 닫기
-              </button>
-            </div>
-          ) : (
-            <button
-              type="button"
-              onClick={showBeginnerGuide}
-              aria-label="초보 안내 다시 보기"
-              className="mt-2 rounded-lg border border-mystic/30 px-2 py-1 text-[10px] font-bold text-ink-dim hover:bg-mystic/10 focus-visible:outline-2 focus-visible:outline-cyber"
-            >
-              안내
-            </button>
-          )
+          <button
+            type="button"
+            onClick={beginnerGuideVisible ? dismissBeginnerGuide : showBeginnerGuide}
+            aria-label={beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내 다시 보기'}
+            data-guide-toggle="lobby"
+            className="mt-1 min-h-11 rounded-lg px-2 text-xs font-bold text-ink-dim underline decoration-dotted underline-offset-2 hover:text-ink"
+          >
+            {beginnerGuideVisible ? '초보 안내 닫기' : '초보 안내'}
+          </button>
         )}
 
         {/* 대사 — 카드 전체 폭 사용 (좁은 화면에서 1줄 말줄임되던 문제: 행 분리로 폭 2배 확보,
@@ -232,7 +218,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             key={speech}
             initial={{ opacity: 0, y: 3 }}
             animate={{ opacity: 1, y: 0 }}
-            className="mt-2 line-clamp-3 text-xs leading-relaxed text-ink"
+            className="mt-2 line-clamp-3 text-sm leading-relaxed text-ink"
           >
             “{speech}”
           </motion.p>

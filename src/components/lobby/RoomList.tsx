@@ -29,7 +29,7 @@ const DIFFICULTY_BADGES: Record<string, { label: string; className: string }> = 
 // bots는 '봇 전용'이 아니라 '혼자 연습' — 전자는 AI끼리 논다는 오해를 부르고,
 // 이 방의 실제 차별점은 봇 상대가 아니라(mixed도 봇이 있다) 다른 사람이 못 낀다는 점이다.
 const TABLE_TYPE_BADGES: Record<string, { label: string; className: string }> = {
-  bots: { label: '🎯 혼자 연습', className: 'text-cyber border-cyber/40' },
+  bots: { label: '혼자 연습', className: 'text-cyber border-cyber/40' },
   mixed: { label: '봇+사람', className: 'text-ink-dim border-white/20' },
   humans: { label: '사람만', className: 'text-blossom border-blossom/40' },
 };
@@ -47,7 +47,7 @@ const MODE_FILTERS: Array<{ id: ModeFilter; label: string }> = [
 
 const TYPE_FILTERS: Array<{ id: TypeFilter; label: string }> = [
   { id: 'all', label: '전체' },
-  { id: 'bots', label: '🎯 혼자 연습' },
+  { id: 'bots', label: '혼자 연습' },
   { id: 'mixed', label: '봇+사람' },
   { id: 'humans', label: '사람만' },
 ];
@@ -113,6 +113,7 @@ export default function RoomList({
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [joinableOnly, setJoinableOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>('default');
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [mttDetailId, setMttDetailId] = useState<string | null>(null);
   // 초대 목적지는 한 번만 연다 — 사용자가 닫은 모달이 다시 열리면 안 된다
   const [inviteOpened, setInviteOpened] = useState(false);
@@ -150,9 +151,9 @@ export default function RoomList({
 
   return (
     // 헤더/복귀 배너/필터는 고정, 테이블 목록만 내부 스크롤 — 테이블이 늘어나도 컨트롤이 화면 밖으로 밀리지 않는다
-    <div className="mx-auto flex h-full min-h-0 w-full max-w-3xl flex-col px-3 md:px-4">
-      <div className="flex flex-none items-center justify-between mb-2 md:mb-3">
-        <h2 className="text-mystic font-bold text-base md:text-lg">테이블 목록</h2>
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col px-3 md:px-4">
+      <div className="mb-2 flex flex-none items-center justify-between md:mb-3">
+        <h2 className="text-base font-bold text-ink md:text-lg">테이블</h2>
         {PUBLIC_MTT_ENABLED && modeFilter === 'mtt' && canCreateTournament ? (
           <Button variant="primary" size="sm" onClick={() => setMttCreateOpen(true)}>
             + 토너먼트 개설
@@ -174,16 +175,16 @@ export default function RoomList({
           key={`mine-${room.id}`}
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-3 flex-none bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
+          className="mb-3 flex flex-none items-center justify-between gap-3 rounded-xl border border-gilded/45 bg-panel/90 p-3"
         >
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/50 rounded px-1 py-px">
-                🪑 내 자리
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 text-xs font-bold text-gilded">
+                내 자리
               </span>
-              <span className="text-white font-bold text-sm truncate">{room.name}</span>
+              <span className="truncate text-sm font-bold text-ink">{room.name}</span>
             </div>
-            <p className="text-xs text-ink-dim mt-1 leading-relaxed">{mySeatStatusLine(room)}</p>
+            <p className="mt-1 text-xs leading-relaxed text-ink-dim">{mySeatStatusLine(room)}</p>
           </div>
           <Button variant="success" size="sm" className="shrink-0" onClick={() => onJoin(room.id)}>
             {room.mode !== 'sng' && (room.mySeat?.chips ?? 0) <= 0 ? '리바이' : '게임 복귀'}
@@ -197,16 +198,16 @@ export default function RoomList({
           key={`mine-mtt-${t.id}`}
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-3 flex-none bg-panel/90 backdrop-blur-sm border border-gilded/50 rounded-xl p-3 flex items-center justify-between gap-3 shadow-[0_0_16px_rgba(255,215,106,0.15)]"
+          className="mb-3 flex flex-none items-center justify-between gap-3 rounded-xl border border-gilded/45 bg-panel/90 p-3"
         >
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/50 rounded px-1 py-px">
-                🏆 내 토너먼트
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className="shrink-0 text-xs font-bold text-gilded">
+                내 토너먼트
               </span>
-              <span className="text-white font-bold text-sm truncate">{t.name}</span>
+              <span className="truncate text-sm font-bold text-ink">{t.name}</span>
             </div>
-            <p className="text-xs text-ink-dim mt-1 leading-relaxed">
+            <p className="mt-1 text-xs leading-relaxed text-ink-dim">
               Lv.{t.level} · 잔존 {t.remaining}/{t.entrantCount} · 블라인드가 계속 차감되고 있어요 — 서둘러 돌아오세요!
             </p>
           </div>
@@ -221,56 +222,79 @@ export default function RoomList({
         </motion.div>
       ))}
 
-      {/* 필터/정렬 바 */}
-      <div className="flex flex-none flex-wrap items-center gap-1.5 mb-2">
-        <div className="flex rounded-lg border border-mystic/20 overflow-hidden">
+      {/* 기본 모드만 한 줄에 두고, 덜 자주 쓰는 필터는 펼쳐서 접근한다. */}
+      <div className="mb-2 flex min-w-0 flex-none items-center gap-1.5">
+        <div className="flex min-w-0 flex-1 overflow-x-auto rounded-lg border border-white/10 scrollbar-thin">
           {MODE_FILTERS.map(f => (
             <button
               key={f.id}
+              type="button"
               onClick={() => setModeFilter(f.id)}
-              className={`px-2.5 py-1 text-xs font-bold transition-colors ${
+              aria-pressed={modeFilter === f.id}
+              className={`min-h-11 shrink-0 px-3 text-xs font-bold transition-colors ${
                 modeFilter === f.id
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-panel/60 text-ink-dim hover:text-ink'
+                  ? 'bg-blossom text-abyss'
+                  : 'bg-panel/70 text-ink-dim hover:bg-elevated hover:text-ink'
               }`}
             >
               {f.label}
             </button>
           ))}
         </div>
-        <div className="flex rounded-lg border border-mystic/20 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setFiltersOpen(value => !value)}
+          aria-expanded={filtersOpen}
+          aria-controls="room-list-filters"
+          className={`min-h-11 shrink-0 rounded-lg border px-3 text-xs font-bold transition-colors ${
+            filtersOpen || typeFilter !== 'all' || joinableOnly || sort !== 'default'
+              ? 'border-blossom/50 bg-blossom/15 text-ink'
+              : 'border-white/10 bg-panel/70 text-ink-dim hover:text-ink'
+          }`}
+        >
+          필터{filtersOpen ? ' 닫기' : ''}
+        </button>
+      </div>
+
+      {filtersOpen && (
+        <div id="room-list-filters" className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-white/10 bg-panel/70 p-1.5">
           {TYPE_FILTERS.map(f => (
             <button
               key={f.id}
+              type="button"
               onClick={() => setTypeFilter(f.id)}
-              className={`px-2.5 py-1 text-xs font-bold transition-colors whitespace-nowrap ${
+              aria-pressed={typeFilter === f.id}
+              className={`min-h-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
                 typeFilter === f.id
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-panel/60 text-ink-dim hover:text-ink'
+                  ? 'border-blossom/50 bg-blossom/15 text-ink'
+                  : 'border-white/10 bg-elevated/70 text-ink-dim hover:text-ink'
               }`}
             >
               {f.label}
             </button>
           ))}
+          <button
+            type="button"
+            onClick={() => setJoinableOnly(value => !value)}
+            aria-pressed={joinableOnly}
+            className={`min-h-11 rounded-lg border px-3 text-xs font-bold transition-colors ${
+              joinableOnly
+                ? 'border-blossom/50 bg-blossom/15 text-ink'
+                : 'border-white/10 bg-elevated/70 text-ink-dim hover:text-ink'
+            }`}
+          >
+            참가 가능만
+          </button>
+          <button
+            type="button"
+            onClick={() => setSort(s => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length])}
+            className="min-h-11 rounded-lg border border-white/10 bg-elevated/70 px-3 text-xs font-bold text-ink-dim transition-colors hover:text-ink"
+            title="누르면 정렬 기준이 바뀝니다"
+          >
+            정렬 · {SORT_LABELS[sort]}
+          </button>
         </div>
-        <button
-          onClick={() => setJoinableOnly(v => !v)}
-          className={`px-2.5 py-1 text-xs font-bold rounded-lg border transition-colors ${
-            joinableOnly
-              ? 'bg-purple-600 text-white border-purple-400'
-              : 'bg-panel/60 text-ink-dim border-mystic/20 hover:text-ink'
-          }`}
-        >
-          참가 가능만
-        </button>
-        <button
-          onClick={() => setSort(s => SORT_CYCLE[(SORT_CYCLE.indexOf(s) + 1) % SORT_CYCLE.length])}
-          className="ml-auto px-2.5 py-1 text-xs font-bold rounded-lg border border-mystic/20 bg-panel/60 text-ink-dim hover:text-ink transition-colors"
-          title="누르면 정렬 기준이 바뀝니다"
-        >
-          ↕ {SORT_LABELS[sort]}
-        </button>
-      </div>
+      )}
 
       <InviteCodeEntry
         allowTournaments={PUBLIC_MTT_ENABLED}
@@ -301,8 +325,7 @@ export default function RoomList({
           />
         ))}
         {modeFilter === 'mtt' && visibleTournaments.length === 0 && (
-          <div className="text-center py-12 text-ink-dim">
-            <p className="text-4xl mb-3">🏆</p>
+          <div className="py-12 text-center text-ink-dim">
             {/* 토너먼트 개설은 운영자 전용 — 일반 유저에게 개설을 권하면 없는 버튼을 찾게 된다 */}
             <p className="text-sm">
               {canCreateTournament
@@ -317,36 +340,36 @@ export default function RoomList({
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="bg-panel/80 backdrop-blur-sm border border-mystic/20 rounded-xl p-3 md:p-4 flex items-center justify-between hover:border-blossom/40 transition-all active:scale-[0.98]"
+            className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-panel/90 p-3 transition-colors hover:border-blossom/40 active:scale-[0.99] md:p-4"
           >
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               {/* Table icon — 시트앤고는 트로피, 캐시는 스페이드 */}
-              <div className="w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br from-purple-600/30 to-pink-600/30 flex items-center justify-center text-xl md:text-2xl border border-mystic/20 shrink-0">
-                {room.mode === 'sng' ? '🏆' : '♠️'}
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-elevated text-xl text-gilded md:h-12 md:w-12 md:text-2xl">
+                {room.mode === 'sng' ? '🏆' : '♠'}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   {room.mode === 'sng' && (
-                    <span className="shrink-0 text-[10px] font-bold text-gilded border border-gilded/40 rounded px-1 py-px">
+                    <span className="shrink-0 text-xs font-bold text-gilded">
                       Sit &amp; Go
                     </span>
                   )}
                   {TABLE_TYPE_BADGES[room.tableType ?? 'mixed'] && (
-                    <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${TABLE_TYPE_BADGES[room.tableType ?? 'mixed'].className}`}>
+                    <span className={`shrink-0 text-xs font-bold ${TABLE_TYPE_BADGES[room.tableType ?? 'mixed'].className}`}>
                       {TABLE_TYPE_BADGES[room.tableType ?? 'mixed'].label}
                     </span>
                   )}
                   {room.difficulty && DIFFICULTY_BADGES[room.difficulty] && (
-                    <span className={`shrink-0 text-[10px] font-bold border rounded px-1 py-px ${DIFFICULTY_BADGES[room.difficulty].className}`}>
+                    <span className={`shrink-0 text-xs font-bold ${DIFFICULTY_BADGES[room.difficulty].className}`}>
                       {DIFFICULTY_BADGES[room.difficulty].label}
                     </span>
                   )}
                   {room.hasPassword && (
-                    <span className="shrink-0 text-[11px]" title="비밀번호 방">🔒</span>
+                    <span className="shrink-0 text-xs text-ink-dim" title="비밀번호 방">잠금</span>
                   )}
-                  <h3 className="text-white font-bold text-sm md:text-base truncate">{room.name}</h3>
+                  <h3 className="truncate text-sm font-bold text-ink md:text-base">{room.name}</h3>
                 </div>
-                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs md:text-sm text-ink-dim mt-0.5">
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-ink-dim md:text-sm">
                   <span>블라인드 <span className="text-gilded">{room.blinds}</span></span>
                   {(room.turnTime ?? 15) !== 15 && (
                     <span>턴 <span className="text-cyber">{room.turnTime}초</span></span>
@@ -385,22 +408,21 @@ export default function RoomList({
         ))}
 
         {modeFilter !== 'mtt' && (rooms.length === 0 && visibleTournaments.length === 0 ? (
-          <div className="text-center py-12 text-ink-dim">
-            <p className="text-4xl mb-3">🃏</p>
+          <div className="py-12 text-center text-ink-dim">
             <p className="text-sm">아직 테이블이 없어요. 새 방을 만들어 시작해보세요!</p>
           </div>
         ) : visible.length === 0 && visibleTournaments.length === 0 && (
-          <div className="text-center py-12 text-ink-dim">
-            <p className="text-4xl mb-3">🔍</p>
+          <div className="py-12 text-center text-ink-dim">
             <p className="text-sm">조건에 맞는 테이블이 없어요.</p>
             <button
+              type="button"
               onClick={() => {
                 setModeFilter('all');
                 setTypeFilter('all');
                 setJoinableOnly(false);
                 setSort('default');
               }}
-              className="mt-2 text-xs text-mystic underline underline-offset-2 hover:text-blossom"
+              className="mt-2 min-h-11 rounded-lg px-3 text-xs font-bold text-mystic underline underline-offset-2 hover:text-blossom"
             >
               필터 초기화
             </button>

@@ -21,7 +21,7 @@ interface ChapterCardProps {
   state: ChapterCardState;
   /** 이 챕터가 다루는 드릴 유형 + 내 정확도 (수련 목록의 "부족한 부분 고르기" 단서) */
   skills: ChapterSkill[];
-  /** 아직 못 받은 보상 미리보기 — '🎁 사쿠라 · 도복 (첫 완주)' */
+  /** 아직 못 받은 보상 미리보기 */
   rewardHints: string[];
   recommended: boolean;
   partnerId: StoryHeroineId | null;
@@ -45,7 +45,7 @@ function SkillChip({ skill }: { skill: ChapterSkill }) {
   const strong = skill.pct !== null && skill.total >= WEAKNESS_MIN_ATTEMPTS && skill.pct >= 90;
   return (
     <span
-      className={`rounded-md border px-1.5 py-0.5 text-[9px] ${
+      className={`rounded-md border px-1.5 py-1 text-xs ${
         weak ? 'border-blossom/50 bg-blossom/10 text-blossom' : strong ? 'border-cyber/40 bg-cyber/10 text-cyber' : 'border-mystic/25 bg-abyss/40 text-ink-dim'
       }`}
       title={skill.pct === null ? `${skill.label} · 아직 푼 문제 없음` : `${skill.label} · 정확도 ${skill.pct}% (${skill.total}문)`}
@@ -82,32 +82,32 @@ export default function ChapterCard({
               : 'border-mystic/25 bg-elevated/50'
       }`}
     >
-      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-mystic/25">
+      <div className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-white/15">
         <CharacterImage characterId={teacherArtId(teacherId)} expression={locked ? 'neutral' : 'happy'} round={false} outfitId={outfitId} className="h-full w-full text-2xl" />
         {grade && (
-          <span className="absolute bottom-0 right-0 rounded-tl-lg bg-gilded px-1.5 text-[10px] font-black text-abyss" aria-label={`최고 등급 ${grade}`}>
+          <span className="absolute bottom-0 right-0 rounded-tl-lg bg-gilded px-1.5 text-xs font-black text-abyss" aria-label={`최고 등급 ${grade}`}>
             {grade}
           </span>
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-bold tracking-wider text-ink-dim">
+        <p className="text-xs font-bold tracking-wide text-ink-dim">
           CH{number} · {teacherName} · <span className={state === 'completed' ? 'text-cyber' : state === 'in-progress' ? 'text-blossom' : ''}>{STATE_LABEL[state]}</span>
-          {recommended && state !== 'in-progress' && <span className="ml-1 text-gilded">★ 추천</span>}
+          {recommended && state !== 'in-progress' && <span className="ml-1 text-gilded">· 추천</span>}
         </p>
         <h3 className="truncate text-sm font-bold text-ink">{chapter?.title ?? progress.chapterId}</h3>
-        <p className="truncate text-[11px] text-ink-dim">{chapter?.subtitle ?? ''}</p>
+        <p className="truncate text-sm text-ink-dim">{chapter?.subtitle ?? ''}</p>
         {skills.length > 0 && (
           <div className="mt-1 flex flex-wrap gap-1" aria-label="다루는 유형">
             {skills.map(skill => <SkillChip key={skill.category} skill={skill} />)}
           </div>
         )}
         {rewardHints.length > 0 && (
-          <p className="mt-1 truncate text-[10px] text-gilded" title={rewardHints.join(' · ')}>
-            🎁 {rewardHints.join(' · ')}
+          <p className="mt-1 line-clamp-2 text-xs text-gilded" title={rewardHints.join(' · ')}>
+            보상 · {rewardHints.join(' · ')}
           </p>
         )}
-        <div className="mt-1.5 flex items-center gap-2 text-[10px] text-ink-dim">
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-ink-dim">
           {chapter && <span>약 {chapter.estimatedMinutes}분</span>}
           {progress.completions > 0 && <span>완료 {progress.completions}회</span>}
           {progress.attempts > 0 && progress.completions === 0 && <span>도전 {progress.attempts}회</span>}
@@ -119,8 +119,8 @@ export default function ChapterCard({
             type="button"
             onClick={onStart}
             disabled={pending}
-            className={`rounded-lg px-3 py-2 text-xs font-bold text-white shadow disabled:opacity-50 ${
-              state === 'in-progress' ? 'bg-blossom' : 'bg-gradient-to-r from-mystic to-blossom'
+            className={`min-h-11 whitespace-nowrap rounded-lg px-3 text-xs font-bold text-abyss transition-colors hover:bg-blossom-hot disabled:opacity-50 ${
+              state === 'in-progress' ? 'bg-blossom' : 'bg-blossom'
             }`}
           >
             {state === 'in-progress' ? '이어하기' : state === 'completed' ? '다시' : '시작'}
@@ -132,11 +132,11 @@ export default function ChapterCard({
                 onClick={onExam}
                 disabled={pending}
                 title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
-                className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
+                className="min-h-11 whitespace-nowrap rounded-lg border border-gilded/40 px-2 text-xs font-bold text-gilded transition-colors hover:bg-gilded/10 disabled:opacity-50"
               >
                 문제만 풀기
               </button>
-              <span className="max-w-24 text-center text-[9px] leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
+              <span className="max-w-32 text-center text-xs leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
             </>
           )}
           {onGraduation && state === 'completed' && (
@@ -145,7 +145,7 @@ export default function ChapterCard({
               onClick={onGraduation}
               disabled={pending}
               title="수업을 건너뛰고 졸업 대결(실제 6인 Sit & Go)만 다시 도전해요"
-              className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
+              className="min-h-11 whitespace-nowrap rounded-lg border border-gilded/40 px-2 text-xs font-bold text-gilded transition-colors hover:bg-gilded/10 disabled:opacity-50"
             >
               졸업 대결만
             </button>
