@@ -11,7 +11,6 @@ import { TournamentState } from '@/lib/poker/types';
 import type { PublicTournamentSummary } from '@/lib/realtime/protocol';
 import { presentTournament } from '@/lib/tournament/tournament-presenter';
 import Button from '@/components/ui/Button';
-import NeonText from '@/components/ui/NeonText';
 import SettingsModal from './SettingsModal';
 import HelpModal from '../help/HelpModal';
 import HandHistoryModal from '../history/HandHistoryModal';
@@ -65,6 +64,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
   const canTopUp = !!gameState
     && !gameState.tournament
     && !inStoryRoom
+    && !gameState.weeklyDojo
     && !!topUpSeat
     && topUpSeat.chips > 0
     && topUpSeat.chips < gameState.bigBlind * 200;
@@ -99,7 +99,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           ←
         </Button>
         <span className="hidden sm:inline">
-          <NeonText size="sm" color="#A78BFA">POKER DOKU</NeonText>
+          <span className="text-sm font-bold text-ink-dim">POKER DOKU</span>
         </span>
       </div>
       <div className="contents min-w-0 flex-1 items-center justify-end gap-1.5 md:flex md:gap-3">
@@ -177,7 +177,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
           </button>
         )}
         {/* 코드를 눈에 보이게 둔다 — 음성으로 불러주려면 호스트가 읽을 수 있어야 한다 */}
-        {inviteCode && !inStoryRoom && (
+        {inviteCode && !inStoryRoom && !gameState?.weeklyDojo && (
           <span
             className="hidden shrink-0 font-mono text-[10px] tracking-wider text-ink-dim md:inline"
             title="초대 코드"
@@ -185,7 +185,7 @@ export default function TopBar({ onLeave }: TopBarProps) {
             {formatInviteCode(inviteCode)}
           </span>
         )}
-        {!inStoryRoom && (
+        {!inStoryRoom && !gameState?.weeklyDojo && (
           <button
             onClick={copy}
             aria-label="초대 링크 복사"

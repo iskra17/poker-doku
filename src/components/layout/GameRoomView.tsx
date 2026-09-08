@@ -37,6 +37,9 @@ import { useStoryLive } from '@/components/story/live/use-story-live';
 import { getChapter } from '@/lib/story/chapters';
 import { useStoryStore } from '@/lib/store/story-store';
 import TopBar from './TopBar';
+import WeeklyDojoTableStatus from '@/components/arena/WeeklyDojoTableStatus';
+import Modal from '@/components/ui/Modal';
+import Button from '@/components/ui/Button';
 
 interface GameRoomViewProps {
   /** 방 나가기 — 'sitout'이면 좌석/칩 유지 (game-store.leaveRoom과 시그니처 호환) */
@@ -56,6 +59,8 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const isMobile = useIsMobile();
   const reducedMotion = usePrefersReducedMotion();
   const [leaveOpen, setLeaveOpen] = useState(false);
+  const [weeklyLeaveOpen, setWeeklyLeaveOpen] = useState(false);
+  const inWeeklyRoom = gameState?.weeklyDojo === true;
   // 수련 스토리 라이브 스텝 — 자리비움/나가기 예약을 서버가 거절하므로 이탈은 '포기'(abandon) 한 갈래다
   const { active: inStoryRoom, run: storyRun, live: storyLive } = useStoryLive();
   const storyChapterTitle = storyRun ? (getChapter(storyRun.chapterId)?.title ?? '') : '';
@@ -92,6 +97,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
   const myReservation = inStoryRoom ? null : (myPlayer?.leaveReservation ?? null);
   const handleLeaveClick = () => {
     if (inStoryRoom) setStoryLeaveOpen(true);
+    else if (inWeeklyRoom) setWeeklyLeaveOpen(true);
     else if (canSitOut) setLeaveOpen(true);
     else onLeave();
   };
@@ -113,6 +119,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
       style={isFinalTable ? finalTableThemeStyle(finalTheme) : undefined}
     >
       <TopBar onLeave={handleLeaveClick} />
+      <WeeklyDojoTableStatus />
       {visibleNotice && (
         <div className="flex-none border-b border-gilded/30 bg-elevated/95 px-3 py-1.5 text-center text-xs text-gilded">
           {visibleNotice}
@@ -162,6 +169,15 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
         onReserve={kind => { setLeaveOpen(false); reserveLeave(kind); }}
         onExit={() => { setLeaveOpen(false); onLeave(); }}
       />
+      <Modal isOpen={weeklyLeaveOpen} onClose={() => setWeeklyLeaveOpen(false)} title="도전을 잠시 멈출까요?">
+        <p className="text-sm leading-relaxed text-ink-dim">
+          진행 중인 핸드는 폴드 처리하고 기록을 남겨요. 올인 중이면 결과까지 기다려요. 남은 핸드는 나중에 이어할 수 있어요.
+        </p>
+        <div className="mt-4 flex gap-2">
+          <Button variant="secondary" className="flex-1" onClick={() => setWeeklyLeaveOpen(false)}>계속 플레이</Button>
+          <Button className="flex-1" onClick={() => { setWeeklyLeaveOpen(false); onLeave(); }}>나중에 이어하기</Button>
+        </div>
+      </Modal>
       <StoryLeaveConfirm
         isOpen={storyLeaveOpen}
         pending={storyPending}
@@ -214,7 +230,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <BondSceneUnlockWatcher />
             <SngWaitingOverlay />
             <EliminationNotice onLeave={onLeave} />
-            <BustNotice onLeave={onLeave} />
+            {!inWeeklyRoom && <BustNotice onLeave={onLeave} />}
             <TournamentResultOverlay onLeave={onLeave} />
             {tournament?.stage === 'final-intro' && (
               <FinalTableIntro

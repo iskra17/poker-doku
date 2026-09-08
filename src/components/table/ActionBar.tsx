@@ -108,7 +108,7 @@ export default function ActionBar() {
 
   // 스토리 라이브 방에서는 자리비움/게임 복귀를 감춘다 — 서버 toggle-sit-out이 rejected다.
   // 예외: 졸업 대결의 **부재 상태**에서만 [게임 복귀]를 노출한다(서버도 복귀만 허용).
-  const sitOutButton = myPlayer && (!inStoryRoom || (storyTournament && sittingOut)) && (
+  const sitOutButton = myPlayer && !gameState?.weeklyDojo && (!inStoryRoom || (storyTournament && sittingOut)) && (
     <button
       onClick={toggleSitOut}
       disabled={controlsDisabled}

@@ -5,6 +5,7 @@ import { useArenaStore } from '@/lib/store/arena-store';
 import ArenaLeaderboard from './ArenaLeaderboard';
 import ArenaQueuePanel from './ArenaQueuePanel';
 import ArenaSeasonRewards from './ArenaSeasonRewards';
+import WeeklyDojoPanel from './WeeklyDojoPanel';
 
 type ArenaSection = 'group' | 'global' | 'rewards';
 
@@ -18,6 +19,27 @@ const TIER_LABELS = {
 } as const;
 
 export default function ArenaLobby() {
+  const [mode, setMode] = useState<'weekly' | 'ranked'>('weekly');
+  return (
+    <div className="mx-auto w-full max-w-4xl space-y-3 px-4 pb-8">
+      <nav aria-label="아레나 경기 방식" className="flex gap-4 border-b border-ink-dim/20">
+        {([['weekly', '주간 도전'], ['ranked', '공식전']] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            aria-pressed={mode === value}
+            onClick={() => setMode(value)}
+            className={`min-h-11 border-b-2 px-2 text-sm font-bold ${mode === value
+              ? 'border-blossom text-ink' : 'border-transparent text-ink-dim'}`}
+          >{label}</button>
+        ))}
+      </nav>
+      {mode === 'weekly' ? <WeeklyDojoPanel /> : <OfficialArena />}
+    </div>
+  );
+}
+
+function OfficialArena() {
   const snapshot = useArenaStore(state => state.snapshot);
   const loading = useArenaStore(state => state.loading);
   const error = useArenaStore(state => state.error);
@@ -33,9 +55,9 @@ export default function ArenaLobby() {
   if (!snapshot.enabled) {
     return (
       <section className="mx-auto max-w-2xl px-4 py-8 text-center">
-        <h2 className="text-xl font-bold text-ink">포커 아레나 준비 중</h2>
+        <h2 className="text-lg font-bold text-ink">공식전 준비 중</h2>
         <p aria-live="polite" className="mt-2 text-sm text-ink-dim">
-          현재 시즌은 닫혀 있어요. 일반 게임과 수련 과제를 이용해 주세요.
+          시즌이 열리면 이곳에서 참가할 수 있어요.
         </p>
       </section>
     );
@@ -44,7 +66,7 @@ export default function ArenaLobby() {
   const hours = Math.max(0, Math.ceil(snapshot.season.remainingMs / 3_600_000));
   const placement = snapshot.profile.placementGames < snapshot.profile.placementMatches;
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-3 px-4 pb-8">
+    <section className="space-y-3">
       <section
         aria-labelledby="arena-lobby-title"
         className="rounded-2xl border border-blossom/35 bg-panel/90 p-4"
@@ -55,11 +77,11 @@ export default function ArenaLobby() {
               시즌 종료까지 약 {hours}시간
             </p>
             <h2 id="arena-lobby-title" className="mt-1 text-xl font-bold text-ink">
-              포커 아레나
+              공식전
             </h2>
           </div>
           <div className="rounded-xl border border-gilded/30 bg-elevated px-3 py-2 text-right">
-            <p className="text-[10px] text-ink-dim">무료 경기권</p>
+            <p className="text-xs text-ink-dim">무료 경기권</p>
             <p className="text-lg font-bold text-gilded">
               {snapshot.profile.availableTickets}장
             </p>
@@ -75,11 +97,11 @@ export default function ArenaLobby() {
             </dd>
           </div>
           <div className="rounded-xl bg-elevated p-3">
-            <dt className="text-ink-dim">이번 주 그룹</dt>
+            <dt className="text-ink-dim">이번 주 활동 순위</dt>
             <dd className="mt-1 text-sm font-bold text-blossom">
               {snapshot.weekly.rank ? `${snapshot.weekly.rank}위` : '배정 전'}
-              <span className="ml-1 text-[10px] text-ink-dim">
-                {snapshot.weekly.score}점
+              <span className="ml-1 text-xs text-ink-dim">
+                누적 {snapshot.weekly.score}점
               </span>
             </dd>
           </div>
@@ -104,7 +126,7 @@ export default function ArenaLobby() {
             type="button"
             onClick={() => setSection(value)}
             aria-pressed={section === value}
-            className={`rounded-xl border px-2 py-2 text-xs font-bold ${
+            className={`min-h-11 rounded-xl border px-2 py-2 text-xs font-bold ${
               section === value
                 ? 'border-blossom/50 bg-blossom/15 text-blossom'
                 : 'border-mystic/25 bg-panel text-ink-dim'
@@ -117,6 +139,6 @@ export default function ArenaLobby() {
       {section === 'rewards'
         ? <ArenaSeasonRewards />
         : <ArenaLeaderboard key={section} kind={section} />}
-    </main>
+    </section>
   );
 }

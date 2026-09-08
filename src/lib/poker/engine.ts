@@ -117,6 +117,7 @@ export class PokerEngine {
       winners: null,
       handRake: 0,
       economyMode: config.economyMode,
+      ...(config.weeklyDojoAttemptId ? { weeklyDojo: true } : {}),
       lastAction: null,
       turnTimer: config.turnTime,
       handNumber: 0,
