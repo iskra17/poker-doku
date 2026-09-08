@@ -92,11 +92,16 @@ export default function Home() {
     return useGameStore.subscribe((state, prevState) => {
       if (prevState.currentRoomId === null || state.currentRoomId !== null) return;
       void refresh();
+      // 새로고침으로 탭 선택이 초기화됐어도 도전의 기록/이어하기로 돌아간다.
+      if (prevState.gameState?.weeklyDojo) {
+        setLobbyView('arena');
+        return;
+      }
       // 리캡 스냅샷은 복귀 직후 즉시 — 집계는 다음 게임 이벤트 전까지 유지된다.
       // 수련 스토리 라이브 스텝이 끝나 방이 닫힌 복귀는 이야기가 이어지는 중이므로(StoryStage가
       // 바로 에필로그를 그린다) 리캡 모달을 띄우지 않는다 — 결산은 ChapterResult가 담당한다.
       const recap = getSessionRecap();
-      if (recap.hands > 0 && !prevState.gameState?.weeklyDojo && !useStoryStore.getState().run) setSessionRecap(recap);
+      if (recap.hands > 0 && !useStoryStore.getState().run) setSessionRecap(recap);
     });
   }, [refresh]);
 
