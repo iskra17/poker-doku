@@ -28,6 +28,8 @@ interface DrillCardProps {
   /** 재출제 오퍼 응답 — [다시 풀기 N문] / [복습 노트에 넣고 넘어가기] */
   onRetry: () => void;
   onSkipRetry: () => void;
+  /** Ch1 초반에 현재 상황에서 눌러야 할 실제 입력·다음 버튼을 짧게 안내한다 */
+  beginnerGuide?: boolean;
 }
 
 const PRAISE = ['정답이에요!', '좋아요, 그거예요.', '완벽해요.', '그렇죠!'];
@@ -41,7 +43,7 @@ const PRAISE = ['정답이에요!', '좋아요, 그거예요.', '완벽해요.',
  * `retryOffer`를 주고, 이 카드는 문제 대신 오퍼 패널을 그린다.
  */
 export default function DrillCard({
-  drill, teacherId, partnerId, pending, hint, lastResult, onAnswer, onHint, onNext, hintAllowed = true, onRetry, onSkipRetry,
+  drill, teacherId, partnerId, pending, hint, lastResult, onAnswer, onHint, onNext, hintAllowed = true, onRetry, onSkipRetry, beginnerGuide = false,
 }: DrillCardProps) {
   const [answer, setAnswer] = useState<DrillAnswer | null>(null);
   const startedAt = useRef<number>(0);
@@ -80,6 +82,8 @@ export default function DrillCard({
   const momentLine = moment && lastResult && moment.moment !== 'drill-perfect' ? drillMomentLine(lastResult.explanation.speaker, moment.moment, instance.seed) : '';
   const progressValue = retry ? retry.index : drill.index;
   const progressMax = retry ? retry.total : drill.total;
+  const answerComplete = isAnswerComplete(instance.answerSpec, answer);
+  const nextLabel = drill.index + 1 < drill.total || drill.wrongQueue > 0 ? '다음 문제' : '세트 완료';
 
   if (drill.retryOffer) {
     const count = drill.retryOffer.count;
@@ -160,7 +164,13 @@ export default function DrillCard({
 
       <p className="px-1 text-sm font-bold text-ink">{instance.question}</p>
 
-      <div className="relative">
+      {!answered && beginnerGuide && (
+        <p className="rounded-lg border border-gilded/35 bg-gilded/10 px-2.5 py-2 text-[11px] leading-relaxed text-ink" role="note" aria-label="초보 안내">
+          보드와 내 카드를 확인한 뒤, 답을 고르고 제출해 주세요.
+        </p>
+      )}
+
+      <div className={`relative ${beginnerGuide && !answered && !answerComplete ? 'rounded-xl ring-2 ring-gilded/70 ring-offset-2 ring-offset-abyss' : ''}`}>
         <DrillAnswerInput
           key={key}
           spec={instance.answerSpec}
@@ -209,8 +219,8 @@ export default function DrillCard({
           <button
             type="button"
             onClick={() => answer && onAnswer(answer, performance.now() - startedAt.current)}
-            disabled={pending || !isAnswerComplete(instance.answerSpec, answer)}
-            className="flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50"
+            disabled={pending || !answerComplete}
+            className={`flex-1 rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide && answerComplete ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-abyss' : ''}`}
           >
             {pending ? '확인 중…' : '제출'}
           </button>
@@ -227,13 +237,14 @@ export default function DrillCard({
           <p className="text-[11px] text-ink-dim">
             정답: <span className="font-bold text-ink">{describeCorrectAnswer(lastResult.correctAnswer)}</span>
           </p>
+          {beginnerGuide && <p className="rounded-lg border border-gilded/35 bg-gilded/10 px-2.5 py-2 text-[11px] leading-relaxed text-ink" role="note" aria-label="초보 안내">피드백을 읽었으면 {nextLabel} 버튼을 눌러 주세요.</p>}
           <button
             type="button"
             onClick={onNext}
             disabled={pending}
-            className="rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50"
+            className={`rounded-xl bg-gradient-to-r from-mystic to-blossom py-2.5 text-sm font-bold text-white disabled:opacity-50 ${beginnerGuide ? 'ring-2 ring-gilded/70 ring-offset-2 ring-offset-abyss' : ''}`}
           >
-            {drill.index + 1 < drill.total || drill.wrongQueue > 0 ? '다음 문제' : '세트 완료'}
+            {nextLabel}
           </button>
         </>
       )}

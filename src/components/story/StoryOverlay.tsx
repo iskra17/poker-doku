@@ -60,13 +60,13 @@ export default function StoryOverlay() {
   const lastHandEndAt = useCallback(() => handEndAtRef.current, []);
 
   const [promptDismissed, setPromptDismissed] = useState<string | null>(null);
-  // null = 기기 기본값 (모바일은 접힘) — 사용자가 토글하면 그 의도를 고정 (ActionLog와 같은 패턴)
+  // null = 새 라이브 스텝의 기본값(펼침) — 사용자가 토글하면 해당 스텝 동안 의도를 고정
   const [hudUserExpanded, setHudUserExpanded] = useState<boolean | null>(null);
   const [firstTurnPlayedFor, setFirstTurnPlayedFor] = useState<string | null>(null);
   const [firstTurnOpen, setFirstTurnOpen] = useState(false);
   const [sceneDoneFor, setSceneDoneFor] = useState<string | null>(null);
   const isMobile = useIsMobile();
-  const hudExpanded = hudUserExpanded ?? !isMobile;
+  const hudExpanded = hudUserExpanded ?? true;
 
   // 미션 클리어/보스 격파 컷인 — 스텝당 1회, 마지막 핸드의 승자 컷인(1.6초)과 같은 타이밍에 우측에서
   const [missionData, setMissionData] = useState<StoryCutInData | null>(null);
@@ -106,6 +106,7 @@ export default function StoryOverlay() {
   if (trackedStepKey !== stepKey) {
     setTrackedStepKey(stepKey);
     setFirstTurnOpen(false);
+    setHudUserExpanded(null);
   }
 
   // 스텝당 1회: 처음 내 턴이 오면 first-my-turn 인터럽트를 연다 (같은 보정 패턴).
@@ -133,10 +134,10 @@ export default function StoryOverlay() {
         <PracticePromptBanner text={prompt} onDismiss={() => setPromptDismissed(stepKey)} />
       )}
 
-      {/* HUD는 테이블 세로 컬럼의 우상단(딜러 코너 아래)에 맞춘다 —
-          컨테이너 우측 끝은 데스크탑 채팅 패널, 좌상단은 액션 로그가 쓴다 */}
-      <div className="pointer-events-none absolute inset-0 z-30 flex justify-center">
-        <div className="relative h-full w-full" style={{ maxWidth: 'min(440px, 60dvh)' }}>
+      {/* HUD는 중앙 테이블의 오른쪽 여백에 둔다. 모바일은 하단 도크 위까지만 차지하고,
+          데스크톱은 채팅 패널 앞의 별도 여백을 사용한다. */}
+      <div className="pointer-events-none absolute inset-0 z-30">
+        <div className="relative h-full w-full">
           {operator && (
             <button
               type="button"
@@ -148,7 +149,7 @@ export default function StoryOverlay() {
               ⏭ 스킵
             </button>
           )}
-          <div className="absolute right-1 top-[4.5rem]">
+          <div className="absolute bottom-16 right-1 top-[4.5rem] flex items-start md:bottom-20">
             <ObjectiveHud
               key={stepKey}
               tag={live?.tag ?? '대결'}

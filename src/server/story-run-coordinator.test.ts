@@ -4,10 +4,10 @@ import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { hashSeed } from '@/lib/poker/seeded-rng';
 import { CH01 } from '@/lib/story/chapters/act1/ch01-dojo-gate';
 import { CH10 } from '@/lib/story/chapters/act4/ch10-storm-call';
-import { makeChapter, makeChapterChain, makeScene, curriculumFor } from '@/lib/story/test-fixtures';
+import { makeChapter, makeChapterChain, makeScene, makeTable, curriculumFor } from '@/lib/story/test-fixtures';
 import { REVIEW_SLOT_TEMPLATE_ID, type Chapter, type StoryTeacherId } from '@/lib/story/types';
 import { getStoryRewardDefinition, listStoryRewardPreview, toStoryRewardItemView } from '@/lib/story/rewards/catalog';
-import type { StoryRewardItemView, StoryRunView } from '@/lib/story/views';
+import type { StoryAdvanceTarget, StoryRewardItemView, StoryRunView } from '@/lib/story/views';
 import type { LiveEnterInput, LiveStepSummary, StoryLiveEvents } from './story-live-adapter';
 import type { StoryAffinityTransitionRecord, StoryLiveAdapterPort } from './story-run-coordinator';
 import {
@@ -301,6 +301,148 @@ describe('scene choices', () => {
     ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 1, target: 'next' });
     expect(ctx.repository.flags.get(PROFILE)).toEqual({ 'choice:act1-ch01:greet': 'warm' });
     expect(ctx.repository.completions).toEqual([{ chapterId: 'act1-ch01', grade: 'B' }]);
+  });
+});
+
+describe('switching a full run to exam', () => {
+  const examTarget: StoryAdvanceTarget = 'exam';
+
+  function advanceRequest(ctx: ReturnType<typeof setup>, target: StoryAdvanceTarget = examTarget) {
+    const view = ctx.latest();
+    return { runId: view.runId, expectedStepIndex: view.stepIndex, target };
+  }
+
+  it('switches from a lesson into the next drill with the same run and requires real answers', () => {
+    const chapter = makeChapter({
+      steps: [
+        { kind: 'lesson', id: 'lesson', title: 'foundation', blocks: [{ kind: 'concept-card', title: 'cards', body: 'body' }] },
+        { kind: 'drill-set', id: 'drills', title: 'questions', teacher: 'miyako', drills: [
+          { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 },
+          { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 8 },
+        ], hintPenalty: 0.5 },
+        { kind: 'result', id: 'result' },
+      ],
+    });
+    const ctx = setup([chapter]);
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    const before = ctx.latest();
+    expect(before.phase).toBe('lesson');
+
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx))).toEqual({ ok: true, value: undefined });
+    const drill = ctx.latest();
+    expect(drill).toMatchObject({ runId: before.runId, mode: 'exam', stepKind: 'drill-set', phase: 'drill' });
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx, 'next'))).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(ctx.coordinator.drill(PROFILE, {
+      runId: drill.runId, setId: drill.drill!.setId, index: drill.drill!.index, action: 'hint',
+    })).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx, 'next'))).toMatchObject({ ok: true });
+    expect(ctx.latest().drill?.index).toBe(1);
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx, 'next'))).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    expect(ctx.rewards.chapters).toHaveLength(0);
+  });
+
+  it('keeps completed drill counts, hint penalties, and run identity when switching mid chapter', () => {
+    const chapter = makeChapter({
+      steps: [
+        { kind: 'drill-set', id: 'first-drills', title: 'first', teacher: 'miyako', drills: [
+          { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 },
+          { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 8 },
+        ], hintPenalty: 0.5 },
+        { kind: 'lesson', id: 'lesson', title: 'foundation', blocks: [{ kind: 'concept-card', title: 'cards', body: 'body' }] },
+        { kind: 'drill-set', id: 'future-drills', title: 'future', teacher: 'miyako', drills: [
+          { templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 9 },
+        ], hintPenalty: 0.5 },
+        { kind: 'result', id: 'result' },
+      ],
+    });
+    const ctx = setup([chapter]);
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    let view = ctx.latest();
+    expect(ctx.coordinator.drill(PROFILE, { runId: view.runId, setId: view.drill!.setId, index: view.drill!.index, action: 'hint' }).ok).toBe(true);
+    expect(answerCurrent(ctx, false).ok).toBe(true);
+    // The first answer is shown until the normal next action; then answer the second slot.
+    expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: 0, target: 'next' })).toMatchObject({ ok: true });
+    view = ctx.latest();
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: 0, target: 'next' })).toMatchObject({ ok: true });
+    expect(ctx.coordinator.drill(PROFILE, { runId: view.runId, setId: view.drill!.setId, index: view.drill!.index + 1, action: 'skip-retry' })).toMatchObject({ ok: true });
+    const lesson = ctx.latest();
+    expect(lesson.phase).toBe('lesson');
+    const runId = lesson.runId;
+    const summary = ctx.coordinator.getActiveRun(PROFILE)!.drillSummary;
+    expect(summary).toMatchObject({ answered: 2, correct: 1, hintsUsed: 1, wrongSlots: 1, hintPenalty: 0.5 });
+
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx))).toMatchObject({ ok: true });
+    expect(ctx.latest()).toMatchObject({ runId, mode: 'exam', stepKind: 'drill-set', phase: 'drill' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)!.drillSummary).toMatchObject(summary);
+    expect(ctx.rewards.chapters).toHaveLength(0);
+  });
+
+  it('rejects daily, completed, disabled, live, result, and stale transitions', () => {
+    const disabled = setup([makeChapter({ examDisabled: true })]);
+    expect(disabled.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(disabled.coordinator.advance(PROFILE, advanceRequest(disabled))).toMatchObject({ ok: false, code: 'action-rejected' });
+
+    const completed = setup([makeChapter()]);
+    completed.repository.complete(PROFILE, 'act1-ch01');
+    expect(completed.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(completed.coordinator.advance(PROFILE, advanceRequest(completed))).toMatchObject({ ok: false, code: 'action-rejected' });
+
+    const daily = setup([makeChapter()]);
+    daily.repository.complete(PROFILE, 'act1-ch01');
+    expect(daily.coordinator.startDaily(PROFILE).ok).toBe(true);
+    expect(daily.coordinator.advance(PROFILE, advanceRequest(daily))).toMatchObject({ ok: false, code: 'action-rejected' });
+
+    const noFutureDrill = setup([makeChapter({ steps: [
+      { kind: 'lesson', id: 'lesson', title: 'lesson', blocks: [] },
+      { kind: 'result', id: 'result' },
+    ] })]);
+    expect(noFutureDrill.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(noFutureDrill.coordinator.advance(PROFILE, advanceRequest(noFutureDrill))).toMatchObject({ ok: false, code: 'action-rejected' });
+
+    const live = setup([makeChapter({ steps: [
+      { kind: 'scene', id: 'scene', scene: makeScene('scene') },
+      { kind: 'practice-table', id: 'practice', tag: '연습', table: makeTable(), scripts: [] },
+      { kind: 'lesson', id: 'lesson', title: 'lesson', blocks: [] },
+      { kind: 'drill-set', id: 'drills', title: 'drills', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 }], hintPenalty: 0.5 },
+      { kind: 'result', id: 'result' },
+    ] })]);
+    const fake = makeFakeAdapter();
+    live.coordinator.setLiveAdapter(fake.adapter);
+    expect(live.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(live.coordinator.advance(PROFILE, { runId: live.latest().runId, expectedStepIndex: 0, target: 'next' }).ok).toBe(true);
+    expect(live.latest().phase).toBe('live-play');
+    expect(live.coordinator.advance(PROFILE, advanceRequest(live))).toMatchObject({ ok: false, code: 'action-rejected' });
+
+    const stale = setup([makeChapter({ steps: [
+      { kind: 'lesson', id: 'lesson', title: 'lesson', blocks: [] },
+      { kind: 'drill-set', id: 'drills', title: 'drills', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 }], hintPenalty: 0.5 },
+      { kind: 'result', id: 'result' },
+    ] })]);
+    expect(stale.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(stale.coordinator.advance(PROFILE, { runId: 'stale', expectedStepIndex: 0, target: examTarget })).toMatchObject({ ok: false, code: 'stale-state' });
+  });
+
+  it('completes an exam with real answers and grants first clear once', () => {
+    const chapter = makeChapter({ steps: [
+      { kind: 'scene', id: 'scene', scene: makeScene('scene') },
+      { kind: 'lesson', id: 'lesson', title: 'lesson', blocks: [] },
+      { kind: 'drill-set', id: 'drills', title: 'drills', teacher: 'miyako', drills: [{ templateId: 'pos-name', seedPolicy: 'fixed', fixedSeed: 7 }], hintPenalty: 0.5 },
+      { kind: 'result', id: 'result' },
+    ] });
+    const ctx = setup([chapter]);
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01').ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx, 'next')).ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, advanceRequest(ctx)).ok).toBe(true);
+    expect(ctx.latest().mode).toBe('exam');
+    expect(answerCurrent(ctx, true).ok).toBe(true);
+    expect(ctx.coordinator.advance(PROFILE, { runId: ctx.latest().runId, expectedStepIndex: 2, target: 'next' }).ok).toBe(true);
+    expect(ctx.latest().phase).toBe('result');
+    expect(ctx.coordinator.advance(PROFILE, { runId: ctx.latest().runId, expectedStepIndex: 3, target: 'next' }).ok).toBe(true);
+    expect(ctx.latest().result).toMatchObject({ mode: 'exam', passed: true, rewards: { firstClear: true } });
+    expect(ctx.rewards.chapters).toHaveLength(1);
   });
 });
 

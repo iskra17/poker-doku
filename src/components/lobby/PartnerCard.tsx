@@ -17,6 +17,7 @@ import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
+import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
 import { chapterNumber, partnerCtaDecision, recommendChapter } from '@/lib/story/story-hub-rules';
 
 const LAST_VISIT_PREFIX = 'poker-doku-last-visit:';
@@ -54,6 +55,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const pendingRoomId = useGameStore(state => state.pendingRoomId);
   const [talkLine, setTalkLine] = useState<string | null>(null);
   const [showcaseOpen, setShowcaseOpen] = useState(false);
+  const beginnerGuideDismissed = useBeginnerGuideDismissed(profile?.id ?? null);
 
   const partnerId = progression?.profile.selectedCharacterId ?? profile?.avatarId ?? null;
   const partnerOutfit = useOutfitId(partnerId);
@@ -89,6 +91,16 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const recommendation = storyProgress ? recommendChapter(STORY_CHAPTERS, storyProgress) : null;
   const firstTime = (progression?.profile.completedHands ?? 0) === 0;
   const storyCta = cta.kind === 'story-start' || cta.kind === 'story-continue';
+  const beginnerGuideEligible = !!storyProgress && cta.kind === 'story-start' && !preservedRoom;
+  const beginnerGuideVisible = beginnerGuideEligible && !beginnerGuideDismissed;
+
+  const dismissBeginnerGuide = () => {
+    setBeginnerGuideDismissed(profile.id, true);
+  };
+
+  const showBeginnerGuide = () => {
+    setBeginnerGuideDismissed(profile.id, false);
+  };
 
   const joinPractice = () => {
     if (pendingRoomId || !practiceRoom) return;
@@ -162,7 +174,8 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
             type="button"
             onClick={handleCta}
             disabled={!!pendingRoomId || storyPending || (!preservedRoom && !storyCta && !practiceRoom)}
-            className="rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50"
+            aria-describedby={beginnerGuideVisible ? 'beginner-guide-copy' : undefined}
+            className={`rounded-xl bg-gradient-to-r from-mystic to-blossom px-4 py-2.5 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.03] disabled:opacity-50 ${beginnerGuideVisible ? 'ring-2 ring-gilded ring-offset-2 ring-offset-panel' : ''}`}
           >
             {pendingRoomId
               ? '입장 중…'
@@ -187,6 +200,30 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
           )}
         </div>
         </div>
+
+        {beginnerGuideEligible && (
+          beginnerGuideVisible ? (
+            <div id="beginner-guide-copy" className="mt-2 rounded-xl border border-gilded/40 bg-gilded/10 px-3 py-2 text-[11px] leading-relaxed text-ink" role="note" aria-label="초보 안내">
+              <p><span className="font-bold text-gilded">첫 수련 안내</span> · 첫 목표는 문제 2개를 풀고 완료하는 거예요. 위의 <span className="font-bold">첫 수련 시작</span>을 누르면 바로 시작해요.</p>
+              <button
+                type="button"
+                onClick={dismissBeginnerGuide}
+                className="mt-1 rounded-md px-1.5 py-1 text-[10px] font-bold text-ink-dim underline decoration-dotted underline-offset-2 focus-visible:outline-2 focus-visible:outline-cyber"
+              >
+                안내 닫기
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={showBeginnerGuide}
+              aria-label="초보 안내 다시 보기"
+              className="mt-2 rounded-lg border border-mystic/30 px-2 py-1 text-[10px] font-bold text-ink-dim hover:bg-mystic/10 focus-visible:outline-2 focus-visible:outline-cyber"
+            >
+              안내
+            </button>
+          )
+        )}
 
         {/* 대사 — 카드 전체 폭 사용 (좁은 화면에서 1줄 말줄임되던 문제: 행 분리로 폭 2배 확보,
             자연 줄바꿈 + 극단 케이스만 3줄 클램프) */}

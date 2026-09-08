@@ -646,8 +646,8 @@ R1~R5·Ch1~12·보너스 CG 50종은 구현 완료이며, 아래 과거 배포 �
 - 공개 로비의 MTT는 출시 전까지 숨긴다. `src/lib/release-features.ts`의 `PUBLIC_MTT_ENABLED`
   (`NEXT_PUBLIC_MTT_ENABLED === 'true'`, 기본 false)이 탭·카드·개설·보존 좌석 배너·초대 상세를 함께 제어한다.
   Sit & Go와 관리자/서버 MTT 실행은 유지한다. UI 플래그 변경은 재빌드가 필요하다.
-- 수련 `ObjectiveHud`는 행 클릭 또는 [미션 전체보기]로 전체 문구를 공용 Modal에 표시한다.
-  상세 진행도는 `formatObjectiveDetailProgress`를 써서 0회 상한·초과 위반 횟수도 보존한다.
+- 수련 `ObjectiveHud`는 모든 미션 문구·유형·상세 진행도를 기본 인라인으로 표시하고, 헤더의 [미션 접기]/[미션 펼치기]로 스텝 안에서 접고 펼친다.
+  상세 진행도는 `formatObjectiveDetailProgress`를 써서 0회 상한·초과 위반 횟수도 보존한다. 졸업 대결의 토너먼트 진행 블록은 유지한다.
 - 포커 용어는 수기 문구뿐 아니라 AI 생성과 기존 대사 캐시에도 적용한다.
   `characters/poker-terminology.ts`가 생성 규칙/검사를 공유한다. 신체의 손·실제 아이템 투척은 유지한다.
 - 신규 이미지/CG는 로컬 RTX 5090 제작과 구도·시선·표정 다양화를 우선한다. 기존 이미지는 교체하지 않는다.

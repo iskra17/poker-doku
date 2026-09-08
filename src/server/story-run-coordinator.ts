@@ -36,6 +36,7 @@ import { isStoryHeroineId, REVIEW_SLOT_TEMPLATE_ID } from '../lib/story/types';
 import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChapters, deriveBelt, isChapterUnlocked, nextChapter } from '../lib/story/unlocks';
 import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
 import { nextStoryRewards, pickStoryCutscene } from '../lib/story/rewards/catalog';
+import { canSwitchToExam } from '../lib/story/exam-transition';
 import type {
   ChapterResultRewards,
   ChapterResultView,
@@ -796,6 +797,28 @@ export class StoryRunCoordinator {
     const run = checked.value;
     // 저장 대기 중이면 [다시 시도]만 받는다 — 고정된 같은 입력으로 재커밋한다
     if (run.persistPending) return this.persistGate(run);
+    if (request.target === 'exam') {
+      const completed = this.completedSet(this.deps.repository.listProgress(profileId)).has(run.chapter.id);
+      const eligibility = canSwitchToExam({
+        chapterId: run.chapter.id,
+        mode: run.mode,
+        phase: run.phase,
+        stepKind: run.chapter.steps[run.stepIndex]?.kind ?? 'result',
+        stepIndex: run.stepIndex,
+        steps: run.chapter.steps,
+        completed,
+        examDisabled: run.chapter.examDisabled,
+        liveStepVisited: run.liveResults.length > 0,
+      });
+      if (!eligibility.allowed) {
+        return { ok: false, code: 'action-rejected', message: '현재 단계에서는 문제만 풀기 전환을 할 수 없어요.' };
+      }
+      run.mode = 'exam';
+      this.enterStep(run, run.stepIndex + 1);
+      run.updatedAt = this.now();
+      if (this.runs.has(profileId)) this.deps.emit(profileId, this.buildView(run));
+      return { ok: true, value: undefined };
+    }
     const step = run.chapter.steps[run.stepIndex];
     switch (step.kind) {
       case 'scene':

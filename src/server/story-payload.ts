@@ -22,7 +22,7 @@ const INVALID_MESSAGE = '요청 형식이 올바르지 않아요.';
 const CONTROL_CHARS = /[\u0000-\u001f\u007f]/g;
 const ID_PATTERN = /^[A-Za-z0-9:_\-.]+$/;
 const ACTIONS: readonly ActionType[] = ['fold', 'check', 'call', 'raise', 'all-in'];
-const ADVANCE_TARGETS: readonly StoryAdvanceTarget[] = ['next', 'skip', 'resume'];
+const ADVANCE_TARGETS: readonly StoryAdvanceTarget[] = ['next', 'skip', 'resume', 'exam'];
 const ANSWER_KINDS = ['multiple-choice', 'numeric', 'card-pick', 'action-pick', 'multi-select'] as const;
 
 export const STORY_ID_MAX = 64;

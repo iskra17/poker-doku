@@ -44,6 +44,7 @@ describe('story socket payload parsing', () => {
       value: { runId: 'run_1', expectedStepIndex: 3, target: 'next' },
     });
     expect(parseStoryAdvanceRequest({ runId: 'run_1', expectedStepIndex: 0, target: 'resume' }).ok).toBe(true);
+    expect(parseStoryAdvanceRequest({ runId: 'run_1', expectedStepIndex: 0, target: 'exam' }).ok).toBe(true);
     expect(parseStoryAdvanceRequest({ runId: 'run_1', expectedStepIndex: 1.5 }).ok).toBe(false);
     expect(parseStoryAdvanceRequest({ runId: 'run_1', expectedStepIndex: -1 }).ok).toBe(false);
     expect(parseStoryAdvanceRequest({ runId: 'run_1', expectedStepIndex: 10_001 }).ok).toBe(false);

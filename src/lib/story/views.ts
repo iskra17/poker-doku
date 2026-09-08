@@ -320,7 +320,7 @@ export interface StartStoryChapterRequest {
   mode?: StoryRunMode;
 }
 
-export type StoryAdvanceTarget = 'next' | 'skip' | 'resume';
+export type StoryAdvanceTarget = 'next' | 'skip' | 'resume' | 'exam';
 
 export interface StoryAdvanceRequest {
   runId: string;

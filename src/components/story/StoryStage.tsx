@@ -6,13 +6,16 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useIsMobile } from '@/lib/hooks/use-mobile';
 import { getChapter } from '@/lib/story/chapters';
+import { canSwitchToExam } from '@/lib/story/exam-transition';
 import { setMusicScene } from '@/lib/sound/music-manager';
 import { drillPerfectCutIn, type StoryCutInData } from '@/lib/story/story-cut-ins';
 import { holdCopy, needsResumeFromLobby } from '@/lib/story/story-live-rules';
 import { isFirstDrillClearMilestone } from '@/lib/story/story-milestones';
 import { useGameStore } from '@/lib/store/game-store';
+import { useProfileStore } from '@/lib/store/profile-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
+import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
 import LessonPage from './LessonPage';
@@ -46,6 +49,9 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const dismissRun = useStoryStore(state => state.dismissRun);
   const retrySparring = useStoryStore(state => state.retrySparring);
   const startChapter = useStoryStore(state => state.startChapter);
+  const storyProgress = useStoryStore(state => state.progress);
+  const profileId = useProfileStore(state => state.profile?.id ?? null);
+  const beginnerGuideDismissed = useBeginnerGuideDismissed(profileId);
 
   const visible = !!run && !run.live?.roomId;
   const ended = run?.phase === 'ended';
@@ -87,6 +93,20 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const step = run && chapter ? chapter.steps[run.stepIndex] : undefined;
   const partnerId = run?.context.partnerId ?? null;
   const firstDrillClear = isFirstDrillClearMilestone(run, step?.id);
+  const examEligibility = run && chapter && step
+    ? canSwitchToExam({
+      chapterId: run.chapterId,
+      mode: run.mode,
+      phase: run.phase,
+      stepKind: run.stepKind,
+      stepIndex: run.stepIndex,
+      steps: chapter.steps,
+      completed: storyProgress?.chapters.find(row => row.chapterId === run.chapterId)?.completions ? true : false,
+      examDisabled: chapter.examDisabled,
+    })
+    : { allowed: false as const, reason: 'wrong-phase' as const };
+  const canSwitchToExamNow = examEligibility.allowed && !firstDrillClear;
+  const beginnerGuideEnabled = run?.chapterId === 'act1-ch01' && run.mode === 'full' && !beginnerGuideDismissed;
 
   const finishScene = async (chosen: Record<string, string>) => {
     // 선택은 서버 플래그로 남긴다 (실패해도 진행은 막지 않음 — 정답 없는 선택지)
@@ -122,6 +142,16 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             </div>
             <div className="flex items-center gap-2 text-[10px] text-ink-dim">
               <span aria-label="진행">{Math.min(run.stepIndex + 1, run.stepCount)}/{run.stepCount}</span>
+              {run.chapterId === 'act1-ch01' && run.mode === 'full' && run.phase !== 'ended' && profileId && (
+                <button
+                  type="button"
+                  onClick={() => setBeginnerGuideDismissed(profileId, !beginnerGuideDismissed)}
+                  aria-label={beginnerGuideDismissed ? '안내' : '안내 닫기'}
+                  className="rounded-lg border border-gilded/40 px-2 py-1 font-bold text-gilded hover:bg-gilded/10 focus-visible:outline-2 focus-visible:outline-gilded"
+                >
+                  {beginnerGuideDismissed ? '안내' : '안내 닫기'}
+                </button>
+              )}
               {operator && run.phase !== 'ended' && (
                 <button
                   type="button"
@@ -147,7 +177,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
           </header>
 
           <StoryCutIn data={cutIn} isMobile={isMobile} onDone={() => setCutIn(null)} />
-          <main className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 overflow-y-auto px-3 py-3 scrollbar-thin">
+          <main className="flex min-h-0 flex-1 flex-col items-center justify-start gap-3 overflow-y-auto px-3 py-3 scrollbar-thin">
             {run.phase === 'ended' && run.result && (
               <ChapterResult
                 result={run.result}
@@ -196,6 +226,10 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
               />
             )}
 
+            {canSwitchToExamNow && (run.phase === 'scene' || run.phase === 'lesson') && (
+              <ExamSkipCard pending={pending} onSkip={() => void advance('exam')} />
+            )}
+
             {run.phase === 'scene' && step?.kind === 'scene' && !firstDrillClear && (
               <div className="w-full max-w-md">
                 <ScenePlayer
@@ -208,7 +242,16 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
             )}
 
             {run.phase === 'lesson' && step?.kind === 'lesson' && (
-              <LessonPage key={step.id} title={step.title} blocks={step.blocks} partnerId={partnerId} onFinish={() => void advance()} />
+              <LessonPage
+                key={step.id}
+                title={step.title}
+                blocks={step.blocks}
+                partnerId={partnerId}
+                onFinish={() => void advance()}
+                onSkip={() => void advance()}
+                pending={pending}
+                beginnerGuide={beginnerGuideEnabled}
+              />
             )}
 
             {run.phase === 'drill' && run.drill && (
@@ -225,6 +268,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 onRetry={() => void retryDrills()}
                 onSkipRetry={() => void skipRetry()}
                 hintAllowed={run.mode !== 'exam'}
+                beginnerGuide={beginnerGuideEnabled}
               />
             )}
 
@@ -271,5 +315,26 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
       )}
     </AnimatePresence>,
     document.body,
+  );
+}
+
+function ExamSkipCard({ pending, onSkip }: { pending: boolean; onSkip: () => void }) {
+  return (
+    <aside className="w-full max-w-md rounded-xl border border-gilded/30 bg-gilded/5 p-3" aria-label="문제만 풀기 안내">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-xs font-bold text-gilded">설명은 건너뛰고 문제만 풀 수 있어요</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">85점 이상이면 첫 완료 보상을 받아요. 지금까지 푼 문제와 점수는 유지돼요.</p>
+        </div>
+        <button
+          type="button"
+          onClick={onSkip}
+          disabled={pending}
+          className="min-h-11 shrink-0 rounded-xl border border-gilded/50 bg-gilded/15 px-3 py-2 text-xs font-bold text-gilded transition hover:bg-gilded/25 focus-visible:outline-2 focus-visible:outline-gilded disabled:opacity-50"
+        >
+          설명 건너뛰고 문제만 풀기
+        </button>
+      </div>
+    </aside>
   );
 }

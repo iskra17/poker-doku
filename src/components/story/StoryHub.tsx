@@ -139,15 +139,18 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                 {inProgress ? '이어하기' : '시작'}
               </button>
               {recommendedState === 'available' && !recommended.examDisabled && (
-                <button
-                  type="button"
-                  onClick={() => void startChapter(recommended.id, 'exam')}
-                  disabled={pending || !!activeRun}
-                  title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
-                  className="rounded-xl border border-gilded/40 px-3 py-1 text-[11px] font-bold text-gilded disabled:opacity-50"
-                >
-                  실력 확인
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => void startChapter(recommended.id, 'exam')}
+                    disabled={pending || !!activeRun}
+                    title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
+                    className="rounded-xl border border-gilded/40 px-3 py-1 text-[11px] font-bold text-gilded disabled:opacity-50"
+                  >
+                    문제만 풀기
+                  </button>
+                  <span className="text-center text-[9px] leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
+                </>
               )}
             </div>
           </div>
@@ -159,7 +162,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
       {/* 수련 목록 — 막별, 순서 강제 없음 */}
       <div className="mb-2 space-y-3 rounded-2xl border border-mystic/20 bg-panel/85 p-3 backdrop-blur-sm" aria-label="수련 목록">
         <p className="text-[10px] text-ink-dim">
-          순서는 자유예요. 칩의 정확도를 보고 부족한 유형부터 골라도 되고, 아는 내용은 [실력 확인]으로 문제만 풀어 통과할 수 있어요.
+          순서는 자유예요. 칩의 정확도를 보고 부족한 유형부터 골라도 되고, 아는 내용은 [문제만 풀기]로 설명을 건너뛸 수 있어요. 85점 이상이면 첫 완료 보상을 받아요.
         </p>
         {acts.length === 0 && <p className="text-center text-xs text-ink-dim">챕터가 준비되는 중이에요.</p>}
         {acts.map(({ act, chapters }) => (

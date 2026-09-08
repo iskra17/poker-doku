@@ -126,15 +126,18 @@ export default function ChapterCard({
             {state === 'in-progress' ? '이어하기' : state === 'completed' ? '다시' : '시작'}
           </button>
           {onExam && !chapter?.examDisabled && state === 'available' && (
-            <button
-              type="button"
-              onClick={onExam}
-              disabled={pending}
-              title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
-              className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
-            >
-              실력 확인
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onExam}
+                disabled={pending}
+                title="이미 아는 내용이면 문제만 풀어 통과해요 (힌트 없음, 85점 이상)"
+                className="rounded-lg border border-gilded/40 px-2 py-1 text-[10px] font-bold text-gilded disabled:opacity-50"
+              >
+                문제만 풀기
+              </button>
+              <span className="max-w-24 text-center text-[9px] leading-tight text-gilded">85점 이상 · 첫 완료 보상</span>
+            </>
           )}
           {onGraduation && state === 'completed' && (
             <button
