@@ -6,8 +6,22 @@ import { SETTINGS_PERSIST_VERSION, migrateSettings, useSettingsStore } from './s
  * "없던 키"의 기본값이 실제로 채워지는지 고정한다.
  */
 describe('settings-store persist', () => {
-  it('버전은 6 — 파트너 필살기 연출이 추가된 시점', () => {
-    expect(SETTINGS_PERSIST_VERSION).toBe(6);
+  it('버전은 7 — 파트너 실시간 훈수가 추가된 시점', () => {
+    expect(SETTINGS_PERSIST_VERSION).toBe(7);
+  });
+
+  it('v6 이하 저장본에는 partnerCoach를 켬(true)으로 채우고, 끈 선택은 유지한다', () => {
+    expect(migrateSettings({ muted: true }).partnerCoach).toBe(true);
+    expect(migrateSettings({ partnerCoach: 'yes' as never }).partnerCoach).toBe(true);
+    expect(migrateSettings({ partnerCoach: false }).partnerCoach).toBe(false);
+  });
+
+  it('기본 상태의 파트너 훈수는 켜져 있고 토글로 뒤집힌다', () => {
+    expect(useSettingsStore.getState().partnerCoach).toBe(true);
+    useSettingsStore.getState().togglePartnerCoach();
+    expect(useSettingsStore.getState().partnerCoach).toBe(false);
+    useSettingsStore.getState().togglePartnerCoach();
+    expect(useSettingsStore.getState().partnerCoach).toBe(true);
   });
 
   it('v5 이하 저장본에는 skillBurst를 full로 채우고, 고른 값은 유지한다', () => {

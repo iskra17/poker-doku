@@ -11,6 +11,7 @@ import {
 } from '@/lib/characters/partner-dialogue';
 import { onGameEvent } from '@/lib/events/game-events';
 import { useGameStore } from '@/lib/store/game-store';
+import { usePartnerCoachStore } from '@/lib/store/partner-coach-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 
 /**
@@ -91,13 +92,15 @@ export default function PartnerReactions() {
   }, []);
 
   const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null);
+  // 파트너 훈수(PartnerCoach)가 같은 좌하단 자리에 떠 있으면 비켜 준다 — 두 말풍선이 겹치지 않게
+  const coachBubbleVisible = usePartnerCoachStore(state => state.bubbleVisible);
   const character = partnerId ? getCharacterById(partnerId) : null;
   if (!character) return null;
 
   return (
     <div className="pointer-events-none absolute bottom-2 left-2 z-40 max-w-[min(78%,300px)]">
       <AnimatePresence>
-        {line && (
+        {line && !coachBubbleVisible && (
           <motion.div
             key={line.text}
             initial={{ opacity: 0, y: 10, scale: 0.95 }}

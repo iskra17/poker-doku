@@ -639,6 +639,13 @@ npx tsc --noEmit
   `lib/skills/skill-trigger.ts`(순수 판정 — 스틸/쇼다운/큰 팟/올인/리버 역전/포카드+, 3단계, big 6핸드 쿨다운)로
   **내 화면에만** 히트스톱·슬래시 인·기술명 스탬프를 ~1초 재생한다. 서버 전송·턴 대기 없음(다른 플레이어 방해 금지 계약),
   파트너 정의(`lib/skills/catalog.ts`)가 없으면 발동 안 함, 설정 `skillBurst` full/lite/off(persist v6)·게임 중 미리보기.
+  **파트너 실시간 훈수**(2026-10-17 1단계, 클라 전용): `table/PartnerCoach`가 내 차례마다 파트너 한 줄 + [○○ 말대로 · 액션]
+  버튼(올인은 2탭 확인)을 좌하단에 띄운다. 노출은 `lib/coach/coach-eligibility.ts` 단일 소스 — 로비 목록 `tableType 'bots'`이고
+  다른 휴먼이 없으며 스토리·주간 도장·토너먼트·아레나가 아닐 때만(사람과 겨루는 방에서는 실시간 보조 도구가 되므로 금지).
+  판단 `coach-brain.ts`(공개 스냅샷만, 서버 재사용 가능한 순수 함수 — 드로우 %는 Ch3 계약대로 다음 한 장),
+  대사 `coach-lines.ts`(사쿠라 전용 말투 + 중립 폴백). **톤 계약: 안 따라도 꾸짖지 않고, 따랐는데 쇼다운에서 지면
+  "결정은 맞았다"로 위로** — 탓하는 문구 금지(테스트 고정). 따름 횟수는 `partner-coach-store` 세션 메모리뿐이고
+  인연 XP는 서버 검증이 붙는 다음 단계. 설정 `partnerCoach`(persist v7, 기본 켬). 훈수 말풍선이 떠 있으면 PartnerReactions는 비켜 준다.
 - **AI 상황 대사 (3층 전략)**: `src/server/dialogue-manager.ts`가 진입점 — ①기본 상황
   (폴드/레이즈 등)은 캐릭터 모듈의 스크립트 대사만, ②특별 순간(올인/빅팟/SnG 탈락·우승)은
   과거 생성된 대사 풀에서 재사용(캐릭터×상황키별 최대 12줄, `data/dialogue-cache.json`에

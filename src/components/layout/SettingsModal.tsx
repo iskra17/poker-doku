@@ -236,6 +236,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     showBlindButtons, toggleBlindButtons,
     throwablesEnabled, toggleThrowables,
     showBonusCg, toggleBonusCg,
+    partnerCoach, togglePartnerCoach,
     muted, toggleMuted,
     musicMuted, toggleMusicMuted,
   } = useSettingsStore();
@@ -296,6 +297,13 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <Toggle checked={throwablesEnabled} onToggle={toggleThrowables} label="아이템 투척 표시" />
               <p className="text-[11px] text-ink-dim leading-snug">
                 끄면 다른 플레이어가 던진 아이템 연출이 내 화면에 보이지 않고, 내 투척 버튼도 숨겨요.
+              </p>
+            </section>
+            <section>
+              <SectionTitle>파트너 훈수</SectionTitle>
+              <Toggle checked={partnerCoach} onToggle={togglePartnerCoach} label="파트너 훈수 (혼자 연습)" />
+              <p className="text-[11px] text-ink-dim leading-snug">
+                혼자 연습 테이블에서 내 차례마다 파트너가 한 줄 조언하고, 버튼 한 번으로 그대로 할 수 있어요. 다른 사람이 있는 테이블에서는 나오지 않아요.
               </p>
             </section>
             <SkillBurstSettings onClose={onClose} />

@@ -29,6 +29,7 @@ import LoserCutIn from '@/components/characters/LoserCutIn';
 import HandEconomySummary from '@/components/table/HandEconomySummary';
 import ProgressionSummary from '@/components/table/ProgressionSummary';
 import PartnerReactions from '@/components/table/PartnerReactions';
+import PartnerCoach from '@/components/table/PartnerCoach';
 import SkillBurstLayer from '@/components/effects/SkillBurstLayer';
 import Coachmarks from '@/components/table/Coachmarks';
 import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatcher';
@@ -220,6 +221,8 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ProgressionSummary />
             <PartnerReactions />
+            {/* 파트너 실시간 훈수 — 혼자 연습 테이블에서만 스스로 그린다 (그 외 방은 null) */}
+            <PartnerCoach />
             <SkillBurstLayer />
             <Coachmarks chipMessage={inStoryRoom
               ? '수련용 칩으로 플레이해요. 테이블의 칩은 지갑 잔액과 별개예요.'

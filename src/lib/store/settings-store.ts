@@ -96,6 +96,12 @@ interface SettingsStore {
   /** 파트너 필살기 연출 — full(플래시·흔들림·진동 포함) / lite(짧은 배너만) / off */
   skillBurst: SkillBurstMode;
   setSkillBurst: (mode: SkillBurstMode) => void;
+  /**
+   * 파트너 실시간 훈수 — 혼자 연습 테이블(봇만 상대)에서만 보인다(`coach-eligibility.ts`).
+   * 클라이언트 로컬 표시라 서버·다른 플레이어와 무관하다.
+   */
+  partnerCoach: boolean;
+  togglePartnerCoach: () => void;
 }
 
 /**
@@ -105,6 +111,7 @@ interface SettingsStore {
  * v4: 장면별 BGM 선택(musicTrackPrefs) — 없으면 빈 객체(전부 auto)
  * v5: 보너스 CG 표시(showBonusCg) — 기존 사용자는 기본 노출(true)
  * v6: 파트너 필살기 연출(skillBurst) — 없거나 잘못된 값은 'full'
+ * v7: 파트너 실시간 훈수(partnerCoach) — 기존 사용자도 기본 켬(true)
  */
 export function migrateSettings(persisted: unknown): SettingsStore {
   const s = persisted as Partial<SettingsStore> | undefined;
@@ -125,10 +132,13 @@ export function migrateSettings(persisted: unknown): SettingsStore {
   if (!s.skillBurst || !SKILL_BURST_MODES.includes(s.skillBurst)) {
     s.skillBurst = 'full';
   }
+  if (typeof s.partnerCoach !== 'boolean') {
+    s.partnerCoach = true;
+  }
   return s as SettingsStore;
 }
 
-export const SETTINGS_PERSIST_VERSION = 6;
+export const SETTINGS_PERSIST_VERSION = 7;
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
@@ -181,6 +191,8 @@ export const useSettingsStore = create<SettingsStore>()(
       toggleBonusCg: () => set(s => ({ showBonusCg: !s.showBonusCg })),
       skillBurst: 'full',
       setSkillBurst: (skillBurst) => set({ skillBurst }),
+      partnerCoach: true,
+      togglePartnerCoach: () => set(s => ({ partnerCoach: !s.partnerCoach })),
     }),
     {
       name: 'poker-doku-settings',
