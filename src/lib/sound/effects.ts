@@ -27,7 +27,10 @@ export type SoundName =
   | 'reward'      // 보상 카드 플립·스탬프 (수련 스토리 결산)
   | 'level-up'    // 띠 승급·도장 레벨업 4음 상행
   | 'unlock'      // CG·의상 해금 차임
-  | 'combo';      // 드릴 콤보 블립
+  | 'combo'       // 드릴 콤보 블립
+  | 'skill-small' // 파트너 필살기 소 — 짧은 슬래시 + 픽킹
+  | 'skill-burst' // 파트너 필살기 중 — 임팩트 + 파워 코드
+  | 'skill-big';  // 파트너 필살기 대 — 임팩트 + 코드 서스테인 + 반짝임
 
 function chipClack(delayMs: number, gain = 0.14) {
   playTone(2400, 45, { type: 'sine', gain, delayMs });
@@ -140,6 +143,29 @@ export function playEffect(name: SoundName): void {
     case 'combo':
       playTone(660, 90, { type: 'triangle', gain: 0.07, freqEnd: 990 });
       break;
+
+    case 'skill-small':
+      playNoise(110, 900, { gain: 0.07, filterEnd: 4200 });
+      playTone(1318.5, 90, { type: 'triangle', gain: 0.07, freqEnd: 1760, delayMs: 40 });
+      break;
+
+    case 'skill-burst':
+    case 'skill-big': {
+      const big = name === 'skill-big';
+      // 히트스톱 임팩트 — 저역 쿵 + 칼 베는 노이즈 스윕
+      playTone(130, big ? 220 : 160, { type: 'sine', gain: big ? 0.3 : 0.24, freqEnd: 45 });
+      playNoise(big ? 220 : 170, 900, { gain: 0.1, filterEnd: 4800, delayMs: 10 });
+      // E5 파워 코드 (E-B-E) — 톱니파로 디스토션 기타 느낌
+      [164.81, 246.94, 329.63].forEach(freq => {
+        playTone(freq, big ? 620 : 300, { type: 'sawtooth', gain: 0.045, delayMs: 70 });
+      });
+      if (big) {
+        [1318.5, 1568, 1975.5].forEach((freq, i) => {
+          playTone(freq, 240, { type: 'sine', gain: 0.06, delayMs: 220 + i * 80 });
+        });
+      }
+      break;
+    }
 
     case 'chat':
       playTone(1320, 60, { type: 'sine', gain: 0.04, freqEnd: 1560 });

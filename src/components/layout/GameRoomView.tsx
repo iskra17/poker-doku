@@ -29,6 +29,7 @@ import LoserCutIn from '@/components/characters/LoserCutIn';
 import HandEconomySummary from '@/components/table/HandEconomySummary';
 import ProgressionSummary from '@/components/table/ProgressionSummary';
 import PartnerReactions from '@/components/table/PartnerReactions';
+import SkillBurstLayer from '@/components/effects/SkillBurstLayer';
 import Coachmarks from '@/components/table/Coachmarks';
 import BondSceneUnlockWatcher from '@/components/characters/BondSceneUnlockWatcher';
 import StoryOverlay from '@/components/story/StoryOverlay';
@@ -195,7 +196,8 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             {/* 데스크탑 광폭 화면에서 액션 로그(좌)/채팅(우)이 화면 양끝까지 벌어지지 않게
                 테이블 기준 중앙 컨테이너에 함께 묶는다 — 전체 화면을 덮어야 하는
                 오버레이(컷인·모달·백드롭)는 바깥에 남긴다 */}
-            <div className="relative isolate mx-auto h-full w-full max-w-[1100px]">
+            {/* data-skill-shake: 파트너 필살기(SkillBurstLayer)가 내 화면에서만 흔드는 대상 */}
+            <div data-skill-shake className="relative isolate mx-auto h-full w-full max-w-[1100px]">
               {isFinalTable && (
                 <FinalTableAtmosphere theme={finalTheme} reducedMotion={reducedMotion} />
               )}
@@ -218,6 +220,7 @@ export default function GameRoomView({ onLeave }: GameRoomViewProps) {
             <HandEconomySummary key={myPlayerId ?? 'anonymous'} />
             <ProgressionSummary />
             <PartnerReactions />
+            <SkillBurstLayer />
             <Coachmarks chipMessage={inStoryRoom
               ? '수련용 칩으로 플레이해요. 테이블의 칩은 지갑 잔액과 별개예요.'
               : gameState?.economyMode === 'practice'

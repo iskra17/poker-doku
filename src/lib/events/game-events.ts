@@ -34,6 +34,9 @@ export type GameEvent =
       potTotal: number;
       bigWin: boolean;
       handNumber: number;
+      /** 종료 시점 보드 — 내 화면 전용 연출(필살기 역전 판정)이 턴 시점 보드를 재구성할 때 쓴다 */
+      communityCards: Card[];
+      bigBlind: number;
       handRake: number;
       economyMode: PublicGameState['economyMode'];
     }
@@ -151,6 +154,8 @@ export function diffGameState(
       potTotal,
       bigWin: bigHand || bigPot,
       handNumber: next.handNumber,
+      communityCards: next.communityCards,
+      bigBlind: next.bigBlind,
       handRake: next.handRake,
       economyMode: next.economyMode,
     });

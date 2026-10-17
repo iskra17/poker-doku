@@ -17,6 +17,10 @@ export type BetStepUnit = 'sb' | 'bb';
 /** 좌석 칩 스택 표기 — 칩 수 / 빅블라인드 환산 */
 export type ChipDisplayMode = 'chips' | 'bb';
 
+/** 파트너 필살기 연출 강도 — 내 화면에만 보이는 로컬 연출 (상대에게 전송되지 않음) */
+export type SkillBurstMode = 'full' | 'lite' | 'off';
+const SKILL_BURST_MODES: SkillBurstMode[] = ['full', 'lite', 'off'];
+
 interface SettingsStore {
   muted: boolean;
   toggleMuted: () => void;
@@ -89,6 +93,9 @@ interface SettingsStore {
    */
   showBonusCg: boolean;
   toggleBonusCg: () => void;
+  /** 파트너 필살기 연출 — full(플래시·흔들림·진동 포함) / lite(짧은 배너만) / off */
+  skillBurst: SkillBurstMode;
+  setSkillBurst: (mode: SkillBurstMode) => void;
 }
 
 /**
@@ -97,6 +104,7 @@ interface SettingsStore {
  * v3: 카드 스타일 '클래식' 삭제 — 저장돼 있던 classic(및 미지 값)은 solid로
  * v4: 장면별 BGM 선택(musicTrackPrefs) — 없으면 빈 객체(전부 auto)
  * v5: 보너스 CG 표시(showBonusCg) — 기존 사용자는 기본 노출(true)
+ * v6: 파트너 필살기 연출(skillBurst) — 없거나 잘못된 값은 'full'
  */
 export function migrateSettings(persisted: unknown): SettingsStore {
   const s = persisted as Partial<SettingsStore> | undefined;
@@ -114,10 +122,13 @@ export function migrateSettings(persisted: unknown): SettingsStore {
   if (typeof s.showBonusCg !== 'boolean') {
     s.showBonusCg = true;
   }
+  if (!s.skillBurst || !SKILL_BURST_MODES.includes(s.skillBurst)) {
+    s.skillBurst = 'full';
+  }
   return s as SettingsStore;
 }
 
-export const SETTINGS_PERSIST_VERSION = 5;
+export const SETTINGS_PERSIST_VERSION = 6;
 
 export const useSettingsStore = create<SettingsStore>()(
   persist(
@@ -168,6 +179,8 @@ export const useSettingsStore = create<SettingsStore>()(
       markThrowablesGuideSeen: () => set({ throwablesGuideSeen: true }),
       showBonusCg: true,
       toggleBonusCg: () => set(s => ({ showBonusCg: !s.showBonusCg })),
+      skillBurst: 'full',
+      setSkillBurst: (skillBurst) => set({ skillBurst }),
     }),
     {
       name: 'poker-doku-settings',

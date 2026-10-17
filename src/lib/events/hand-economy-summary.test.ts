@@ -35,6 +35,8 @@ function winnersEvent(
     handRake: 20,
     economyMode: 'wallet',
     handNumber: 4,
+    communityCards: [],
+    bigBlind: 20,
     ...overrides,
   };
 }

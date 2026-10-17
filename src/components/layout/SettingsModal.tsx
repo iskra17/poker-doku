@@ -5,7 +5,10 @@ import Modal from '@/components/ui/Modal';
 import CardComponent from '@/components/table/Card';
 import ProfileHub from '@/components/profile/ProfileHub';
 import MusicTrackPicker from './MusicTrackPicker';
-import { useSettingsStore, BetStepUnit } from '@/lib/store/settings-store';
+import { useSettingsStore, BetStepUnit, type SkillBurstMode } from '@/lib/store/settings-store';
+import { useGameStore } from '@/lib/store/game-store';
+import { requestSkillPreview } from '@/lib/skills/catalog';
+import type { SkillTier } from '@/lib/skills/skill-trigger';
 import {
   PREFLOP_PRESET_DEFAULT, POSTFLOP_PRESET_DEFAULT,
 } from '@/lib/poker/bet-presets';
@@ -146,6 +149,64 @@ function BetPresetEditor() {
   );
 }
 
+const SKILL_BURST_LABELS: Record<SkillBurstMode, string> = { full: '풀', lite: '라이트', off: '끄기' };
+const SKILL_PREVIEW_LABELS: Record<SkillTier, string> = { small: '소', medium: '중', big: '대' };
+
+/** 파트너 필살기 강도 + 미리보기 — 미리보기는 모달 뒤에 가려지지 않게 모달을 닫고 띄운다 */
+function SkillBurstSettings({ onClose }: { onClose: () => void }) {
+  const skillBurst = useSettingsStore(state => state.skillBurst);
+  const setSkillBurst = useSettingsStore(state => state.setSkillBurst);
+  const inRoom = useGameStore(state => state.currentRoomId !== null);
+
+  const preview = (tier: SkillTier) => {
+    onClose();
+    setTimeout(() => requestSkillPreview(tier), 220);
+  };
+
+  return (
+    <section>
+      <SectionTitle>파트너 필살기</SectionTitle>
+      <div className="flex items-center justify-between py-1.5">
+        <span className="text-sm text-ink">연출 강도</span>
+        <div className="flex gap-1">
+          {(Object.keys(SKILL_BURST_LABELS) as SkillBurstMode[]).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setSkillBurst(mode)}
+              className={`rounded-lg border px-2.5 py-1 text-xs transition-colors
+                ${skillBurst === mode
+                  ? 'border-blossom bg-blossom/10 text-blossom font-bold'
+                  : 'border-white/10 bg-white/5 text-ink-dim hover:bg-white/10'}`}
+            >
+              {SKILL_BURST_LABELS[mode]}
+            </button>
+          ))}
+        </div>
+      </div>
+      {inRoom && skillBurst !== 'off' && (
+        <div className="flex items-center justify-between py-1.5">
+          <span className="text-sm text-ink">미리보기</span>
+          <div className="flex gap-1">
+            {(Object.keys(SKILL_PREVIEW_LABELS) as SkillTier[]).map(tier => (
+              <button
+                key={tier}
+                onClick={() => preview(tier)}
+                className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-1 text-xs text-ink-dim hover:bg-white/10"
+              >
+                {SKILL_PREVIEW_LABELS[tier]}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      <p className="text-[11px] text-ink-dim leading-snug">
+        내 핸드가 크게 이기면 인연 파트너가 기술을 써요. 내 화면에만 보이고 다른 플레이어의 게임은 멈추지 않아요.
+        라이트는 짧은 배너만 보여 줘요.
+      </p>
+    </section>
+  );
+}
+
 function Toggle({ checked, onToggle, label }: { checked: boolean; onToggle: () => void; label: string }) {
   return (
     <button
@@ -237,6 +298,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 끄면 다른 플레이어가 던진 아이템 연출이 내 화면에 보이지 않고, 내 투척 버튼도 숨겨요.
               </p>
             </section>
+            <SkillBurstSettings onClose={onClose} />
           </>
         )}
 
