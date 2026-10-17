@@ -639,6 +639,9 @@ npx tsc --noEmit
   `lib/skills/skill-trigger.ts`(순수 판정 — 스틸/쇼다운/큰 팟/올인/리버 역전/포카드+, 3단계, big 6핸드 쿨다운)로
   **내 화면에만** 히트스톱·슬래시 인·기술명 스탬프를 ~1초 재생한다. 서버 전송·턴 대기 없음(다른 플레이어 방해 금지 계약),
   파트너 정의(`lib/skills/catalog.ts`)가 없으면 발동 안 함, 설정 `skillBurst` full/lite/off(persist v6)·게임 중 미리보기.
+  장면은 `effects/SkillBurstScenes.tsx`(기술별 모티프 swipe/soundwave/band/wave/dive/storm), 전용 포즈는
+  `characters/<id>/skill/*.webp` + `character-art.ts SKILL_POSES` — 포즈가 하나인 기술은 처음부터 그 포즈만 쓴다(기본 버스트→포즈 컷 전환 금지).
+  검토 화면 `/preview/skill-burst`(개발 서버 전용·슬로 ×4). 새 의상·포즈 원화는 `scripts/art/character-kit/`(턴어라운드 레퍼런스 러너).
   **파트너 실시간 훈수**(2026-10-17 1단계, 클라 전용): `table/PartnerCoach`가 내 차례마다 파트너 한 줄 + [○○ 말대로 · 액션]
   버튼(올인은 2탭 확인)을 좌하단에 띄운다. 노출은 `lib/coach/coach-eligibility.ts` 단일 소스 — 로비 목록 `tableType 'bots'`이고
   다른 휴먼이 없으며 스토리·주간 도장·토너먼트·아레나가 아닐 때만(사람과 겨루는 방에서는 실시간 보조 도구가 되므로 금지).
@@ -715,6 +718,9 @@ npx tsc --noEmit
   개별 기능의 세부 계획은 배치 시작 시 작성하며, 모든 작은 수정마다 사용자에게 모델 선택을 다시 묻지 않는다.
 
 ## 개발 현황과 남은 작업
+
+**최신 시작점(2026-10-17)**: `docs/superpowers/handoffs/2026-10-17-direction-skill-coach-handoff.md` — 방향 확정(싱글 미연시 본편·멀티는
+엔드콘텐츠), 파트너 필살기·실시간 훈수 1단계·캐릭터 키트 완료, 훈수 2단계(인연 XP)·히로인 확장은 사용자 결정 대기. 미push.
 
 2026-09-08 인수 확인: 로컬 main `bf357b0`, 원격 main `d8a2cd8`, 운영 Fly v87(정상).
 로컬에만 있는 `57eb133`(아트 제작 가이드)·`bf357b0`(스토리 스프라이트 액자 제거)은 아직 push/배포되지 않았다.
