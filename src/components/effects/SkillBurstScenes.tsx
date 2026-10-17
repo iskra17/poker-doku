@@ -3,6 +3,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
+import { getSkillPoseArt } from '@/lib/assets/character-art';
 import type { SkillMove } from '@/lib/skills/catalog';
 import type { SkillTier } from '@/lib/skills/skill-trigger';
 
@@ -100,24 +101,37 @@ function Amount({ view, className }: { view: BurstView; className: string }) {
   );
 }
 
-/** 표정 연기 — swapMs 뒤 끝 표정으로 바뀐다 (타이머 콜백에서만 setState) */
-function ActingPortrait({ view, swapMs, className, round = false }: {
-  view: BurstView; swapMs: number; className: string; round?: boolean;
+/** 시작/끝 구간의 얼굴 — 기술 전용 포즈 아트가 있으면 그것, 없으면 기본 표정 */
+function SkillFace({ view, phase, className, round = false }: {
+  view: BurstView; phase: 0 | 1; className: string; round?: boolean;
 }) {
-  const [expression, setExpression] = useState(view.move.acting[0]);
-  useEffect(() => {
-    const timer = setTimeout(() => setExpression(view.move.acting[1]), swapMs);
-    return () => clearTimeout(timer);
-  }, [swapMs, view.move.acting]);
+  const poseId = view.move.poses?.[phase] ?? null;
+  const poseSrc = !round && poseId ? getSkillPoseArt(view.characterId, poseId) : null;
+  if (poseSrc) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element -- 연출 레이어 전용, 원본 크기 그대로 쓰는 투명 webp
+      <img src={poseSrc} alt="" draggable={false} className={`object-contain ${className}`} />
+    );
+  }
   return (
     <CharacterImage
       characterId={view.characterId}
-      expression={expression}
+      expression={view.move.acting[phase]}
       round={round}
       frameless={!round}
       className={className}
     />
   );
+}
+
+/** 표정 연기 — swapMs 뒤 끝 얼굴(포즈)로 바뀐다 (타이머 콜백에서만 setState) */
+function ActingPortrait({ view, swapMs, className }: { view: BurstView; swapMs: number; className: string }) {
+  const [phase, setPhase] = useState<0 | 1>(0);
+  useEffect(() => {
+    const timer = setTimeout(() => setPhase(1), swapMs);
+    return () => clearTimeout(timer);
+  }, [swapMs]);
+  return <SkillFace view={view} phase={phase} className={className} />;
 }
 
 const PORTRAIT_MASK: CSSProperties = {
@@ -154,7 +168,7 @@ function TrailPortrait({ view, className, style, animate, times, ghostOpacity, s
           animate={{ ...animate, opacity: ghostOpacity.map(o => o * (i === 0 ? 0.35 : 0.55)) }}
           transition={{ duration: d, times, ease, delay: lag * view.timeScale }}
         >
-          <CharacterImage characterId={view.characterId} expression={view.move.acting[0]} round={false} frameless className="h-full w-full" />
+          <SkillFace view={view} phase={0} className="h-full w-full" />
         </motion.div>
       ))}
       <motion.div

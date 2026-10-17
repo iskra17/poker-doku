@@ -17,8 +17,13 @@ export interface SkillMove {
   /** 화면에 크게 찍히는 기술명 */
   name: string;
   motif: SkillMotif;
-  /** 표정 연기 — 시작 표정에서 끝 표정으로 바뀐다 (예: 놀람 → 자신감) */
+  /** 표정 연기 — 시작 표정에서 끝 표정으로 바뀐다 (예: 놀람 → 자신감). 포즈 아트가 없을 때의 폴백 */
   acting: [Expression, Expression];
+  /**
+   * 기술 전용 포즈 아트 id (`getSkillPoseArt`) — [시작, 끝]. null이면 그 구간은 acting 표정을 쓴다.
+   * 기술마다 표정·제스처가 달라야 같은 단계라도 다른 기술로 보인다.
+   */
+  poses?: [string | null, string | null];
 }
 
 export interface SkillDef {
@@ -32,12 +37,12 @@ const SKILLS: Record<string, SkillDef> = {
   sakura: {
     characterId: 'sakura',
     moves: {
-      'steal': { name: '스틸 리프!', motif: 'swipe', acting: ['thinking', 'happy'] },
-      'showdown-win': { name: '파워 코드!', motif: 'soundwave', acting: ['confident', 'happy'] },
-      'big-pot': { name: '벚꽃 파워 코드!', motif: 'band', acting: ['surprised', 'confident'] },
-      'river-comeback': { name: '리버 앙코르!', motif: 'wave', acting: ['surprised', 'confident'] },
-      'all-in-win': { name: '스테이지 다이브!', motif: 'dive', acting: ['surprised', 'happy'] },
-      'monster': { name: '벚꽃 폭풍 솔로!', motif: 'storm', acting: ['surprised', 'confident'] },
+      'steal': { name: '스틸 리프!', motif: 'swipe', acting: ['thinking', 'happy'], poses: [null, 'steal'] },
+      'showdown-win': { name: '파워 코드!', motif: 'soundwave', acting: ['confident', 'happy'], poses: [null, 'powerchord'] },
+      'big-pot': { name: '벚꽃 파워 코드!', motif: 'band', acting: ['surprised', 'confident'], poses: [null, 'bigpot'] },
+      'river-comeback': { name: '리버 앙코르!', motif: 'wave', acting: ['surprised', 'confident'], poses: ['encore-tearful', 'encore'] },
+      'all-in-win': { name: '스테이지 다이브!', motif: 'dive', acting: ['surprised', 'happy'], poses: [null, 'dive'] },
+      'monster': { name: '벚꽃 폭풍 솔로!', motif: 'storm', acting: ['surprised', 'confident'], poses: [null, 'storm'] },
     },
     shouts: {
       small: '에, 엣헤헤…♪',

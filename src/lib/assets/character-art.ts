@@ -117,6 +117,19 @@ export function hasOutfitArt(characterId: string, outfitId: string): boolean {
   return !!folder && (OUTFITS[folder]?.[outfitId]?.length ?? 0) > 0;
 }
 
+// 필살기 전용 포즈(512² 투명 webp, `public/assets/characters/<id>/skill/<pose>.webp`) — 기술마다 표정·제스처가 다르다.
+// 원화는 리포 밖 스테이징(poker-doku-art/skill-expressions)에서 Codex로 만들고 `convert.mjs bust`로 변환한다.
+const SKILL_POSES: Readonly<Record<string, readonly string[]>> = {
+  sakura: ['steal', 'powerchord', 'bigpot', 'storm', 'encore-tearful', 'encore', 'dive'],
+};
+
+/** 필살기 포즈 일러스트 — 배치되지 않았으면 null (호출부는 기본 표정으로 폴백) */
+export function getSkillPoseArt(characterId: string, poseId: string): string | null {
+  const folder = ART_FOLDERS[characterId];
+  if (!folder || !SKILL_POSES[folder]?.includes(poseId)) return null;
+  return `/assets/characters/${folder}/skill/${poseId}.webp`;
+}
+
 // 쇼케이스(상반신 포즈, 640x960 투명 webp) 보유 캐릭터 — 프로필 클릭 연출용.
 // 전 캐릭터 보유 (2026-07-22 생성). 새 캐릭터 추가 시 showcase.webp도 함께 생성할 것.
 const SHOWCASE_AVAILABLE: ReadonlySet<string> = new Set(Object.keys(AVAILABLE));
