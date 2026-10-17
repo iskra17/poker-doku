@@ -314,6 +314,11 @@ function FullBurst({ burst }: { burst: Burst }) {
       {/* 파트너 슬래시 인 */}
       <motion.div
         className="absolute bottom-[20%] left-[-4%] aspect-[3/4] w-[52%] max-w-[380px] sm:left-[6%]"
+        // 버스트업 하단이 화면 중간에서 직선으로 잘려 보이지 않게 아래쪽을 띠 안으로 녹인다
+        style={{
+          maskImage: 'linear-gradient(to bottom, black 62%, transparent 96%)',
+          WebkitMaskImage: 'linear-gradient(to bottom, black 62%, transparent 96%)',
+        }}
         initial={{ x: '-70%', opacity: 0, scale: 1.15 }}
         animate={{ x: ['-70%', '6%', '0%', '0%', '-25%'], opacity: [0, 1, 1, 1, 0], scale: [1.15, 1, 1, 1, 1] }}
         transition={{ ...hold, times: [0, 0.14, 0.24, 0.86, 1] }}
