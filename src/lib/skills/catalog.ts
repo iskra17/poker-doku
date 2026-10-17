@@ -2,40 +2,48 @@ import type { Expression } from '../assets/character-art';
 import type { SkillReason, SkillTier } from './skill-trigger';
 
 /**
- * 파트너 필살기 카탈로그 — 캐릭터별 기술명·외침·표정·파티클.
+ * 파트너 필살기 카탈로그 — 캐릭터별 기술(이름·연출 모티프·표정 연기)과 외침.
  * 프로토타입은 사쿠라 1명. 정의가 없는 파트너는 발동하지 않는다 (다른 캐릭터를 대신 띄우지 않음).
  */
 
-export type SkillParticle = 'petal';
+/**
+ * 기술별 연출 모양 — 같은 단계라도 기술마다 다르게 보이게 한다. 다른 캐릭터도 재사용할 수 있는 형식이다.
+ * swipe: 빠른 사선 스윕(소) · soundwave: 음파 링·음표(소) · band: 사선 띠+집중선 · wave: 물결이 뒤집히는 역전 ·
+ * dive: 위에서 떨어져 착지 충격 · storm: 꽃잎 소용돌이
+ */
+export type SkillMotif = 'swipe' | 'soundwave' | 'band' | 'wave' | 'dive' | 'storm';
+
+export interface SkillMove {
+  /** 화면에 크게 찍히는 기술명 */
+  name: string;
+  motif: SkillMotif;
+  /** 표정 연기 — 시작 표정에서 끝 표정으로 바뀐다 (예: 놀람 → 자신감) */
+  acting: [Expression, Expression];
+}
 
 export interface SkillDef {
   characterId: string;
-  /** 발동 사유별 기술명 — 화면 중앙에 크게 찍힌다 */
-  names: Record<SkillReason, string>;
+  moves: Record<SkillReason, SkillMove>;
   /** 단계별 짧은 외침 (캐릭터 말투 유지) */
   shouts: Record<SkillTier, string>;
-  expressions: Record<SkillTier, Expression>;
-  particle: SkillParticle;
 }
 
 const SKILLS: Record<string, SkillDef> = {
   sakura: {
     characterId: 'sakura',
-    names: {
-      'steal': '스틸 리프!',
-      'showdown-win': '파워 코드!',
-      'big-pot': '벚꽃 파워 코드!',
-      'all-in-win': '스테이지 다이브!',
-      'river-comeback': '리버 앙코르!',
-      'monster': '벚꽃 폭풍 솔로!',
+    moves: {
+      'steal': { name: '스틸 리프!', motif: 'swipe', acting: ['thinking', 'happy'] },
+      'showdown-win': { name: '파워 코드!', motif: 'soundwave', acting: ['confident', 'happy'] },
+      'big-pot': { name: '벚꽃 파워 코드!', motif: 'band', acting: ['surprised', 'confident'] },
+      'river-comeback': { name: '리버 앙코르!', motif: 'wave', acting: ['surprised', 'confident'] },
+      'all-in-win': { name: '스테이지 다이브!', motif: 'dive', acting: ['surprised', 'happy'] },
+      'monster': { name: '벚꽃 폭풍 솔로!', motif: 'storm', acting: ['surprised', 'confident'] },
     },
     shouts: {
       small: '에, 엣헤헤…♪',
       medium: '느, 느낌 왔어!',
       big: '이, 이게 내 록이야——!',
     },
-    expressions: { small: 'happy', medium: 'confident', big: 'confident' },
-    particle: 'petal',
   },
 };
 

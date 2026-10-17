@@ -135,7 +135,7 @@ export default function SkillBurstPreview() {
             >
               <span className="flex items-center gap-1.5">
                 <span className="rounded bg-elevated px-1.5 text-[11px] font-bold text-gilded">{TIER_LABEL[item.tier]}</span>
-                <span className="text-sm font-bold">{def?.names[item.reason]}</span>
+                <span className="text-sm font-bold">{def?.moves[item.reason].name}</span>
               </span>
               <span className="mt-0.5 block text-xs text-ink-dim">{item.condition}</span>
             </button>
