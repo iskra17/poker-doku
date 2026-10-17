@@ -635,6 +635,10 @@ npx tsc --noEmit
   아바타+진행 말풍선, 설정으로 개별 숨김), SeatSpeechBubble, WinnerCutIn/LoserCutIn(둘 다 좌측 —
   액션 로그 아래 38%/62% 세로 스택, 패배는 쇼다운 진 봇 sad 컷인). 좌석 리액션: CharacterAvatar가 표정 변화 시 바운스/흔들림 모션,
   table/SeatEmote가 승/패/올인 이모지 버스트.
+  **파트너 필살기**(2026-10-17 프로토타입, 사쿠라만): `effects/SkillBurstLayer`가 `winners` 이벤트를 받아
+  `lib/skills/skill-trigger.ts`(순수 판정 — 스틸/쇼다운/큰 팟/올인/리버 역전/포카드+, 3단계, big 6핸드 쿨다운)로
+  **내 화면에만** 히트스톱·슬래시 인·기술명 스탬프를 ~1초 재생한다. 서버 전송·턴 대기 없음(다른 플레이어 방해 금지 계약),
+  파트너 정의(`lib/skills/catalog.ts`)가 없으면 발동 안 함, 설정 `skillBurst` full/lite/off(persist v6)·게임 중 미리보기.
 - **AI 상황 대사 (3층 전략)**: `src/server/dialogue-manager.ts`가 진입점 — ①기본 상황
   (폴드/레이즈 등)은 캐릭터 모듈의 스크립트 대사만, ②특별 순간(올인/빅팟/SnG 탈락·우승)은
   과거 생성된 대사 풀에서 재사용(캐릭터×상황키별 최대 12줄, `data/dialogue-cache.json`에
