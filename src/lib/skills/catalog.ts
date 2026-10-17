@@ -43,8 +43,17 @@ export function getSkillDef(characterId: string | null | undefined): SkillDef | 
   return characterId ? SKILLS[characterId] ?? null : null;
 }
 
-/** 설정 화면의 미리보기 요청 — 게임 화면의 SkillBurstLayer만 구독한다 (서버·다른 플레이어와 무관) */
-type PreviewListener = (tier: SkillTier) => void;
+/**
+ * 미리보기 요청 — 설정 화면 버튼·연출 미리보기 페이지(/preview/skill-burst)가 보내고
+ * SkillBurstLayer만 구독한다 (서버·다른 플레이어와 무관). reason/bb를 생략하면 단계별 대표값을 쓴다.
+ */
+export interface SkillPreviewRequest {
+  tier: SkillTier;
+  reason?: SkillReason;
+  bb?: number;
+}
+
+type PreviewListener = (request: SkillPreviewRequest) => void;
 const previewListeners = new Set<PreviewListener>();
 
 export function onSkillPreview(listener: PreviewListener): () => void {
@@ -52,6 +61,7 @@ export function onSkillPreview(listener: PreviewListener): () => void {
   return () => previewListeners.delete(listener);
 }
 
-export function requestSkillPreview(tier: SkillTier): void {
-  for (const listener of previewListeners) listener(tier);
+export function requestSkillPreview(request: SkillTier | SkillPreviewRequest): void {
+  const normalized = typeof request === 'string' ? { tier: request } : request;
+  for (const listener of previewListeners) listener(normalized);
 }

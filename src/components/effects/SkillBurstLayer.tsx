@@ -180,10 +180,10 @@ export default function SkillBurstLayer() {
       show(def, trigger.tier, trigger.reason, trigger.bb);
     });
 
-    const unsubscribePreview = onSkillPreview(tier => {
+    const unsubscribePreview = onSkillPreview(({ tier, reason, bb }) => {
       const def = getSkillDef(useProgressionStore.getState().snapshot?.profile.selectedCharacterId)
         ?? getSkillDef('sakura');
-      if (def) show(def, tier, PREVIEW_REASON[tier], PREVIEW_BB[tier]);
+      if (def) show(def, tier, reason ?? PREVIEW_REASON[tier], bb ?? PREVIEW_BB[tier]);
     });
 
     return () => {
