@@ -101,12 +101,17 @@ function Amount({ view, className }: { view: BurstView; className: string }) {
   );
 }
 
+/** 구간(시작/끝)의 얼굴 이미지 — 기술 전용 포즈 아트가 있으면 그 경로, 없으면 null(기본 표정 사용) */
+function poseSrcFor(view: BurstView, phase: 0 | 1): string | null {
+  const poseId = view.move.poses?.[phase] ?? null;
+  return poseId ? getSkillPoseArt(view.characterId, poseId) : null;
+}
+
 /** 시작/끝 구간의 얼굴 — 기술 전용 포즈 아트가 있으면 그것, 없으면 기본 표정 */
 function SkillFace({ view, phase, className, round = false }: {
   view: BurstView; phase: 0 | 1; className: string; round?: boolean;
 }) {
-  const poseId = view.move.poses?.[phase] ?? null;
-  const poseSrc = !round && poseId ? getSkillPoseArt(view.characterId, poseId) : null;
+  const poseSrc = round ? null : poseSrcFor(view, phase);
   if (poseSrc) {
     return (
       // eslint-disable-next-line @next/next/no-img-element -- 연출 레이어 전용, 원본 크기 그대로 쓰는 투명 webp
@@ -124,14 +129,37 @@ function SkillFace({ view, phase, className, round = false }: {
   );
 }
 
-/** 표정 연기 — swapMs 뒤 끝 얼굴(포즈)로 바뀐다 (타이머 콜백에서만 setState) */
+/** 표정 교체 교차 페이드 길이(초) — 컷으로 바뀌면 다른 그림이 튀어 보인다 */
+const FACE_CROSSFADE_S = 0.18;
+
+/**
+ * 표정 연기 — swapMs 뒤 끝 얼굴로 바뀐다 (타이머 콜백에서만 setState).
+ * 시작·끝이 같은 그림이면 바꾸지 않고, 다르면 두 장을 겹쳐 놓고 교차 페이드한다.
+ */
 function ActingPortrait({ view, swapMs, className }: { view: BurstView; swapMs: number; className: string }) {
   const [phase, setPhase] = useState<0 | 1>(0);
+  const startSrc = poseSrcFor(view, 0);
+  const endSrc = poseSrcFor(view, 1);
+  const sameFace = startSrc !== null
+    ? startSrc === endSrc
+    : endSrc === null && view.move.acting[0] === view.move.acting[1];
   useEffect(() => {
+    if (sameFace) return;
     const timer = setTimeout(() => setPhase(1), swapMs);
     return () => clearTimeout(timer);
-  }, [swapMs]);
-  return <SkillFace view={view} phase={phase} className={className} />;
+  }, [swapMs, sameFace]);
+  if (sameFace) return <SkillFace view={view} phase={0} className={className} />;
+  const fade = { duration: FACE_CROSSFADE_S * view.timeScale, ease: 'easeOut' as const };
+  return (
+    <div className={`relative ${className}`}>
+      <motion.div className="absolute inset-0" initial={{ opacity: 1 }} animate={{ opacity: phase === 0 ? 1 : 0 }} transition={fade}>
+        <SkillFace view={view} phase={0} className="h-full w-full" />
+      </motion.div>
+      <motion.div className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: phase === 1 ? 1 : 0 }} transition={fade}>
+        <SkillFace view={view} phase={1} className="h-full w-full" />
+      </motion.div>
+    </div>
+  );
 }
 
 const PORTRAIT_MASK: CSSProperties = {

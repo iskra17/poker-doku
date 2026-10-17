@@ -21,7 +21,8 @@ export interface SkillMove {
   acting: [Expression, Expression];
   /**
    * 기술 전용 포즈 아트 id (`getSkillPoseArt`) — [시작, 끝]. null이면 그 구간은 acting 표정을 쓴다.
-   * 기술마다 표정·제스처가 달라야 같은 단계라도 다른 기술로 보인다.
+   * 포즈가 하나뿐인 기술은 [같은 id, 같은 id]로 처음부터 끝까지 그 포즈를 쓴다 — 기본 표정에서 전용 포즈로
+   * 갈아타면 화풍·구도가 다른 두 그림이 컷으로 바뀌어 어색하다. 두 포즈가 다를 때(역전 전 눈물 → 앙코르)만 교차 페이드.
    */
   poses?: [string | null, string | null];
 }
@@ -37,12 +38,12 @@ const SKILLS: Record<string, SkillDef> = {
   sakura: {
     characterId: 'sakura',
     moves: {
-      'steal': { name: '스틸 리프!', motif: 'swipe', acting: ['thinking', 'happy'], poses: [null, 'steal'] },
-      'showdown-win': { name: '파워 코드!', motif: 'soundwave', acting: ['confident', 'happy'], poses: [null, 'powerchord'] },
-      'big-pot': { name: '벚꽃 파워 코드!', motif: 'band', acting: ['surprised', 'confident'], poses: [null, 'bigpot'] },
+      'steal': { name: '스틸 리프!', motif: 'swipe', acting: ['thinking', 'happy'], poses: ['steal', 'steal'] },
+      'showdown-win': { name: '파워 코드!', motif: 'soundwave', acting: ['confident', 'happy'], poses: ['powerchord', 'powerchord'] },
+      'big-pot': { name: '벚꽃 파워 코드!', motif: 'band', acting: ['surprised', 'confident'], poses: ['bigpot', 'bigpot'] },
       'river-comeback': { name: '리버 앙코르!', motif: 'wave', acting: ['surprised', 'confident'], poses: ['encore-tearful', 'encore'] },
-      'all-in-win': { name: '스테이지 다이브!', motif: 'dive', acting: ['surprised', 'happy'], poses: [null, 'dive'] },
-      'monster': { name: '벚꽃 폭풍 솔로!', motif: 'storm', acting: ['surprised', 'confident'], poses: [null, 'storm'] },
+      'all-in-win': { name: '스테이지 다이브!', motif: 'dive', acting: ['surprised', 'happy'], poses: ['dive', 'dive'] },
+      'monster': { name: '벚꽃 폭풍 솔로!', motif: 'storm', acting: ['surprised', 'confident'], poses: ['storm', 'storm'] },
     },
     shouts: {
       small: '에, 엣헤헤…♪',
