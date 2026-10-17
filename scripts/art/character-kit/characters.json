@@ -1,0 +1,17 @@
+{
+  "_comment": "캐릭터 디자인 스펙 — 새 의상·포즈 생성 프롬프트의 고정 문단. 레퍼런스 원화는 ART_ROOT/characters/<id>/ 아래(리포 밖)에 둔다.",
+  "sakura": {
+    "name": "사쿠라",
+    "design": "soft pink chin-length bob with side-swept bangs, a small white cherry-blossom hair clip on her left side (viewer's right), rose-pink eyes, gentle round face, petite build",
+    "defaultOutfit": "light cream cardigan over a white blouse with frilled collar and a pink ribbon tie, dark navy pleated knee-length skirt, black knee socks, brown loafers",
+    "style": "soft anime illustration, clean thin lineart, pastel cel shading with soft gradients, warm gentle lighting",
+    "references": {
+      "bust": "bust-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
+  }
+}

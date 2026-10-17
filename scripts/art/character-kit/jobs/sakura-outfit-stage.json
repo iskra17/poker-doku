@@ -1,0 +1,15 @@
+{
+  "character": "sakura",
+  "id": "outfit-stage-pilot",
+  "kind": "outfit",
+  "outfitId": "stage",
+  "outfit": "rock live-stage outfit: black cropped denim jacket with small pink cherry-blossom pins, loose white band t-shirt tucked into a pink-and-black plaid knee-length pleated skirt, black opaque tights, black ankle boots, a silver guitar-pick necklace",
+  "references": ["bust", "front", "threeQuarter", "back"],
+  "shots": [
+    { "out": "fullbody/front.png", "framing": "fullbody", "direction": "Front view, neutral relaxed standing pose (arms slightly away from the body), calm gentle smile." },
+    { "out": "fullbody/three-quarter.png", "framing": "fullbody", "direction": "Three-quarter view turned toward the viewer's left, same relaxed standing pose." },
+    { "out": "bust/neutral.png", "framing": "bust", "direction": "Calm neutral expression with a faint smile, facing the viewer." },
+    { "out": "bust/happy.png", "framing": "bust", "direction": "Bright happy smile with eyes slightly closed in joy." },
+    { "out": "bust/confident.png", "framing": "bust", "direction": "Confident small smirk, one hand making a rock-and-roll horns sign beside her shoulder." }
+  ]
+}
