@@ -81,7 +81,7 @@ const PETALS = Array.from({ length: 18 }, (_, i) => {
 });
 
 function formatBB(bb: number): string {
-  return `+${bb >= 10 ? Math.round(bb) : bb.toFixed(1)}BB`;
+  return `+${bb >= 10 ? Math.round(bb) : Number(bb.toFixed(1))}BB`;
 }
 
 function shakeTable(tier: Exclude<SkillTier, 'small'>): void {
