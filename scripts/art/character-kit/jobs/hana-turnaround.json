@@ -1,0 +1,36 @@
+{
+  "character": "hana",
+  "id": "turnaround",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "turnaround/front.png",
+      "framing": "fullbody",
+      "direction": "CHARACTER TURNAROUND model sheet. Front view, neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands."
+    },
+    {
+      "out": "turnaround/three-quarter.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. Three-quarter view turned toward the viewer's left."
+    },
+    {
+      "out": "turnaround/side.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. Full left profile (side view) facing the viewer's left. Keep every hair accessory on the same side of the head as in the references."
+    },
+    {
+      "out": "turnaround/back.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. Back view showing the back of the hairstyle and outfit."
+    },
+    {
+      "out": "turnaround/three-quarter-back.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. Three-quarter back view turned away toward the viewer's right."
+    }
+  ]
+}

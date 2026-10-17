@@ -1,0 +1,26 @@
+{
+  "character": "ara",
+  "id": "skill-b",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/respawn.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. triumphant comeback: loud confident laugh with eyes squeezed in delight, thumb pointing proudly at herself."
+    },
+    {
+      "out": "skill/rush.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. charging forward at the viewer: leaning in, throwing a punch toward the camera with her fist in the foreground, wild excited grin, twin tails flying behind her."
+    },
+    {
+      "out": "skill/inferno.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. overwhelming confidence: arms crossed, chin raised, half-lidded burning eyes with a small proud smirk, twin tails and bangs blown upward as if by rising heat."
+    }
+  ]
+}

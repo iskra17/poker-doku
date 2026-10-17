@@ -1,0 +1,31 @@
+{
+  "character": "vivian",
+  "id": "skill-a",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/mask.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. sly mysterious smile, holding her silver masquerade mask on a slim silver stick in front of one eye."
+    },
+    {
+      "out": "skill/bow.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. elegant theatrical curtain-call bow: head slightly lowered with a graceful smile, one hand on her chest, the other arm extended out to the side."
+    },
+    {
+      "out": "skill/act2.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. dramatic commanding pose: one arm thrust toward the viewer with the palm up, confident smile, cape swept back by the motion."
+    },
+    {
+      "out": "skill/twist-tense.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. tragic heroine acting: eyes closed in anguish, the back of one hand pressed to her forehead, lips parted in a sigh."
+    }
+  ]
+}

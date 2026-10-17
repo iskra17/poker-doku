@@ -116,6 +116,8 @@ export default function SkillBurstLayer() {
         characterId: def.characterId,
         tier,
         move,
+        particle: def.particle,
+        glyphs: def.glyphs,
         shout: def.shouts[tier],
         bbLabel: formatBB(bb),
         color: character.color,
@@ -155,8 +157,9 @@ export default function SkillBurstLayer() {
       show(def, trigger.tier, trigger.reason, trigger.bb);
     });
 
-    const unsubscribePreview = onSkillPreview(({ tier, reason, bb, timeScale }) => {
-      const def = getSkillDef(useProgressionStore.getState().snapshot?.profile.selectedCharacterId)
+    const unsubscribePreview = onSkillPreview(({ tier, reason, bb, timeScale, characterId }) => {
+      const def = getSkillDef(characterId)
+        ?? getSkillDef(useProgressionStore.getState().snapshot?.profile.selectedCharacterId)
         ?? getSkillDef('sakura');
       if (def) show(def, tier, reason ?? PREVIEW_REASON[tier], bb ?? PREVIEW_BB[tier], timeScale ?? 1);
     });

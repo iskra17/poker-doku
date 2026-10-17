@@ -1,0 +1,26 @@
+{
+  "character": "elena",
+  "id": "skill-b",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/thaw.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. rare soft genuine smile with a light blush, eyes open and warm, tucking a strand of hair behind her ear."
+    },
+    {
+      "out": "skill/avalanche.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. rare fierce intensity: leaning toward the viewer with a sharp determined grin, one hand pushing forward palm-out, long hair flying."
+    },
+    {
+      "out": "skill/queen.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. regal ice queen: chin raised, cold overwhelming gaze looking down at the viewer, holding a poker chip up between her fingers like a jewel, long hair floating."
+    }
+  ]
+}

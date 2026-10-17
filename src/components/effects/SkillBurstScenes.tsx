@@ -4,7 +4,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { getSkillPoseArt } from '@/lib/assets/character-art';
-import type { SkillMove } from '@/lib/skills/catalog';
+import type { SkillMove, SkillParticle } from '@/lib/skills/catalog';
 import type { SkillTier } from '@/lib/skills/skill-trigger';
 
 /**
@@ -22,6 +22,10 @@ export interface BurstView {
   characterId: string;
   tier: SkillTier;
   move: SkillMove;
+  /** 흩날리는 입자 모양 — 캐릭터 상징 */
+  particle: SkillParticle;
+  /** soundwave 미니 컷인의 떠오르는 글자 */
+  glyphs: readonly string[];
   shout: string;
   bbLabel: string;
   color: string;
@@ -67,8 +71,25 @@ const CHIPS = Array.from({ length: 14 }, (_, i) => {
   return { x: spread, height, delay: (i % 5) * 0.02 };
 });
 
-const NOTES = ['♪', '♫', '♪', '♬'];
-const PETAL_PATH = 'M10 1 C15 5 17 11 10 19 C3 11 5 5 10 1 Z';
+/** 중심 (10,10) 기준 별 모양 다각형 — points개 꼭짓점, 바깥·안쪽 반지름 교대 */
+function starPath(points: number, outer: number, inner: number): string {
+  const corners = Array.from({ length: points * 2 }, (_, i) => {
+    const r = i % 2 === 0 ? outer : inner;
+    const a = (i / (points * 2)) * Math.PI * 2 - Math.PI / 2;
+    return `${(10 + Math.cos(a) * r).toFixed(2)} ${(10 + Math.sin(a) * r).toFixed(2)}`;
+  });
+  return `M${corners.join(' L')} Z`;
+}
+
+/** 입자 모양 (viewBox 0 0 20 20) — 캐릭터 상징 */
+const PARTICLE_PATHS: Record<SkillParticle, string> = {
+  petal: 'M10 1 C15 5 17 11 10 19 C3 11 5 5 10 1 Z',
+  ember: 'M10 1 C13 6 16 9 16 13 C16 16.5 13.3 19 10 19 C6.7 19 4 16.5 4 13 C4 9 7 6 10 1 Z',
+  spark: 'M10 1 L16 10 L10 19 L4 10 Z',
+  star: starPath(5, 9.5, 4),
+  rose: 'M10 18 C4 14 2 9 4 5 C6 2 9 3 10 5 C11 3 14 2 16 5 C18 9 16 14 10 18 Z',
+  snow: starPath(6, 9.5, 3),
+};
 
 function outlineShadow(color: string): string {
   return `-1.5px -1.5px 0 ${color}, 1.5px -1.5px 0 ${color}, -1.5px 1.5px 0 ${color}, 1.5px 1.5px 0 ${color}, 0 2px 0 ${color}`;
@@ -287,7 +308,7 @@ function PetalBurst({ view, count, spread = 1, delay = 0.08, className = 'left-1
           }}
           transition={{ duration: d * 0.95, delay: (delay + p.delay) * view.timeScale, times: [0, 0.18, 0.6, 1], ease: 'easeOut' }}
         >
-          <path d={PETAL_PATH} fill={i % 3 === 0 ? 'white' : view.color} stroke={view.colorSecondary} strokeWidth={0.6} />
+          <path d={PARTICLE_PATHS[view.particle]} fill={i % 3 === 0 ? 'white' : view.color} stroke={view.colorSecondary} strokeWidth={0.6} />
         </motion.svg>
       ))}
     </>
@@ -350,7 +371,7 @@ export function LiteBanner({ view }: { view: BurstView }) {
 
 // ───────────────────────────── 소 단계 (풀) ─────────────────────────────
 
-/** 풀 설정의 소 단계: 상단 미니 컷인. swipe는 사선 스윕 + 돌진 잔상, soundwave는 음파 링 + 음표 */
+/** 풀 설정의 소 단계: 상단 미니 컷인. swipe는 사선 스윕 + 돌진 잔상, soundwave는 음파 링 + 캐릭터 글자(사쿠라는 음표) */
 export function MiniBurst({ view }: { view: BurstView }) {
   const d = seconds(view);
   const swipe = view.move.motif === 'swipe';
@@ -378,7 +399,7 @@ export function MiniBurst({ view }: { view: BurstView }) {
             transition={{ duration: 0.6 * view.timeScale, delay: (0.1 + delay) * view.timeScale, ease: 'easeOut' }}
           />
         ))}
-        {!swipe && NOTES.map((note, i) => (
+        {!swipe && view.glyphs.map((note, i) => (
           <motion.span
             key={i}
             className="absolute -left-4 top-0 text-2xl font-black"
@@ -486,7 +507,7 @@ function BandScene({ view }: { view: BurstView }) {
   );
 }
 
-/** wave — 청록 물결(지고 있던 흐름)을 분홍 물결이 뒤덮는 역전 + 무대 스포트라이트 */
+/** wave — 청록 물결(지고 있던 흐름)을 캐릭터 색 물결이 뒤덮는 역전 + 무대 스포트라이트 */
 function WaveScene({ view }: { view: BurstView }) {
   const d = seconds(view);
   const wavePath = 'M0 26 Q 25 6 50 26 T 100 26 T 150 26 T 200 26 V100 H0 Z';
@@ -522,7 +543,7 @@ function WaveScene({ view }: { view: BurstView }) {
       >
         <path d={wavePath} fill="var(--color-cyber)" opacity={0.7} />
       </motion.svg>
-      {/* 역전 — 분홍 물결이 오른쪽에서 덮친다 */}
+      {/* 역전 — 캐릭터 색 물결이 오른쪽에서 덮친다 */}
       <motion.svg
         viewBox="0 0 200 100"
         preserveAspectRatio="none"
@@ -601,7 +622,7 @@ function DiveScene({ view }: { view: BurstView }) {
   );
 }
 
-/** storm — 꽃잎 소용돌이 한가운데서 커지는 캐릭터, 이중 플래시 */
+/** storm — 입자(꽃잎·불씨·별…) 소용돌이 한가운데서 커지는 캐릭터, 이중 플래시 */
 function StormScene({ view }: { view: BurstView }) {
   const d = seconds(view);
   return (
@@ -627,7 +648,7 @@ function StormScene({ view }: { view: BurstView }) {
                 className="absolute -ml-3 -mt-3 h-6 w-6"
                 style={{ transform: `translate(${Math.cos(angle) * r}px, ${Math.sin(angle) * r * 0.8}px) rotate(${p.rotate}deg) scale(${p.scale})` }}
               >
-                <path d={PETAL_PATH} fill={i % 3 === 0 ? 'white' : view.color} stroke={view.colorSecondary} strokeWidth={0.6} />
+                <path d={PARTICLE_PATHS[view.particle]} fill={i % 3 === 0 ? 'white' : view.color} stroke={view.colorSecondary} strokeWidth={0.6} />
               </svg>
             );
           })}

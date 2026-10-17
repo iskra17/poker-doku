@@ -13,5 +13,80 @@
       "back": "turnaround/back.png",
       "threeQuarterBack": "turnaround/three-quarter-back.png"
     }
+  },
+  "ara": {
+    "name": "아라",
+    "design": "very long bright crimson-red hair in high twin tails reaching below the waist, tied with large black ribbon bows, messy bangs between the eyes, sharp red-orange eyes, confident fierce face, athletic build",
+    "defaultOutfit": "black cropped military-style jacket with gold piping, gold buttons, shoulder boards and a small gold dragon emblem on her left chest, sleeves pushed to the forearms, red scoop-neck crop top showing the midriff, black belt with a silver buckle, black slim pants with red side stripes, black lace-up combat boots",
+    "style": "modern anime illustration, crisp clean lineart, glossy cel shading with smooth gradients, saturated colors, polished gacha-game quality",
+    "references": {
+      "bust": "bust-reference.png",
+      "showcase": "showcase-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
+  },
+  "hana": {
+    "name": "하나",
+    "design": "very long straight lavender-purple hair reaching the waist with a thin braid running along the right side of her head (viewer's left), long bangs, calm violet eyes, thin rimless glasses with silver temples, composed intelligent face, slender build",
+    "defaultOutfit": "dark purple tailored blazer over a white collared button-up shirt with the top buttons open, thin silver pendant necklace, dark purple knee-length pencil skirt, black sheer tights, black low-heeled pumps",
+    "style": "modern anime illustration, crisp clean lineart, glossy cel shading with smooth gradients, saturated colors, polished gacha-game quality",
+    "references": {
+      "bust": "bust-reference.png",
+      "showcase": "showcase-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
+  },
+  "chloe": {
+    "name": "클로이",
+    "design": "light sky-blue wavy shoulder-length messy hair with an ahoge, a large white snowflake hair clip on her left side (viewer's right) and a small white snowflake clip on her right side, bright blue eyes, cheerful round face, energetic petite build",
+    "defaultOutfit": "light-blue zip-up hoodie with white sleeves and a white hood, blue stripes on the sleeves, yellow and pink star patches on the front, a snowflake zipper pull, white t-shirt underneath, white pleated skirt above the knee, white ankle socks, light-blue sneakers with white soles",
+    "style": "soft bright anime illustration, clean lineart, pastel cel shading, cheerful high-key lighting",
+    "references": {
+      "bust": "bust-reference.png",
+      "showcase": "showcase-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
+  },
+  "vivian": {
+    "name": "비비안",
+    "design": "short dark navy-teal asymmetric bob with long side bangs partly covering her right eye, teal-green eyes with dark eyeliner, a small beauty mark under her left eye, teal drop earrings, elegant mature face, tall slender build",
+    "defaultOutfit": "black high-neck ribbed turtleneck knee-length fitted dress, long black cape-coat with dark teal lining and ornate silver embroidered trim, a silver comedy-and-tragedy theater mask brooch with hanging chains on her left chest, black lace fingerless gloves, black belt with a silver buckle, black tights, black heeled ankle boots",
+    "style": "modern anime illustration, crisp clean lineart, glossy cel shading with smooth gradients, moody jewel-tone colors, polished gacha-game quality",
+    "references": {
+      "bust": "bust-reference.png",
+      "showcase": "showcase-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
+  },
+  "elena": {
+    "name": "엘레나",
+    "design": "very long straight silver-lavender hair reaching the hips, parted slightly off-center with long face-framing strands, cool grey-blue half-lidded eyes, small silver hoop earrings, calm mature face, tall slender build",
+    "defaultOutfit": "black tailored suit jacket over a crisp white dress shirt with a silver-grey necktie, black tailored straight-leg trousers, black low-heeled pointed pumps",
+    "style": "modern anime illustration, crisp clean lineart, glossy cel shading with smooth cool-toned gradients, polished gacha-game quality",
+    "references": {
+      "bust": "bust-reference.png",
+      "showcase": "showcase-reference.png",
+      "front": "turnaround/front.png",
+      "threeQuarter": "turnaround/three-quarter.png",
+      "side": "turnaround/side.png",
+      "back": "turnaround/back.png",
+      "threeQuarterBack": "turnaround/three-quarter-back.png"
+    }
   }
 }

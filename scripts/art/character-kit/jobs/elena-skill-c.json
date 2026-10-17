@@ -1,0 +1,16 @@
+{
+  "character": "elena",
+  "id": "skill-c",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/queen.png",
+      "framing": "bust",
+      "direction": "Ice queen of the snowfield: body turned three-quarters, glancing back over her shoulder at the viewer with chin raised and a cold, faint, overwhelming smile, one hand sweeping her long silver hair back, hair and jacket lifted by an icy updraft. No poker chip and nothing held in her hands."
+    }
+  ]
+}

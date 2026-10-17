@@ -1,0 +1,26 @@
+{
+  "character": "vivian",
+  "id": "skill-b",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/twist.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. triumphant reveal: lowering her masquerade mask away from her face with one hand, wide sly grin, one eyebrow raised."
+    },
+    {
+      "out": "skill/finale.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. grand finale: arms spread wide, head tilted back with an ecstatic smile, eyes closed, cape flaring dramatically behind her."
+    },
+    {
+      "out": "skill/bravo.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. self-applause: clapping her gloved hands near her chin, half-lidded smug smile, cape and short hair blown by the wind."
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "character": "elena",
+  "id": "skill-a",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/silent.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. cool calm half-lidded look, index finger raised to her lips in a quiet \"shh\" gesture, faint smile."
+    },
+    {
+      "out": "skill/chipflip.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. faint confident smile with cool eyes, holding a black poker chip between two fingers beside her face."
+    },
+    {
+      "out": "skill/frost.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. serious piercing stare, pointing two fingers at the viewer, long silver hair and necktie blown sideways by a cold wind."
+    },
+    {
+      "out": "skill/thaw-tense.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. calm under pressure: eyes closed, lips pressed together, a single bead of sweat on her cheek, one hand gripping her necktie."
+    }
+  ]
+}

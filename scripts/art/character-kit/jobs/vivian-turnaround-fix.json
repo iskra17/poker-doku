@@ -1,0 +1,26 @@
+{
+  "character": "vivian",
+  "id": "turnaround-fix",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "turnaround/side.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. ONE single figure in full left profile (side view) facing the viewer's left, cape hanging naturally."
+    },
+    {
+      "out": "turnaround/back.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. ONE single figure seen from directly behind, showing the back of her short bob and the long cape."
+    },
+    {
+      "out": "turnaround/three-quarter-back.png",
+      "framing": "fullbody",
+      "direction": "Same neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), calm expression, even neutral lighting, nothing in her hands. ONE single figure in three-quarter back view turned away toward the viewer's right."
+    }
+  ]
+}

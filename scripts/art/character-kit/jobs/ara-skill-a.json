@@ -1,0 +1,31 @@
+{
+  "character": "ara",
+  "id": "skill-a",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/headshot.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. cocky smug grin, one eye closed as if aiming, making a finger-gun with her right hand pointed straight at the viewer."
+    },
+    {
+      "out": "skill/clutch.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. victorious fierce grin with teeth, shouting in triumph, one fist pumped up beside her face."
+    },
+    {
+      "out": "skill/blaze.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. fierce battle shout with mouth open, eyebrows angled with resolve, pointing her index finger straight at the viewer, twin tails whipped back by a gust."
+    },
+    {
+      "out": "skill/respawn-tense.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. frustrated and cornered: gritting her teeth, glaring hard with a bead of sweat on her cheek, fist clenched tight near her chest."
+    }
+  ]
+}

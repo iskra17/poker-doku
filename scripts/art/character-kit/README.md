@@ -8,6 +8,7 @@
 ```
 ART_ROOT/characters/<id>/
   bust-reference.png          # 기본 버스트 (public/assets/characters/<id>/confident.webp에서 변환)
+  showcase-reference.png      # 상반신 쇼케이스 (public/assets/characters/<id>/showcase.webp에서 변환) — 턴어라운드 전 레퍼런스
   turnaround/{front,three-quarter,side,three-quarter-back,back}.png   # 1024×1536, #00ff00 배경
   jobs/<jobId>/{prompt.txt, out/, logs/, contact.png}                 # 러너가 만드는 작업 폴더
 ```
@@ -56,6 +57,13 @@ node scripts/art/character-kit/run.mjs scripts/art/character-kit/jobs/<job>.json
 ## 새 캐릭터 준비
 
 1. `characters.json`에 스펙을 추가한다.
-2. 기본 버스트를 `bust-reference.png`로 둔다.
+2. 기본 버스트를 `bust-reference.png`, 쇼케이스를 `showcase-reference.png`로 둔다.
 3. 턴어라운드 job(`kind: "pose"`, `fullbody` 5샷: 정면·3⁄4·측면·3⁄4 후면·후면, 같은 서 있는 자세)을 돌리고 `turnaround/`로 옮긴다.
    하반신처럼 기존 원화에 없는 부분은 `characters.json`의 `defaultOutfit`에 명시해 모든 뷰가 같게 나오도록 한다.
+
+## 히로인 6명 현황 (2026-10-17)
+
+- 턴어라운드·필살기 포즈 job: `jobs/<id>-turnaround.json`, `jobs/<id>-skill-{a,b}.json` (레퍼런스는 bust + showcase).
+  사쿠라는 이전 스테이징(`ART_ROOT/skill-expressions`)에서 만들었다.
+- 필살기 포즈는 캐릭터당 7장(리버 역전만 시작·끝 2장)이고 `convert.mjs bust`로 512² webp로 변환해 넣었다.
+- 실행 한 번에 3~4샷, 약 3~4분. 동시 2개까지 돌렸다.

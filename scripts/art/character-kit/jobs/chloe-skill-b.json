@@ -1,0 +1,26 @@
+{
+  "character": "chloe",
+  "id": "skill-b",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/miracle.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. OMG ecstatic surprise: sparkling eyes, open-mouth scream of joy, both hands pressed to her cheeks."
+    },
+    {
+      "out": "skill/jump.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. jumping with joy: eyes squeezed shut in happy arcs, laughing with mouth wide open, both arms thrown up beside her head, hair lifted as if mid-air."
+    },
+    {
+      "out": "skill/legend.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. confident idol finish: blowing a kiss toward the viewer, making a finger-heart with one hand near her cheek, sparkling smile, hair swirling in the wind."
+    }
+  ]
+}

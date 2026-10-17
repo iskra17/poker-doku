@@ -1,0 +1,16 @@
+{
+  "character": "vivian",
+  "id": "skill-c",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/act2.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. Curtain rises on act two: one gloved hand raised high above her head pointing up at an unseen spotlight, the other hand gripping the edge of her cape and sweeping it across her body, fierce exhilarated smile, short hair lifted by the motion. Do NOT extend an open palm toward the viewer."
+    }
+  ]
+}

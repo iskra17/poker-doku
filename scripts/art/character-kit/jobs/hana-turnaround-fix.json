@@ -1,0 +1,16 @@
+{
+  "character": "hana",
+  "id": "turnaround-fix",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "turnaround/back.png",
+      "framing": "fullbody",
+      "direction": "CHARACTER TURNAROUND back view: ONE single figure only, seen from directly behind, neutral relaxed standing pose (arms slightly away from the body, feet slightly apart), showing the back of her long lavender hair with the thin braid and the back of the blazer and pencil skirt. Do not draw multiple views or a model sheet in this image."
+    }
+  ]
+}

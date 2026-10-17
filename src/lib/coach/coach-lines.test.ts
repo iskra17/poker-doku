@@ -16,6 +16,9 @@ const REASONS: CoachReason[] = [
   'call-implied', 'fold-price',
 ];
 const REACTIONS: CoachReaction[] = ['followed', 'ignored', 'followed-won', 'followed-lost'];
+/** 히로인 6명 + 전용 말투가 없는 캐릭터(중립 폴백) */
+const HEROINES = ['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena'];
+const VOICE_IDS = [...HEROINES, 'mochi'];
 
 const FULL_FACTS: CoachAdvice['facts'] = {
   position: 'BTN', handTopPct: 16.4, requiredPct: 25, drawPct: 19, outs: 9,
@@ -35,8 +38,8 @@ function advice(reason: CoachReason, facts: CoachAdvice['facts'] = FULL_FACTS): 
 }
 
 describe('coach-lines', () => {
-  it('모든 이유에 사쿠라 대사와 중립 대사가 있고, 자리표시자 없는 문장이 하나 이상 있다', () => {
-    for (const id of ['sakura', 'elena']) {
+  it('모든 이유에 히로인 대사와 중립 대사가 있고, 자리표시자 없는 문장이 하나 이상 있다', () => {
+    for (const id of VOICE_IDS) {
       const voice = coachVoiceFor(id);
       for (const reason of REASONS) {
         expect(voice.advice[reason]?.length, `${id}/${reason}`).toBeGreaterThan(0);
@@ -46,12 +49,14 @@ describe('coach-lines', () => {
         expect(voice.reaction[reaction]?.length, `${id}/${reaction}`).toBeGreaterThan(0);
       }
     }
-    expect(coachVoiceFor('sakura')).not.toBe(coachVoiceFor('elena'));
-    expect(coachVoiceFor(null)).toBe(coachVoiceFor('elena'));
+    const neutral = coachVoiceFor('mochi');
+    expect(new Set(HEROINES.map(id => coachVoiceFor(id))).size).toBe(HEROINES.length);
+    for (const id of HEROINES) expect(coachVoiceFor(id), id).not.toBe(neutral);
+    expect(coachVoiceFor(null)).toBe(neutral);
   });
 
   it('숫자가 다 있으면 모든 문장이 채워지고, 없으면 자리표시자 없는 문장으로 내려간다', () => {
-    for (const id of ['sakura', 'hana']) {
+    for (const id of VOICE_IDS) {
       for (const reason of REASONS) {
         for (let seed = 0; seed < 6; seed += 1) {
           const full = coachAdviceLine(id, advice(reason), seed);
@@ -83,7 +88,7 @@ describe('coach-lines', () => {
   });
 
   it('포커 용어를 번역하지 않는다 (손/판/접다/열다)', () => {
-    for (const id of ['sakura', 'elena']) {
+    for (const id of VOICE_IDS) {
       const voice = coachVoiceFor(id);
       const all = [...Object.values(voice.advice).flat(), ...Object.values(voice.reaction).flat()];
       for (const line of all) {
@@ -95,7 +100,7 @@ describe('coach-lines', () => {
 
   it('반응 대사는 탓하지 않는다 — 안 따른 경우·진 경우에 질책 표현이 없다', () => {
     const blame = /(왜|틀렸|잘못|실수|그러니까|말했잖|탓)/u;
-    for (const id of ['sakura', 'elena']) {
+    for (const id of VOICE_IDS) {
       const voice = coachVoiceFor(id);
       for (const line of [...voice.reaction.ignored, ...voice.reaction['followed-lost']]) {
         expect(line, line).not.toMatch(blame);

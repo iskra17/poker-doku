@@ -1,0 +1,31 @@
+{
+  "character": "hana",
+  "id": "skill-a",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/equity.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. cool knowing slight smile, pushing her glasses up the bridge of her nose with one index finger, a bright glint of light on one lens."
+    },
+    {
+      "out": "skill/calculated.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. calm satisfied smile with eyes gently closed, holding two fanned playing cards (backs facing the viewer, plain purple card backs) beside her cheek."
+    },
+    {
+      "out": "skill/ev.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. confident composed expression, pointing her index finger straight at the viewer, glasses glinting, long hair swept to one side by a gust."
+    },
+    {
+      "out": "skill/odds-tense.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. tense and calculating under pressure: frowning, biting her thumbnail, eyes narrowed, a small sweat drop on her temple."
+    }
+  ]
+}

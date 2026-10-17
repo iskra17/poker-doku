@@ -1,0 +1,26 @@
+{
+  "character": "hana",
+  "id": "skill-b",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/odds.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. rare genuine delight: wide-eyed happy smile with a light blush, both fists clenched near her chest in a small victory gesture."
+    },
+    {
+      "out": "skill/allin.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. uncharacteristically excited cheer: both fists raised beside her head, mouth open cheering, glasses slightly askew, braid bouncing."
+    },
+    {
+      "out": "skill/solver.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. overwhelming intellect: half-lidded intense eyes, both glasses lenses reflecting bright light, one hand raised with fingers spread toward the viewer as if commanding, long hair floating."
+    }
+  ]
+}

@@ -27,7 +27,8 @@ const MODEL = process.env.CHARACTER_KIT_MODEL ?? 'gpt-5.6-sol';
 
 const FRAMING = {
   bust: 'square 1024x1024 bust-up portrait framed like the bust reference (top of head near the top edge, cut around mid-chest), character centered',
-  fullbody: 'portrait 1024x1536 FULL BODY head to toe including shoes, flat orthographic-like camera at chest height, same height and proportions as the turnaround references',
+  // 한 장에 여러 뷰를 그리는 모델 시트로 새는 일이 잦아서(2026-10-17 하나·비비안 후면) 단일 인물을 명시한다
+  fullbody: 'portrait 1024x1536 FULL BODY head to toe including shoes, EXACTLY ONE figure in the image (never a multi-view model sheet), flat orthographic-like camera at chest height, same height and proportions as the turnaround references',
   cg: 'portrait 1024x1536 illustrated scene with a soft painted background (no chroma key for this shot)',
 };
 
@@ -109,7 +110,9 @@ async function recover(stage, codexHome, job, logText) {
     const dest = path.join(stage, 'out', shot.out);
     if (await exists(dest)) { report.push(`saved     ${shot.out}`); continue; }
     const escaped = shot.out.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = logText.match(new RegExp(`([\\w-]+\\.png)\\W*(?:→|->)\\W*\\.?/?out/${escaped}`));
+    // 매핑은 "./out/x.png"뿐 아니라 "C:\…\out\x.png" 절대 경로로도 찍힌다 — 구분자를 /로 맞춰 찾는다
+    const match = logText.replaceAll('\\', '/')
+      .match(new RegExp(`([\\w-]+\\.png)\\s*(?:→|->)\\s*\\S*?\\bout/${escaped}`));
     const source = match ? await findGenerated(match[1]) : null;
     if (!source) { report.push(`MISSING   ${shot.out}`); continue; }
     await fs.mkdir(path.dirname(dest), { recursive: true });

@@ -5,6 +5,8 @@ import CardComponent from '@/components/table/Card';
 import CharacterImage from '@/components/characters/CharacterImage';
 import SkillBurstLayer from '@/components/effects/SkillBurstLayer';
 import { parseCards } from '@/lib/poker/card-notation';
+import { getCharacterById } from '@/lib/characters';
+import { PROGRESSION_CHARACTER_IDS } from '@/lib/progression/types';
 import { getSkillDef, requestSkillPreview } from '@/lib/skills/catalog';
 import type { SkillReason, SkillTier } from '@/lib/skills/skill-trigger';
 import { useSettingsStore, type SkillBurstMode } from '@/lib/store/settings-store';
@@ -43,9 +45,11 @@ export default function SkillBurstPreview() {
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [auto, setAuto] = useState(false);
   const [slow, setSlow] = useState(false);
+  const [characterId, setCharacterId] = useState<string>('sakura');
   const timeScale = slow ? SLOW_SCALE : 1;
   const originalModeRef = useRef<SkillBurstMode | null>(null);
-  const def = getSkillDef('sakura');
+  const def = getSkillDef(characterId);
+  const character = getCharacterById(characterId);
 
   // 이 화면에서 바꾼 강도는 나갈 때 원래 설정으로 되돌린다 (검토가 실제 게임 설정을 바꾸지 않게)
   useEffect(() => {
@@ -59,7 +63,7 @@ export default function SkillBurstPreview() {
   const play = (index: number) => {
     const item = ITEMS[index];
     setLastIndex(index);
-    requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale });
+    requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale, characterId });
   };
 
   useEffect(() => {
@@ -68,16 +72,16 @@ export default function SkillBurstPreview() {
     const id = setInterval(() => {
       const item = ITEMS[next];
       setLastIndex(next);
-      requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale });
+      requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale, characterId });
       next = (next + 1) % ITEMS.length;
     }, AUTO_INTERVAL_MS * timeScale);
     return () => clearInterval(id);
-  }, [auto, timeScale]);
+  }, [auto, timeScale, characterId]);
 
   return (
     <main className="flex min-h-dvh flex-col bg-abyss text-ink">
       <header className="px-4 pt-4">
-        <h1 className="text-lg font-bold" style={{ fontFamily: 'var(--font-display)' }}>사쿠라 필살기 연출 미리보기</h1>
+        <h1 className="text-lg font-bold" style={{ fontFamily: 'var(--font-display)' }}>{character?.name} 필살기 연출 미리보기</h1>
         <p className="mt-1 text-xs text-ink-dim">
           실제 게임과 같은 연출 컴포넌트를 재생해요. 개발 서버에서만 열리는 검토 화면이에요.
         </p>
@@ -95,12 +99,30 @@ export default function SkillBurstPreview() {
             {BOARD.map(card => <CardComponent key={`${card.rank}${card.suit}`} card={card} size="sm" />)}
           </div>
           <span className="absolute bottom-6 block h-14 w-14 overflow-hidden rounded-full border-2 border-blossom">
-            <CharacterImage characterId="sakura" expression="happy" className="h-full w-full text-2xl" />
+            <CharacterImage characterId={characterId} expression="happy" className="h-full w-full text-2xl" />
           </span>
         </div>
       </div>
 
       <section className="space-y-3 border-t border-white/10 bg-panel px-4 pb-6 pt-4">
+        <div className="flex flex-wrap gap-1.5">
+          {PROGRESSION_CHARACTER_IDS.filter(id => getSkillDef(id)).map(id => (
+            <button
+              key={id}
+              onClick={() => setCharacterId(id)}
+              aria-pressed={characterId === id}
+              className={`flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-3 text-xs transition-colors
+                ${characterId === id
+                  ? 'border-blossom bg-blossom/10 font-bold text-blossom'
+                  : 'border-white/10 bg-white/5 text-ink-dim hover:bg-white/10'}`}
+            >
+              <span className="block h-6 w-6 overflow-hidden rounded-full">
+                <CharacterImage characterId={id} expression="neutral" className="h-full w-full text-xs" />
+              </span>
+              {getCharacterById(id)?.name}
+            </button>
+          ))}
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-sm">연출 강도</span>
           <div className="flex gap-1">

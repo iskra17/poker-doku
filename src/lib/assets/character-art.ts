@@ -118,9 +118,15 @@ export function hasOutfitArt(characterId: string, outfitId: string): boolean {
 }
 
 // 필살기 전용 포즈(512² 투명 webp, `public/assets/characters/<id>/skill/<pose>.webp`) — 기술마다 표정·제스처가 다르다.
-// 원화는 리포 밖 스테이징(poker-doku-art/skill-expressions)에서 Codex로 만들고 `convert.mjs bust`로 변환한다.
+// 원화는 리포 밖 스테이징(poker-doku-art — 사쿠라는 skill-expressions, 나머지는 characters/<id>/jobs/skill-*)에서
+// Codex로 만들고 `convert.mjs bust`로 변환한다.
 const SKILL_POSES: Readonly<Record<string, readonly string[]>> = {
   sakura: ['steal', 'powerchord', 'bigpot', 'storm', 'encore-tearful', 'encore', 'dive'],
+  ara: ['headshot', 'clutch', 'blaze', 'respawn-tense', 'respawn', 'rush', 'inferno'],
+  hana: ['equity', 'calculated', 'ev', 'odds-tense', 'odds', 'allin', 'solver'],
+  chloe: ['wink', 'herocall', 'hype', 'miracle-tense', 'miracle', 'jump', 'legend'],
+  vivian: ['mask', 'bow', 'act2', 'twist-tense', 'twist', 'finale', 'bravo'],
+  elena: ['silent', 'chipflip', 'frost', 'thaw-tense', 'thaw', 'avalanche', 'queen'],
 };
 
 /** 필살기 포즈 일러스트 — 배치되지 않았으면 null (호출부는 기본 표정으로 폴백) */

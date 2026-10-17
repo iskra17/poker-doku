@@ -1,0 +1,31 @@
+{
+  "character": "chloe",
+  "id": "skill-a",
+  "kind": "pose",
+  "references": [
+    "bust",
+    "showcase"
+  ],
+  "shots": [
+    {
+      "out": "skill/wink.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. playful tongue-out wink, making a V peace sign right next to her winking eye, head tilted."
+    },
+    {
+      "out": "skill/herocall.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. beaming grin, pointing double finger-guns at the viewer with both hands."
+    },
+    {
+      "out": "skill/hype.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. hyped streamer shout with mouth wide open, holding a smartphone up in one hand as if filming a selfie stream, the other hand waving."
+    },
+    {
+      "out": "skill/miracle-tense.png",
+      "framing": "bust",
+      "direction": "Facing mostly toward the viewer. nervous \"oh no\": eyes wide and teary, covering her mouth with both hands, shoulders hunched."
+    }
+  ]
+}

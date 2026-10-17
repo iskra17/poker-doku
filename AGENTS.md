@@ -635,18 +635,19 @@ npx tsc --noEmit
   아바타+진행 말풍선, 설정으로 개별 숨김), SeatSpeechBubble, WinnerCutIn/LoserCutIn(둘 다 좌측 —
   액션 로그 아래 38%/62% 세로 스택, 패배는 쇼다운 진 봇 sad 컷인). 좌석 리액션: CharacterAvatar가 표정 변화 시 바운스/흔들림 모션,
   table/SeatEmote가 승/패/올인 이모지 버스트.
-  **파트너 필살기**(2026-10-17 프로토타입, 사쿠라만): `effects/SkillBurstLayer`가 `winners` 이벤트를 받아
+  **파트너 필살기**(2026-10-17, 히로인 6명 — 사쿠라·아라·하나·클로이·비비안·엘레나 각 6기술): `effects/SkillBurstLayer`가 `winners` 이벤트를 받아
   `lib/skills/skill-trigger.ts`(순수 판정 — 스틸/쇼다운/큰 팟/올인/리버 역전/포카드+, 3단계, big 6핸드 쿨다운)로
   **내 화면에만** 히트스톱·슬래시 인·기술명 스탬프를 ~1초 재생한다. 서버 전송·턴 대기 없음(다른 플레이어 방해 금지 계약),
   파트너 정의(`lib/skills/catalog.ts`)가 없으면 발동 안 함, 설정 `skillBurst` full/lite/off(persist v6)·게임 중 미리보기.
-  장면은 `effects/SkillBurstScenes.tsx`(기술별 모티프 swipe/soundwave/band/wave/dive/storm), 전용 포즈는
+  장면은 `effects/SkillBurstScenes.tsx`(기술별 모티프 swipe/soundwave/band/wave/dive/storm + 캐릭터 상징 입자 `particle`
+  petal/ember/spark/star/rose/snow·soundwave 글자 `glyphs`), 전용 포즈는
   `characters/<id>/skill/*.webp` + `character-art.ts SKILL_POSES` — 포즈가 하나인 기술은 처음부터 그 포즈만 쓴다(기본 버스트→포즈 컷 전환 금지).
-  검토 화면 `/preview/skill-burst`(개발 서버 전용·슬로 ×4). 새 의상·포즈 원화는 `scripts/art/character-kit/`(턴어라운드 레퍼런스 러너).
+  `catalog.test.ts`가 히로인 6명의 기술·포즈 파일 존재를 고정한다. 검토 화면 `/preview/skill-burst`(개발 서버 전용·캐릭터 선택·슬로 ×4). 새 의상·포즈 원화는 `scripts/art/character-kit/`(턴어라운드 레퍼런스 러너).
   **파트너 실시간 훈수**(2026-10-17 1단계, 클라 전용): `table/PartnerCoach`가 내 차례마다 파트너 한 줄 + [○○ 말대로 · 액션]
   버튼(올인은 2탭 확인)을 좌하단에 띄운다. 노출은 `lib/coach/coach-eligibility.ts` 단일 소스 — 로비 목록 `tableType 'bots'`이고
   다른 휴먼이 없으며 스토리·주간 도장·토너먼트·아레나가 아닐 때만(사람과 겨루는 방에서는 실시간 보조 도구가 되므로 금지).
   판단 `coach-brain.ts`(공개 스냅샷만, 서버 재사용 가능한 순수 함수 — 드로우 %는 Ch3 계약대로 다음 한 장),
-  대사 `coach-lines.ts`(사쿠라 전용 말투 + 중립 폴백). **톤 계약: 안 따라도 꾸짖지 않고, 따랐는데 쇼다운에서 지면
+  대사 `coach-lines.ts`(히로인 6명 전용 말투 + 그 밖의 캐릭터 중립 폴백). **톤 계약: 안 따라도 꾸짖지 않고, 따랐는데 쇼다운에서 지면
   "결정은 맞았다"로 위로** — 탓하는 문구 금지(테스트 고정). 따름 횟수는 `partner-coach-store` 세션 메모리뿐이고
   인연 XP는 서버 검증이 붙는 다음 단계. 설정 `partnerCoach`(persist v7, 기본 켬). 훈수 말풍선이 떠 있으면 PartnerReactions는 비켜 준다.
 - **AI 상황 대사 (3층 전략)**: `src/server/dialogue-manager.ts`가 진입점 — ①기본 상황
