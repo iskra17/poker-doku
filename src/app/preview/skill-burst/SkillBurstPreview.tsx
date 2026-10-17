@@ -34,12 +34,16 @@ const TIER_LABEL: Record<SkillTier, string> = { small: '소', medium: '중', big
 const MODE_LABEL: Record<Exclude<SkillBurstMode, 'off'>, string> = { full: '풀', lite: '라이트' };
 const BOARD = parseCards('Qh Jd 4c 2s Td');
 const AUTO_INTERVAL_MS = 2400;
+/** 슬로 모션 배율 — 1초짜리 연출을 4초로 늘려 동작을 하나씩 확인한다 */
+const SLOW_SCALE = 4;
 
 export default function SkillBurstPreview() {
   const skillBurst = useSettingsStore(state => state.skillBurst);
   const setSkillBurst = useSettingsStore(state => state.setSkillBurst);
   const [lastIndex, setLastIndex] = useState<number | null>(null);
   const [auto, setAuto] = useState(false);
+  const [slow, setSlow] = useState(false);
+  const timeScale = slow ? SLOW_SCALE : 1;
   const originalModeRef = useRef<SkillBurstMode | null>(null);
   const def = getSkillDef('sakura');
 
@@ -55,7 +59,7 @@ export default function SkillBurstPreview() {
   const play = (index: number) => {
     const item = ITEMS[index];
     setLastIndex(index);
-    requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb });
+    requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale });
   };
 
   useEffect(() => {
@@ -64,11 +68,11 @@ export default function SkillBurstPreview() {
     const id = setInterval(() => {
       const item = ITEMS[next];
       setLastIndex(next);
-      requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb });
+      requestSkillPreview({ tier: item.tier, reason: item.reason, bb: item.bb, timeScale });
       next = (next + 1) % ITEMS.length;
-    }, AUTO_INTERVAL_MS);
+    }, AUTO_INTERVAL_MS * timeScale);
     return () => clearInterval(id);
-  }, [auto]);
+  }, [auto, timeScale]);
 
   return (
     <main className="flex min-h-dvh flex-col bg-abyss text-ink">
@@ -112,6 +116,16 @@ export default function SkillBurstPreview() {
                 {MODE_LABEL[mode]}
               </button>
             ))}
+            <button
+              onClick={() => setSlow(value => !value)}
+              aria-pressed={slow}
+              className={`rounded-lg border px-3 py-1 text-xs transition-colors
+                ${slow
+                  ? 'border-gilded bg-gilded/10 font-bold text-gilded'
+                  : 'border-white/10 bg-white/5 text-ink-dim hover:bg-white/10'}`}
+            >
+              {slow ? '슬로 ×4' : '슬로 모션'}
+            </button>
             <button
               onClick={() => setAuto(value => !value)}
               aria-pressed={auto}

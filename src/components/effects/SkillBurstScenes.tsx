@@ -25,8 +25,16 @@ export interface BurstView {
   bbLabel: string;
   color: string;
   colorSecondary: string;
+  /** 기본 재생 길이 (슬로 모션 배율 적용 전) */
   durationMs: number;
+  /** 시간 배율 — 1이 실제 속도, 4면 4배 느리게 (연출 검토용) */
+  timeScale: number;
   reduced: boolean;
+}
+
+/** 배율을 적용한 재생 길이(초) */
+function seconds(view: BurstView): number {
+  return (view.durationMs / 1000) * view.timeScale;
 }
 
 /** 모듈 상수: 렌더 순수성을 위해 난수 없이 결정적으로 분포시킨다 */
@@ -133,7 +141,7 @@ function TrailPortrait({ view, className, style, animate, times, ghostOpacity, s
   swapMs: number;
   ease?: 'easeOut' | 'easeIn' | 'linear';
 }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   const initial = Object.fromEntries(Object.entries(animate).map(([key, frames]) => [key, frames[0]]));
   return (
     <>
@@ -144,7 +152,7 @@ function TrailPortrait({ view, className, style, animate, times, ghostOpacity, s
           style={{ ...style, ...PORTRAIT_MASK, filter: `brightness(1.7) saturate(0.4) drop-shadow(0 0 12px ${view.color})` }}
           initial={{ ...initial, opacity: 0 }}
           animate={{ ...animate, opacity: ghostOpacity.map(o => o * (i === 0 ? 0.35 : 0.55)) }}
-          transition={{ duration: d, times, ease, delay: lag }}
+          transition={{ duration: d, times, ease, delay: lag * view.timeScale }}
         >
           <CharacterImage characterId={view.characterId} expression={view.move.acting[0]} round={false} frameless className="h-full w-full" />
         </motion.div>
@@ -156,25 +164,26 @@ function TrailPortrait({ view, className, style, animate, times, ghostOpacity, s
         animate={animate}
         transition={{ duration: d, times, ease }}
       >
-        <ActingPortrait view={view} swapMs={swapMs} className="h-full w-full text-7xl" />
+        <ActingPortrait view={view} swapMs={swapMs * view.timeScale} className="h-full w-full text-7xl" />
       </motion.div>
     </>
   );
 }
 
-function Flash({ strength, delay = 0 }: { strength: number; delay?: number }) {
+function Flash({ view, strength, delay = 0 }: { view: BurstView; strength: number; delay?: number }) {
+  const s = view.timeScale;
   return (
     <motion.div
       className="absolute inset-0 bg-white mix-blend-screen"
       initial={{ opacity: delay > 0 ? 0 : strength }}
       animate={{ opacity: [strength, strength, 0] }}
-      transition={{ duration: 0.26, times: [0, 0.28, 1], ease: 'easeOut', delay }}
+      transition={{ duration: 0.26 * s, times: [0, 0.28, 1], ease: 'easeOut', delay: delay * s }}
     />
   );
 }
 
 function Vignette({ view, tint }: { view: BurstView; tint: string }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <motion.div
       className="absolute inset-0"
@@ -187,7 +196,7 @@ function Vignette({ view, tint }: { view: BurstView; tint: string }) {
 }
 
 function SpeedLines({ view, spin = 0 }: { view: BurstView; spin?: number }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <motion.svg
       viewBox="-100 -100 200 200"
@@ -203,13 +212,14 @@ function SpeedLines({ view, spin = 0 }: { view: BurstView; spin?: number }) {
   );
 }
 
-function Ring({ delay, scale, className = '' }: { delay: number; scale: number; className?: string }) {
+function Ring({ view, delay, scale, className = '' }: { view: BurstView; delay: number; scale: number; className?: string }) {
+  const s = view.timeScale;
   return (
     <motion.div
       className={`absolute -ml-16 -mt-16 h-32 w-32 rounded-full border-4 border-gilded ${className}`}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: [0, scale], opacity: [1, 0] }}
-      transition={{ duration: 0.55, delay, ease: 'easeOut' }}
+      transition={{ duration: 0.55 * s, delay: delay * s, ease: 'easeOut' }}
     />
   );
 }
@@ -217,7 +227,7 @@ function Ring({ delay, scale, className = '' }: { delay: number; scale: number; 
 function PetalBurst({ view, count, spread = 1, delay = 0.08, className = 'left-1/2 top-1/2' }: {
   view: BurstView; count: number; spread?: number; delay?: number; className?: string;
 }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <>
       {PETALS.slice(0, count).map((p, i) => (
@@ -233,7 +243,7 @@ function PetalBurst({ view, count, spread = 1, delay = 0.08, className = 'left-1
             opacity: [0, 1, 1, 0],
             scale: [0.3, p.scale, p.scale, p.scale * 0.8],
           }}
-          transition={{ duration: d * 0.95, delay: delay + p.delay, times: [0, 0.18, 0.6, 1], ease: 'easeOut' }}
+          transition={{ duration: d * 0.95, delay: (delay + p.delay) * view.timeScale, times: [0, 0.18, 0.6, 1], ease: 'easeOut' }}
         >
           <path d={PETAL_PATH} fill={i % 3 === 0 ? 'white' : view.color} stroke={view.colorSecondary} strokeWidth={0.6} />
         </motion.svg>
@@ -244,7 +254,7 @@ function PetalBurst({ view, count, spread = 1, delay = 0.08, className = 'left-1
 
 /** 오른쪽(또는 아래 중앙) 기술명 스탬프 */
 function Stamp({ view, placement, delay = 0 }: { view: BurstView; placement: 'right' | 'bottom'; delay?: number }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   const big = view.tier === 'big';
   const position = placement === 'right'
     ? 'right-[3%] top-1/2 w-[64%] items-end text-right sm:right-[8%] sm:w-[52%]'
@@ -255,7 +265,7 @@ function Stamp({ view, placement, delay = 0 }: { view: BurstView; placement: 'ri
       style={placement === 'right' ? { y: '-50%' } : { x: '-50%' }}
       initial={{ opacity: 0, scale: 2.4 }}
       animate={{ opacity: [0, 1, 1, 1, 0], scale: [2.4, 0.94, 1, 1, 1.08] }}
-      transition={{ duration: d - delay, times: [0, 0.16, 0.24, 0.86, 1], ease: 'easeOut', delay }}
+      transition={{ duration: d - delay * view.timeScale, times: [0, 0.16, 0.24, 0.86, 1], ease: 'easeOut', delay: delay * view.timeScale }}
     >
       <span
         className="mb-1 text-sm font-bold text-white sm:text-base"
@@ -277,7 +287,7 @@ function Stamp({ view, placement, delay = 0 }: { view: BurstView; placement: 'ri
 
 /** 라이트·모션 감소: 어두운 패널에 흰 글씨 — 어떤 배경 위에서도 읽힌다 */
 export function LiteBanner({ view }: { view: BurstView }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <motion.div
       className="absolute left-1/2 top-[22%] flex max-w-[92vw] items-center gap-2.5 rounded-full border-2 bg-abyss/90 py-1.5 pl-1.5 pr-5 shadow-2xl"
@@ -300,7 +310,7 @@ export function LiteBanner({ view }: { view: BurstView }) {
 
 /** 풀 설정의 소 단계: 상단 미니 컷인. swipe는 사선 스윕 + 돌진 잔상, soundwave는 음파 링 + 음표 */
 export function MiniBurst({ view }: { view: BurstView }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   const swipe = view.move.motif === 'swipe';
   return (
     <motion.div className="absolute inset-x-0 top-[14%] h-36" exit={{ opacity: 0, transition: { duration: 0.12 } }}>
@@ -310,7 +320,7 @@ export function MiniBurst({ view }: { view: BurstView }) {
           style={{ rotate: -10, background: `linear-gradient(90deg, transparent, white, ${view.color}, transparent)` }}
           initial={{ x: '-80vw', opacity: 0 }}
           animate={{ x: ['-80vw', '110vw'], opacity: [0, 1, 1, 0] }}
-          transition={{ duration: 0.3, ease: 'easeIn' }}
+          transition={{ duration: 0.3 * view.timeScale, ease: 'easeIn' }}
         />
       )}
 
@@ -323,7 +333,7 @@ export function MiniBurst({ view }: { view: BurstView }) {
             style={{ borderColor: view.color }}
             initial={{ scale: 0.4, opacity: 0 }}
             animate={{ scale: [0.4, 2.4], opacity: [0.9, 0] }}
-            transition={{ duration: 0.6, delay: 0.1 + delay, ease: 'easeOut' }}
+            transition={{ duration: 0.6 * view.timeScale, delay: (0.1 + delay) * view.timeScale, ease: 'easeOut' }}
           />
         ))}
         {!swipe && NOTES.map((note, i) => (
@@ -333,7 +343,7 @@ export function MiniBurst({ view }: { view: BurstView }) {
             style={{ color: i % 2 ? 'white' : view.color, textShadow: outlineShadow(view.colorSecondary) }}
             initial={{ x: 0, y: 0, opacity: 0 }}
             animate={{ x: [0, (i - 1.5) * 22, (i - 1.5) * 34], y: [0, -40, -78], opacity: [0, 1, 0], rotate: [0, (i - 1.5) * 12] }}
-            transition={{ duration: d * 0.85, delay: 0.12 + i * 0.07, ease: 'easeOut' }}
+            transition={{ duration: d * 0.85, delay: (0.12 + i * 0.07) * view.timeScale, ease: 'easeOut' }}
           >
             {note}
           </motion.span>
@@ -344,7 +354,7 @@ export function MiniBurst({ view }: { view: BurstView }) {
           style={{ borderColor: view.color, boxShadow: `0 0 26px ${view.color}88` }}
           initial={{ opacity: 0, scale: 1.4, rotate: -4 }}
           animate={{ opacity: [0, 1, 1, 0], scale: [1.4, 0.96, 1, 1], rotate: -4 }}
-          transition={{ duration: d, times: [0, 0.2, 0.82, 1], ease: 'easeOut', delay: swipe ? 0.12 : 0 }}
+          transition={{ duration: d, times: [0, 0.2, 0.82, 1], ease: 'easeOut', delay: swipe ? 0.12 * view.timeScale : 0 }}
         >
           <SkillName view={view} outline="shadow" sizeClass="text-2xl sm:text-3xl" />
           <Amount view={view} className="text-base sm:text-lg" />
@@ -383,7 +393,7 @@ export function FullBurst({ view }: { view: BurstView }) {
 function DiagonalBand({ view, rotate, top = '50%', horizontalSweep = false }: {
   view: BurstView; rotate: number; top?: string; horizontalSweep?: boolean;
 }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <motion.div
       className="absolute left-[-15%] right-[-15%] h-[32%] max-h-[280px] overflow-hidden"
@@ -417,7 +427,7 @@ function BandScene({ view }: { view: BurstView }) {
     <>
       <Vignette view={view} tint={`${view.colorSecondary}40`} />
       <SpeedLines view={view} />
-      <div className="absolute left-1/2 top-1/2"><Ring delay={0.07} scale={big ? 5 : 3.4} /></div>
+      <div className="absolute left-1/2 top-1/2"><Ring view={view} delay={0.07} scale={big ? 5 : 3.4} /></div>
       <DiagonalBand view={view} rotate={-7} />
       <PetalBurst view={view} count={18} />
       <TrailPortrait
@@ -429,14 +439,14 @@ function BandScene({ view }: { view: BurstView }) {
         swapMs={view.durationMs * 0.28}
       />
       <Stamp view={view} placement="right" />
-      <Flash strength={big ? 0.95 : 0.8} />
+      <Flash view={view} strength={big ? 0.95 : 0.8} />
     </>
   );
 }
 
 /** wave — 청록 물결(지고 있던 흐름)을 분홍 물결이 뒤덮는 역전 + 무대 스포트라이트 */
 function WaveScene({ view }: { view: BurstView }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   const wavePath = 'M0 26 Q 25 6 50 26 T 100 26 T 150 26 T 200 26 V100 H0 Z';
   return (
     <>
@@ -493,15 +503,17 @@ function WaveScene({ view }: { view: BurstView }) {
       />
       <PetalBurst view={view} count={20} delay={0.4} />
       <Stamp view={view} placement="right" delay={0.38} />
-      <Flash strength={0.6} />
-      <Flash strength={0.9} delay={0.36} />
+      <Flash view={view} strength={0.6} />
+      <Flash view={view} strength={0.9} delay={0.36} />
     </>
   );
 }
 
 /** dive — 위에서 떨어져 착지(찌그러짐) → 충격파·칩 분수 */
 function DiveScene({ view }: { view: BurstView }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
+  // 헬퍼(Ring·Stamp·Flash)는 배율 전 시간을 받으므로 착지 시점도 배율 전 기준으로 넘긴다
+  const base = view.durationMs / 1000;
   const land = 0.24;
   return (
     <>
@@ -509,8 +521,8 @@ function DiveScene({ view }: { view: BurstView }) {
       <SpeedLines view={view} spin={8} />
       <DiagonalBand view={view} rotate={0} top="62%" horizontalSweep />
       <div className="absolute left-[30%] top-[78%] sm:left-[28%]">
-        <Ring delay={d * land} scale={4.4} />
-        <Ring delay={d * land + 0.1} scale={2.6} className="border-white" />
+        <Ring view={view} delay={base * land} scale={4.4} />
+        <Ring view={view} delay={base * land + 0.1} scale={2.6} className="border-white" />
         {CHIPS.map((chip, i) => (
           <motion.span
             key={i}
@@ -522,7 +534,7 @@ function DiveScene({ view }: { view: BurstView }) {
               opacity: [0, 1, 1, 0],
               rotateX: [0, 180, 360, 540],
             }}
-            transition={{ duration: d * 0.7, delay: d * land + chip.delay, times: [0, 0.35, 0.65, 1], ease: 'easeOut' }}
+            transition={{ duration: d * 0.7, delay: (base * land + chip.delay) * view.timeScale, times: [0, 0.35, 0.65, 1], ease: 'easeOut' }}
           />
         ))}
       </div>
@@ -541,15 +553,15 @@ function DiveScene({ view }: { view: BurstView }) {
         swapMs={view.durationMs * (land + 0.05)}
         ease="easeIn"
       />
-      <Stamp view={view} placement="right" delay={d * land} />
-      <Flash strength={0.95} delay={d * land} />
+      <Stamp view={view} placement="right" delay={base * land} />
+      <Flash view={view} strength={0.95} delay={base * land} />
     </>
   );
 }
 
 /** storm — 꽃잎 소용돌이 한가운데서 커지는 캐릭터, 이중 플래시 */
 function StormScene({ view }: { view: BurstView }) {
-  const d = view.durationMs / 1000;
+  const d = seconds(view);
   return (
     <>
       <Vignette view={view} tint={`${view.color}55`} />
@@ -580,8 +592,8 @@ function StormScene({ view }: { view: BurstView }) {
         </motion.div>
       ))}
       <div className="absolute left-1/2 top-[45%]">
-        <Ring delay={0.05} scale={5.5} />
-        <Ring delay={0.42} scale={4} className="border-white" />
+        <Ring view={view} delay={0.05} scale={5.5} />
+        <Ring view={view} delay={0.42} scale={4} className="border-white" />
       </div>
       <TrailPortrait
         view={view}
@@ -593,8 +605,8 @@ function StormScene({ view }: { view: BurstView }) {
         swapMs={view.durationMs * 0.36}
       />
       <Stamp view={view} placement="bottom" delay={0.1} />
-      <Flash strength={0.95} />
-      <Flash strength={0.7} delay={0.42} />
+      <Flash view={view} strength={0.95} />
+      <Flash view={view} strength={0.7} delay={0.42} />
     </>
   );
 }

@@ -53,7 +53,7 @@ function formatBB(bb: number): string {
   return `+${bb >= 10 ? Math.round(bb) : Number(bb.toFixed(1))}BB`;
 }
 
-function shakeTable(tier: Exclude<SkillTier, 'small'>, delayMs: number): void {
+function shakeTable(tier: Exclude<SkillTier, 'small'>, delayMs: number, timeScale: number): void {
   const el = document.querySelector<HTMLElement>('[data-skill-shake]');
   if (!el || typeof el.animate !== 'function') return;
   const a = SHAKE_PX[tier];
@@ -67,7 +67,7 @@ function shakeTable(tier: Exclude<SkillTier, 'small'>, delayMs: number): void {
       { transform: 'translate(0, 0)' },
     ],
     // 플래시가 멈춰 있는 히트스톱 구간 다음에 흔들린다
-    { duration: tier === 'big' ? 360 : 260, delay: delayMs, easing: 'ease-out' },
+    { duration: (tier === 'big' ? 360 : 260) * timeScale, delay: delayMs, easing: 'ease-out' },
   );
 }
 
@@ -99,7 +99,7 @@ export default function SkillBurstLayer() {
       setBurst(null);
     };
 
-    const show = (def: SkillDef, tier: SkillTier, reason: SkillReason, bb: number) => {
+    const show = (def: SkillDef, tier: SkillTier, reason: SkillReason, bb: number, timeScale = 1) => {
       const mode = useSettingsStore.getState().skillBurst;
       if (mode === 'off') return;
       const character = getCharacterById(def.characterId);
@@ -121,15 +121,16 @@ export default function SkillBurstLayer() {
         color: character.color,
         colorSecondary: character.colorSecondary,
         durationMs,
+        timeScale,
         reduced,
       });
       playEffect(kind === 'full' ? (tier === 'big' ? 'skill-big' : 'skill-burst') : 'skill-small');
       if (kind === 'full' && tier !== 'small') {
-        const impactMs = move.motif === 'dive' ? Math.round(durationMs * DIVE_IMPACT_RATIO) : 70;
-        shakeTable(tier, impactMs);
-        vibrate(tier, move.motif === 'dive' ? impactMs : 0);
+        const impactMs = (move.motif === 'dive' ? Math.round(durationMs * DIVE_IMPACT_RATIO) : 70) * timeScale;
+        shakeTable(tier, impactMs, timeScale);
+        if (timeScale === 1) vibrate(tier, move.motif === 'dive' ? impactMs : 0);
       }
-      timerRef.current = setTimeout(() => setBurst(null), durationMs);
+      timerRef.current = setTimeout(() => setBurst(null), durationMs * timeScale);
     };
 
     const unsubscribeGame = onGameEvent(event => {
@@ -154,10 +155,10 @@ export default function SkillBurstLayer() {
       show(def, trigger.tier, trigger.reason, trigger.bb);
     });
 
-    const unsubscribePreview = onSkillPreview(({ tier, reason, bb }) => {
+    const unsubscribePreview = onSkillPreview(({ tier, reason, bb, timeScale }) => {
       const def = getSkillDef(useProgressionStore.getState().snapshot?.profile.selectedCharacterId)
         ?? getSkillDef('sakura');
-      if (def) show(def, tier, reason ?? PREVIEW_REASON[tier], bb ?? PREVIEW_BB[tier]);
+      if (def) show(def, tier, reason ?? PREVIEW_REASON[tier], bb ?? PREVIEW_BB[tier], timeScale ?? 1);
     });
 
     return () => {

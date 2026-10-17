@@ -59,6 +59,8 @@ export interface SkillPreviewRequest {
   tier: SkillTier;
   reason?: SkillReason;
   bb?: number;
+  /** 연출 검토용 슬로 모션 배율 (미리보기 페이지 전용, 기본 1) */
+  timeScale?: number;
 }
 
 type PreviewListener = (request: SkillPreviewRequest) => void;
