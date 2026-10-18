@@ -131,3 +131,101 @@ describe('ensurePartnerBot — 파트너 우선 착석', () => {
     expect(manager.ensurePartnerBot(botsId, 'unknown-character')).toBe(false);
   });
 });
+
+/**
+ * 훈수 파트너 제외(excludePartnerFromBots) 계약 — 사용자 결정 2026-10-19:
+ * 혼자 연습(bots) 방에서 파트너는 훈수 담당이고 상대석에 앉지 않는다.
+ * 랜덤 충원이 파트너를 고르지 않고, 이미 앉은 파트너 봇은 핸드 경계에서만 교체되며,
+ * 제외 규칙은 방 리셋 뒤 다음 방문자에게 새지 않는다. bots 외 구성은 영향 없음.
+ */
+describe('excludePartnerFromBots — 훈수 파트너는 상대석에 앉지 않는다', () => {
+  let manager: RoomManager;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    manager = new RoomManager(() => {}, () => {});
+  });
+
+  afterEach(() => {
+    manager.shutdown();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+  });
+
+  /** 진행 중 핸드를 폴드 연쇄로 종료 */
+  function foldOutHand(roomId: string): void {
+    const st = manager.getRoom(roomId)!.engine.state;
+    expect(st.isHandInProgress).toBe(true);
+    let guard = 0;
+    while (st.isHandInProgress && guard++ < 12) {
+      manager.processPlayerAction(roomId, st.players[st.activePlayerIndex].id, 'fold');
+    }
+    expect(st.isHandInProgress).toBe(false);
+  }
+
+  it('bots 방의 랜덤 봇 충원은 파트너를 고르지 않는다', () => {
+    // 제외가 없으면 봇 5석 중 파트너가 나올 확률이 방마다 약 5/16 — 30방이면 사실상 반드시 걸린다
+    for (let i = 0; i < 30; i++) {
+      const roomId = manager.createRoom(makeConfig({ botCount: 5 }));
+      expect(manager.excludePartnerFromBots(roomId, 'sakura', 'p1')).toBe(true);
+      expect(manager.joinRoom(roomId, makeHuman('p1', 0))).toBe(true);
+      const bots = seatedCharacters(manager, roomId);
+      expect(bots).toHaveLength(5);
+      expect(bots).not.toContain('sakura');
+    }
+  });
+
+  it('이미 앉은 파트너 봇은 진행 중 핸드엔 그대로 두고 다음 핸드 경계에서 다른 캐릭터로 바꾼다', () => {
+    const roomId = manager.createRoom(makeConfig({ botCount: 5 }));
+    const room = manager.getRoom(roomId)!;
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    // 제외 규칙 전에 파트너 봇이 앉아 있던 상황 (예: 이전 구성·다른 경로)
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(true);
+    expect(room.engine.state.players).toHaveLength(6);
+
+    vi.advanceTimersByTime(2000);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+
+    expect(manager.excludePartnerFromBots(roomId, 'sakura', 'p1')).toBe(true);
+    // 진행 중 핸드의 좌석·팟 회계에는 손대지 않는다
+    expect(seatedCharacters(manager, roomId)).toContain('sakura');
+    expect(room.engine.state.players).toHaveLength(6);
+
+    foldOutHand(roomId);
+    vi.advanceTimersByTime(10_000);
+
+    expect(seatedCharacters(manager, roomId)).not.toContain('sakura');
+    expect(room.engine.state.players.filter(p => p.type === 'bot')).toHaveLength(5);
+    expect(room.engine.state.players.some(p => p.id === 'p1')).toBe(true);
+    // 제외 중에는 ensurePartnerBot도 파트너를 다시 앉히지 않는다
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(false);
+  });
+
+  it('휴먼이 떠나 방이 리셋되면 제외 규칙도 사라진다', () => {
+    const roomId = manager.createRoom(makeConfig());
+    manager.excludePartnerFromBots(roomId, 'sakura', 'p1');
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(false);
+
+    expect(manager.leaveRoom(roomId, 'p1')).toBe(true);
+    // 같은 휴먼이 제외 등록 없이 다시 앉으면 이전 규칙이 남아 있지 않다
+    expect(manager.joinRoom(roomId, makeHuman('p1', 0))).toBe(true);
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(true);
+  });
+
+  it('다른 휴먼이 앉은 bots 방에서는 거절될 입장자의 규칙으로 덮어쓰지 않는다', () => {
+    const roomId = manager.createRoom(makeConfig());
+    manager.excludePartnerFromBots(roomId, 'sakura', 'p1');
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+
+    expect(manager.excludePartnerFromBots(roomId, 'hana', 'p2')).toBe(false);
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(false);
+  });
+
+  it('bots 외 구성(mixed)은 제외 규칙을 받지 않고 충원도 바뀌지 않는다', () => {
+    const roomId = manager.createRoom(makeConfig({ tableType: 'mixed', botCount: 2 }));
+    expect(manager.excludePartnerFromBots(roomId, 'sakura', 'p1')).toBe(false);
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    expect(seatedCharacters(manager, roomId)).toHaveLength(2);
+  });
+});

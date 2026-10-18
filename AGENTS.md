@@ -501,8 +501,12 @@ npx tsc --noEmit
   mixed는 기존 봇 양보 동작, humans는 봇 충원 0. create-room에서 botCount를
   구성이 결정(bots=5/mixed=1~5/humans=0), SnG는 mixed 고정. 로비에 구성 배지+필터 노출,
   기본 방에 봇 전용 'Practice Dojo' 추가(나머지 3개는 mixed). 좌석 UI는 봇에게 상시 BOT
-  뱃지(PlayerSeat — `player.type`은 getPublicState로 이미 공개됨). 회귀:
-  `room-manager.tabletype.test.ts`.
+  뱃지(PlayerSeat — `player.type`은 getPublicState로 이미 공개됨). **bots 방의 인연 파트너는 훈수 담당이라
+  상대석에 앉지 않는다**(2026-10-19 사용자 결정): join-room이 착석 전 `excludePartnerFromBots`로 등록하면
+  `refreshCashBots` 충원이 그 캐릭터를 고르지 않고, 이미 앉은 파트너 봇은 핸드 경계에서만 교체한다
+  (등록 휴먼이 앉아 있을 때만 유효, 대기 리셋·dispose에서 삭제, 스토리/주간 도장 고정 라인업은 대상 외).
+  PartnerReactions도 훈수와 같은 `coach-eligibility.ts` 테이블에서만 말한다. 회귀:
+  `room-manager.tabletype.test.ts`, `room-manager.partner.test.ts`.
 - **방 비밀번호/초대**: `RoomConfig.password`는 서버 전용(절대 gameState로 노출 금지),
   목록엔 `hasPassword`만 노출. join-room에서 검증. 초대 링크는 `/?room=<id>` — page.tsx가
   파싱해 닉네임 입력 후 JoinRoomModal 자동 오픈.

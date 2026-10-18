@@ -95,9 +95,11 @@ export function fillEmptySeats(
   minPlayers: number = 3,
   botStack?: number,
   difficulty?: RoomDifficulty,
+  /** 이 테이블에 앉히지 않을 캐릭터 — 혼자 연습 방의 훈수 파트너 등 (기존 좌석 제외 규칙에 더해진다) */
+  excludeCharacterIds: readonly string[] = [],
 ): void {
   const occupiedSeats = new Set(engine.state.players.map(p => p.seatIndex));
-  const usedCharacters = getUsedCharacterIds(engine);
+  const usedCharacters = [...getUsedCharacterIds(engine), ...excludeCharacterIds];
 
   // MTT 가변 정원(최대 9)을 지원하기 위해 좌석 탐색 상한을 목표 인원까지 확장
   for (let seat = 0; seat < Math.max(6, minPlayers) && engine.state.players.length < minPlayers; seat++) {

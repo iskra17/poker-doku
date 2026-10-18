@@ -341,6 +341,11 @@ export class RoomManager {
   private seatWaiters: Map<string, SeatWaiter[]> = new Map();
   /** 착석 핸드오프 연출 타이머(봇 퇴장→대기자 착석 순차 브로드캐스트) — disposeRoom에서 정리 */
   private seatHandoffTimers: Map<string, NodeJS.Timeout[]> = new Map();
+  /**
+   * 혼자 연습(bots) 방의 훈수 파트너 — 상대석 봇으로 고르지 않는다 (사용자 결정 2026-10-19:
+   * 파트너 = 훈수 담당). `ownerId` 휴먼이 앉아 있을 때만 유효하고, 대기 리셋·dispose에서 함께 지운다.
+   */
+  private partnerExclusions: Map<string, { ownerId: string; characterId: string }> = new Map();
   /** 방별 휴먼 공격성 추적 — 봇의 상습 쇼버/레이저 대응용 (disposeRoom/엔진 교체 시 함께 정리) */
   private aggroTrackers: Map<string, AggroTracker> = new Map();
   private finishedRoomTimers: Map<string, NodeJS.Timeout> = new Map();
@@ -785,6 +790,7 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.aggroTrackers.delete(roomId);
+    this.partnerExclusions.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
     this.economyLeaveBlockedPlayers.delete(roomId);
     this.economyLeaveBlockWasPreexisting.delete(roomId);
@@ -1729,6 +1735,7 @@ export class RoomManager {
     this.tournamentClocks.delete(roomId);
     this.botLoopEpochs.delete(roomId);
     this.aggroTrackers.delete(roomId);
+    this.partnerExclusions.delete(roomId);
     this.economyBlockedRooms.delete(roomId);
     this.economyLeaveBlockedPlayers.delete(roomId);
     this.economyLeaveBlockWasPreexisting.delete(roomId);
@@ -1842,6 +1849,17 @@ export class RoomManager {
       this.sendSystemChat(roomId, `${bot.name}님이 칩을 모두 잃어 자리에서 일어납니다.`);
     }
 
+    // 혼자 연습 방: 훈수 파트너와 같은 캐릭터의 봇은 상대석에 두지 않는다. 핸드 사이(위 가드)에만
+    // 일어나므로 processLeave가 즉시 좌석을 비우고, 아래 충원이 다른 캐릭터로 채운다 — 팟 회계 무관.
+    const excludedPartner = this.activePartnerExclusion(roomId, room);
+    if (excludedPartner) {
+      const partnerBots = room.engine.state.players.filter(
+        p => p.type === 'bot' && !p.pendingRemoval
+          && (p.personalityId || p.avatar) === excludedPartner,
+      );
+      for (const bot of partnerBots) room.engine.processLeave(bot.id);
+    }
+
     const humans = room.engine.state.players.filter(p => p.type === 'human').length;
     const bots = room.engine.state.players.length - humans;
     // 착석 대기자 몫의 좌석은 봇 재충원에서 제외 — 아니면 양보로 비운 자리를 봇이 도로 채운다
@@ -1850,8 +1868,51 @@ export class RoomManager {
       room.config.maxPlayers - humans - this.seatWaiterCount(roomId),
     );
     if (bots < targetBots) {
-      fillEmptySeats(room.engine, humans + targetBots, undefined, room.config.difficulty);
+      fillEmptySeats(
+        room.engine,
+        humans + targetBots,
+        undefined,
+        room.config.difficulty,
+        excludedPartner ? [excludedPartner] : [],
+      );
     }
+  }
+
+  /**
+   * 혼자 연습(bots) 방에서 이 휴먼의 훈수 파트너를 상대석 봇 후보에서 뺀다.
+   * 이미 그 캐릭터 봇이 앉아 있으면 다음 핸드 경계(`refreshCashBots`)에서 다른 캐릭터로 교체한다 —
+   * 진행 중 핸드에는 손대지 않는다. bots 외 구성·스토리/주간 도장(고정 라인업)·토너먼트 방은 무시한다.
+   * join-room이 착석 **전에** 호출해, 착석 직후의 첫 충원부터 적용되게 한다.
+   */
+  excludePartnerFromBots(roomId: string, characterId: string, ownerId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    if ((room.config.tableType ?? 'mixed') !== 'bots') return false;
+    if (this.isPrivateSoloRoom(room) || room.engine.state.tournament) return false;
+    if (!characterId || !ownerId) return false;
+    // bots 방은 휴먼 1명 — 다른 휴먼이 앉아 있으면 그 사람의 제외 규칙을 덮어쓰지 않는다
+    // (거절될 입장 시도가 기존 착석자의 파트너를 상대석에 불러들이면 안 된다)
+    if (room.engine.state.players.some(
+      p => p.type === 'human' && !p.pendingRemoval && p.id !== ownerId,
+    )) {
+      return false;
+    }
+    this.partnerExclusions.set(roomId, { ownerId, characterId });
+    return true;
+  }
+
+  /** 유효한 파트너 제외 캐릭터 — 등록한 휴먼이 지금 앉아 있을 때만 (다음 방문자에게 새지 않게). */
+  private activePartnerExclusion(
+    roomId: string,
+    room: { config: RoomConfig; engine: PokerEngine },
+  ): string | null {
+    const exclusion = this.partnerExclusions.get(roomId);
+    if (!exclusion) return null;
+    if ((room.config.tableType ?? 'mixed') !== 'bots' || this.isPrivateSoloRoom(room)) return null;
+    const ownerSeated = room.engine.state.players.some(
+      p => p.id === exclusion.ownerId && p.type === 'human' && !p.pendingRemoval,
+    );
+    return ownerSeated ? exclusion.characterId : null;
   }
 
   /**
@@ -1870,6 +1931,8 @@ export class RoomManager {
     if (room.engine.state.isHandInProgress) return false;
     const st = room.engine.state;
     if (st.players.some(p => p.type === 'human' && p.avatar === characterId)) return false;
+    // 훈수 파트너로 제외된 캐릭터는 상대석에 앉히지 않는다 (refreshCashBots가 곧바로 내보낸다)
+    if (this.activePartnerExclusion(roomId, room) === characterId) return false;
     if (st.players.some(
       p => p.type === 'bot' && (p.personalityId || p.avatar) === characterId,
     )) {

@@ -2530,11 +2530,12 @@ export function setupSocketHandlers(
       const walletAdmission = walletCash || walletSng;
 
       let publicCosmetics: Player['publicCosmetics'];
+      let partnerCharacterId: string | null = null;
       if (progression) {
         try {
-          publicCosmetics = buildPublicCosmetics(
-            progression.getSnapshot(session.playerId, avatar),
-          );
+          const progressionSnapshot = progression.getSnapshot(session.playerId, avatar);
+          publicCosmetics = buildPublicCosmetics(progressionSnapshot);
+          partnerCharacterId = progressionSnapshot.profile.selectedCharacterId ?? null;
         } catch {
           eventLog.log('join-room:reject', {
             roomId,
@@ -2548,6 +2549,13 @@ export function setupSocketHandlers(
           });
           return;
         }
+      }
+
+      // 혼자 연습(bots) 방의 파트너는 훈수 담당 — 상대석 봇으로 고르지 않는다(사용자 결정 2026-10-19).
+      // 착석 전에 등록해 착석 직후의 첫 봇 충원부터 적용되고, 이미 앉은 파트너 봇은 다음 핸드 경계에 교체된다.
+      // RoomManager가 bots 외 구성·스토리/주간 도장·토너먼트 방을 스스로 거른다.
+      if (partnerCharacterId) {
+        roomManager.excludePartnerFromBots(roomId, partnerCharacterId, session.playerId);
       }
 
       // 멱등/재입장 처리: 같은 playerId가 이미 좌석에 있으면 새 Player를 만들지 않는다.
