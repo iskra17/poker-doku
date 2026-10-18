@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
-import { shouldRefreshLobbyWallet, useProfileStore } from '@/lib/store/profile-store';
+import {
+  stepLobbyWalletRefresh,
+  useProfileStore,
+  type LobbyWalletRefreshArm,
+} from '@/lib/store/profile-store';
 import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
 import LobbyHeader from '@/components/lobby/LobbyHeader';
 import RoomList from '@/components/lobby/RoomList';
@@ -71,18 +75,27 @@ export default function Home() {
 
   useEffect(() => subscribeStoryWalletRefresh(useStoryStore, useProfileStore), []);
 
-  useEffect(() => useGameStore.subscribe((state, previous) => {
-    const profileState = useProfileStore.getState();
-    // room-list 1회당 한 번만 판단한다. 프로필 갱신 자체는 이 분기를 다시 실행하지 않는다.
-    if (shouldRefreshLobbyWallet({
-      roomsChanged: state.rooms !== previous.rooms,
-      currentRoomId: state.currentRoomId,
-      pendingRoomId: state.pendingRoomId,
-      rooms: state.rooms,
-      profile: profileState.profile,
-      hasActiveSeat: profileState.economy?.hasActiveSeat,
-    })) void refresh({ afterCurrent: true });
-  }), [refresh]);
+  useEffect(() => {
+    // 좌석이 사라진 전이(나가기·room-lost·로비 목록의 내 좌석 소멸)에만 무장하고, 그 뒤 room-list에서
+    // 정산을 확인할 때까지 상한 안에서만 지갑을 다시 읽는다. 숨은 에스크로(wallet MTT 등록)가 있어도
+    // room-list 방송마다 재조회하지 않는다.
+    let arm: LobbyWalletRefreshArm | null = null;
+    return useGameStore.subscribe((state, previous) => {
+      const profileState = useProfileStore.getState();
+      const step = stepLobbyWalletRefresh(arm, {
+        roomsChanged: state.rooms !== previous.rooms,
+        previousRoomId: previous.currentRoomId,
+        currentRoomId: state.currentRoomId,
+        pendingRoomId: state.pendingRoomId,
+        previousRooms: previous.rooms,
+        rooms: state.rooms,
+        profile: profileState.profile,
+        hasActiveSeat: profileState.economy?.hasActiveSeat,
+      });
+      arm = step.arm;
+      if (step.refresh) void refresh({ afterCurrent: true });
+    });
+  }, [refresh]);
 
   useEffect(() => {
     const handleVisibility = () => {

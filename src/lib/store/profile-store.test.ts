@@ -3,7 +3,8 @@ import {
   createProfileStore,
   normalizeRecoveryWords,
   recoveryAcknowledgementKey,
-  shouldRefreshLobbyWallet,
+  LOBBY_WALLET_REFRESH_BUDGET,
+  stepLobbyWalletRefresh,
 } from './profile-store';
 
 const PROFILE = {
@@ -29,29 +30,82 @@ const ECONOMY = {
   },
 };
 
-describe('shouldRefreshLobbyWallet', () => {
-  const update = {
+describe('stepLobbyWalletRefresh', () => {
+  const ESCROWED = { ...PROFILE, wallet: { balance: 8_000, activeEscrow: 2_000 } };
+  const lobby = {
     roomsChanged: true,
+    previousRoomId: null,
     currentRoomId: null,
     pendingRoomId: null,
+    previousRooms: [{}],
     rooms: [{}],
-    profile: { ...PROFILE, wallet: { balance: 8_000, activeEscrow: 2_000 } },
+    profile: ESCROWED,
   };
-  it('로비에서 좌석 없는 새 목록을 받으면 정산 뒤 지갑을 다시 읽는다', () => {
-    expect(shouldRefreshLobbyWallet(update)).toBe(true);
-    // 직전 목록에도 좌석이 없을 수 있다(pendingRemoval). 정산 뒤 별도 방송도 잡는다.
-    expect(shouldRefreshLobbyWallet({ ...update, rooms: [] })).toBe(true);
-    expect(shouldRefreshLobbyWallet({ ...update, profile: PROFILE, hasActiveSeat: true })).toBe(true);
+  type StepInput = Parameters<typeof stepLobbyWalletRefresh>[1];
+  const ARMED = { remaining: LOBBY_WALLET_REFRESH_BUDGET, baselineEscrow: null };
+
+  it('숨은 에스크로(wallet MTT 등록)만 있으면 room-list 방송마다 재조회하지 않는다', () => {
+    let arm = null as ReturnType<typeof stepLobbyWalletRefresh>['arm'];
+    let refreshes = 0;
+    for (let i = 0; i < 20; i++) {
+      const step = stepLobbyWalletRefresh(arm, lobby);
+      arm = step.arm;
+      if (step.refresh) refreshes += 1;
+    }
+    expect(refreshes).toBe(0);
   });
-  it('방 목록이 안 바뀌는 프로필 응답·다른 스토어 갱신은 재조회하지 않는다', () => {
-    expect(shouldRefreshLobbyWallet({ ...update, roomsChanged: false })).toBe(false);
-    expect(shouldRefreshLobbyWallet({ ...update, profile: PROFILE })).toBe(false);
-    expect(shouldRefreshLobbyWallet({ ...update, profile: null })).toBe(false);
+
+  it('방을 나가면 무장하고, 다음 room-list에서 한 번 재조회한다', () => {
+    // 나가기 갱신 자체(목록 변화 없음)는 무장만 — 로비 복귀 효과가 별도로 지갑을 읽는다
+    const left = stepLobbyWalletRefresh(null, { ...lobby, roomsChanged: false, previousRoomId: 'room-1' });
+    expect(left).toEqual({ arm: ARMED, refresh: false });
+
+    const listed = stepLobbyWalletRefresh(left.arm, lobby);
+    expect(listed.refresh).toBe(true);
+    // 정산이 확인되면(에스크로 감소) 다음 목록에서 재조회 없이 해제
+    const settled = stepLobbyWalletRefresh(listed.arm, {
+      ...lobby,
+      profile: { ...PROFILE, wallet: { balance: 9_000, activeEscrow: 1_000 } },
+    });
+    expect(settled).toEqual({ arm: null, refresh: false });
   });
-  it('테이블·입장 대기·보존 좌석이 있으면 재조회하지 않는다', () => {
-    expect(shouldRefreshLobbyWallet({ ...update, currentRoomId: 'room-1' })).toBe(false);
-    expect(shouldRefreshLobbyWallet({ ...update, pendingRoomId: 'room-1' })).toBe(false);
-    expect(shouldRefreshLobbyWallet({ ...update, rooms: [{ mySeat: { chips: 0 } }] })).toBe(false);
+
+  it('정산 전 목록이 먼저 와도 상한 안에서만 다시 읽고 멈춘다', () => {
+    let arm = stepLobbyWalletRefresh(null, { ...lobby, roomsChanged: false, previousRoomId: 'room-1' }).arm;
+    let refreshes = 0;
+    for (let i = 0; i < 10; i++) {
+      const step = stepLobbyWalletRefresh(arm, lobby);
+      arm = step.arm;
+      if (step.refresh) refreshes += 1;
+    }
+    expect(refreshes).toBe(LOBBY_WALLET_REFRESH_BUDGET);
+    expect(arm).toBeNull();
+  });
+
+  it('로비 목록에서 내 좌석이 사라진 그 목록에서 바로 재조회한다', () => {
+    const step = stepLobbyWalletRefresh(null, { ...lobby, previousRooms: [{ mySeat: { chips: 100 } }] });
+    expect(step.refresh).toBe(true);
+    expect(step.arm?.remaining).toBe(LOBBY_WALLET_REFRESH_BUDGET - 1);
+  });
+
+  it('지킬 에스크로·활성 좌석이 없으면 재조회 없이 해제한다', () => {
+    expect(stepLobbyWalletRefresh(ARMED, { ...lobby, profile: PROFILE })).toEqual({ arm: null, refresh: false });
+    expect(stepLobbyWalletRefresh(ARMED, { ...lobby, profile: PROFILE, hasActiveSeat: true }).refresh).toBe(true);
+    expect(stepLobbyWalletRefresh(ARMED, { ...lobby, profile: null }).refresh).toBe(false);
+    expect(stepLobbyWalletRefresh(ARMED, { ...lobby, roomsChanged: false }).refresh).toBe(false);
+  });
+
+  it('테이블·입장 대기·보존 좌석이 있으면 재조회하지 않고 무장을 푼다', () => {
+    const cases: Partial<StepInput>[] = [
+      { currentRoomId: 'room-1' },
+      { pendingRoomId: 'room-1' },
+      { rooms: [{ mySeat: { chips: 0 } }] },
+      // 자리비움 나가기 — 좌석이 목록에 남으면 에스크로가 남는 게 정상
+      { previousRoomId: 'room-1', rooms: [{ mySeat: { chips: 500 } }] },
+    ];
+    for (const overrides of cases) {
+      expect(stepLobbyWalletRefresh(ARMED, { ...lobby, ...overrides })).toEqual({ arm: null, refresh: false });
+    }
   });
 });
 

@@ -72,18 +72,71 @@ export interface ProfileStoreState {
 
 type ProfileStore = UseBoundStore<StoreApi<ProfileStoreState>>;
 
-/** 개인화 room-list 수신 뒤, 좌석 없는 로비에 남은 정산 전 지갑만 다시 읽는다. */
-export function shouldRefreshLobbyWallet({ roomsChanged, currentRoomId, pendingRoomId, rooms, profile, hasActiveSeat = false }: {
-  roomsChanged: boolean;
-  currentRoomId: string | null;
-  pendingRoomId: string | null;
-  rooms: readonly { mySeat?: unknown }[];
-  profile: Pick<PublicProfile, 'wallet'> | null;
-  hasActiveSeat?: boolean;
-}): boolean {
-  return roomsChanged && currentRoomId === null && pendingRoomId === null
-    && profile !== null && ((profile.wallet.activeEscrow > 0) || hasActiveSeat)
-    && !rooms.some(room => room.mySeat);
+/**
+ * 로비 지갑 재조회 무장 상태 — 좌석이 사라진 전이(방 나가기·room-lost·로비 목록의 내 좌석 소멸) 한 번에만 건다.
+ * `remaining`은 이 전이에서 남은 재조회 횟수, `baselineEscrow`는 첫 재조회 때 본 에스크로(감소 = 정산 확인).
+ */
+export interface LobbyWalletRefreshArm {
+  remaining: number;
+  baselineEscrow: number | null;
+}
+
+/**
+ * 한 번의 좌석→무좌석 전이에서 허용하는 재조회 상한. 보통은 1회로 끝난다(정산 뒤 room-list → 재조회 →
+ * 에스크로 감소 확인). 나간 직후 다른 사람의 입장 등으로 정산 **전** room-list가 먼저 오면 그 1회가 헛돌 수 있어
+ * 여유를 둔다. 숨은 에스크로(wallet MTT 등록처럼 목록에 없는 좌석)는 줄지 않으므로 이 상한에서 멈춘다 —
+ * 예전처럼 room-list 방송마다 토너먼트가 끝날 때까지 재조회하지 않는다.
+ */
+export const LOBBY_WALLET_REFRESH_BUDGET = 3;
+
+/**
+ * 게임 스토어 갱신 1회마다 호출하는 순수 상태 전이. 정산 전 지갑만 다시 읽는다.
+ * - 방 안·입장 대기·로비 목록에 내 좌석이 보이면 무장 해제(보존 좌석은 에스크로가 남는 게 정상).
+ * - 방을 나가 로비로 왔거나, 로비 목록에서 내 좌석이 사라지면 무장한다.
+ * - 무장 중 새 room-list가 오면 재조회한다. 에스크로·활성 좌석이 없거나, 첫 재조회 기준보다 에스크로가
+ *   줄었으면(정산 확인) 재조회 없이 해제한다.
+ */
+export function stepLobbyWalletRefresh(
+  arm: LobbyWalletRefreshArm | null,
+  {
+    roomsChanged,
+    previousRoomId,
+    currentRoomId,
+    pendingRoomId,
+    previousRooms,
+    rooms,
+    profile,
+    hasActiveSeat = false,
+  }: {
+    roomsChanged: boolean;
+    previousRoomId: string | null;
+    currentRoomId: string | null;
+    pendingRoomId: string | null;
+    previousRooms: readonly { mySeat?: unknown }[];
+    rooms: readonly { mySeat?: unknown }[];
+    profile: Pick<PublicProfile, 'wallet'> | null;
+    hasActiveSeat?: boolean;
+  },
+): { arm: LobbyWalletRefreshArm | null; refresh: boolean } {
+  if (currentRoomId !== null || pendingRoomId !== null || rooms.some(room => room.mySeat)) {
+    return { arm: null, refresh: false };
+  }
+  const leftRoom = previousRoomId !== null;
+  const lobbySeatGone = roomsChanged && previousRooms.some(room => room.mySeat);
+  const next = leftRoom || lobbySeatGone
+    ? { remaining: LOBBY_WALLET_REFRESH_BUDGET, baselineEscrow: null }
+    : arm;
+  if (!next || !roomsChanged || !profile) return { arm: next, refresh: false };
+  const escrow = profile.wallet.activeEscrow;
+  if (escrow <= 0 && !hasActiveSeat) return { arm: null, refresh: false };
+  if (next.baselineEscrow !== null && escrow < next.baselineEscrow) {
+    return { arm: null, refresh: false };
+  }
+  const remaining = next.remaining - 1;
+  return {
+    arm: remaining > 0 ? { remaining, baselineEscrow: next.baselineEscrow ?? escrow } : null,
+    refresh: true,
+  };
 }
 
 const RECOVERY_ACK_PREFIX = 'poker-doku-recovery-saved:';
