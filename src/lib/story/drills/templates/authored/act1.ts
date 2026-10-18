@@ -4,6 +4,8 @@
  * 계약:
  * - `source.kind: 'authored'` — 생성기를 타지 않고 instance를 그대로 쓴다(seed는 슬롯의 fixedSeed).
  * - 해설·힌트는 전부 수기(AI 금지). 출제자 말투는 담당 히로인(Ch2 = 사쿠라: 소심·말더듬·존댓말, 호칭 '당신').
+ *   Ch1 첫 문항은 미야코(호칭 「수련생님」, 말끝 ♪) — 생성 3파전(풀하우스 vs 스트레이트)이 첫 문제로 나와
+ *   초보가 막히던 문제(2026-10-18 플레이테스트)를 2인 원페어 vs 하이카드로 고정한다.
  * - 백분위(facts.percentile)는 `hand-rankings.ts`의 `handPercentile`로 실측한 값이다
  *   (J♣7♦ 69.68% → 69.7 / A♦J♦ 2.56% → 2.6). 임계는 A7 ③의 포지션별 값(UTG 15 · BTN 35).
  */
@@ -22,7 +24,47 @@ function villains(entries: Array<[number, string, string]>): DrillVillain[] {
   }));
 }
 
-export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze([
+export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<DrillTemplate[]>([
+  {
+    // 보드 K♠9♦5♣3♥2♠ — 스트레이트(A·4 필요)·플러시(같은 무늬 셋 이하) 모두 불가.
+    // 나 A♦J♣ = A 하이카드, 초코 9♥8♥ = 9 원페어 → 초코 승. "A를 들어도 짝이 없으면 진다"를 한 장면으로.
+    id: 'act-ch01-pair-beats-high',
+    category: 'hand-ranking',
+    title: '페어와 하이카드',
+    difficulty: 1,
+    hints: ['보드의 카드와 숫자가 같은 홀카드가 있는지 먼저 찾아 보세요. 짝이 하나라도 있으면 원페어예요.'],
+    source: {
+      kind: 'authored',
+      instance: {
+        category: 'hand-ranking',
+        situation: {
+          hero: parseCards('Ad Jc'),
+          board: parseCards('Ks 9d 5c 3h 2s'),
+          potChips: 8 * BIG_BLIND,
+          toCallChips: 0,
+          bigBlind: BIG_BLIND,
+          heroStackChips: STACK,
+          heroPosition: 'BTN',
+          street: 'river',
+          villains: [
+            { seatIndex: 1, characterId: 'choco', position: 'BB', stackChips: STACK, holeCards: parseCards('9h 8h') },
+          ],
+          note: '두 사람 모두 카드를 공개했어요.',
+        },
+        question: '쇼다운이에요. 이 팟은 누가 가져갈까요?',
+        answerSpec: { kind: 'multiple-choice', options: ['나', '초코'], correctIndex: 1 },
+        hint: '보드의 카드와 숫자가 같은 홀카드가 있는지 먼저 찾아 보세요. 짝이 하나라도 있으면 원페어예요.',
+        explanation: {
+          text:
+            '보드는 K♠ 9♦ 5♣ 3♥ 2♠예요. 수련생님의 A♦ J♣는 보드와 숫자가 하나도 겹치지 않아서 A 하이카드, '
+            + '초코의 9♥ 8♥는 보드의 9♦와 짝이 맞아 9 원페어예요. '
+            + 'A가 제일 높은 카드여도, 짝이 하나 있는 쪽이 이긴답니다♪',
+          speaker: 'miyako',
+          facts: { board: 'K♠ 9♦ 5♣ 3♥ 2♠', heroHand: '하이카드', villain1Name: '초코', villain1Hand: '원페어', winner: '초코' },
+        },
+      },
+    },
+  },
   {
     id: 'act-ch02-fold-utg',
     category: 'action-judgment',

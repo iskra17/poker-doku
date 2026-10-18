@@ -43,6 +43,6 @@ export const CH07: Chapter = {
     { kind: 'result', id: 'ch07-result' },
   ],
   failScene: scene('ch07-failure', ['괜찮아요, 자기. 가면은 한 번에 다 읽히지 않는 법이죠.', '정답과 관찰한 행동을 비교해 보아요. 다시 도전하면 가면의 자리는 새로 정해져요.', '칩을 땄는지는 중요하지 않아요. 네 질문과 실제 결정 기회를 차분히 살펴보아요.']),
-  rewards: { first: { dojoXpMilli: 250_000, affinity: [{ target: 'vivian', milli: 100_000 }], badgeId: 'story-title-unmasker' },
+  rewards: { first: { dojoXpMilli: 250_000, affinity: [{ target: 'vivian', milli: 100_000 }, { target: 'partner', milli: 20_000 }], badgeId: 'story-title-unmasker' },
     replay: { dojoXpMilli: 50_000 }, gradeBonusMilli: { A: 50_000, S: 120_000 } },
 };

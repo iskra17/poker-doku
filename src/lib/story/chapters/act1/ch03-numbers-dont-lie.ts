@@ -381,7 +381,7 @@ export const CH03: Chapter = {
   rewards: {
     first: {
       dojoXpMilli: 150_000,
-      affinity: [{ target: 'hana', milli: 100_000 }],
+      affinity: [{ target: 'hana', milli: 100_000 }, { target: 'partner', milli: 20_000 }],
       badgeId: 'story-yellow-belt',
     },
     replay: { dojoXpMilli: 30_000 },

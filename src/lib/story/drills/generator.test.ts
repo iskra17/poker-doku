@@ -179,6 +179,7 @@ describe('authored templates', () => {
   it('registers the Act 1·2·3·4 authored drills (ids unique, all instantiable)', () => {
     const ids = AUTHORED_DRILL_TEMPLATES.map(template => template.id);
     expect(ids).toEqual([
+      'act-ch01-pair-beats-high',
       'act-ch02-fold-utg', 'act-ch02-open-btn',
       'act-ch04-steal-btn', 'act-ch04-cbet-dry', 'act-ch04-iso-sb',
       'act-ch05-river-value', 'act-ch05-river-air-check',
@@ -192,6 +193,10 @@ describe('authored templates', () => {
       expect(DRILL_TEMPLATE_IDS.has(template.id)).toBe(true);
       const instance = generateDrill(template.id, 0, { teacher: 'sakura' });
       expect(instance.explanation.speaker).toBe('sakura');
+      if (instance.answerSpec.kind === 'multiple-choice') {
+        expect(gradeDrill(instance, { kind: 'multiple-choice', index: instance.answerSpec.correctIndex })).toBe(true);
+        continue;
+      }
       const spec = instance.answerSpec as { kind: 'action-pick'; correct: readonly ('fold'|'raise'|'call'|'check'|'all-in')[]; sizingBB?: { min: number; max: number } };
       expect(gradeDrill(instance, { kind: 'action-pick', action: spec.correct[0], sizingBB: spec.sizingBB?.min ?? 2.5 })).toBe(true);
     }

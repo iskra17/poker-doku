@@ -37,5 +37,5 @@ export const CH08: Chapter = {
   {kind:'result',id:'ch08-result'},
  ],
  failScene:scene('ch08-failure',['으엥, 손이 생각보다 빨랐네. 나도 알아, 콜 버튼이 제일 궁금해 보인다구.','틀린 질문은 공개한 레인지와 가격으로 다시 계산하자. 이겼는지보다 그때 어떤 이유가 있었는지가 먼저야.','스파링만 다시 하면 새 패와 새 리딩 기회로 시작해. 이번에는 눌러 보기 전에 같이 한 번 세자.']),
- rewards:{first:{dojoXpMilli:250_000,affinity:[{target:'chloe',milli:100_000}],badgeId:'story-title-bluff-catcher'},replay:{dojoXpMilli:50_000},gradeBonusMilli:{A:50_000,S:120_000}},
+ rewards:{first:{dojoXpMilli:250_000,affinity: [{ target: 'chloe', milli: 100_000 }, { target: 'partner', milli: 20_000 }],badgeId:'story-title-bluff-catcher'},replay:{dojoXpMilli:50_000},gradeBonusMilli:{A:50_000,S:120_000}},
 };
