@@ -8,8 +8,9 @@ import type {
 } from '@/lib/poker/hand-history';
 import { cards } from '@/lib/poker/test-helpers';
 import type { Street } from '@/lib/poker/types';
-import { JUNK_PERCENTILE, PREMIUM_PERCENTILE } from './objectives';
-import { reviewHand } from './review';
+import { JUNK_PERCENTILE, PREMIUM_PERCENTILE, addHand, deriveHeroHandFacts, emptyTally } from './objectives';
+import { reviewHand, showdownMissionPending } from './review';
+import type { Objective } from './types';
 
 // ---------------------------------------------------------------------------
 // 합성 CompletedHandRecord 빌더 (objectives.test.ts와 같은 규칙 — 액션에서 기여금을 유도한다)
@@ -414,5 +415,70 @@ describe('reviewHand — 오버벳 폴라라이즈 정책', () => {
       showdown: true,
     });
     expect(reviewHand(record, 'hero', { overbetPolarized: true })).toEqual(reviewHand(record, 'hero'));
+  });
+});
+
+/** 7♣2♦로 프리플랍 림프 + 플랍 오버 가격 콜 → 쇼다운. 기본 리뷰는 ⚠ 2개. */
+function badPriceShowdownCall(): CompletedHandRecord {
+  return makeRecord({
+    seats: [{ id: 'hero', hole: '7c 2d' }, { id: 'villain', hole: '9s 9h' }],
+    board: 'Ah Ks Qd 3c 4h',
+    actions: [
+      ['preflop', 'hero', 'post-sb', 25],
+      ['preflop', 'villain', 'post-bb', 50],
+      ['preflop', 'hero', 'call', 25],
+      ['preflop', 'villain', 'check', 0],
+      ['flop', 'villain', 'raise', 150],
+      ['flop', 'hero', 'call', 150],
+      ['turn', 'villain', 'check', 0],
+      ['turn', 'hero', 'check', 0],
+      ['river', 'villain', 'check', 0],
+      ['river', 'hero', 'check', 0],
+    ],
+    winners: [{ playerId: 'villain', amount: 400 }],
+    showdown: true,
+  });
+}
+
+describe('reviewHand — 쇼다운 미션 정책 (2026-10-18 플레이테스트 A5-8)', () => {
+  it('미션 중 콜의 ⚠는 🤔 안내로 낮추고 가격 수치는 남긴다', () => {
+    const plain = reviewHand(badPriceShowdownCall(), 'hero');
+    expect(plain?.verdicts.map(verdict => verdict.mark)).toEqual(['warn', 'warn']);
+
+    const mission = reviewHand(badPriceShowdownCall(), 'hero', { showdownMission: true });
+    expect(mission?.verdicts.map(verdict => verdict.mark)).toEqual(['hmm', 'hmm']);
+    for (const verdict of mission!.verdicts) {
+      expect(verdict.action).toBe('call');
+      expect(verdict.reason).toContain('쇼다운 미션을 위한 콜이었어요');
+      expect(verdict.reason).toContain('실전이라면 가격');
+      expect(verdict.reason).not.toContain('오즈가 맞지 않는');
+    }
+    const flop = mission!.verdicts[1];
+    expect(flop.facts).toEqual(plain!.verdicts[1].facts);
+    expect(flop.reason).toContain('콜 값');
+  });
+
+  it('폴드 판정과 👍 콜은 그대로 둔다', () => {
+    const fold = flushDrawHand(25, 'fold');
+    expect(reviewHand(fold, 'hero', { showdownMission: true })).toEqual(reviewHand(fold, 'hero'));
+    const goodCall = flushDrawHand(50, 'call');
+    expect(reviewHand(goodCall, 'hero', { showdownMission: true })).toEqual(reviewHand(goodCall, 'hero'));
+  });
+
+  it('showdownMissionPending — reach-showdown 목표가 미달성일 때만 true', () => {
+    const objectives: { primary: Objective[]; bonus: Objective[] } = {
+      primary: [
+        { id: 'sd', kind: 'reach-showdown', label: '쇼다운까지 가 보기', target: 1 },
+        { id: 'fold', kind: 'fold-hands', label: '폴드해 보기', target: 1 },
+      ],
+      bonus: [],
+    };
+    expect(showdownMissionPending(objectives, emptyTally())).toBe(true);
+
+    const afterShowdown = addHand(emptyTally(), deriveHeroHandFacts(badPriceShowdownCall(), 'hero'));
+    expect(showdownMissionPending(objectives, afterShowdown)).toBe(false);
+
+    const noMission = { primary: [objectives.primary[1]], bonus: [] };
+    expect(showdownMissionPending(noMission, emptyTally())).toBe(false);
   });
 });

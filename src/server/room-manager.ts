@@ -1859,6 +1859,9 @@ export class RoomManager {
    * 핸드 사이에 봇 하나를 파트너로 교체(빈 좌석이 있으면 추가)한다.
    * bots 방은 휴먼 1명 제한이라 다른 유저의 테이블 구성에 영향이 없다.
    * 핸드 진행 중이면 조용히 무시 — 다음 입장에서 다시 시도되는 best-effort 연출이다.
+   *
+   * 2026-10-19: join-room은 더 이상 이 함수를 부르지 않는다(파트너 = 훈수 담당, 상대석에 앉히지 않음).
+   * 다른 호출 경로 대비 가드 — 휴먼 아바타가 같은 캐릭터면 앉히지 않는다(같은 얼굴 중복).
    */
   ensurePartnerBot(roomId: string, characterId: string): boolean {
     const room = this.rooms.get(roomId);
@@ -1866,6 +1869,7 @@ export class RoomManager {
     if ((room.config.tableType ?? 'mixed') !== 'bots') return false;
     if (room.engine.state.isHandInProgress) return false;
     const st = room.engine.state;
+    if (st.players.some(p => p.type === 'human' && p.avatar === characterId)) return false;
     if (st.players.some(
       p => p.type === 'bot' && (p.personalityId || p.avatar) === characterId,
     )) {
@@ -3520,6 +3524,7 @@ export class RoomManager {
     let rake = state.handRake;
     let settlementOk = true;
     let progressionRetryable = false;
+    let deferredExitsSettled = 0;
 
     if (this.isWalletCash(room)) {
       try {
@@ -3533,6 +3538,7 @@ export class RoomManager {
         for (const player of state.players) {
           if (player.type === 'human' && player.pendingRemoval) {
             economy.settleExit(roomId, player);
+            deferredExitsSettled += 1;
           }
         }
       } catch {
@@ -3542,6 +3548,11 @@ export class RoomManager {
         this.sendSystemChat(roomId, '저장 연결을 확인 중이에요');
       }
     }
+    // 핸드 중 완전히 나간 좌석의 정산은 핸드 끝까지 미뤄진다. 그 사이 로비로 간 클라이언트는
+    // 나간 직후의 room-list(정산 전)만 들고 있어 지갑·좌석이 낡는다 (2026-10-18 플레이테스트 A5-7).
+    // 정산이 커밋된 지금 개인화 room-list를 다시 보내 로비가 지갑을 새로 고치게 한다.
+    // (뒤의 진행도 실패와 무관하게 지갑 정산은 이미 커밋됐다 — 예외 시엔 카운트가 그 직전까지만 남는다)
+    if (deferredExitsSettled > 0) this.onRoomsChanged?.();
     if (
       settlementOk
       && state.tournament?.finished

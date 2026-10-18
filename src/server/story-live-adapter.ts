@@ -39,7 +39,7 @@ import {
   primaryObjectivesMet,
   type ObjectiveTally,
 } from '../lib/story/objectives';
-import { reviewHand } from '../lib/story/review';
+import { reviewHand, showdownMissionPending } from '../lib/story/review';
 import { HEROINE_FILL_SEAT, STORY_HEROINE_IDS, type Interrupt, type LiveTournamentPolicy, type Step, type StoryHeroineId } from '../lib/story/types';
 import { resolveSngStructure } from './sng-structures';
 import type { BotThought, DecisionReview, ObjectiveProgressView, StoryHoldReason, StoryLiveView, StoryQuizRequest, StoryQuizReceipt, ObservationNote } from '../lib/story/views';
@@ -729,9 +729,12 @@ export class LiveTableAdapter implements StoryRoomHooks {
         if (session.step.kind === 'practice-table') {
           session.scriptCursor = Math.min(session.step.scripts.length, session.scriptCursor + 1);
         } else {
+          // 쇼다운 미션 판정은 이번 핸드를 더하기 **전** tally로 — 이번 핸드로 채웠어도 그 콜은 미션을 위한 콜이다
+          const showdownMission = showdownMissionPending(session.step.objectives, session.tally);
           session.tally = addHand(session.tally, facts);
           session.lastReview = reviewHand(record, session.profileId, {
             overbetPolarized: session.step.table.reviewPolicy === 'act4-overbet-v1',
+            showdownMission,
           });
           if (session.step.table.readingReview) {
             const responses = reviewReadingResponses(record, session.profileId, session.botIdentities ?? []);

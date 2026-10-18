@@ -366,7 +366,7 @@ export const CH04: Chapter = {
   rewards: {
     first: {
       dojoXpMilli: 200_000,
-      affinity: [{ target: 'ara', milli: 100_000 }],
+      affinity: [{ target: 'ara', milli: 100_000 }, { target: 'partner', milli: 20_000 }],
       badgeId: 'story-first-steal',
     },
     replay: { dojoXpMilli: 40_000 },

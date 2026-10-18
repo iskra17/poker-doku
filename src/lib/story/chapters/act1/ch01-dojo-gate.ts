@@ -89,6 +89,56 @@ export const CH01: Chapter = {
       },
     },
 
+    // ───────────────────────────────────────────── 첫 핸드 — 규칙보다 카드를 먼저 (2026-10-18 플레이테스트)
+    // 첫 라이브 핸드가 7번째 스텝(8~24분 뒤)이라 "공부 먼저"로 느껴졌다. 결과가 정해진 핸드는 이 1개뿐이고,
+    // 뒤의 연습·스파링은 기존처럼 결과를 보장하지 않는다(사용자 결정 2026-10-19).
+    {
+      kind: 'practice-table',
+      id: 'act1-ch01:first-hand',
+      tag: '연습',
+      table: {
+        blinds: { small: 10, big: 20 },
+        heroSeat: 0,
+        heroStackBB: 100,
+        lineup: [
+          { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
+          { seatIndex: 2, characterId: 'kapi', stackBB: 100, role: 'neighbor' },
+          { seatIndex: 3, characterId: 'choco', stackBB: 100, role: 'neighbor' },
+        ],
+        difficulty: 'easy',
+        turnTimeSec: 90,
+        botThinkScale: 0.6,
+        hints: 1,
+      },
+      scripts: [
+        // A♠K♠ on A♥K♦7♣2♦9♠ — 투페어(A·K). 카피의 Q♥Q♦는 원페어에 그친다(쇼다운까지 가면 이기는 핸드).
+        { hero: 'As Ks', board: 'Ah Kd 7c 2d 9s', villains: { 2: 'Qh Qd' } },
+      ],
+      perHandPrompt: '첫 핸드예요♪ 규칙은 나중에 배워요 — 지금은 콜이나 체크로 끝까지 가 보세요.',
+    },
+    {
+      kind: 'scene',
+      id: 'act1-ch01:first-hand-after',
+      scene: {
+        id: 'act1-ch01:first-hand-after',
+        lines: [
+          {
+            kind: 'say',
+            speaker: 'partner',
+            text: '…첫 핸드, 끝. 카드 쥐는 손, 생각보다 침착했어.',
+            expression: 'happy',
+            bg: 'dojo-table',
+          },
+          {
+            kind: 'say',
+            speaker: 'miyako',
+            text: '방금 A♠ K♠는 보드의 A·K와 짝을 지어 투페어가 되는 핸드였어요. 왜 이기는지, 지금부터 배워 볼게요♪',
+            expression: 'happy',
+          },
+        ],
+      },
+    },
+
     // ───────────────────────────────────────────── 첫 카드 읽기 — 첫 2~3분
     {
       kind: 'lesson',
@@ -116,7 +166,8 @@ export const CH01: Chapter = {
       title: '첫 수련 문제 · 핸드 랭킹',
       teacher: 'miyako',
       drills: [
-        { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
+        // 첫 문항은 수기 2인 문항(원페어 vs 하이카드) — 생성 3파전은 첫 문제로 너무 어렵다(2026-10-18 플레이테스트)
+        { templateId: 'act-ch01-pair-beats-high', seedPolicy: 'fixed', fixedSeed: 0 },
         { templateId: 'rank-who-wins', seedPolicy: 'per-run' },
       ],
       hintPenalty: 0.5,
@@ -227,8 +278,8 @@ export const CH01: Chapter = {
         hints: 1,
       },
       scripts: [
-        // ① A♠K♠ on A♥K♦7♣2♦9♠ — 투페어(A·K) 밸류. 카피의 Q♥Q♦는 원페어에 그친다.
-        { hero: 'As Ks', board: 'Ah Kd 7c 2d 9s', villains: { 2: 'Qh Qd' } },
+        // ① J♥J♦ on J♠8♣3♦5♥K♣ — 트리플(J) 밸류. 카피의 A♥K♦는 K 원페어에 그친다(첫 핸드의 A·K와 겹치지 않게).
+        { hero: 'Jh Jd', board: 'Js 8c 3d 5h Kc', villains: { 2: 'Ah Kd' } },
         // ② 7♦2♣ — 첫 폴드를 손에 익히는 핸드(보드는 랜덤).
         { hero: '7d 2c' },
       ],
@@ -395,7 +446,8 @@ export const CH01: Chapter = {
   rewards: {
     first: {
       dojoXpMilli: 100_000,
-      affinity: [{ target: 'partner', milli: 30_000 }],
+      // 50 = 인연 Lv2 문턱(40)을 넘겨 Ch1 결산에서 첫 인연 씬이 열린다 (2026-10-19 A6)
+      affinity: [{ target: 'partner', milli: 50_000 }],
       badgeId: 'story-white-belt',
     },
     replay: { dojoXpMilli: 20_000 },

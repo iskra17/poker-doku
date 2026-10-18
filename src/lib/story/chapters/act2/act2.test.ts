@@ -105,9 +105,9 @@ describe('2막 챕터 데이터', () => {
   });
 
   it('보상 수치가 A5-2 표와 같다', () => {
-    expect(CH04.rewards.first).toEqual({ dojoXpMilli: 200_000, affinity: [{ target: 'ara', milli: 100_000 }], badgeId: 'story-first-steal' });
-    expect(CH05.rewards.first).toEqual({ dojoXpMilli: 200_000, affinity: [{ target: 'chloe', milli: 100_000 }], badgeId: 'story-value-artisan' });
-    expect(CH06.rewards.first).toEqual({ dojoXpMilli: 250_000, affinity: [{ target: 'ara', milli: 100_000 }], badgeId: 'story-blue-belt' });
+    expect(CH04.rewards.first).toEqual({ dojoXpMilli: 200_000, affinity: [{ target: 'ara', milli: 100_000 }, { target: 'partner', milli: 20_000 }], badgeId: 'story-first-steal' });
+    expect(CH05.rewards.first).toEqual({ dojoXpMilli: 200_000, affinity: [{ target: 'chloe', milli: 100_000 }, { target: 'partner', milli: 20_000 }], badgeId: 'story-value-artisan' });
+    expect(CH06.rewards.first).toEqual({ dojoXpMilli: 250_000, affinity: [{ target: 'ara', milli: 100_000 }, { target: 'partner', milli: 20_000 }], badgeId: 'story-blue-belt' });
     for (const chapter of [CH04, CH05]) {
       expect(chapter.rewards.replay.dojoXpMilli).toBe(40_000);
       expect(chapter.rewards.gradeBonusMilli).toEqual({ A: 40_000, S: 100_000 });

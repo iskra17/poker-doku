@@ -5,7 +5,9 @@
  * generator.test.ts, 라이브 스텝 동작은 story-live-adapter.test.ts가 맡는다.
  */
 import { describe, expect, it } from 'vitest';
+import { evaluateHand } from '@/lib/poker/evaluator';
 import { ACT1_AUTHORED_DRILLS } from '../../drills/templates/authored/act1';
+import { sceneMatchesFlags } from '../../scene-cursor';
 import type { Chapter, Scene, SceneSayLine, Step } from '../../types';
 import { validateChapters } from '../index';
 import { CH01 } from './ch01-dojo-gate';
@@ -117,9 +119,9 @@ function drillCount(chapter: Chapter): number {
   return chapter.steps.reduce((count, step) => count + (step.kind === 'drill-set' ? step.drills.length : 0), 0);
 }
 
-function presetHandCount(chapter: Chapter): number {
-  const step = chapter.steps.find(candidate => candidate.kind === 'practice-table');
-  return step?.kind === 'practice-table' ? step.scripts.length : -1;
+/** 챕터의 '연습' 스텝 전부의 프리셋 핸드 수 (Ch1은 첫 핸드 1 + 본 연습 2) */
+function presetHandCounts(chapter: Chapter): number[] {
+  return chapter.steps.flatMap(step => (step.kind === 'practice-table' ? [step.scripts.length] : []));
 }
 
 // ---------------------------------------------------------------------------
@@ -131,22 +133,26 @@ describe('1막 챕터 데이터', () => {
 
   it('수기 문항 템플릿 id가 유일하고 authored 소스다', () => {
     const ids = ACT1_AUTHORED_DRILLS.map(template => template.id);
-    expect(ids).toEqual(['act-ch02-fold-utg', 'act-ch02-open-btn']);
+    expect(ids).toEqual(['act-ch01-pair-beats-high', 'act-ch02-fold-utg', 'act-ch02-open-btn']);
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of ACT1_AUTHORED_DRILLS) {
       expect(template.source.kind).toBe('authored');
       expect(template.hints.length).toBeGreaterThan(0);
       if (template.source.kind !== 'authored') throw new Error('unreachable');
       expect(template.source.instance.explanation.text.trim().length).toBeGreaterThan(0);
-      expect(template.source.instance.explanation.speaker).toBe('sakura');
+      expect(template.source.instance.explanation.speaker).toBe(template.id.startsWith('act-ch01-') ? 'miyako' : 'sakura');
     }
   });
 
   it('A6 템플릿 순서를 지킨다', () => {
     for (const chapter of ACT1) {
+      // Ch1은 프롤로그 직후 첫 핸드(연습 1핸드) + 짧은 씬, Ch2는 Ch1 선택 회상 씬 3개(플래그 분기)가 앞에 붙는다 (2026-10-19 A1·A2)
+      const base = ['scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result'];
       const expected = chapter.id === 'act1-ch01'
-        ? ['scene', 'lesson', 'drill-set', 'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result']
-        : ['scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result'];
+        ? ['scene', 'practice-table', 'scene', 'lesson', 'drill-set', 'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result']
+        : chapter.id === 'act1-ch02'
+          ? ['scene', 'scene', 'scene', ...base]
+          : base;
       expect(stepKinds(chapter)).toEqual(expected);
       for (const step of chapter.steps) expect(step.id.startsWith(`${chapter.id}:`)).toBe(true);
     }
@@ -154,13 +160,72 @@ describe('1막 챕터 데이터', () => {
 
   it('드릴 수와 프리셋 핸드 수가 커리큘럼(A5-1)과 같다', () => {
     expect([drillCount(CH01), drillCount(CH02), drillCount(CH03)]).toEqual([6, 7, 8]);
-    expect([presetHandCount(CH01), presetHandCount(CH02), presetHandCount(CH03)]).toEqual([2, 2, 2]);
+    expect([presetHandCounts(CH01), presetHandCounts(CH02), presetHandCounts(CH03)]).toEqual([[1, 2], [2], [2]]);
 
     // Ch2의 수기 문항은 시드 고정 — 상황이 매번 같아야 수기 해설이 성립한다.
     const drills = CH02.steps.find(step => step.kind === 'drill-set');
     if (drills?.kind !== 'drill-set') throw new Error('fixture');
     const authored = drills.drills.find(slot => slot.templateId === 'act-ch02-fold-utg');
     expect(authored).toEqual({ templateId: 'act-ch02-fold-utg', seedPolicy: 'fixed', fixedSeed: 0 });
+  });
+
+  it('Ch1은 프롤로그 바로 뒤에 결과가 정해진 첫 핸드 1개를 두고, 본 연습은 같은 핸드를 반복하지 않는다 (2026-10-19 A1)', () => {
+    expect(CH01.steps.slice(0, 4).map(step => step.id)).toEqual([
+      'act1-ch01:prologue', 'act1-ch01:first-hand', 'act1-ch01:first-hand-after', 'act1-ch01:lesson-foundation',
+    ]);
+    const first = CH01.steps[1];
+    const practice = CH01.steps.find(step => step.id === 'act1-ch01:practice');
+    if (first.kind !== 'practice-table' || practice?.kind !== 'practice-table') throw new Error('fixture');
+    expect(first.scripts).toEqual([{ hero: 'As Ks', board: 'Ah Kd 7c 2d 9s', villains: { 2: 'Qh Qd' } }]);
+    // 라인업·블라인드·턴 시간·봇 속도는 본 연습과 같다
+    expect(first.table).toEqual(practice.table);
+    expect(first.perHandPrompt).toContain('끝까지');
+    expect(practice.scripts[0].hero).not.toBe('As Ks');
+    expect(practice.scripts[1]).toEqual({ hero: '7d 2c' });
+
+    const after = CH01.steps[2];
+    if (after.kind !== 'scene') throw new Error('fixture');
+    expect(after.scene.lines.map(line => (line.kind === 'say' ? line.speaker : 'choice'))).toEqual(['partner', 'miyako']);
+
+    // 첫 드릴의 첫 문항은 수기 2인 문항(원페어 vs 하이카드) — 시드 고정
+    const drills = CH01.steps.find(step => step.id === 'act1-ch01:drills');
+    if (drills?.kind !== 'drill-set') throw new Error('fixture');
+    expect(drills.drills[0]).toEqual({ templateId: 'act-ch01-pair-beats-high', seedPolicy: 'fixed', fixedSeed: 0 });
+    const easy = ACT1_AUTHORED_DRILLS.find(template => template.id === 'act-ch01-pair-beats-high');
+    if (easy?.source.kind !== 'authored') throw new Error('fixture');
+    expect(easy.source.instance.situation.villains).toHaveLength(1);
+    expect(easy.source.instance.answerSpec).toEqual({ kind: 'multiple-choice', options: ['나', '초코'], correctIndex: 1 });
+    // 정답 검산 — 나 A 하이카드 < 초코 9 원페어
+    const { hero, board, villains } = easy.source.instance.situation;
+    const heroHand = evaluateHand(hero, board);
+    const villainHand = evaluateHand(villains[0].holeCards!, board);
+    expect([heroHand.rank, villainHand.rank]).toEqual(['high-card', 'one-pair']);
+    expect(villainHand.value).toBeGreaterThan(heroHand.value);
+  });
+
+  it('Ch2 회상 씬은 Ch1 에필로그 선택값마다 하나씩이고, 플래그가 없으면 셋 다 건너뛴다 (2026-10-19 A2)', () => {
+    const epilogue = CH01.steps.find(step => step.id === 'act1-ch01:epilogue');
+    if (epilogue?.kind !== 'scene') throw new Error('fixture');
+    const choice = epilogue.scene.lines.find(line => line.kind === 'choice');
+    if (choice?.kind !== 'choice') throw new Error('fixture');
+    const values = choice.choice.options.map(option => option.setFlags?.['choice:act1-ch01:after']);
+    expect(values).toEqual(['thanks', 'more', 'quiet']);
+
+    const recalls = CH02.steps.slice(0, 3);
+    expect(recalls.map(step => step.id)).toEqual(['act1-ch02:recall-thanks', 'act1-ch02:recall-more', 'act1-ch02:recall-quiet']);
+    expect(CH02.steps[3].id).toBe('act1-ch02:prologue');
+    const scenes = recalls.map(step => {
+      if (step.kind !== 'scene') throw new Error('fixture');
+      for (const line of step.scene.lines) expect(line.kind === 'say' && line.speaker).toBe('partner');
+      return step.scene;
+    });
+
+    // 서버 sceneMatches와 같은 규칙(scene-cursor) — Ch1을 안 했으면 회상 0개, 했으면 정확히 1개
+    expect(scenes.filter(scene => sceneMatchesFlags(scene, {}))).toHaveLength(0);
+    for (const value of values) {
+      const matched = scenes.filter(scene => sceneMatchesFlags(scene, { 'choice:act1-ch01:after': value! }));
+      expect(matched.map(scene => scene.id)).toEqual([`act1-ch02:recall-${value}`]);
+    }
   });
 
   it('1막은 비선형(requires 없음)이고 담당·띠가 커리큘럼과 같다 (2026-09-03 피드백 ②)', () => {
@@ -175,7 +240,7 @@ describe('1막 챕터 데이터', () => {
   it('보상 수치가 A5-2 표와 같다', () => {
     expect(CH01.rewards.first).toEqual({
       dojoXpMilli: 100_000,
-      affinity: [{ target: 'partner', milli: 30_000 }],
+      affinity: [{ target: 'partner', milli: 50_000 }],
       badgeId: 'story-white-belt',
     });
     expect(CH01.rewards.replay.dojoXpMilli).toBe(20_000);
@@ -183,12 +248,12 @@ describe('1막 챕터 데이터', () => {
 
     expect(CH02.rewards.first).toEqual({
       dojoXpMilli: 150_000,
-      affinity: [{ target: 'sakura', milli: 100_000 }],
+      affinity: [{ target: 'sakura', milli: 100_000 }, { target: 'partner', milli: 20_000 }],
       badgeId: 'story-patience-sprout',
     });
     expect(CH03.rewards.first).toEqual({
       dojoXpMilli: 150_000,
-      affinity: [{ target: 'hana', milli: 100_000 }],
+      affinity: [{ target: 'hana', milli: 100_000 }, { target: 'partner', milli: 20_000 }],
       badgeId: 'story-yellow-belt',
     });
     for (const chapter of [CH02, CH03]) {

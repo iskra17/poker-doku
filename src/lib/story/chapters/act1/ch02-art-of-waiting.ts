@@ -9,8 +9,30 @@
  *   바꾸려면 리뷰·드릴 해설과 함께 옮길 것.
  * - 백분위는 `hand-rankings.ts`의 `handPercentile` 실측값(A♠A♥ 0.23% / A♦J♦ 2.56% / J♣7♦ 69.68%).
  */
-import type { Chapter } from '../../types';
+import type { Chapter, Scene, SceneSayLine, Step } from '../../types';
 import { guidedSituation } from '../helpers';
+
+/**
+ * Ch1 에필로그 선택(`choice:act1-ch01:after`)을 파트너가 기억하는 회상 씬 (2026-10-19 A2).
+ * 값마다 씬 1개 — 서버 `sceneMatches`가 맞지 않는 씬을 건너뛰므로 Ch1을 안 했으면 셋 다 건너뛴다(1막 비선형 유지).
+ * 화자 'partner'는 6명 누구여도 어색하지 않게 Ch1과 같은 중립 말줄임체로 쓴다.
+ */
+const CH01_AFTER_FLAG = 'choice:act1-ch01:after';
+
+function recallStep(value: 'thanks' | 'more' | 'quiet', lines: Array<Pick<SceneSayLine, 'text' | 'expression'>>): Step {
+  const id = `act1-ch02:recall-${value}`;
+  const scene: Scene = {
+    id,
+    requiresFlags: { [CH01_AFTER_FLAG]: value },
+    lines: lines.map((line, index) => ({
+      kind: 'say',
+      speaker: 'partner',
+      ...line,
+      ...(index === 0 ? { bg: 'dojo-table' } : {}),
+    })),
+  };
+  return { kind: 'scene', id, scene };
+}
 
 export const CH02: Chapter = {
   id: 'act1-ch02',
@@ -24,6 +46,20 @@ export const CH02: Chapter = {
   requires: [],
   estimatedMinutes: 15,
   steps: [
+    // ───────────────────────────────────────────── Ch1 마지막 한마디 회상 (플래그가 맞는 1개만 재생)
+    recallStep('thanks', [
+      { text: '…지난번 그 말, 아직 기억하고 있어. 「옆에 있어 줘서 고마웠어요」.', expression: 'happy' },
+      { text: '그런 말 들으면… 오늘도 옆자리는 비워 둘 수밖에.', expression: 'happy' },
+    ]),
+    recallStep('more', [
+      { text: '「한 핸드 더」라고 했던 거, 기억나. 그래서 오늘도 왔지.', expression: 'confident' },
+      { text: '좋아. 오늘은 그 한 핸드를 언제 치고 언제 넘기는지부터.', expression: 'neutral' },
+    ]),
+    recallStep('quiet', [
+      { text: '지난번, 말없이 카드 정리하던 손… 아직 눈에 남아 있어.', expression: 'neutral' },
+      { text: '오늘 수업은 그런 손에 잘 맞을 거야. 기다리는 법이니까.', expression: 'happy' },
+    ]),
+
     // ───────────────────────────────────────────── 프롤로그
     {
       kind: 'scene',
@@ -381,7 +417,7 @@ export const CH02: Chapter = {
   rewards: {
     first: {
       dojoXpMilli: 150_000,
-      affinity: [{ target: 'sakura', milli: 100_000 }],
+      affinity: [{ target: 'sakura', milli: 100_000 }, { target: 'partner', milli: 20_000 }],
       badgeId: 'story-patience-sprout',
     },
     replay: { dojoXpMilli: 30_000 },

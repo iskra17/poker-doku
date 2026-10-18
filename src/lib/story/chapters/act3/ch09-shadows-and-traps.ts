@@ -47,5 +47,5 @@ export const CH09:Chapter={
   {kind:'result',id:'ch09-result'},
  ],
  failScene:scene('ch09-failure',['…멈춰도 돼. 한 번의 레이즈가 네 실력을 전부 말해 주지는 않아.','그 스트리트에서 누가 먼저 체크했고, 언제 벳이 나왔는지 다시 놓아 보자. 결과를 지우면 결정이 더 잘 보여.','다시 할 때도 새 패야. 지난 답을 외우지 말고, 이번에 남은 가능성을 세어. 기다릴게.']),
- rewards:{first:{dojoXpMilli:300_000,affinity:[{target:'elena',milli:100_000}],badgeId:'story-title-shadow-reader'},replay:{dojoXpMilli:50_000},gradeBonusMilli:{A:60_000,S:150_000}},
+ rewards:{first:{dojoXpMilli:300_000,affinity: [{ target: 'elena', milli: 100_000 }, { target: 'partner', milli: 20_000 }],badgeId:'story-title-shadow-reader'},replay:{dojoXpMilli:50_000},gradeBonusMilli:{A:60_000,S:150_000}},
 };

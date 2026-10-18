@@ -90,13 +90,16 @@ describe('Ch10 폭풍 속의 콜', () => {
     expect(boss.objectives.bonus.map(objective => objective.kind)).toEqual(['net-chips']);
   });
 
-  it('첫 완주 보상은 비비안 인연 + 폭풍의 콜 칭호다', () => {
+  it('첫 완주 보상은 비비안 인연 + 파트너 인연 20 + 폭풍의 콜 칭호다', () => {
     const grant = firstClearRewards(CH10, 'B', 'sakura');
     expect(grant).toEqual({
       dojoXpMilli: 300_000,
-      affinity: [{ characterId: 'vivian', milli: 100_000 }],
+      affinity: [{ characterId: 'vivian', milli: 100_000 }, { characterId: 'sakura', milli: 20_000 }],
       badgeId: 'story-title-storm-caller',
     });
+    // 파트너가 교사와 같으면 합산된다 (2026-10-19 A6)
+    expect(firstClearRewards(CH10, 'B', 'vivian').affinity).toEqual([{ characterId: 'vivian', milli: 120_000 }]);
+    expect(firstClearRewards(CH10, 'S', null).affinity).toEqual([{ characterId: 'vivian', milli: 100_000 }]);
     expect(firstClearRewards(CH10, 'S', null).dojoXpMilli).toBe(420_000);
   });
 });

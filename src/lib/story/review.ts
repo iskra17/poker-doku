@@ -15,9 +15,12 @@ import type { CompletedHandRecord } from '@/lib/poker/hand-history';
 import {
   PREMIUM_PERCENTILE,
   deriveHeroHandFacts,
+  evaluateObjective,
   type HeroHandFacts,
+  type ObjectiveTally,
   type PricedDecisionFact,
 } from './objectives';
+import type { Objective } from './types';
 import type { DecisionMark, DecisionReview, DecisionVerdict } from './views';
 
 /** 기본 최대 판정 수 — 결산 카드가 한 화면에 담을 수 있는 분량. */
@@ -35,6 +38,33 @@ const OVERBET_REASON: Readonly<Record<'good' | 'warn', string>> = {
   good: '팟을 넘는 오버벳 대면이에요. 이 챕터의 폴라라이즈 가정에 맞는 결정이에요.',
   warn: '팟을 넘는 오버벳 대면이에요. 폴라라이즈 가정에서는 홀카드가 관여한 투페어 이상만 콜하고, 그 아래는 폴드예요.',
 };
+
+/**
+ * 쇼다운 미션 정책(`showdownMission`) — `reach-showdown` 목표를 아직 못 채운 핸드의 콜 ⚠를 완화한다.
+ * "쇼다운까지 가 보기" 미션을 따르는 콜을 리뷰가 "오즈가 맞지 않는 콜"이라고 꾸짖던 문제
+ * (2026-10-18 플레이테스트 A5-8). 판정을 지우지 않고 🤔 안내로 바꾸고, 가격 수치는 그대로 보여 준다.
+ */
+function showdownMissionReason(verdict: DecisionVerdict): string {
+  const potOdds = verdict.facts.potOdds;
+  const equity = verdict.facts.equity;
+  const price = typeof potOdds === 'number' && typeof equity === 'number'
+    ? `(콜 값 ${pct(potOdds)}%, 추정 승률 ${pct(equity)}%)`
+    : '';
+  return `쇼다운 미션을 위한 콜이었어요 — 실전이라면 가격${price}을 먼저 따져 봐요.`;
+}
+
+/**
+ * 이 핸드 **시작 시점**에 `reach-showdown` 목표(primary·bonus)가 아직 미달성인가.
+ * 호출자는 이번 핸드를 tally에 더하기 **전** 상태를 넘긴다 — 이번 핸드로 목표를 채웠어도 그 콜은 미션을 위한 콜이다.
+ */
+export function showdownMissionPending(
+  objectives: { primary: readonly Objective[]; bonus: readonly Objective[] },
+  tally: ObjectiveTally,
+): boolean {
+  return [...objectives.primary, ...objectives.bonus].some(objective => (
+    objective.kind === 'reach-showdown' && evaluateObjective(objective, tally, false).achieved === false
+  ));
+}
 
 function pct(value: number): number {
   return Math.round(value * 100);
@@ -129,7 +159,7 @@ function preflopEntry(facts: HeroHandFacts): Entry | null {
 export function reviewHand(
   record: CompletedHandRecord,
   heroId: string,
-  opts?: { maxVerdicts?: number; overbetPolarized?: boolean },
+  opts?: { maxVerdicts?: number; overbetPolarized?: boolean; showdownMission?: boolean },
 ): DecisionReview | null {
   const facts = deriveHeroHandFacts(record, heroId);
   if (!facts.dealtIn || facts.voluntaryActions === 0) return null;
@@ -171,6 +201,14 @@ export function reviewHand(
     for (const entry of entries) {
       if (entry.order !== facts.overbetActionIndex) continue;
       entry.verdict = { ...entry.verdict, mark, reason: OVERBET_REASON[mark] };
+    }
+  }
+
+  // 쇼다운 미션 정책: 미션을 따르는 콜의 ⚠(가격·하위 레인지 참여)를 🤔 안내로 낮춘다. 폴드·레이즈 판정은 그대로다.
+  if (opts?.showdownMission) {
+    for (const entry of entries) {
+      if (entry.verdict.action !== 'call' || entry.verdict.mark !== 'warn') continue;
+      entry.verdict = { ...entry.verdict, mark: 'hmm', reason: showdownMissionReason(entry.verdict) };
     }
   }
 

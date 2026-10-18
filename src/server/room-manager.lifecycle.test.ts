@@ -346,6 +346,42 @@ describe('RoomManager wallet cash persistence hooks', () => {
     expect(room.engine.state.isHandInProgress).toBe(false);
   });
 
+  it('re-broadcasts the room list after a mid-hand exit is settled at hand end (A5-7)', () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const economy = hooks({
+      settleExit: vi.fn((_roomId, player) => {
+        order.push(`exit:${player.id}`);
+      }),
+    });
+    const onRoomsChanged = vi.fn(() => {
+      order.push('rooms-changed');
+    });
+    manager = new RoomManager(() => {}, () => {}, onRoomsChanged, { economy });
+    const roomId = manager.createRoom(makeWalletConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0));
+    manager.joinRoom(roomId, makeHuman('p2', 1));
+    manager.joinRoom(roomId, makeHuman('p3', 2));
+    vi.advanceTimersByTime(2_001);
+    const room = manager.getRoom(roomId)!;
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    const leaver = room.engine.state.players[room.engine.state.activePlayerIndex];
+
+    // 3인 중 1명 이탈 — 핸드는 계속되고 지갑 정산은 핸드 끝으로 미뤄진다
+    manager.leaveRoom(roomId, leaver.id);
+    expect(room.engine.state.isHandInProgress).toBe(true);
+    expect(economy.settleExit).not.toHaveBeenCalled();
+    order.length = 0;
+
+    // 남은 두 사람 중 차례인 쪽이 폴드 → 핸드 종료 → 미뤘던 정산 → room-list 재방송
+    const actor = room.engine.state.players[room.engine.state.activePlayerIndex];
+    expect(manager.processPlayerAction(roomId, actor.id, 'fold')).toBe(true);
+    expect(room.engine.state.isHandInProgress).toBe(false);
+    expect(economy.settleExit).toHaveBeenCalledOnce();
+    expect(order.indexOf(`exit:${leaver.id}`)).toBeGreaterThanOrEqual(0);
+    expect(order.lastIndexOf('rooms-changed')).toBeGreaterThan(order.indexOf(`exit:${leaver.id}`));
+  });
+
   it('preserves escrow on disconnect and settles between-hands exits and room disposal once', () => {
     vi.useFakeTimers();
     const economy = hooks();

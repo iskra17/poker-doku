@@ -139,7 +139,7 @@ export const CH10: Chapter = {
     '다시 하면 카드는 새로 깔려요. 지난 패를 외우지 말고, 이번 가격표를 읽어요.',
   ]),
   rewards: {
-    first: { dojoXpMilli: 300_000, affinity: [{ target: 'vivian', milli: 100_000 }], badgeId: 'story-title-storm-caller' },
+    first: { dojoXpMilli: 300_000, affinity: [{ target: 'vivian', milli: 100_000 }, { target: 'partner', milli: 20_000 }], badgeId: 'story-title-storm-caller' },
     replay: { dojoXpMilli: 50_000 },
     gradeBonusMilli: { A: 50_000, S: 120_000 },
   },

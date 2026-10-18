@@ -7,6 +7,8 @@ import { Player, RoomConfig } from '../lib/poker/types';
  * 혼자 연습(bots) 방에서 인연 파트너 캐릭터를 테이블에 보장한다.
  * 빈 좌석이 있으면 추가, 만석이면 봇 하나가 양보, 이미 있으면 no-op,
  * bots 외 구성/핸드 진행 중에는 동작하지 않는다.
+ * 휴먼 아바타와 같은 캐릭터는 앉히지 않는다 (2026-10-18 플레이테스트 — 같은 얼굴 중복).
+ * join-room 경로는 2026-10-19부터 이 함수를 부르지 않는다(파트너 = 훈수 담당).
  */
 
 function makeConfig(overrides: Partial<RoomConfig> = {}): RoomConfig {
@@ -25,12 +27,12 @@ function makeConfig(overrides: Partial<RoomConfig> = {}): RoomConfig {
   };
 }
 
-function makeHuman(id: string, seatIndex = 0): Player {
+function makeHuman(id: string, seatIndex = 0, avatar = 'player'): Player {
   return {
     id,
     name: `휴먼-${id}`,
     type: 'human',
-    avatar: 'player',
+    avatar,
     chips: 2000,
     seatIndex,
     holeCards: [],
@@ -105,6 +107,18 @@ describe('ensurePartnerBot — 파트너 우선 착석', () => {
     expect(seatedCharacters(manager, roomId)).toContain(partner);
     // 휴먼 좌석은 그대로
     expect(room.engine.state.players.some(p => p.id === 'p1')).toBe(true);
+  });
+
+  it('휴먼 아바타가 파트너와 같은 캐릭터면 파트너 봇을 앉히지 않는다', () => {
+    const roomId = manager.createRoom(makeConfig());
+    manager.joinRoom(roomId, makeHuman('p1', 0, 'sakura'));
+    const before = manager.getRoom(roomId)!.engine.state.players.length;
+
+    expect(manager.ensurePartnerBot(roomId, 'sakura')).toBe(false);
+    expect(seatedCharacters(manager, roomId)).not.toContain('sakura');
+    expect(manager.getRoom(roomId)!.engine.state.players.length).toBe(before);
+    // 다른 캐릭터는 그대로 앉힐 수 있다
+    expect(manager.ensurePartnerBot(roomId, 'hana')).toBe(true);
   });
 
   it('bots 외 구성과 미지 캐릭터는 거절한다', () => {
