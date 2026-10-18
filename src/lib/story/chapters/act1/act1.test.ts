@@ -5,7 +5,8 @@
  * generator.test.ts, 라이브 스텝 동작은 story-live-adapter.test.ts가 맡는다.
  */
 import { describe, expect, it } from 'vitest';
-import { evaluateHand } from '@/lib/poker/evaluator';
+import { parseCards } from '@/lib/poker/card-notation';
+import { compareHands, evaluateHand } from '@/lib/poker/evaluator';
 import { ACT1_AUTHORED_DRILLS } from '../../drills/templates/authored/act1';
 import { sceneMatchesFlags } from '../../scene-cursor';
 import type { Chapter, Scene, SceneSayLine, Step } from '../../types';
@@ -176,7 +177,22 @@ describe('1막 챕터 데이터', () => {
     const first = CH01.steps[1];
     const practice = CH01.steps.find(step => step.id === 'act1-ch01:practice');
     if (first.kind !== 'practice-table' || practice?.kind !== 'practice-table') throw new Error('fixture');
-    expect(first.scripts).toEqual([{ hero: 'As Ks', board: 'Ah Kd 7c 2d 9s', villains: { 2: 'Qh Qd' } }]);
+    expect(first.scripts).toHaveLength(1);
+    const [script] = first.scripts;
+    expect(script.hero).toBe('As Ks');
+    expect(script.board).toBe('Ah Kd 7c 2d 9s');
+    // 정해진 승리 — 라인업의 모든 상대 좌석이 카드를 고정하고, 히어로가 각각을 평가기로 이긴다
+    const villainSeats = first.table.lineup.map(seat => seat.seatIndex).sort();
+    expect(Object.keys(script.villains ?? {}).map(Number).sort()).toEqual(villainSeats);
+    const scriptBoard = parseCards(script.board!);
+    const heroBest = evaluateHand(parseCards(script.hero!), scriptBoard);
+    expect(heroBest.rank).toBe('two-pair');
+    const used = [script.hero!, script.board!, ...Object.values(script.villains ?? {})].join(' ').split(' ');
+    expect(new Set(used).size).toBe(used.length);
+    for (const holeCards of Object.values(script.villains ?? {})) {
+      const villainBest = evaluateHand(parseCards(holeCards), scriptBoard);
+      expect(compareHands(heroBest, villainBest)).toBeGreaterThan(0);
+    }
     // 라인업·블라인드·턴 시간·봇 속도는 본 연습과 같다
     expect(first.table).toEqual(practice.table);
     expect(first.perHandPrompt).toContain('끝까지');
