@@ -1,6 +1,8 @@
 'use client';
 
 import { useMemo } from 'react';
+import { getCharacterById } from '@/lib/characters';
+import { nextBondScene } from '@/lib/characters/bond-scenes';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import {
   ACT_BELT,
@@ -38,7 +40,10 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const load = useStoryStore(state => state.load);
   // 운영자 모드 — 잠긴 챕터도 열어 둔다(서버 start도 operator면 해금 검사를 우회)
   const operator = useOperatorMode();
-  const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null) as StoryHeroineId | null;
+  const progression = useProgressionStore(state => state.snapshot);
+  const partnerId = progression?.profile.selectedCharacterId ?? null;
+  const affinity = progression?.affinities.find(entry => entry.characterId === partnerId);
+  const nextScene = partnerId ? nextBondScene(partnerId, affinity?.level ?? 1, affinity?.xpMilli) : null;
 
   const recommendation = progress ? recommendChapter(STORY_CHAPTERS, progress) : null;
 
@@ -106,6 +111,13 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         </span>
       </div>
 
+      {partnerId && (
+        <div className="mb-2 rounded-xl border border-blossom/20 bg-panel/90 px-3 py-2 text-[11px]" aria-label="파트너 인연">
+          <p className="font-bold text-ink">{getCharacterById(partnerId)?.name ?? '파트너'} · 인연 Lv.{affinity?.level ?? 1}</p>
+          {nextScene && <p className="mt-0.5 leading-relaxed text-blossom">다음 인연 씬 「{nextScene.title}」 · Lv.{nextScene.unlockLevel}까지 {nextScene.xpRemaining} XP</p>}
+        </div>
+      )}
+
       {recommendation && (
         <p className="mb-1 px-1 text-xs leading-relaxed text-ink-dim" aria-label="추천 수련">
           <span className="font-bold text-blossom">추천 수련</span> · {recommendationCopy(recommendation)}
@@ -141,7 +153,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                   walletReward={walletReward}
                   rewardHints={rewardHints}
                   recommended={recommendation?.chapterId === chapter.id}
-                  partnerId={partnerId}
+                  partnerId={partnerId as StoryHeroineId | null}
                   pending={pending || (!!activeRun && activeRun.chapterId !== chapter.id)}
                   onStart={() => void startChapter(chapter.id)}
                   onExam={() => void startChapter(chapter.id, 'exam')}

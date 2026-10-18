@@ -72,6 +72,20 @@ export interface ProfileStoreState {
 
 type ProfileStore = UseBoundStore<StoreApi<ProfileStoreState>>;
 
+/** 개인화 room-list 수신 뒤, 좌석 없는 로비에 남은 정산 전 지갑만 다시 읽는다. */
+export function shouldRefreshLobbyWallet({ roomsChanged, currentRoomId, pendingRoomId, rooms, profile, hasActiveSeat = false }: {
+  roomsChanged: boolean;
+  currentRoomId: string | null;
+  pendingRoomId: string | null;
+  rooms: readonly { mySeat?: unknown }[];
+  profile: Pick<PublicProfile, 'wallet'> | null;
+  hasActiveSeat?: boolean;
+}): boolean {
+  return roomsChanged && currentRoomId === null && pendingRoomId === null
+    && profile !== null && ((profile.wallet.activeEscrow > 0) || hasActiveSeat)
+    && !rooms.some(room => room.mySeat);
+}
+
 const RECOVERY_ACK_PREFIX = 'poker-doku-recovery-saved:';
 const DEFAULT_ERROR = '요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.';
 

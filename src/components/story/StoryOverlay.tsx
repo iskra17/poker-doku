@@ -149,7 +149,7 @@ export default function StoryOverlay() {
               ⏭ 스킵
             </button>
           )}
-          <div className="absolute bottom-16 right-1 top-[4.5rem] flex items-start md:bottom-20">
+          <div className="absolute bottom-16 right-1 top-[4.5rem] flex max-w-[44vw] items-start md:bottom-20 md:max-w-none">
             <ObjectiveHud
               key={stepKey}
               tag={live?.tag ?? '대결'}

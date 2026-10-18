@@ -3,6 +3,7 @@ import {
   createProfileStore,
   normalizeRecoveryWords,
   recoveryAcknowledgementKey,
+  shouldRefreshLobbyWallet,
 } from './profile-store';
 
 const PROFILE = {
@@ -27,6 +28,32 @@ const ECONOMY = {
     reason: 'balance-threshold' as const,
   },
 };
+
+describe('shouldRefreshLobbyWallet', () => {
+  const update = {
+    roomsChanged: true,
+    currentRoomId: null,
+    pendingRoomId: null,
+    rooms: [{}],
+    profile: { ...PROFILE, wallet: { balance: 8_000, activeEscrow: 2_000 } },
+  };
+  it('로비에서 좌석 없는 새 목록을 받으면 정산 뒤 지갑을 다시 읽는다', () => {
+    expect(shouldRefreshLobbyWallet(update)).toBe(true);
+    // 직전 목록에도 좌석이 없을 수 있다(pendingRemoval). 정산 뒤 별도 방송도 잡는다.
+    expect(shouldRefreshLobbyWallet({ ...update, rooms: [] })).toBe(true);
+    expect(shouldRefreshLobbyWallet({ ...update, profile: PROFILE, hasActiveSeat: true })).toBe(true);
+  });
+  it('방 목록이 안 바뀌는 프로필 응답·다른 스토어 갱신은 재조회하지 않는다', () => {
+    expect(shouldRefreshLobbyWallet({ ...update, roomsChanged: false })).toBe(false);
+    expect(shouldRefreshLobbyWallet({ ...update, profile: PROFILE })).toBe(false);
+    expect(shouldRefreshLobbyWallet({ ...update, profile: null })).toBe(false);
+  });
+  it('테이블·입장 대기·보존 좌석이 있으면 재조회하지 않는다', () => {
+    expect(shouldRefreshLobbyWallet({ ...update, currentRoomId: 'room-1' })).toBe(false);
+    expect(shouldRefreshLobbyWallet({ ...update, pendingRoomId: 'room-1' })).toBe(false);
+    expect(shouldRefreshLobbyWallet({ ...update, rooms: [{ mySeat: { chips: 0 } }] })).toBe(false);
+  });
+});
 
 const WORDS = '가게 가격 가구 가까이 가끔 가난 가늘 가득 가로 가방 가수 가슴';
 const NEW_WORDS = '나무 나비 나라 나름 나중 낮다 낳다 내년 너무 넓다 넘다 넣다';

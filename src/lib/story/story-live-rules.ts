@@ -145,7 +145,7 @@ export function liveFinishHint(view: StoryLiveView | null): string | null {
   if (!view || view.tag !== '대결') return null;
   // 졸업 대결은 순위가 끝을 정한다 — 핸드 수 상한은 안내하지 않는다(폭주 가드일 뿐)
   if (view.tournament) return '탈락하거나 우승하면 끝나요 · 자리를 비워도 블라인드는 계속 나가요';
-  if (view.minHands !== null) return `목표를 다 채우면 끝나요 (최대 ${view.maxHands}핸드)`;
+  if (view.minHands !== null) return `최소 ${view.minHands}핸드 · 목표를 다 채우면 끝나요 (최대 ${view.maxHands}핸드)`;
   return `${view.maxHands}핸드까지 진행해요`;
 }
 

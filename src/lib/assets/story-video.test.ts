@@ -1,11 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { BONUS_CG_VIDEO_STEMS } from '@/lib/story/rewards/bonus-cg';
+import { getBondScenes } from '@/lib/characters/bond-scenes';
 import { getStoryVideo, hasStoryVideo, sceneCgVideoId } from './story-video';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 
 describe('story-video 매니페스트', () => {
+  it('새 해금 레벨에서도 기존 인연 씬 영상 키를 유지한다', () => {
+    for (const characterId of ['sakura', 'ara', 'hana', 'chloe', 'vivian', 'elena']) {
+      const scenes = getBondScenes(characterId);
+      expect(scenes.map(scene => scene.unlockLevel)).toEqual([2, 4, 7, 10]);
+      for (const scene of scenes) {
+        const id = `${characterId}-scene-lv${scene.level}`;
+        expect(getStoryVideo(id)).toEqual({ webm: `/assets/story/video/${id}.webm`, mp4: `/assets/story/video/${id}.mp4` });
+      }
+    }
+  });
   it('검수된 일반 영상2개는 완료된 쌍 영수증 및 실제 파일 해시와 일치한다', () => {
     const supply = JSON.parse(readFileSync(resolve('scripts/art/library/recipes/first-video-supply-20260905.json'), 'utf8'));
     const jobs = ['sakura-victory-video-v1', 'elena-river-walk-video-v1'];

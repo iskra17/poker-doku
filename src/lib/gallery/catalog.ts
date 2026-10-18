@@ -87,7 +87,7 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
   const affinityLevel = new Map(snapshot?.affinities.map(affinity => [affinity.characterId, affinity.level]) ?? []);
   const entries: GalleryEntry[] = [];
 
-  // 인연 씬 — 히로인 6명 × Lv5/10/15/20
+  // 인연 씬 — 히로인 6명 × 해금 Lv2/4/7/10 (아트 키와 별개)
   for (const characterId of PROGRESSION_CHARACTER_IDS) {
     const level = affinityLevel.get(characterId) ?? 1;
     for (const scene of getBondScenes(characterId)) {
@@ -96,10 +96,10 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
         section: 'bond',
         name: scene.title,
         unlocked: isBondSceneUnlocked(scene, level),
-        hint: `인연 Lv.${scene.level}`,
+        hint: `인연 Lv.${scene.unlockLevel}`,
         art: getBondSceneArt(scene),
         characterId,
-        level: scene.level,
+        level: scene.unlockLevel,
         bond: scene,
         caption: scene.caption,
       });

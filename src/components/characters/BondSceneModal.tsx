@@ -30,10 +30,10 @@ export default function BondSceneModal({ scene, justUnlocked = false, onClose, l
         alt: `${character.name} — ${scene.title}`,
         name: character.name,
         color: character.color,
-        kicker: `BOND MEMORY · Lv.${scene.level}`,
+        kicker: `BOND MEMORY · Lv.${scene.unlockLevel}`,
         title: scene.title,
         caption: scene.caption,
-        badge: justUnlocked ? `✦ 새로운 인연 씬 해금 — 인연 Lv.${scene.level}` : null,
+        badge: justUnlocked ? `✦ 새로운 인연 씬 해금 — 인연 Lv.${scene.unlockLevel}` : null,
         hint: justUnlocked ? '기록실에서 다시 볼 수 있어요 · 탭하면 닫혀요' : undefined,
         // 영상 id는 아트 경로 규약과 같은 '<character>-scene-lv<N>' — 파일럿 3클립 중 사쿠라 Lv5
         video: getStoryVideo(`${scene.characterId}-scene-lv${scene.level}`),

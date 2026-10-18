@@ -9,6 +9,12 @@ import { getCharacterArt } from '@/lib/assets/character-art';
  * jsdom이 없는 저장소라 `renderToStaticMarkup` 문자열로 고정한다.
  */
 describe('CharacterImage frameless', () => {
+  it('보상 초상화는 상단 크롭을 지정하고 다른 버스트의 위치는 유지한다', () => {
+    const top = renderToStaticMarkup(<CharacterImage characterId="sakura" round={false} objectPosition="top" className="h-24 w-full" />);
+    const normal = renderToStaticMarkup(<CharacterImage characterId="sakura" round={false} />);
+    expect(top).toContain('object-position:top');
+    expect(normal).not.toContain('object-position:');
+  });
   const ART_ID = 'sakura';
   const SKIN_ID = 'affinity-sakura-skin';
 

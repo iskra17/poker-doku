@@ -32,14 +32,14 @@ function ObjectiveRow({ line }: { line: ObjectiveHudLine }) {
   const typeLabel = child ? '체크리스트' : line.primary ? '통과 조건' : '보너스';
   const detail = formatObjectiveDetailProgress(line);
   return (
-    <li className={`rounded-lg border border-mystic/20 bg-mystic/5 p-1.5 md:p-2 ${child ? 'ml-3' : ''}`}>
+    <li className={`rounded-lg border border-mystic/20 bg-mystic/5 p-1 md:p-2 ${child ? 'ml-2 md:ml-3' : ''}`}>
       <div className="flex flex-wrap items-center justify-between gap-1 text-[9px]">
         <span className={child ? 'text-mystic' : line.primary ? 'font-bold text-blossom' : 'text-mystic'}>{typeLabel}{achieved ? ' ✓' : ''}</span>
         <span className={detail ? 'tabular text-gilded' : achieved ? 'text-cyber' : 'text-ink-dim'}>
           {detail ?? (achieved ? '달성' : line.achieved === null ? '판정 대기' : '미달성')}
         </span>
       </div>
-      <p className={`mt-1 whitespace-normal break-words text-[11px] leading-relaxed ${achieved ? 'text-cyber' : 'text-ink'}`}>{line.label}</p>
+      <p className={`mt-0.5 whitespace-normal break-words text-[10px] leading-snug md:mt-1 md:text-[11px] md:leading-relaxed ${achieved ? 'text-cyber' : 'text-ink'}`}>{line.label}</p>
     </li>
   );
 }
@@ -71,7 +71,7 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
       <motion.div
         initial={{ opacity: 0, y: -6 }}
         animate={{ opacity: 1, y: 0 }}
-        className="pointer-events-auto flex max-h-full w-[min(200px,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-mystic/30 bg-panel/92 p-2 shadow-lg backdrop-blur-sm md:w-[280px] md:max-w-[280px]"
+        className="pointer-events-auto flex max-h-[min(30dvh,240px,100%)] w-[min(176px,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] flex-col overflow-hidden rounded-xl border border-mystic/30 bg-panel/92 p-1.5 shadow-lg backdrop-blur-sm md:max-h-full md:w-[280px] md:max-w-[280px] md:p-2"
       >
         <button
           type="button"
@@ -79,7 +79,7 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
           disabled={!canExpand}
           aria-expanded={canExpand ? expanded : undefined}
           aria-label={canExpand ? (expanded ? '미션 접기' : '미션 펼치기') : undefined}
-          className="flex min-h-9 w-full shrink-0 items-center gap-2 rounded-lg text-left disabled:cursor-default"
+          className="flex min-h-8 w-full shrink-0 items-center gap-1 rounded-lg text-left disabled:cursor-default md:min-h-9 md:gap-2"
         >
           <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${TAG_STYLE[tag]}`}>
             {tag}
@@ -93,10 +93,10 @@ export default function ObjectiveHud({ tag, handsPlayed, maxHands, minHands, fin
           )}
         </button>
         {canExpand && expanded && (
-          <div className="mt-1.5 min-h-0 flex-1 overflow-y-auto border-t border-mystic/20 pt-1.5 scrollbar-thin">
+          <div className="mt-1 min-h-0 flex-1 overflow-y-auto border-t border-mystic/20 pt-1 scrollbar-thin md:mt-1.5 md:pt-1.5">
             {tournamentBlock}
             {finishHint && <p className="mb-1 text-[9px] text-ink-dim">{finishHint}</p>}
-            <ul className="space-y-1.5">
+            <ul className="space-y-1 md:space-y-1.5">
               {lines.map(line => <ObjectiveRow key={line.id} line={line} />)}
             </ul>
           </div>

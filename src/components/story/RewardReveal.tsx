@@ -2,6 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import CharacterImage from '@/components/characters/CharacterImage';
+import { getCharacterById } from '@/lib/characters';
+import { getBondScenes, nextBondScene } from '@/lib/characters/bond-scenes';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { playEffect } from '@/lib/sound/effects';
 import { playStinger } from '@/lib/sound/stingers';
@@ -10,6 +14,9 @@ import { STAGE_TIMING_MS, buildRewardRevealPlan, stageAutoAdvanceMs, type Reveal
 import type { ChapterResultView } from '@/lib/story/views';
 import { usePresentationStore } from '@/lib/store/presentation-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
+import { useStoryStore } from '@/lib/store/story-store';
+import { useProgressionStore } from '@/lib/store/progression-store';
+import { partnerResultLine } from '@/lib/story/result-lines';
 import BeltBanner from './BeltBanner';
 import RewardCutscene from './RewardCutscene';
 import RewardItemCard, { type RewardCardItem } from './RewardItemCard';
@@ -36,6 +43,11 @@ const GRADE_COLOR: Record<ChapterResultView['grade'], string> = {
  */
 export default function RewardReveal({ result, onDone }: RewardRevealProps) {
   const reduced = usePrefersReducedMotion();
+  const partnerId = useStoryStore(state => state.run?.context.partnerId ?? null);
+  const progression = useProgressionStore(state => state.snapshot);
+  const partnerOutfit = useOutfitId(partnerId);
+  const partner = partnerId ? getCharacterById(partnerId) : null;
+  const partnerLine = partnerResultLine(partnerId, !result.passed ? 'fail' : result.grade === 'S' ? 'sGrade' : 'pass');
   // 보너스 CG를 숨겨 뒀으면 컷신 단계 자체를 만들지 않는다(플랜 입력 — 렌더 숨김은 진행이 멈춘다)
   const showBonusCg = useSettingsStore(state => state.showBonusCg);
   const plan = useMemo(() => buildRewardRevealPlan(result, undefined, { showBonusCg }), [result, showBonusCg]);
@@ -47,9 +59,11 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
   const release = usePresentationStore(state => state.release);
   const doneRef = useRef(false);
 
-  const stage: RevealStage = plan.stages[Math.min(stageIndex, lastIndex)];
+  // 수화 뒤 모션 감소 설정이 들어와도 즉시 최종 표시 상태가 된다.
+  const displayStageIndex = reduced ? lastIndex : Math.min(stageIndex, lastIndex);
+  const stage: RevealStage = plan.stages[displayStageIndex];
   const indexOf = (target: RevealStage) => plan.stages.indexOf(target);
-  const reached = (target: RevealStage) => indexOf(target) !== -1 && stageIndex >= indexOf(target);
+  const reached = (target: RevealStage) => indexOf(target) !== -1 && displayStageIndex >= indexOf(target);
   const cards: RewardCardItem[] = [
     ...plan.items.map(item => ({ kind: 'item' as const, item })),
     ...(plan.chips > 0 ? [{ kind: 'chips' as const, amount: plan.chips }] : []),
@@ -186,18 +200,52 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
         <div className="mt-2 rounded-xl border border-gilded/30 bg-gilded/5 p-2 text-[11px] text-ink">
           <p className="font-bold text-gilded">{daily ? '오늘의 수련 보상' : result.rewards.firstClear ? '첫 완주 보상' : result.passed ? '재도전 보상' : '보상'}</p>
           {result.rewards.dojoXpMilli > 0 && <p>도장 XP +{Math.round(result.rewards.dojoXpMilli / 1000)}</p>}
-          {result.rewards.affinity.map(grant => (
-            <p key={grant.characterId} className="text-blossom">
-              인연 +{Math.round(grant.milli / 1000)}
-              {grant.levelBefore !== undefined && grant.levelAfter !== undefined && grant.levelAfter > grant.levelBefore
-                ? ` · Lv.${grant.levelBefore} → Lv.${grant.levelAfter}`
-                : ''}
-            </p>
-          ))}
+          {result.rewards.affinity.map(grant => {
+            const affinity = progression?.affinities.find(entry => entry.characterId === grant.characterId);
+            const level = Math.max(affinity?.level ?? 1, grant.levelAfter ?? 1);
+            const next = nextBondScene(grant.characterId, level, affinity?.level === level ? affinity.xpMilli : 0);
+            const previousMilestone = getBondScenes(grant.characterId).filter(scene => scene.unlockLevel <= level).at(-1)?.unlockLevel ?? 1;
+            const total = nextBondScene(grant.characterId, previousMilestone)?.xpRemaining ?? 1;
+            const progress = next ? Math.min(100, Math.max(0, (1 - next.xpRemaining / total) * 100)) : 100;
+            return (
+              <div key={grant.characterId} className="text-blossom">
+                <p>
+                  인연 +{Math.round(grant.milli / 1000)}
+                  {grant.levelBefore !== undefined && grant.levelAfter !== undefined && grant.levelAfter > grant.levelBefore
+                    ? ` · Lv.${grant.levelBefore} → Lv.${grant.levelAfter}`
+                    : ''}
+                </p>
+                {next && (
+                  <div className="mt-1">
+                    <p className="text-[10px] leading-relaxed">다음 인연 씬 「{next.title}」 · Lv.{next.unlockLevel}까지 {next.xpRemaining} XP</p>
+                    <div className="mt-1 h-1 overflow-hidden rounded-full bg-blossom/15" role="progressbar" aria-label={`다음 인연 씬 ${next.title}`} aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100}>
+                      <div className="h-full rounded-full bg-blossom" style={{ width: `${progress}%` }} />
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {result.rewards.dojoXpMilli === 0 && result.rewards.affinity.length === 0 && <p className="text-ink-dim">이번엔 없어요 — 통과하면 보상이 열려요</p>}
           {result.reviewNotesAdded > 0 && <p className="text-ink-dim">복습 노트에 {result.reviewNotesAdded}문 추가</p>}
         </div>
       </motion.div>
+      )}
+
+      {!plan.graduationOnly && displayStageIndex > indexOf('stats') && (
+        <motion.div
+          initial={reduced ? false : { opacity: 0, y: 6 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: reduced ? 0 : 0.3 }}
+          className="mt-3 flex items-start gap-2"
+          aria-label="파트너 한마디"
+        >
+          <CharacterImage characterId={partner?.id ?? 'dealer'} expression={result.passed ? 'happy' : 'neutral'} outfitId={partner ? partnerOutfit : null} className="h-11 w-11 shrink-0 text-xl" />
+          <div className="min-w-0 flex-1 rounded-xl rounded-tl-sm border border-blossom/25 bg-blossom/5 px-3 py-2">
+            <p className="text-[10px] font-bold text-blossom">{partner?.name ?? '파트너'}</p>
+            <p className="mt-0.5 text-xs leading-relaxed text-ink">{partnerLine}</p>
+          </div>
+        </motion.div>
       )}
 
       {/* 보상 카드 */}
@@ -211,7 +259,7 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
               <RewardItemCard
                 key={card.kind === 'chips' ? 'chips' : card.item.id}
                 card={card}
-                flipped={index < flipped}
+                flipped={reduced || index < flipped}
                 reducedMotion={reduced}
                 onClick={reduced && card.kind === 'item' && card.item.kind === 'cg' && plan.cutscene?.id === card.item.id
                   ? () => setManualCutscene(true)

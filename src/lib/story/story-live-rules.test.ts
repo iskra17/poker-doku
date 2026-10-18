@@ -5,6 +5,7 @@ import {
   holdCopy,
   isStoryLiveRoom,
   liveHintLevel,
+  liveFinishHint,
   needsResumeFromLobby,
   formatObjectiveProgress,
   formatObjectiveDetailProgress,
@@ -17,6 +18,12 @@ import type { Interrupt, Step } from './types';
 import type { ObjectiveProgressView, StoryLiveView, StoryRunView } from './views';
 
 describe('상세 미션 진행도', () => {
+  it('대결의 최소 핸드·최대 핸드와 조기 종료 조건을 함께 안내한다', () => {
+    expect(liveFinishHint(liveFixture({ minHands: 3, maxHands: 10 }))).toBe('최소 3핸드 · 목표를 다 채우면 끝나요 (최대 10핸드)');
+    expect(liveFinishHint(liveFixture())).toBe('10핸드까지 진행해요');
+    expect(liveFinishHint(liveFixture({ tag: '연습' }))).toBeNull();
+    expect(liveFinishHint(null)).toBeNull();
+  });
   it('실제 위반 횟수를 상한으로 잘라 버리지 않는다', () => {
     expect(formatObjectiveDetailProgress({ progress: 2, target: 1 })).toBe('현재 2 · 기준 1');
   });

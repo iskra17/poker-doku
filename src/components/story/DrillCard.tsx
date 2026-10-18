@@ -123,7 +123,7 @@ export default function DrillCard({
             다시 풀기 {count}문
           </button>
         </div>
-        <p className="sr-only">출제 {teacherId}</p>
+        <p className="sr-only">출제 {resolveSpeaker(teacherId, partnerId).name}</p>
       </div>
     );
   }

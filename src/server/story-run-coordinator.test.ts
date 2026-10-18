@@ -518,9 +518,9 @@ describe('drill set flow', () => {
     expect(view).toMatchObject({ stepIndex: 5, stepKind: 'result', phase: 'result', drill: null });
 
     // 결산: 첫 완주 보상(파트너 +30,000·도장 100,000+등급 보너스), 복습 노트 1, 다음 챕터
-    // 카탈로그 보상 포트: reconcile이 칭호+CG+500칩을 새로 지급하고, 인연은 사쿠라 L4→L5(씬 「벚꽃 아래서」 해금)
+    // 카탈로그 보상 포트: reconcile이 칭호+CG+500칩을 새로 지급하고, 인연은 사쿠라 L1→L2(씬 「벚꽃 아래서」 해금)
     rewards.pending = { granted: [rewardItem('story-title-white-belt'), rewardItem('story-cg-act1-belt-white')], chips: 500 };
-    rewards.transitions = [{ characterId: 'sakura', previousLevel: 4, nextLevel: 5 }];
+    rewards.transitions = [{ characterId: 'sakura', previousLevel: 1, nextLevel: 2 }];
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 5, target: 'next' });
     view = latest();
     expect(view.phase).toBe('ended');
@@ -529,7 +529,7 @@ describe('drill set flow', () => {
       drill: { answered: 3, correct: 2, bestStreak: 2, hintsUsed: 1, slots: 2, finalCorrect: 2, perfect: false, retrySkipped: false },
       rewards: {
         firstClear: true,
-        affinity: [{ characterId: 'sakura', milli: 30_000, levelBefore: 4, levelAfter: 5 }],
+        affinity: [{ characterId: 'sakura', milli: 30_000, levelBefore: 1, levelAfter: 2 }],
         // 호환용 badgeId = 새로 지급된 첫 칭호 id (챕터 데이터의 'white-belt'보다 우선)
         badgeId: 'story-title-white-belt',
         items: [{ id: 'story-title-white-belt', kind: 'title' }, { id: 'story-cg-act1-belt-white', kind: 'cg' }],

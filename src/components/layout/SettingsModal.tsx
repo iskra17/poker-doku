@@ -26,6 +26,7 @@ const BET_STEP_LABELS: Record<BetStepUnit, string> = {
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  initialTab?: SettingsTab;
 }
 
 const PREVIEW_CARDS: CardType[] = [
@@ -226,8 +227,14 @@ function Toggle({ checked, onToggle, label }: { checked: boolean; onToggle: () =
   );
 }
 
-export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const [tab, setTab] = useState<SettingsTab>('game');
+export default function SettingsModal({ isOpen, onClose, initialTab = 'game' }: SettingsModalProps) {
+  const [tab, setTab] = useState<SettingsTab>(initialTab);
+  const [wasOpen, setWasOpen] = useState(isOpen);
+  // 열림 전환에서 보정한다. effect setState 없이 매번 진입 목적의 탭을 보장한다.
+  if (wasOpen !== isOpen) {
+    setWasOpen(isOpen);
+    if (isOpen) setTab(initialTab);
+  }
   const {
     deckStyle, setDeckStyle, deckColor, setDeckColor,
     showDealerAvatar, toggleDealerAvatar, showDealerBubble, toggleDealerBubble,

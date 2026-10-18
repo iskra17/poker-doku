@@ -11,6 +11,8 @@ interface CharacterImageProps {
   expression?: Expression;
   /** 원형 크롭 (좌석 아바타). false면 사각 버스트업 (컷인/로비) */
   round?: boolean;
+  /** 가로로 긴 보상 초상화처럼 머리를 보존해야 하는 크롭. */
+  objectPosition?: string;
   className?: string;
   skinId?: string | null;
   /**
@@ -33,7 +35,7 @@ interface CharacterImageProps {
  */
 export default function CharacterImage({
   characterId, expression = 'neutral', round = true, className = '', skinId = null, outfitId = null,
-  frameless = false,
+  frameless = false, objectPosition,
 }: CharacterImageProps) {
   const [errored, setErrored] = useState(false);
   const character = getCharacterById(characterId);
@@ -80,7 +82,7 @@ export default function CharacterImage({
           transition={{ duration: 0.2 }}
           className="absolute inset-0 w-full h-full object-cover"
           // 버스트업 원본에서 얼굴 중심으로 줌 (원형 크롭용)
-          style={round ? { transform: 'scale(1.5)', transformOrigin: '50% 24%' } : undefined}
+          style={{ ...(round ? { transform: 'scale(1.5)', transformOrigin: '50% 24%' } : {}), objectPosition }}
           onError={() => setErrored(true)}
           draggable={false}
         />

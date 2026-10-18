@@ -8,7 +8,7 @@ import { STORY_CHAPTERS } from '@/lib/story/chapters';
 function snapshot(overrides: Partial<ProgressionSnapshot> = {}): ProgressionSnapshot {
   return {
     profile: { profileId: 'p1', selectedCharacterId: 'sakura', balanceVersion: 1 } as ProgressionSnapshot['profile'],
-    affinities: [{ characterId: 'sakura', level: 5, xpMilli: 0 } as ProgressionSnapshot['affinities'][number]],
+    affinities: [{ characterId: 'sakura', level: 2, xpMilli: 0 } as ProgressionSnapshot['affinities'][number]],
     streak: {} as ProgressionSnapshot['streak'],
     inventory: [{ itemId: 'story-cg-act1-belt-white', quantity: 1, updatedAt: 0 } as ProgressionSnapshot['inventory'][number]],
     equipment: { title: null, frame: null, skin: null, cutin: null },
@@ -31,12 +31,14 @@ function progress(completed: string[] = []): StoryProgressView {
 }
 
 describe('buildGallery', () => {
-  it('보유 CG와 인연 Lv5 씬만 해금되고, 나머지는 잠김 + 조건 문구', () => {
+  it('보유 CG와 인연 Lv2 씬만 해금되고, 잠금 문구는 해금 레벨을 따른다', () => {
     const entries = buildGallery({ snapshot: snapshot(), progress: progress() });
     const unlocked = entries.filter(entry => entry.unlocked).map(entry => entry.id);
     expect(unlocked).toContain('story-cg-act1-belt-white');
     expect(unlocked).toContain('bond:sakura-lv5');
     expect(unlocked.filter(id => id.startsWith('bond:'))).toHaveLength(1);
+    expect(entries.find(entry => entry.id === 'bond:sakura-lv5')).toMatchObject({ hint: '인연 Lv.2', art: '/assets/characters/sakura/scene-lv5.webp', level: 2 });
+    expect(entries.find(entry => entry.id === 'bond:sakura-lv10')).toMatchObject({ unlocked: false, hint: '인연 Lv.4' });
     expect(unlocked.some(id => id.startsWith('bg:'))).toBe(false);
     for (const entry of entries.filter(entry => !entry.unlocked)) expect(entry.hint.length).toBeGreaterThan(0);
     // 잠긴 CG는 컷신 payload를 그대로 들고 있어 해금 즉시 재생 가능

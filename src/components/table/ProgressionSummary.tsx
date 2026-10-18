@@ -57,7 +57,7 @@ export default function ProgressionSummary({ variant = 'table' }: ProgressionSum
         style={{ transform: 'translate(-50%, -50%)' }}
       >
         <div className="overflow-hidden rounded-xl border border-gilded/50 bg-panel/95 p-4 shadow-xl backdrop-blur-sm">
-          <CharacterImage characterId={summary.characterId} expression="happy" round={false} skinId={skinId} className="mb-3 h-24 w-full text-4xl" />
+          <CharacterImage characterId={summary.characterId} expression="happy" round={false} objectPosition="top" skinId={skinId} className="mb-3 h-24 w-full text-4xl" />
           {storyLevelUp && (
             <p className="text-base font-black text-gilded">도장 Lv.{summary.dojoLevelsGained[summary.dojoLevelsGained.length - 1]} 달성!</p>
           )}

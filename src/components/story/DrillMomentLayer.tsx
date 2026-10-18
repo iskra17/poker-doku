@@ -20,7 +20,8 @@ const LINE_VISIBLE_MS = 4_500;
 
 /**
  * 드릴 순간 연출 — 콤보/퍼펙트 스탬프 + 파티클 버스트 + 교사 한마디 말풍선.
- * DrillCard의 relative 래퍼 안에 absolute로 얹힌다(pointer-events none). 문항당 1회.
+ * 말풍선은 카드 상단의 일반 흐름에 넣어 해설을 밀어낸다. 파티클만 absolute로 얹는다.
+ * pointer-events none, 문항당 1회.
  */
 export default function DrillMomentLayer({ momentKey, pick, line, teacherName, teacherColor }: DrillMomentLayerProps) {
   const reduced = usePrefersReducedMotion();
@@ -40,7 +41,7 @@ export default function DrillMomentLayer({ momentKey, pick, line, teacherName, t
   if (!pick) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-10" aria-hidden>
+    <div className="pointer-events-none z-10 flex flex-col items-end gap-2" aria-hidden>
       {pick.burst && !reduced && (
         <div className="absolute inset-0 overflow-hidden">
           <Confetti key={momentKey} particleCount={pick.moment === 'drill-perfect' ? 60 : 28} durationMs={pick.moment === 'drill-perfect' ? 1_500 : 900} />
@@ -54,10 +55,9 @@ export default function DrillMomentLayer({ momentKey, pick, line, teacherName, t
             animate={{ scale: [0.6, 1.2, 1], opacity: 1, rotate: -8 }}
             exit={{ opacity: 0 }}
             transition={{ duration: reduced ? 0 : 0.45 }}
-            className={`absolute left-1/2 top-3 rounded-xl border-2 px-4 py-1.5 font-black shadow-lg ${
+            className={`self-center rounded-xl border-2 px-4 py-1.5 font-black shadow-lg ${
               pick.moment === 'drill-perfect' ? 'border-gilded bg-gilded/15 text-2xl text-gilded' : 'border-blossom bg-blossom/15 text-lg text-blossom'
             }`}
-            style={{ x: '-50%' }}
           >
             {pick.stamp}
           </motion.div>
@@ -70,7 +70,7 @@ export default function DrillMomentLayer({ momentKey, pick, line, teacherName, t
             initial={reduced ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="absolute bottom-2 right-2 max-w-[78%] rounded-2xl rounded-br-sm border bg-panel/95 px-3 py-2 text-[11px] text-ink shadow-lg backdrop-blur-sm"
+            className="max-w-[90%] rounded-2xl rounded-tr-sm border bg-panel/95 px-3 py-2 text-[11px] text-ink shadow-lg backdrop-blur-sm"
             style={{ borderColor: teacherColor ? `${teacherColor}88` : undefined }}
           >
             <span className="mr-1 font-bold" style={{ color: teacherColor ?? undefined }}>{teacherName}</span>

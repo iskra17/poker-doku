@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useGameStore, RoomInfo } from '@/lib/store/game-store';
-import { useProfileStore } from '@/lib/store/profile-store';
+import { shouldRefreshLobbyWallet, useProfileStore } from '@/lib/store/profile-store';
 import { initMusicSystem, setMusicScene } from '@/lib/sound/music-manager';
 import LobbyHeader from '@/components/lobby/LobbyHeader';
 import RoomList from '@/components/lobby/RoomList';
@@ -46,6 +46,7 @@ export default function Home() {
   } = useGameStore();
   const [joinTarget, setJoinTarget] = useState<RoomInfo | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsInitialTab, setSettingsInitialTab] = useState<'game' | 'profile'>('game');
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -69,6 +70,19 @@ export default function Home() {
   }, [bootstrap]);
 
   useEffect(() => subscribeStoryWalletRefresh(useStoryStore, useProfileStore), []);
+
+  useEffect(() => useGameStore.subscribe((state, previous) => {
+    const profileState = useProfileStore.getState();
+    // room-list 1회당 한 번만 판단한다. 프로필 갱신 자체는 이 분기를 다시 실행하지 않는다.
+    if (shouldRefreshLobbyWallet({
+      roomsChanged: state.rooms !== previous.rooms,
+      currentRoomId: state.currentRoomId,
+      pendingRoomId: state.pendingRoomId,
+      rooms: state.rooms,
+      profile: profileState.profile,
+      hasActiveSeat: profileState.economy?.hasActiveSeat,
+    })) void refresh({ afterCurrent: true });
+  }), [refresh]);
 
   useEffect(() => {
     const handleVisibility = () => {
@@ -164,13 +178,13 @@ export default function Home() {
     <div className="flex h-dvh flex-col overflow-hidden pt-safe" style={LOBBY_BG_STYLE}>
       <LobbyHeader
         compact
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={() => { setSettingsInitialTab('game'); setSettingsOpen(true); }}
         onOpenFeedback={() => setFeedbackOpen(true)}
         onOpenHistory={() => setHistoryOpen(true)}
         onOpenHelp={() => setHelpOpen(true)}
         onOpenGallery={() => setGalleryOpen(true)}
       />
-      <EconomyBar onOpenSettings={() => setSettingsOpen(true)} />
+      <EconomyBar onOpenSettings={() => { setSettingsInitialTab('profile'); setSettingsOpen(true); }} />
       <nav aria-label="로비 메뉴" className="mx-auto mb-2 grid w-full max-w-4xl flex-none grid-cols-4 gap-1.5 px-3 md:gap-2 md:px-4">
         {([
           ['games', '게임'],
@@ -248,7 +262,7 @@ export default function Home() {
         )}
       </main>
       <CreateRoomModal />
-      <SettingsModal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal isOpen={settingsOpen} initialTab={settingsInitialTab} onClose={() => setSettingsOpen(false)} />
       <FeedbackModal isOpen={feedbackOpen} onClose={() => setFeedbackOpen(false)} />
       <HandHistoryModal isOpen={historyOpen} onClose={() => setHistoryOpen(false)} />
       <HelpModal isOpen={helpOpen} onClose={() => setHelpOpen(false)} />

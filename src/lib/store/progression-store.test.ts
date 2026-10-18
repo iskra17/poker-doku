@@ -42,17 +42,17 @@ describe('progression store', () => {
       ...snapshot(1),
       affinities: [{ profileId: 'profile-1', characterId: 'sakura', level, xpMilli: 0 }],
     });
-    store.getState().receiveSnapshot(withAffinity(4));
+    store.getState().receiveSnapshot(withAffinity(1));
     expect(store.getState().bondSceneQueue).toEqual([]);
-    store.getState().receiveSnapshot(withAffinity(5));
+    store.getState().receiveSnapshot(withAffinity(2));
     expect(store.getState().bondSceneQueue.map(scene => scene.id)).toEqual(['sakura-lv5']);
     // 멀티 레벨 점프는 순서대로 큐에 쌓인다
-    store.getState().receiveSnapshot(withAffinity(10));
+    store.getState().receiveSnapshot(withAffinity(4));
     expect(store.getState().bondSceneQueue.map(scene => scene.id)).toEqual(['sakura-lv5', 'sakura-lv10']);
     store.getState().shiftBondScene();
     expect(store.getState().bondSceneQueue.map(scene => scene.id)).toEqual(['sakura-lv10']);
     // 같은 레벨 재수신은 쌓지 않는다
-    store.getState().receiveSnapshot(withAffinity(10));
+    store.getState().receiveSnapshot(withAffinity(4));
     expect(store.getState().bondSceneQueue).toHaveLength(1);
     store.getState().reset();
     expect(store.getState().bondSceneQueue).toEqual([]);

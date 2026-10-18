@@ -181,11 +181,11 @@ export default function AffinityTab() {
                 ) : (
                   <div
                     key={scene.id}
-                    aria-label={`잠긴 인연 씬 — 인연 Lv.${scene.level} 해금`}
+                    aria-label={`잠긴 인연 씬 — 인연 Lv.${scene.unlockLevel} 해금`}
                     className="flex aspect-[2/3] flex-col items-center justify-center rounded-lg border border-white/10 bg-abyss/60 text-center"
                   >
                     <span className="text-sm">🔒</span>
-                    <span className="mt-0.5 text-[8px] text-ink-dim">Lv.{scene.level}</span>
+                    <span className="mt-0.5 text-[8px] text-ink-dim">Lv.{scene.unlockLevel}</span>
                   </div>
                 );
               })}

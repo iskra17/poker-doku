@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import CharacterShowcaseModal from '@/components/characters/CharacterShowcaseModal';
 import { getCharacterById } from '@/lib/characters';
+import { nextBondScene } from '@/lib/characters/bond-scenes';
 import {
   getPartnerLine,
   getPartnerTier,
@@ -59,7 +60,9 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
 
   const partnerId = progression?.profile.selectedCharacterId ?? profile?.avatarId ?? null;
   const partnerOutfit = useOutfitId(partnerId);
-  const affinityLevel = progression?.affinities.find(a => a.characterId === partnerId)?.level ?? 1;
+  const affinity = progression?.affinities.find(a => a.characterId === partnerId);
+  const affinityLevel = affinity?.level ?? 1;
+  const nextScene = partnerId ? nextBondScene(partnerId, affinityLevel, affinity?.xpMilli) : null;
   const tier = getPartnerTier(affinityLevel);
 
   // 인사말은 마운트 시 1회 결정 — 시간대/재회(3일+) 판정. 렌더 중 Date.now() 금지 규칙에 따라
@@ -163,6 +166,11 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
                 <span className="font-normal text-gilded">· 단짝</span>
               )}
             </p>
+            {nextScene && (
+              <p className="mt-0.5 text-[10px] leading-relaxed text-blossom">
+                다음 인연 씬 「{nextScene.title}」 · Lv.{nextScene.unlockLevel}까지 {nextScene.xpRemaining} XP
+              </p>
+            )}
             {speech && (
               <motion.p
                 key={speech}
