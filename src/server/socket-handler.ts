@@ -3107,18 +3107,9 @@ export function setupSocketHandlers(
           });
           return;
         }
-        // 파트너 우선 착석 — 혼자 연습(bots) 방이면 인연 파트너 캐릭터를 테이블에 보장.
-        // 진행도 조회 실패는 착석에 영향 없음 (랜덤 봇 구성 그대로 진행)
-        if ((room.config.tableType ?? 'mixed') === 'bots' && progression) {
-          try {
-            const partnerId = progression
-              .getSnapshot(session.playerId, avatar)
-              .profile.selectedCharacterId;
-            roomManager.ensurePartnerBot(roomId, partnerId);
-          } catch {
-            // best-effort 연출 — 실패해도 입장은 유효
-          }
-        }
+        // 혼자 연습(bots) 방에 파트너 봇을 상대석으로 앉히지 않는다 — 파트너는 훈수(PartnerCoach) 담당이다.
+        // 상대석 파트너 + 훈수 + 기본 아바타(= 파트너)로 같은 얼굴이 최대 3번 보였다 (2026-10-18 플레이테스트,
+        // 사용자 결정 2026-10-19). RoomManager.ensurePartnerBot은 다른 경로 대비로 남겨 둔다(휴먼 아바타 가드 포함).
         socket.emit('room-joined', {
           roomId,
           gameState: room.engine.getPublicState(session.playerId),
