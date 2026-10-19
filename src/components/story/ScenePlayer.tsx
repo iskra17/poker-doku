@@ -53,6 +53,9 @@ export function resolveSpeaker(speaker: SceneSpeaker, partnerId: StoryHeroineId 
  * VN 씬 플레이어 — 배경/스프라이트/대사창/선택지/[자동][건너뛰기][로그].
  * 커서 상태 머신은 scene-cursor.ts(순수). 탭 1회: 타이핑 중이면 완성, 아니면 다음 라인.
  */
+/** 대사창 고정 높이 — 이름 줄 + 본문 4줄(text-sm·leading-relaxed) + 여백 */
+const DIALOGUE_BOX_HEIGHT = 'h-[9.25rem]';
+
 export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = true, compact = false }: ScenePlayerProps) {
   const [cursor, setCursor] = useState<SceneCursor>(() => createSceneCursor(scene));
   const [auto, setAuto] = useState(false);
@@ -233,10 +236,14 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
         </AnimatePresence>
       </div>
 
-      {/* 대사창 / 선택지 */}
-      <div className="p-2">
+      {/* 대사창 / 선택지 — 대사창 높이는 4줄로 고정한다(2026-10-20 피드백: 대사 길이에 따라 창이 늘고 줄면
+          위 스프라이트 위치가 함께 흔들렸다). 최장 대사(약 90자)가 휴대폰 폭에서 4줄이고, 넘치면 창 안에서 스크롤한다.
+          선택지는 같은 높이의 자리를 지킨 채 위로 떠올라 스프라이트를 밀지 않는다. */}
+      <div className="relative p-2">
         {view.kind === 'choice' ? (
-          <div className="rounded-2xl border border-gilded/40 bg-abyss/85 p-3" role="group" aria-label="선택지">
+          <>
+          <div className={DIALOGUE_BOX_HEIGHT} aria-hidden />
+          <div className="absolute inset-x-2 bottom-2 z-10 rounded-2xl border border-gilded/40 bg-abyss/90 p-3" role="group" aria-label="선택지">
             {view.choice.prompt && <p className="mb-2 text-xs text-ink-dim">{view.choice.prompt}</p>}
             <div className="grid gap-2">
               {view.choice.options.map(option => (
@@ -251,22 +258,22 @@ export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = tr
               ))}
             </div>
           </div>
+          </>
         ) : (
           <button
             type="button"
             onClick={handleTap}
             disabled={view.kind === 'done'}
-            className="block w-full rounded-2xl border border-mystic/30 bg-abyss/85 p-3 text-left backdrop-blur-sm"
+            className={`relative flex ${DIALOGUE_BOX_HEIGHT} w-full flex-col rounded-2xl border border-mystic/30 bg-abyss/85 p-3 pb-4 text-left backdrop-blur-sm`}
             aria-label={done ? '다음' : '대사 완성'}
           >
-            {speaker?.name && (
-              <span className="mb-1 block text-[11px] font-bold" style={{ color: speaker.color ?? undefined }}>{speaker.name}</span>
-            )}
-            <span className={`block min-h-[3.2em] text-sm leading-relaxed text-ink ${line?.speaker === 'narrator' ? 'italic text-ink-dim' : ''}`}>
+            {/* 이름 줄은 내레이션에도 자리를 남긴다 — 화자가 바뀔 때 본문이 위아래로 뛰지 않게 */}
+            <span className="mb-1 block h-4 shrink-0 text-[11px] font-bold leading-4" style={{ color: speaker?.color ?? undefined }}>{speaker?.name ?? ''}</span>
+            <span className={`block min-h-0 flex-1 overflow-y-auto text-sm leading-relaxed text-ink ${line?.speaker === 'narrator' ? 'italic text-ink-dim' : ''}`}>
               {display}
               {!done && <span className="ml-0.5 inline-block animate-pulse">▍</span>}
             </span>
-            {done && view.kind === 'say' && <span className="mt-1 block text-right text-[10px] text-ink-dim">▼ 탭</span>}
+            {done && view.kind === 'say' && <span className="pointer-events-none absolute bottom-1 right-3 text-[10px] text-ink-dim">▼ 탭</span>}
           </button>
         )}
       </div>
