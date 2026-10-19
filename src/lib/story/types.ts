@@ -296,7 +296,17 @@ export interface Interrupt {
 
 export type Step =
   /** `graduation: 'epilogue'` — 졸업 대결 뒤에만 재생하는 씬 스텝(졸업 모드도 이 스텝만 진입한다) */
-  | { kind: 'scene'; id: string; scene: Scene; graduation?: 'epilogue' }
+  | {
+      kind: 'scene';
+      id: string;
+      scene: Scene;
+      graduation?: 'epilogue';
+      /**
+       * 빠른 진행(`mode 'fast'`)에서 함께 건너뛰는 씬 — 건너뛴 '연습' 테이블을 쳤다고 가정하는 소감 씬에만 단다.
+       * 다른 씬은 빠른 진행에서도 그대로 재생한다(본편은 미연시).
+       */
+      fastModeSkip?: true;
+    }
   | { kind: 'lesson'; id: string; title: string; blocks: LessonBlock[] }
   | {
       kind: 'drill-set';

@@ -391,6 +391,7 @@ function isPlaythroughMode(mode: StoryRunMode): mode is 'full' | 'fast' {
 
 /** 빠른 진행이 건너뛰는 스텝(레슨·프리셋 '연습') — 인덱스는 유지한다 */
 function isFastSkippedStep(step: Step): boolean {
+  if (step.kind === 'scene') return step.fastModeSkip === true;
   return (FAST_MODE_SKIPPED_STEP_KINDS as readonly string[]).includes(step.kind);
 }
 

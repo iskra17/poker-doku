@@ -122,6 +122,8 @@ export const CH01: Chapter = {
     {
       kind: 'scene',
       id: 'act1-ch01:first-hand-after',
+      // 방금 친 첫 핸드의 소감 — 빠른 진행은 첫 핸드를 건너뛰므로 이 씬도 함께 건너뛴다
+      fastModeSkip: true,
       scene: {
         id: 'act1-ch01:first-hand-after',
         lines: [

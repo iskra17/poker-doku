@@ -1558,10 +1558,9 @@ describe('fast mode (숙련자 빠른 진행)', () => {
       expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
       record();
     }
-    // 1(연습)·3(레슨)·6(레슨)·8(연습)은 건너뛰고, 씬·드릴·스파링은 그대로
+    // 1(연습)·3(레슨)·6(레슨)·8(연습)과 첫 핸드 소감 씬(2, fastModeSkip)은 건너뛰고, 나머지 씬·드릴·스파링은 그대로
     expect(visited).toEqual([
       { stepIndex: 0, stepKind: 'scene' },
-      { stepIndex: 2, stepKind: 'scene' },
       { stepIndex: 4, stepKind: 'drill-set', total: fastSlots(4) },
       { stepIndex: 5, stepKind: 'scene' },
       { stepIndex: 7, stepKind: 'drill-set', total: fastSlots(7) },
@@ -1649,9 +1648,8 @@ describe('fast mode (숙련자 빠른 진행)', () => {
   it.runIf(fastExamSwitchSupported)('fast에서 실력 확인으로 전환할 수 있다 (건너뛴 연습 테이블은 after-live가 아니다)', () => {
     const ctx = setup([CH01]);
     ctx.coordinator.start(PROFILE, 'act1-ch01', 'fast');
-    ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
-    expect(ctx.latest()).toMatchObject({ stepIndex: 2, stepKind: 'scene' });
-    expect(ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'exam' }).ok).toBe(true);
+    expect(ctx.latest()).toMatchObject({ stepIndex: 0, stepKind: 'scene' });
+    expect(ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'exam' }).ok).toBe(true);
     expect(ctx.latest()).toMatchObject({ mode: 'exam', stepIndex: 4, phase: 'drill' });
   });
 });
