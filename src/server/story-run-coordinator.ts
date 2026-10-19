@@ -37,6 +37,7 @@ import { BLACK_BELT_FLAG, EMPTY_NOTE_FLAG, PERFECT_SET_FLAG, computeUnlockedChap
 import { findNewlyUnlockedScenes, getBondSceneArt } from '../lib/characters/bond-scenes';
 import { nextStoryRewards, pickStoryCutscene } from '../lib/story/rewards/catalog';
 import { canSwitchToExam } from '../lib/story/exam-transition';
+import { chapterAllowsFastMode, FAST_MODE_SKIPPED_STEP_KINDS, fastModeDrillSlots, fastModeTableDifficulty } from '../lib/story/placement';
 import type {
   ChapterResultRewards,
   ChapterResultView,
@@ -383,6 +384,26 @@ function isGraduationStep(step: Step): boolean {
   return step.kind === 'scene' && step.graduation === 'epilogue';
 }
 
+/** 'fast'(숙련자 빠른 진행)는 'full'과 같은 정식 주행이다 — 통과·보상·재도전 규칙을 공유한다 */
+function isPlaythroughMode(mode: StoryRunMode): mode is 'full' | 'fast' {
+  return mode === 'full' || mode === 'fast';
+}
+
+/** 빠른 진행이 건너뛰는 스텝(레슨·프리셋 '연습') — 인덱스는 유지한다 */
+function isFastSkippedStep(step: Step): boolean {
+  return (FAST_MODE_SKIPPED_STEP_KINDS as readonly string[]).includes(step.kind);
+}
+
+/**
+ * 드릴 세트의 실제 슬롯 목록 — **이 런에서 서빙·채점·진행 수·재출제·결산 점수가 모두 이 목록을 쓴다**.
+ * 'fast'는 난이도 1 슬롯을 덜어 낸다(`fastModeDrillSlots`, `*review`는 난이도 미상으로 항상 유지).
+ * 그 밖의 모드는 스텝 정의 그대로다(같은 배열 참조 — 기존 동작 불변).
+ */
+function drillSlotsFor(mode: StoryRunMode, step: Extract<Step, { kind: 'drill-set' }>): DrillSlot[] {
+  if (mode !== 'fast') return step.drills;
+  return fastModeDrillSlots(step.drills, templateId => getDrillTemplate(templateId)?.difficulty ?? null);
+}
+
 function emptySummary(hintPenalty = 0.5): StoryRun['drillSummary'] {
   return { outcomes: [], hintsUsed: 0, bestStreak: 0, answered: 0, correct: 0, hintPenalty, wrongSlots: 0, sets: 0, perfectSets: 0, retrySkipped: false };
 }
@@ -462,7 +483,7 @@ export class StoryRunCoordinator {
     }
     const source = checkpoint.source;
     const completedSets = source.chapter.steps.slice(0, source.stepIndex).filter(step => step.kind === 'drill-set').length;
-    if (source.mode !== 'full' || source.chapter.steps[source.stepIndex]?.kind !== 'sparring'
+    if (!isPlaythroughMode(source.mode) || source.chapter.steps[source.stepIndex]?.kind !== 'sparring'
       || source.drill !== null || source.drillSummary.sets !== completedSets || this.runs.has(profileId)
       || !this.liveAdapter || this.liveAdapter.hasSession(profileId)) {
       return { ok: false, code: 'story-busy', message: '진행 중인 수련이나 테이블을 마친 뒤 다시 시도해 주세요.' };
@@ -474,8 +495,7 @@ export class StoryRunCoordinator {
     if (step.kind !== 'sparring') throw new Error('Invalid retry checkpoint');
     this.runs.set(profileId, run);
     try {
-      const entered = this.liveAdapter.enter({ profileId, runId: run.runId, chapterId: run.chapter.id,
-        chapterTitle: run.chapter.title, stepIndex: run.stepIndex, step, partnerId: run.partnerId });
+      const entered = this.liveAdapter.enter(this.liveEnterInput(run, run.stepIndex, step));
       if (entered !== 'entered') throw new Error('스파링 테이블을 준비하지 못했어요. 다시 시도해 주세요.');
       run.phase = this.liveAdapter.phase(profileId) ?? 'live-hold';
       this.deps.repository.recordAttemptStart(profileId, run.chapter.id, now);
@@ -634,6 +654,9 @@ export class StoryRunCoordinator {
     // 운영자는 잠긴 챕터도 바로 연다 (QA·검수 경로 — 해금 그래프는 그대로, 권한만 우회)
     if (!options.operator && !isChapterUnlocked(chapter, completed)) {
       return { ok: false, code: 'story-locked', message: '아직 열리지 않은 챕터예요. 이전 챕터를 먼저 끝내 주세요.' };
+    }
+    if (mode === 'fast' && !chapterAllowsFastMode(chapter)) {
+      return { ok: false, code: 'action-rejected', message: '이 수업은 빠른 진행으로 들을 수 없어요.' };
     }
     if (mode === 'exam') {
       if (chapter.examDisabled) {
@@ -1119,7 +1142,7 @@ export class StoryRunCoordinator {
       this.completeGraduationStep(run, summary);
       return;
     }
-    const failed = run.mode === 'full' && run.chapter.steps[run.stepIndex]?.kind === 'sparring'
+    const failed = isPlaythroughMode(run.mode) && run.chapter.steps[run.stepIndex]?.kind === 'sparring'
       && (summary.primaryObjectivesMet === false || summary.outcome === 'failed');
     const checkpoint = failed ? structuredClone(run) : null;
     run.liveResults.push(failed ? { ...summary, primaryObjectivesMet: false } : summary);
@@ -1309,6 +1332,11 @@ export class StoryRunCoordinator {
         cursor += 1;
         continue;
       }
+      // 빠른 진행: 레슨·프리셋 '연습'만 건너뛴다(씬·드릴 세트·스파링·결산은 그대로, 같은 인덱스 규약)
+      if (run.mode === 'fast' && isFastSkippedStep(step)) {
+        cursor += 1;
+        continue;
+      }
       // 졸업 대결만 재도전: 토너먼트 스파링 · 에필로그 씬 · 결산만 (같은 인덱스 규약)
       if (run.mode === 'graduation' && !isGraduationStep(step)) {
         cursor += 1;
@@ -1331,15 +1359,7 @@ export class StoryRunCoordinator {
       }
       // practice-table / sparring: 어댑터가 방을 열면 라이브 단계, 어댑터가 없거나 열지 못하면 스킵
       if (this.liveAdapter && run.kind === 'chapter') {
-        const entered = this.liveAdapter.enter({
-          profileId: run.profileId,
-          runId: run.runId,
-          chapterId: run.chapter.id,
-          chapterTitle: run.chapter.title,
-          stepIndex: cursor,
-          step,
-          partnerId: run.partnerId,
-        });
+        const entered = this.liveAdapter.enter(this.liveEnterInput(run, cursor, step));
         if (entered === 'entered') {
           run.phase = this.liveAdapter.phase(run.profileId) ?? 'live-play';
           return;
@@ -1351,13 +1371,31 @@ export class StoryRunCoordinator {
     run.phase = 'result';
   }
 
+  /**
+   * 라이브 스텝 진입 입력 — 'fast'면 봇 강도를 한 단계 올린다(`fastModeTableDifficulty`). 어댑터가 세션에 보관해
+   * 방이 사라졌다 다시 열려도(「이어하기」) 같은 강도를 쓴다. 다른 모드는 override 없이 기존 입력 그대로.
+   */
+  private liveEnterInput(run: StoryRun, stepIndex: number, step: LiveEnterInput['step']): LiveEnterInput {
+    return {
+      profileId: run.profileId,
+      runId: run.runId,
+      chapterId: run.chapter.id,
+      chapterTitle: run.chapter.title,
+      stepIndex,
+      step,
+      partnerId: run.partnerId,
+      ...(run.mode === 'fast' ? { difficultyOverride: fastModeTableDifficulty(step.table.difficulty) } : {}),
+    };
+  }
+
   private enterDrillSet(run: StoryRun, step: Extract<Step, { kind: 'drill-set' }>): boolean {
     const teacher = this.resolveTeacherRef(run, step.teacher);
     const day = kstDay(this.now());
-    const review = this.resolveReviewSlots(run, step);
+    const slots = drillSlotsFor(run.mode, step);
+    const review = this.resolveReviewSlots(run, step, slots);
     let reviewCursor = 0;
     const queue: DrillServe[] = [];
-    step.drills.forEach((slot, slotIndex) => {
+    slots.forEach((slot, slotIndex) => {
       const isReview = slot.templateId === REVIEW_SLOT_TEMPLATE_ID;
       const templateId = isReview ? review.templateIds[reviewCursor++] : slot.templateId;
       if (!templateId || getDrillTemplate(templateId) === undefined) return;
@@ -1375,7 +1413,7 @@ export class StoryRunCoordinator {
     const drill: DrillSetState = {
       setId: step.id,
       teacher,
-      slots: step.drills,
+      slots,
       queue,
       cursor: 0,
       retryQueue: [],
@@ -1411,8 +1449,9 @@ export class StoryRunCoordinator {
   private resolveReviewSlots(
     run: StoryRun,
     step: Extract<Step, { kind: 'drill-set' }>,
+    drillSlots: readonly DrillSlot[],
   ): { templateIds: string[]; noteSeeds: Map<string, Set<number>> } {
-    const slots = step.drills.filter(slot => slot.templateId === REVIEW_SLOT_TEMPLATE_ID).length;
+    const slots = drillSlots.filter(slot => slot.templateId === REVIEW_SLOT_TEMPLATE_ID).length;
     const noteSeeds = new Map<string, Set<number>>();
     if (slots === 0) return { templateIds: [], noteSeeds };
 

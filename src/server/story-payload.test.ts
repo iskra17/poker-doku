@@ -7,7 +7,9 @@ import {
   parseStoryAdvanceRequest,
   parseStoryChoiceRequest,
   parseStoryDrillRequest,
+  parseStoryPlacementRequest,
   parseStoryQuizRequest,
+  PLACEMENT_ANSWERS_MAX,
 } from './story-payload';
 
 const BAD_INPUTS = [null, undefined, [], 'bad', 17, () => undefined];
@@ -34,6 +36,7 @@ describe('story socket payload parsing', () => {
     // mode는 선택 — 'full' | 'exam'만, 그 밖은 거절
     expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'exam' })).toEqual({ ok: true, value: { chapterId: 'act1-ch01', mode: 'exam' } });
     expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'full' })).toEqual({ ok: true, value: { chapterId: 'act1-ch01', mode: 'full' } });
+    expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'fast' })).toEqual({ ok: true, value: { chapterId: 'act1-ch01', mode: 'fast' } });
     expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 'cheat' }).ok).toBe(false);
     expect(parseStartStoryChapterRequest({ chapterId: 'act1-ch01', mode: 1 }).ok).toBe(false);
   });
@@ -138,4 +141,45 @@ it('retry accepts only the failed run identifier', () => {
   for (const value of [null, {}, { failedRunId: 1 }, { failedRunId: 'run-1', stepIndex: 4 }, { failedRunId: 'run-1', profileId: 'other' }]) {
     expect(parseRetryStorySparringRequest(value).ok).toBe(false);
   }
+});
+
+describe('parseStoryPlacementRequest', () => {
+  it.each(BAD_INPUTS)('객체가 아니면 거절: %j', input => {
+    expect(parseStoryPlacementRequest(input).ok).toBe(false);
+  });
+
+  it('questions/set: 허용 키·값만 통과', () => {
+    expect(parseStoryPlacementRequest({ action: 'questions' })).toEqual({ ok: true, value: { action: 'questions' } });
+    expect(parseStoryPlacementRequest({ action: 'questions', seed: 1 }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'set', tier: 'advanced' })).toEqual({ ok: true, value: { action: 'set', tier: 'advanced' } });
+    expect(parseStoryPlacementRequest({ action: 'set', tier: 'pro' }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'set' }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'set', tier: 'novice', extra: true }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'grade' }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({}).ok).toBe(false);
+  });
+
+  it('submit: 자기 평가 화이트리스트 + 드릴 답 파서 재사용 + null 허용 + 길이 상한', () => {
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'new', answers: [] }))
+      .toEqual({ ok: true, value: { action: 'submit', selfReport: 'new', answers: [] } });
+    expect(parseStoryPlacementRequest({
+      action: 'submit',
+      selfReport: 'regular',
+      answers: [{ kind: 'multiple-choice', index: 1 }, null, { kind: 'action-pick', action: 'call' }],
+    })).toEqual({
+      ok: true,
+      value: { action: 'submit', selfReport: 'regular', answers: [{ kind: 'multiple-choice', index: 1 }, null, { kind: 'action-pick', action: 'call' }] },
+    });
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'expert', answers: [] }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules' }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: 'x' }).ok).toBe(false);
+    // 형식이 틀린 답이 하나라도 있으면 전체 거절 (부분 채점 금지)
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: [{ kind: 'multiple-choice', index: 99 }] }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: [{ kind: 'multiple-choice', index: 0, correct: true }] }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: [undefined] }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: [], tier: 'advanced' }).ok).toBe(false);
+    const tooMany = Array.from({ length: PLACEMENT_ANSWERS_MAX + 1 }, () => null);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: tooMany }).ok).toBe(false);
+    expect(parseStoryPlacementRequest({ action: 'submit', selfReport: 'rules', answers: tooMany.slice(1) }).ok).toBe(true);
+  });
 });

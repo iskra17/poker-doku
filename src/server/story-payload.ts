@@ -14,8 +14,10 @@ import type {
   StoryAdvanceTarget,
   StoryChoiceRequest,
   StoryDrillRequest,
+  StoryPlacementRequest,
   StoryQuizRequest,
 } from '../lib/story/views';
+import { isPlacementSelfReport, isSkillTier } from '../lib/story/placement';
 import { isRecord, type ParseResult } from './socket-payload';
 
 const INVALID_MESSAGE = '요청 형식이 올바르지 않아요.';
@@ -59,7 +61,7 @@ function hasOnlyKeys(value: Record<string, unknown>, allowed: readonly string[])
   return Object.keys(value).every(key => allowed.includes(key));
 }
 
-const RUN_MODES: readonly StoryRunMode[] = ['full', 'exam', 'graduation'];
+const RUN_MODES: readonly StoryRunMode[] = ['full', 'exam', 'graduation', 'fast'];
 
 export function parseStartStoryChapterRequest(input: unknown): ParseResult<StartStoryChapterRequest> {
   if (!isRecord(input) || !hasOnlyKeys(input, ['chapterId', 'mode'])) return fail();
@@ -173,4 +175,39 @@ export function parseRetryStorySparringRequest(input: unknown): ParseResult<{ fa
   if (!isRecord(input) || !hasOnlyKeys(input, ['failedRunId'])) return fail();
   const failedRunId = idText(input.failedRunId);
   return failedRunId ? { ok: true, value: { failedRunId } } : fail();
+}
+
+/** 배치 답 상한 — 발급 문항 수보다 길면 거절(빈 슬롯은 null) */
+export const PLACEMENT_ANSWERS_MAX = 8;
+
+/**
+ * 실력 배치 — action별 허용 키만. 답은 `parseDrillAnswer` 화이트리스트(드릴과 같은 파서)를 통과하거나
+ * null(건너뜀=오답)이어야 하고, 하나라도 형식이 틀리면 전체를 거절한다(부분 채점 금지).
+ */
+export function parseStoryPlacementRequest(input: unknown): ParseResult<StoryPlacementRequest> {
+  if (!isRecord(input)) return fail();
+  switch (input.action) {
+    case 'questions':
+      return hasOnlyKeys(input, ['action']) ? { ok: true, value: { action: 'questions' } } : fail();
+    case 'set':
+      if (!hasOnlyKeys(input, ['action', 'tier']) || !isSkillTier(input.tier)) return fail();
+      return { ok: true, value: { action: 'set', tier: input.tier } };
+    case 'submit': {
+      if (!hasOnlyKeys(input, ['action', 'selfReport', 'answers']) || !isPlacementSelfReport(input.selfReport)) return fail();
+      if (!Array.isArray(input.answers) || input.answers.length > PLACEMENT_ANSWERS_MAX) return fail();
+      const answers: (DrillAnswer | null)[] = [];
+      for (const raw of input.answers) {
+        if (raw === null) {
+          answers.push(null);
+          continue;
+        }
+        const answer = parseDrillAnswer(raw);
+        if (!answer) return fail();
+        answers.push(answer);
+      }
+      return { ok: true, value: { action: 'submit', selfReport: input.selfReport, answers } };
+    }
+    default:
+      return fail();
+  }
 }

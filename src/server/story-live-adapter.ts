@@ -22,7 +22,7 @@ import { reviewOpponentResponses } from './story-opponent-review';
  */
 import type { PokerEngine } from '../lib/poker/engine';
 import type { CompletedHandRecord } from '../lib/poker/hand-history';
-import type { Player, RoomConfig } from '../lib/poker/types';
+import type { Player, RoomConfig, RoomDifficulty } from '../lib/poker/types';
 import type { BotDecision } from '../lib/bot/bot-ai';
 import { createBotWithCharacter, type BotDisplayIdentity } from '../lib/bot/bot-manager';
 import { DEALER_CHARACTER, getCharacterById, MASKED_BOT_CHARACTER } from '../lib/characters';
@@ -81,6 +81,11 @@ export interface LiveEnterInput {
    * 생략한 좌석은 실제 캐릭터를 그대로 보여준다.
    */
   botDisplaysBySeat?: Readonly<Record<number, BotDisplayIdentity>>;
+  /**
+   * 봇 강도 덮어쓰기 — 빠른 진행(`StoryRunMode 'fast'`)이 스펙보다 한 단계 강하게 연다. 생략하면 `step.table.difficulty`.
+   * 세션에 보관되므로 방이 사라졌다 다시 열려도(「이어하기」) 같은 강도를 쓴다.
+   */
+  difficultyOverride?: RoomDifficulty;
 }
 
 /** 소켓 계층이 구현 — 히어로 Player 생성·좌석 착석·room-joined 통지 */
@@ -173,6 +178,8 @@ interface LiveSession {
   partnerId: StoryHeroineId | null;
   /** 진입 입력의 복사본 — 호출자가 나중에 손대도 세션 계획이 흔들리지 않는다 */
   botDisplaysBySeat: Record<number, BotDisplayIdentity> | undefined;
+  /** 방 난이도·봇 강도 — 진입 때 확정(override ?? 스펙), 재개도 같은 값 */
+  difficulty: RoomDifficulty;
   /** openRoom이 최초 1회 확정 (재개 시 재사용) */
   botIdentities: StoryBotIdentity[] | null;
   roomId: string | null;
@@ -914,6 +921,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       step: input.step,
       partnerId: input.partnerId,
       botDisplaysBySeat: copyBotDisplays(input.botDisplaysBySeat),
+      difficulty: input.difficultyOverride ?? input.step.table.difficulty,
       botIdentities: null,
       roomId: null,
       deck: null,
@@ -956,7 +964,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       turnTime: table.turnTimeSec,
       gameMode: structure ? 'sng' : 'cash',
       ...(structure ? { startingStack: structure.startingStack, sngStructureId: structure.id } : {}),
-      difficulty: table.difficulty,
+      difficulty: session.difficulty,
       botCount: 0,
       tableType: 'bots',
       storyChapterId: session.chapterId,
@@ -1007,7 +1015,7 @@ export class LiveTableAdapter implements StoryRoomHooks {
       const stack = stackBySeat.get(identity.seatIndex);
       const bot = stack === undefined
         ? null
-        : createBotWithCharacter(identity.seatIndex, stack, identity.personalityId, table.difficulty, display);
+        : createBotWithCharacter(identity.seatIndex, stack, identity.personalityId, session.difficulty, display);
       if (!bot || !this.options.roomManager.joinRoom(roomId, bot)) {
         // 라인업은 전원 착석이 전제 — 한 좌석이라도 빠지면 스크립트 villain 좌석·목표 상대가 어긋나므로 방을 열지 않는다
         eventLog.log('story-step', {

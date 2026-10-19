@@ -520,6 +520,38 @@ describe('LiveTableAdapter', () => {
     expect(stateOf(next.roomId!)!.isHandInProgress).toBe(true);
   });
 
+  it('difficultyOverride(빠른 진행): 방 난이도·봇 강도에 적용되고 room-lost 재개에도 유지된다', async () => {
+    const entered = adapter.enter({
+      profileId: PROFILE,
+      runId: RUN,
+      chapterId: 'act1-ch01',
+      chapterTitle: '도장의 문',
+      stepIndex: 9,
+      step: sparringStep(5),
+      partnerId: 'sakura',
+      difficultyOverride: 'normal',
+    });
+    expect(entered).toBe('entered');
+    const roomId = adapter.view(PROFILE)!.roomId!;
+    const bots = (id: string) => manager.getRoom(id)!.engine.state.players.filter(p => p.type === 'bot');
+    expect(manager.getRoom(roomId)!.config.difficulty).toBe('normal');
+    expect(bots(roomId).map(bot => bot.botSkill)).toEqual(['normal', 'normal', 'normal']);
+
+    expect(manager.disposeRoom(roomId, 'idle')).toBe(true);
+    expect(adapter.view(PROFILE)).toMatchObject({ roomId: null, holdReason: 'room-lost' });
+    expect(adapter.resume(PROFILE, RUN)).toEqual({ ok: true });
+    const reopened = adapter.view(PROFILE)!.roomId!;
+    expect(reopened).not.toBe(roomId);
+    expect(manager.getRoom(reopened)!.config.difficulty).toBe('normal');
+    expect(bots(reopened).map(bot => bot.botSkill)).toEqual(['normal', 'normal', 'normal']);
+  });
+
+  it('difficultyOverride가 없으면 스펙 난이도 그대로 (기존 동작)', () => {
+    const roomId = enter(sparringStep(3));
+    expect(manager.getRoom(roomId)!.config.difficulty).toBe('easy');
+    expect(manager.getRoom(roomId)!.engine.state.players.filter(p => p.type === 'bot').every(bot => bot.botSkill === 'easy')).toBe(true);
+  });
+
   it('hold 타임아웃: 상한을 넘긴 hold는 방을 해체하고 room-lost 보존으로 전환한다', async () => {
     adapter.shutdown();
     buildAdapter({ holdTimeoutMs: 5_000, sweepIntervalMs: 1_000 });

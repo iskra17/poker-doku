@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { generateDrill, gradeDrill } from '@/lib/story/drills/generator';
+import { generateDrill, getDrillTemplate, gradeDrill } from '@/lib/story/drills/generator';
+import { canSwitchToExam } from '@/lib/story/exam-transition';
+import { fastModeDrillSlots } from '@/lib/story/placement';
+import { CH12 } from '@/lib/story/chapters/act4/ch12-graduation';
 import type { DrillAnswer, DrillAnswerSpec } from '@/lib/story/drills/types';
 import { hashSeed } from '@/lib/poker/seeded-rng';
 import { CH01 } from '@/lib/story/chapters/act1/ch01-dojo-gate';
@@ -1511,5 +1514,144 @@ describe('Ch10 스파링 재도전', () => {
     // 실패한 스파링 요약은 버리고 연습 두 개만 남는다
     expect(run.liveResults.map(entry => entry.tag)).toEqual(['연습', '연습']);
     expect(run.drillSummary.outcomes).toHaveLength(8);
+  });
+});
+
+describe('fast mode (숙련자 빠른 진행)', () => {
+  /** 현재 단계를 끝까지 정답으로 밀어 조건에 맞는 뷰에 세운다 */
+  function driveUntil(ctx: ReturnType<typeof setup>, stop: (view: StoryRunView) => boolean, guardMax = 40) {
+    for (let guard = 0; guard < guardMax; guard++) {
+      const view = ctx.latest();
+      if (stop(view)) return view;
+      if (view.phase === 'drill') expect(answerCurrent(ctx, true).ok).toBe(true);
+      const advanced = ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: ctx.latest().stepIndex, target: 'next' });
+      expect(advanced.ok).toBe(true);
+    }
+    throw new Error('stop condition not reached');
+  }
+
+  const fastSlots = (index: number) => {
+    const step = CH01.steps[index];
+    if (step.kind !== 'drill-set') throw new Error('not a drill set');
+    return fastModeDrillSlots(step.drills, id => getDrillTemplate(id)?.difficulty ?? null).length;
+  };
+
+  it('Ch1: 레슨·연습 테이블은 인덱스를 유지한 채 건너뛰고, 드릴은 fastModeDrillSlots만큼, 스파링 봇은 한 단계 강하게', () => {
+    const ctx = setup([CH01]);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01', 'fast')).toEqual({ ok: true, value: { runId: 'run-1' } });
+    expect(ctx.latest()).toMatchObject({ mode: 'fast', stepIndex: 0, stepKind: 'scene' });
+    expect(ctx.coordinator.getProgress(PROFILE).activeRun).toMatchObject({ mode: 'fast' });
+    const visited: Array<{ stepIndex: number; stepKind: string; total?: number }> = [];
+    const record = () => {
+      const view = ctx.latest();
+      const last = visited.at(-1);
+      if (!last || last.stepIndex !== view.stepIndex) {
+        visited.push({ stepIndex: view.stepIndex, stepKind: view.stepKind, ...(view.drill ? { total: view.drill.total } : {}) });
+      }
+    };
+    record();
+    for (let guard = 0; guard < 40 && !['live-play', 'live-hold'].includes(ctx.latest().phase); guard++) {
+      const view = ctx.latest();
+      if (view.phase === 'drill') expect(answerCurrent(ctx, true).ok).toBe(true);
+      expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
+      record();
+    }
+    // 1(연습)·3(레슨)·6(레슨)·8(연습)은 건너뛰고, 씬·드릴·스파링은 그대로
+    expect(visited).toEqual([
+      { stepIndex: 0, stepKind: 'scene' },
+      { stepIndex: 2, stepKind: 'scene' },
+      { stepIndex: 4, stepKind: 'drill-set', total: fastSlots(4) },
+      { stepIndex: 5, stepKind: 'scene' },
+      { stepIndex: 7, stepKind: 'drill-set', total: fastSlots(7) },
+      { stepIndex: 9, stepKind: 'sparring' },
+    ]);
+    // Ch1 두 번째 세트(4슬롯 전부 난이도 1)는 최소 3문으로 줄어든다
+    expect(fastSlots(7)).toBe(3);
+    expect(fake.enters).toHaveLength(1);
+    expect(fake.enters[0]).toMatchObject({ stepIndex: 9, difficultyOverride: 'normal' });
+    expect(fake.enters[0].step.kind).toBe('sparring');
+
+    fake.finish(liveSummary());
+    const ended = driveUntil(ctx, view => view.phase === 'ended');
+    expect(ended.result).toMatchObject({ mode: 'fast', passed: true, rewards: { firstClear: true } });
+    expect(ended.result?.drill.slots).toBe(fastSlots(4) + fastSlots(7));
+    expect(ctx.repository.listProgress(PROFILE).find(row => row.chapterId === 'act1-ch01')?.completions).toBe(1);
+    expect(ctx.rewards.chapters[0]).toMatchObject({ chapterId: 'act1-ch01', firstClear: true });
+  });
+
+  it('full 런의 라이브 진입 입력엔 난이도 덮어쓰기가 없다 (기존 동작 불변)', () => {
+    const ctx = setup([CH01]);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    ctx.coordinator.start(PROFILE, 'act1-ch01');
+    driveUntil(ctx, view => view.phase === 'live-play');
+    expect(fake.enters).toHaveLength(1);
+    expect(fake.enters[0]).not.toHaveProperty('difficultyOverride');
+  });
+
+  it('스파링 primary 미달이면 full과 같이 실패 — 완료 기록·보상 없음', () => {
+    const ctx = setup();
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    ctx.coordinator.start(PROFILE, 'act1-ch01', 'fast');
+    driveUntil(ctx, view => view.phase === 'live-play');
+    expect(ctx.latest().stepKind).toBe('sparring');
+    fake.finish(liveSummary({ primaryObjectivesMet: false, liveScore: 0 }));
+    const ended = driveUntil(ctx, view => view.phase === 'ended');
+    expect(ended.result).toMatchObject({ mode: 'fast', passed: false, rewards: { firstClear: false, dojoXpMilli: 0 } });
+    expect(ctx.rewards.chapters).toHaveLength(0);
+  });
+
+  it('실패 씬·스파링 재도전 체크포인트가 fast에서도 열리고, 재도전도 강화된 봇으로 들어간다', () => {
+    const chapter = makeChapter({ failScene: makeScene('failure') });
+    const ctx = setup([chapter]);
+    const fake = makeFakeAdapter();
+    ctx.coordinator.setLiveAdapter(fake.adapter);
+    ctx.coordinator.start(PROFILE, chapter.id, 'fast');
+    const live = driveUntil(ctx, view => view.phase === 'live-play');
+    expect(live.stepKind).toBe('sparring'); // 연습 테이블은 건너뜀
+    fake.finish(liveSummary({ primaryObjectivesMet: false, handsPlayed: 2 }));
+    expect(ctx.latest()).toMatchObject({ mode: 'fast', phase: 'failure-scene', result: { passed: false, sparringRetry: { expiresAt: expect.any(Number) } } });
+    ctx.coordinator.advance(PROFILE, { runId: live.runId, expectedStepIndex: live.stepIndex, target: 'next' });
+    expect(ctx.coordinator.retrySparring(PROFILE, live.runId)).toEqual({ ok: true, value: { runId: 'run-2' } });
+    expect(ctx.coordinator.getActiveRun(PROFILE)?.mode).toBe('fast');
+    expect(fake.enters.at(-1)).toMatchObject({ runId: 'run-2', stepIndex: live.stepIndex, difficultyOverride: 'normal' });
+    fake.finish(liveSummary());
+    const ended = driveUntil(ctx, view => view.phase === 'ended');
+    expect(ended.result).toMatchObject({ mode: 'fast', passed: true });
+  });
+
+  it('졸업 챕터는 빠른 진행을 거절한다 (운영자도)', () => {
+    const ctx = setup([CH12]);
+    expect(ctx.coordinator.start(PROFILE, CH12.id, 'fast', { operator: true })).toMatchObject({ ok: false, code: 'action-rejected' });
+    expect(ctx.coordinator.getActiveRun(PROFILE)).toBeNull();
+    expect(ctx.repository.attemptStarts).toHaveLength(0);
+  });
+
+  it('완료한 챕터도 fast로 다시 들을 수 있다 (exam과 달리)', () => {
+    const ctx = setup();
+    ctx.repository.complete(PROFILE, 'act1-ch01');
+    expect(ctx.coordinator.start(PROFILE, 'act1-ch01', 'fast').ok).toBe(true);
+  });
+
+  // exam-transition.ts의 'fast' 허용은 클라 작업 브랜치 소유 — 병합 뒤 자동으로 실행된다
+  const fastExamSwitchSupported = canSwitchToExam({
+    chapterId: 'x',
+    mode: 'fast',
+    phase: 'scene',
+    stepKind: 'scene',
+    stepIndex: 0,
+    steps: [CH01.steps[0], CH01.steps[4]],
+    completed: false,
+  }).allowed;
+  it.runIf(fastExamSwitchSupported)('fast에서 실력 확인으로 전환할 수 있다 (건너뛴 연습 테이블은 after-live가 아니다)', () => {
+    const ctx = setup([CH01]);
+    ctx.coordinator.start(PROFILE, 'act1-ch01', 'fast');
+    ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    expect(ctx.latest()).toMatchObject({ stepIndex: 2, stepKind: 'scene' });
+    expect(ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'exam' }).ok).toBe(true);
+    expect(ctx.latest()).toMatchObject({ mode: 'exam', stepIndex: 4, phase: 'drill' });
   });
 });

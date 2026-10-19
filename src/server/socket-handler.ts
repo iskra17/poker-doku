@@ -51,9 +51,11 @@ import {
   parseStoryAdvanceRequest,
   parseStoryChoiceRequest,
   parseStoryDrillRequest,
+  parseStoryPlacementRequest,
   parseStoryQuizRequest,
 } from './story-payload';
-import type { StoryDrillAck, StoryProgressView, StoryQuizReceipt } from '../lib/story/views';
+import { StoryPlacementService } from './story-placement';
+import type { StoryDrillAck, StoryPlacementAck, StoryProgressView, StoryQuizReceipt } from '../lib/story/views';
 import type { Chapter } from '../lib/story/types';
 import {
   parseOptionalPayloadArgs,
@@ -626,6 +628,11 @@ export function setupSocketHandlers(
         }
       },
     })
+    : undefined;
+
+  // 실력 배치 — 발급 문항(seed)은 프로필별 인메모리, 등급은 story flag(`placement:tier`)로 영속
+  const storyPlacement = storyRepository
+    ? new StoryPlacementService({ repository: storyRepository })
     : undefined;
 
   io.use((socket, next) => {
@@ -1869,6 +1876,49 @@ export function setupSocketHandlers(
       if (storyUnavailable(ack)) return;
       if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
       ack?.({ ok: true, data: storyCoordinator!.getProgress(session.playerId) });
+    });
+
+    /**
+     * 실력 배치 — 'questions' 발급(정답 제외) / 'submit' 서버 채점 + 등급 저장 / 'set' 직접 변경.
+     * 진행 요약을 push하는 서버 이벤트는 없다 — 클라가 ack 뒤 허브 뷰(`/api/story`·get-story-progress)를 다시 받는다.
+     * 로그에는 답·문항을 남기지 않는다(등급·정답 수만).
+     */
+    socket.on('story-placement', (...rawArgs: unknown[]) => {
+      const args = parseRequiredPayloadArgs<StoryPlacementAck>(rawArgs);
+      if (!args.ok) {
+        invalidPayload(args.ack);
+        return;
+      }
+      const { payload, ack } = args;
+      if (!ensureOwnership(ack)) return;
+      const parsed = parseStoryPlacementRequest(payload);
+      if (!parsed.ok) {
+        invalidPayload(ack);
+        return;
+      }
+      // storyPlacement는 storyCoordinator와 같은 storyRepository 조건으로 만들어진다
+      if (storyUnavailable(ack) || !storyPlacement) return;
+      if (!ensureRateLimit('story', '요청이 너무 빨라요. 잠시 후 다시 시도해 주세요.', ack)) return;
+      const request = parsed.value;
+      switch (request.action) {
+        case 'questions':
+          replyStory(ack, storyPlacement.issue(session.playerId));
+          return;
+        case 'submit': {
+          const submitted = storyPlacement.submit(session.playerId, request.selfReport, request.answers);
+          if (submitted.ok) {
+            eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'submit', selfReport: request.selfReport, tier: submitted.value.tier, correct: submitted.value.correct, total: submitted.value.total } });
+          }
+          replyStory(ack, submitted);
+          return;
+        }
+        case 'set': {
+          const set = storyPlacement.set(session.playerId, request.tier);
+          if (set.ok) eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'set', tier: set.value.tier } });
+          replyStory(ack, set);
+          return;
+        }
+      }
     });
 
     socket.on('retry-story-sparring', (...rawArgs: unknown[]) => {
@@ -4212,6 +4262,7 @@ export function setupSocketHandlers(
     weeklyDojo,
     revokeProfile: profileId => {
       storyCoordinator?.clearProfile(profileId);
+      storyPlacement?.clearProfile(profileId);
       const revoked = sessions.revokeProfile(profileId);
       if (!revoked) return;
       startDisconnectedGrace(revoked.session);
