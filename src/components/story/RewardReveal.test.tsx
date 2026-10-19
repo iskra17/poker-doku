@@ -29,6 +29,14 @@ function result(overrides: Partial<ChapterResultView> = {}): ChapterResultView {
 beforeEach(() => { input.reduced = true; input.partnerId = 'ara'; });
 
 describe('RewardReveal', () => {
+  it('빠른 진행은 배지와 일반 수련의 통과·보상 문구를 보여 준다', () => {
+    const markup = renderToStaticMarkup(<RewardReveal result={result({ mode: 'fast' })} onDone={() => {}} />);
+    expect(markup).toContain('빠른 진행');
+    expect(markup).toContain('첫 완주 보상');
+    expect(markup).toContain('통과');
+    expect(markup).not.toContain('실력 확인 통과');
+    expect(renderToStaticMarkup(<RewardReveal result={result()} onDone={() => {}} />)).not.toContain('빠른 진행');
+  });
   it('모션 감소 시 통계 뒤 실제 파트너 초상화와 한마디를 즉시 보여 준다', () => {
     const markup = renderToStaticMarkup(<RewardReveal result={result()} onDone={() => {}} />);
     expect(markup).toContain(partnerResultLine('ara', 'pass'));

@@ -1,7 +1,7 @@
 import type { StoryRunPhase, StoryRunMode } from './views';
 import type { Step, StepKind } from './types';
 
-/** Reasons the in-progress full course cannot be changed into a skill check. */
+/** Reasons the in-progress full/fast course cannot be changed into a skill check. */
 export type ExamTransitionRejection =
   | 'daily'
   | 'not-full'
@@ -33,13 +33,13 @@ function isLiveStep(step: Step): boolean {
 }
 
 /**
- * Shared client/server gate for changing the current full chapter run into an exam.
+ * Shared client/server gate for changing the current full/fast chapter run into an exam.
  * The current scene/lesson is retained only as a position marker; enterStep applies
  * the regular exam skip rules to reach the next available drill.
  */
 export function canSwitchToExam(input: ExamTransitionInput): ExamTransitionResult {
   if (input.chapterId === 'daily') return { allowed: false, reason: 'daily' };
-  if (input.mode !== 'full') return { allowed: false, reason: 'not-full' };
+  if (input.mode !== 'full' && input.mode !== 'fast') return { allowed: false, reason: 'not-full' };
   if (input.completed) return { allowed: false, reason: 'completed' };
   if (input.examDisabled) return { allowed: false, reason: 'exam-disabled' };
   if (input.phase !== 'scene' && input.phase !== 'lesson') return { allowed: false, reason: 'wrong-phase' };
@@ -48,7 +48,9 @@ export function canSwitchToExam(input: ExamTransitionInput): ExamTransitionResul
   if (!current || current.kind !== input.stepKind || (current.kind !== 'scene' && current.kind !== 'lesson')) {
     return { allowed: false, reason: 'wrong-phase' };
   }
-  if (input.liveStepVisited || input.steps.slice(0, input.stepIndex).some(isLiveStep)) {
+  if (input.liveStepVisited || input.steps.slice(0, input.stepIndex).some(step => (
+    isLiveStep(step) && (input.mode !== 'fast' || step.kind !== 'practice-table')
+  ))) {
     return { allowed: false, reason: 'after-live' };
   }
   if (!input.steps.slice(input.stepIndex + 1).some(step => step.kind === 'drill-set' && step.drills.length > 0)) {
