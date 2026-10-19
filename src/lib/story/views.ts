@@ -5,6 +5,7 @@
  */
 import type { ActionType, Street } from '@/lib/poker/types';
 import type { DrillAnswer, DrillInstancePublic, DrillResult } from './drills/types';
+import type { PlacementSelfReport, SkillTier } from './placement';
 import type { ChapterGrade, ChapterId, ObjectiveKind, StepKind, StoryAct, StoryBelt, StoryHeroineId, StoryTeacherId } from './types';
 
 export type StoryRunPhase = 'failure-scene' | 'scene' | 'lesson' | 'drill' | 'live-hold' | 'live-play' | 'result' | 'ended';
@@ -16,7 +17,7 @@ export type StoryRunPhase = 'failure-scene' | 'scene' | 'lesson' | 'drill' | 'li
  * 'graduation'은 **졸업 대결만 재도전** — 이미 완주한 졸업 챕터에서 드릴·레슨을 건너뛰고
  * 토너먼트 스파링과 에필로그·결산만 돈다. 완료 횟수·XP·인연·칩은 늘지 않고 순위 영수증만 남는다.
  */
-export type StoryRunMode = 'full' | 'exam' | 'graduation';
+export type StoryRunMode = 'full' | 'exam' | 'graduation' | 'fast';
 /** 'persist' — 확정된 순위를 저장하지 못해 재시도를 기다리는 상태 */
 export type StoryHoldReason = 'scene' | 'timeout' | 'room-lost' | 'quiz' | 'persist';
 
@@ -84,6 +85,25 @@ export interface BotThought {
 }
 
 export interface StoryQuizReceipt { quizId: string; accepted: true }
+
+/**
+ * 실력 배치 (`story-placement`, 2026-10-20) — 'questions'는 서버가 새 seed로 4문을 발급(정답 제외),
+ * 'submit'은 발급한 문항을 서버가 다시 생성해 채점하고 `placement:tier` flag를 저장, 'set'은 사용자가 직접 바꾼다.
+ * 'new' 자기 평가는 questions 없이 submit(answers: [])만 보내도 된다. 성공 뒤 서버는 진행 요약을 다시 보낸다.
+ */
+export type StoryPlacementRequest =
+  | { action: 'questions' }
+  | { action: 'submit'; selfReport: PlacementSelfReport; answers: (DrillAnswer | null)[] }
+  | { action: 'set'; tier: SkillTier };
+
+export interface StoryPlacementAck {
+  /** action 'questions'일 때만 */
+  questions?: DrillInstancePublic[];
+  /** action 'submit'·'set' 결과 */
+  tier?: SkillTier;
+  correct?: number;
+  total?: number;
+}
 export interface StoryQuizFeedback { seatIndex: number; selected: number | null; correctIndex: number; correctLabel: string; selectedLabel: string | null; characterId: string; explanation: string }
 export interface ObservationNote { seatIndex: number; hands: number; entered: number; raised: number; called: number }
 export interface MasqueradeView {

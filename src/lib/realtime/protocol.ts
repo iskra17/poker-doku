@@ -21,6 +21,7 @@ import type {
   StoryChoiceRequest,
   StoryDrillAck,
   StoryDrillRequest,
+  StoryPlacementAck,
   StoryProgressView,
   StoryQuizRequest,
   StoryQuizReceipt,
@@ -626,6 +627,8 @@ export interface ClientToServerEvents {
   'story-choice': (data: unknown, ack?: AckCallback) => void;
   'story-drill': (data: unknown, ack?: AckCallback<StoryDrillAck>) => void;
   'story-quiz': (data: unknown, ack?: AckCallback<StoryQuizReceipt>) => void;
+  /** 실력 배치 — questions/submit/set (`StoryPlacementRequest`). 성공 뒤 진행 요약(story-update 아님)을 다시 받는다 */
+  'story-placement': (data: unknown, ack?: AckCallback<StoryPlacementAck>) => void;
   'story-daily': (dataOrAck?: unknown, ack?: AckCallback<{ runId: string }>) => void;
   'abandon-story': (data: unknown, ack?: AckCallback) => void;
   /** 진행 요약(허브) — HTTP GET /api/story와 같은 뷰 */
