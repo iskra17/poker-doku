@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { describeCorrectAnswer, isAnswerComplete } from '@/lib/story/drill-input';
+import { describeCorrectAnswer, isAnswerComplete, isTapToSubmit, TAP_SUBMIT_DELAY_MS } from '@/lib/story/drill-input';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
 import type { StoryHeroineId } from '@/lib/story/types';
 import type { StoryDrillView } from '@/lib/story/views';
@@ -38,6 +38,8 @@ const PRAISE = ['정답이에요!', '좋아요, 그거예요.', '완벽해요.',
 
 /**
  * 드릴 카드 — 진행 바+콤보 → 상황 미니 테이블 → 질문 → 입력 → [힌트][제출] → 즉시 피드백 스탬프 + 히로인 해설.
+ * 보기·액션 하나만 고르는 문항(`isTapToSubmit`)은 [제출] 없이 누르는 즉시 채점한다 — 짧은 간격 동안 선택을 보여 주고,
+ * 그 안에 다른 보기를 누르면 그 답으로 바뀐다.
  * 정답 판정은 서버(ack의 DrillResult). 다음 문항은 [다음]으로 story-advance 대신 서버가 story-update로 밀어준다.
  *
  * 진행 표시 계약(2026-09-03 재출제 완화): `total`은 첫 패스 슬롯 수로 불변이고 재출제는 `retry`로 따로 표시한다 —
@@ -58,6 +60,11 @@ export default function DrillCard({
   }
   useEffect(() => {
     startedAt.current = performance.now();
+  }, [key]);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    tapTimer.current = null;
   }, [key]);
 
   const instance = drill.instance;
@@ -86,6 +93,16 @@ export default function DrillCard({
   const progressMax = retry ? retry.total : drill.total;
   const answerComplete = isAnswerComplete(instance.answerSpec, answer);
   const nextLabel = drill.index + 1 < drill.total || drill.wrongQueue > 0 ? '다음 문제' : '세트 완료';
+  const tapSubmit = isTapToSubmit(instance.answerSpec);
+  const handleChange = (next: DrillAnswer | null) => {
+    setAnswer(next);
+    if (!tapSubmit || !next || pending || answered) return;
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    tapTimer.current = setTimeout(() => {
+      tapTimer.current = null;
+      onAnswer(next, performance.now() - startedAt.current);
+    }, TAP_SUBMIT_DELAY_MS);
+  };
 
   if (drill.retryOffer) {
     const count = drill.retryOffer.count;
@@ -168,10 +185,14 @@ export default function DrillCard({
 
       {beginnerGuide && !pending && onDismissGuide && (
         <ContextGuide
-          target={answered ? '[data-tour="drill-next"]' : answerComplete ? '[data-tour="drill-submit"]' : '[data-tour="drill-answer"]'}
+          target={answered ? '[data-tour="drill-next"]' : answerComplete && !tapSubmit ? '[data-tour="drill-submit"]' : '[data-tour="drill-answer"]'}
           onDismiss={onDismissGuide}
         >
-          {answered ? `${nextLabel}를 눌러 이어가요.` : answerComplete ? '제출을 눌러 답을 확인해요.' : '여기에서 답을 골라 주세요.'}
+          {answered
+            ? `${nextLabel}를 눌러 이어가요.`
+            : tapSubmit
+              ? '답을 누르면 바로 채점돼요.'
+              : answerComplete ? '제출을 눌러 답을 확인해요.' : '여기에서 답을 골라 주세요.'}
         </ContextGuide>
       )}
 
@@ -180,7 +201,7 @@ export default function DrillCard({
           key={key}
           spec={instance.answerSpec}
           value={answer}
-          onChange={setAnswer}
+          onChange={handleChange}
           disabled={pending || answered}
           reveal={answered ? { correctIndices, chosenIndex } : null}
         />
@@ -221,15 +242,21 @@ export default function DrillCard({
               힌트
             </button>
           )}
-          <button
-            data-tour="drill-submit"
-            type="button"
-            onClick={() => answer && onAnswer(answer, performance.now() - startedAt.current)}
-            disabled={pending || !answerComplete}
-            className="min-h-11 flex-1 rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
-          >
-            {pending ? '확인 중…' : '제출'}
-          </button>
+          {tapSubmit ? (
+            <p className="flex min-h-11 flex-1 items-center justify-center text-xs text-ink-dim" aria-live="polite">
+              {pending ? '확인 중…' : '답을 누르면 바로 채점돼요.'}
+            </p>
+          ) : (
+            <button
+              data-tour="drill-submit"
+              type="button"
+              onClick={() => answer && onAnswer(answer, performance.now() - startedAt.current)}
+              disabled={pending || !answerComplete}
+              className="min-h-11 flex-1 rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
+            >
+              {pending ? '확인 중…' : '제출'}
+            </button>
+          )}
         </div>
       ) : lastResult && (
         <>

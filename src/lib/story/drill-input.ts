@@ -24,6 +24,18 @@ export function isAnswerComplete(spec: DrillAnswerSpecPublic | DrillAnswerSpec, 
   }
 }
 
+/**
+ * 한 번 누르면 답이 정해지는 입력인가 — 보기 하나 고르기, 사이즈 없는 액션 고르기.
+ * 이런 문항은 [제출] 없이 누르는 즉시 채점한다(2026-10-20 피드백: 매 문항 제출 탭이 피로).
+ * 숫자·카드·복수 선택·레이즈 사이즈 문항은 답을 만들어 가는 중간 값이 있어 [제출]을 유지한다.
+ */
+export function isTapToSubmit(spec: DrillAnswerSpecPublic | DrillAnswerSpec): boolean {
+  return spec.kind === 'multiple-choice' || (spec.kind === 'action-pick' && !spec.sizingBB);
+}
+
+/** 즉시 채점 전 선택 표시를 보여 주는 짧은 간격 — 이 안에 다른 보기를 누르면 그 답으로 바뀐다 */
+export const TAP_SUBMIT_DELAY_MS = 220;
+
 export function clampNumeric(value: number, spec: { min: number; max: number }): number {
   if (!Number.isFinite(value)) return spec.min;
   return Math.min(spec.max, Math.max(spec.min, value));

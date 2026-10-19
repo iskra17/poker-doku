@@ -1,12 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import { useOutfitId } from '@/lib/hooks/use-outfit';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { mergeGuidedSituation } from '@/lib/story/chapters/helpers';
-import { gradeLocally, isAnswerComplete } from '@/lib/story/drill-input';
+import { gradeLocally, isAnswerComplete, isTapToSubmit, TAP_SUBMIT_DELAY_MS } from '@/lib/story/drill-input';
 import type { DrillAnswer, DrillSituation } from '@/lib/story/drills/types';
 import type { GuidedStage, LessonBlock, StoryHeroineId, StoryTeacherRef } from '@/lib/story/types';
 import DrillAnswerInput from './DrillAnswerInput';
@@ -150,10 +150,30 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
   const bubble = finished || !stage ? '잘했어요. 이제 진짜 문제로 가 볼까요?' : feedback ? feedback.text : stage.prompt;
   const { display, done } = useTypewriter(bubble, 20);
 
-  const submit = () => {
-    if (!stage || !answer) return;
-    const correct = gradeLocally(stage.answer, answer);
+  const tapSubmit = stage ? isTapToSubmit(stage.answer) : false;
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    tapTimer.current = null;
+  }, [stageIndex]);
+
+  const grade = (picked: DrillAnswer) => {
+    if (!stage) return;
+    const correct = gradeLocally(stage.answer, picked);
     setFeedback({ correct, text: correct ? stage.onCorrect : stage.onWrong });
+  };
+  const submit = () => {
+    if (answer) grade(answer);
+  };
+  // 보기·액션 하나만 고르는 단계는 누르는 즉시 확인한다 (DrillCard와 같은 기준)
+  const handleChange = (next: DrillAnswer | null) => {
+    setAnswer(next);
+    if (!tapSubmit || !next || pending) return;
+    if (tapTimer.current) clearTimeout(tapTimer.current);
+    tapTimer.current = setTimeout(() => {
+      tapTimer.current = null;
+      grade(next);
+    }, TAP_SUBMIT_DELAY_MS);
   };
   const proceed = () => {
     setFeedback(null);
@@ -164,9 +184,13 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
   return (
     <div className="rounded-2xl border border-gilded/40 bg-panel/90 p-4" aria-label="함께 풀기">
       {beginnerGuide && !pending && done && onDismissGuide && <ContextGuide
-        target={finished || feedback ? '[data-tour="guided-next"]' : answerComplete ? '[data-tour="guided-submit"]' : '[data-tour="guided-answer"]'}
+        target={finished || feedback ? '[data-tour="guided-next"]' : answerComplete && !tapSubmit ? '[data-tour="guided-submit"]' : '[data-tour="guided-answer"]'}
         onDismiss={onDismissGuide}>
-        {finished || feedback ? '읽었으면 다음 버튼을 눌러요.' : answerComplete ? '확인을 눌러 답을 살펴봐요.' : '내 카드와 보드를 보고 답을 골라요.'}
+        {finished || feedback
+          ? '읽었으면 다음 버튼을 눌러요.'
+          : tapSubmit
+            ? '내 카드와 보드를 보고 답을 누르면 바로 확인해요.'
+            : answerComplete ? '확인을 눌러 답을 살펴봐요.' : '내 카드와 보드를 보고 답을 골라요.'}
       </ContextGuide>}
       <p className="text-xs font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
       <div className="mt-2">
@@ -188,17 +212,19 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
       {!finished && stage && !feedback && (
         <div className="mt-3">
           <div data-tour="guided-answer" role="group" aria-label="답 선택">
-            <DrillAnswerInput spec={stage.answer} value={answer} onChange={setAnswer} />
+            <DrillAnswerInput spec={stage.answer} value={answer} onChange={handleChange} />
           </div>
-          <button
-            type="button"
-            onClick={submit}
-            data-tour="guided-submit"
-            disabled={pending || !done || !answerComplete}
-            className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
-          >
-            확인
-          </button>
+          {!tapSubmit && (
+            <button
+              type="button"
+              onClick={submit}
+              data-tour="guided-submit"
+              disabled={pending || !done || !answerComplete}
+              className="mt-3 min-h-11 w-full rounded-xl bg-blossom py-2.5 text-sm font-bold text-abyss disabled:opacity-50"
+            >
+              확인
+            </button>
+          )}
         </div>
       )}
       {!finished && feedback && (

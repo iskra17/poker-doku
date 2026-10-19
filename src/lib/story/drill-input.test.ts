@@ -6,12 +6,22 @@ import {
   describeCorrectAnswer,
   gradeLocally,
   isAnswerComplete,
+  isTapToSubmit,
   toggleCard,
   toggleIndex,
 } from './drill-input';
 import type { DrillAnswerSpec } from './drills/types';
 
 describe('drill-input helpers', () => {
+  it('isTapToSubmit: 한 번에 답이 정해지는 입력만 즉시 채점한다', () => {
+    expect(isTapToSubmit({ kind: 'multiple-choice', options: ['a', 'b'] })).toBe(true);
+    expect(isTapToSubmit({ kind: 'action-pick', options: ['fold', 'call', 'raise'] })).toBe(true);
+    expect(isTapToSubmit({ kind: 'action-pick', options: ['fold', 'raise'], sizingBB: { min: 2, max: 4 } })).toBe(false);
+    expect(isTapToSubmit({ kind: 'numeric', unit: '%', min: 0, max: 100 })).toBe(false);
+    expect(isTapToSubmit({ kind: 'multi-select', options: ['a', 'b'] })).toBe(false);
+    expect(isTapToSubmit({ kind: 'card-pick', candidates: [], pickCount: 1 })).toBe(false);
+  });
+
   it('isAnswerComplete per kind', () => {
     expect(isAnswerComplete({ kind: 'multiple-choice', options: ['a', 'b'] }, { kind: 'multiple-choice', index: 1 })).toBe(true);
     expect(isAnswerComplete({ kind: 'multiple-choice', options: ['a', 'b'] }, { kind: 'multiple-choice', index: 2 })).toBe(false);
