@@ -925,6 +925,10 @@ export function setupSocketHandlers(
       hero: {
         isOnline: soloHeroOnline,
         seatHero: (profileId, roomId, seat) => seatSoloHero(profileId, roomId, seat, 'story'),
+        heroAvatarOf: profileId => {
+          const socketId = sessions.getByPlayerId(profileId)?.socketId;
+          return (socketId && io.sockets.sockets.get(socketId)?.data.profileAvatarId) || null;
+        },
       },
     })
     : undefined;

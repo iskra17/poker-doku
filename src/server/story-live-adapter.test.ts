@@ -641,6 +641,28 @@ describe('LiveTableAdapter', () => {
     expect(new Set(bots).size).toBe(2);
   });
 
+  it('partner 해석: 파트너가 히어로 아바타와 같으면 다른 히로인을 앉힌다 (같은 얼굴 둘 금지)', () => {
+    adapter.shutdown();
+    adapter = new LiveTableAdapter({
+      roomManager: manager,
+      hero: { seatHero, heroAvatarOf: () => 'chloe' },
+      sweepIntervalMs: 0,
+    });
+    adapter.bindEvents({ onStepFinished, onLiveChanged });
+    manager.setStoryHooks(adapter);
+    const step = practiceStep({
+      lineup: [
+        { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
+        { seatIndex: 2, characterId: 'kapi', stackBB: 100, role: 'neighbor' },
+      ],
+    });
+    const roomId = enter(step, 'chloe');
+    const bots = stateOf(roomId)!.players.filter(p => p.type === 'bot').map(p => p.personalityId);
+    expect(bots).toHaveLength(2);
+    expect(bots).not.toContain('chloe');
+    expect(bots).toContain('kapi');
+  });
+
   it("'heroine-fill' 좌석은 파트너·명시 히로인을 예약 제외하고 서로 다른 히로인으로 채운다", () => {
     const step = sparringStep();
     step.table.lineup = [

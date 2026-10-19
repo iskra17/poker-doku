@@ -91,6 +91,11 @@ export interface StoryLiveHeroPort {
    * live 소켓이 없거나 착석 실패면 false (어댑터가 방을 정리한다).
    */
   seatHero(profileId: string, roomId: string, seat: { seatIndex: number; chips: number }): boolean;
+  /**
+   * 히어로의 좌석 아바타(캐릭터 id). 'partner'·'heroine-fill' 좌석이 같은 얼굴을 고르지 않게 피한다 —
+   * 새 프로필은 파트너를 아바타로 채우므로 이 가드가 없으면 Ch1부터 같은 캐릭터가 두 명 앉는다.
+   */
+  heroAvatarOf?(profileId: string): string | null;
 }
 
 /** 코디네이터가 구현 — 어댑터 → 런 상태 머신 통지 */
@@ -1047,9 +1052,10 @@ export class LiveTableAdapter implements StoryRoomHooks {
     const refs = session.step.table.lineup.map(seat => seat.characterId);
     const used = new Set<string>();
     const plan: StoryBotIdentity[] = [];
+    const heroAvatar = this.options.hero.heroAvatarOf?.(session.profileId) ?? null;
 
     for (const seat of session.step.table.lineup) {
-      const personalityId = this.resolveLineupCharacter(seat.characterId, session.partnerId, refs, used);
+      const personalityId = this.resolveLineupCharacter(seat.characterId, session.partnerId, refs, used, heroAvatar);
       const display = session.botDisplaysBySeat?.[seat.seatIndex];
       if (
         !personalityId
@@ -1070,18 +1076,24 @@ export class LiveTableAdapter implements StoryRoomHooks {
    * 'partner' → 선택 파트너(없거나 라인업에 이미 있으면 다른 히로인),
    * 'heroine-fill' → 아직 쓰이지 않은 첫 히로인, 그 외는 캐릭터 id 그대로.
    * 두 토큰 모두 **라인업에 명시된 히로인을 예약 제외**한다 — 안 그러면 뒤 좌석의 명시 히로인을 먼저 먹는다.
+   * 히어로 아바타도 피한다(같은 얼굴 둘 금지). 남은 히로인이 없을 때만 아바타와 겹치는 쪽을 허용한다.
+   * 명시 캐릭터 좌석은 챕터가 고른 상대 성향이라 아바타와 겹쳐도 바꾸지 않는다.
    */
   private resolveLineupCharacter(
     ref: string,
     partnerId: StoryHeroineId | null,
     lineupRefs: readonly string[],
     used: ReadonlySet<string>,
+    heroAvatar: string | null,
   ): string | null {
     if (ref !== 'partner' && ref !== HEROINE_FILL_SEAT) return used.has(ref) ? null : ref;
     const explicit = lineupRefs.filter(candidate => candidate !== 'partner' && candidate !== HEROINE_FILL_SEAT);
     const taken = new Set([...explicit, ...used]);
-    if (ref === 'partner' && partnerId && !taken.has(partnerId)) return partnerId;
-    return STORY_HEROINE_IDS.find(id => !taken.has(id)) ?? null;
+    const avoid = heroAvatar ? new Set([...taken, heroAvatar]) : taken;
+    if (ref === 'partner' && partnerId && !avoid.has(partnerId)) return partnerId;
+    return STORY_HEROINE_IDS.find(id => !avoid.has(id))
+      ?? STORY_HEROINE_IDS.find(id => !taken.has(id))
+      ?? null;
   }
 
   private refillPracticeStacks(session: LiveSession, players: Player[]): void {
