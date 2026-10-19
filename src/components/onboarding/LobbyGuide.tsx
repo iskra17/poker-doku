@@ -4,6 +4,7 @@ import { useProfileStore } from '@/lib/store/profile-store';
 import { useGameStore } from '@/lib/store/game-store';
 import { useStoryStore } from '@/lib/store/story-store';
 import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
+import { placementTierFromFlags, tierShowsBeginnerGuide } from '@/lib/story/placement';
 import ContextGuide from './ContextGuide';
 
 export default function LobbyGuide() {
@@ -16,8 +17,9 @@ export default function LobbyGuide() {
   const progress = useStoryStore(state => state.progress);
   const pending = useStoryStore(state => state.pending);
   if (!profileId || dismissed || !connected || roomId || preserved || run || pending || !progress
+    || !tierShowsBeginnerGuide(placementTierFromFlags(progress.flags))
     || progress.chapters.some(chapter => chapter.completions > 0)) return null;
   return <ContextGuide target={'[data-tour="lobby-start"]'} onDismiss={() => setBeginnerGuideDismissed(profileId, true)}>
-    첫 수련을 눌러 두 문제부터 시작해요.
+    첫 수련을 눌러 내 실력에 맞는 수련을 시작해요.
   </ContextGuide>;
 }

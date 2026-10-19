@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import CharacterImage from '@/components/characters/CharacterImage';
 import CharacterShowcaseModal from '@/components/characters/CharacterShowcaseModal';
+import PlacementSheet from '@/components/story/PlacementSheet';
 import { getCharacterById } from '@/lib/characters';
 import { nextBondScene } from '@/lib/characters/bond-scenes';
 import {
@@ -20,6 +21,7 @@ import { useStoryStore } from '@/lib/store/story-store';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
 import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
 import { chapterNumber, partnerCtaDecision, recommendChapter } from '@/lib/story/story-hub-rules';
+import { defaultRunModeForTier, placementTierFromFlags, tierShowsBeginnerGuide } from '@/lib/story/placement';
 
 const LAST_VISIT_PREFIX = 'poker-doku-last-visit:';
 const REUNION_GAP_MS = 3 * 24 * 60 * 60 * 1000;
@@ -56,6 +58,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const pendingRoomId = useGameStore(state => state.pendingRoomId);
   const [talkLine, setTalkLine] = useState<string | null>(null);
   const [showcaseOpen, setShowcaseOpen] = useState(false);
+  const [placementOpen, setPlacementOpen] = useState(false);
   const beginnerGuideDismissed = useBeginnerGuideDismissed(profile?.id ?? null);
 
   const partnerId = progression?.profile.selectedCharacterId ?? profile?.avatarId ?? null;
@@ -94,7 +97,8 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
   const recommendation = storyProgress ? recommendChapter(STORY_CHAPTERS, storyProgress) : null;
   const firstTime = (progression?.profile.completedHands ?? 0) === 0;
   const storyCta = cta.kind === 'story-start' || cta.kind === 'story-continue';
-  const beginnerGuideEligible = !!storyProgress && cta.kind === 'story-start' && !preservedRoom;
+  const placementTier = placementTierFromFlags(storyProgress?.flags);
+  const beginnerGuideEligible = !!storyProgress && cta.kind === 'story-start' && !preservedRoom && tierShowsBeginnerGuide(placementTier);
   const beginnerGuideVisible = beginnerGuideEligible && !beginnerGuideDismissed;
 
   const dismissBeginnerGuide = () => {
@@ -122,8 +126,13 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
       // 첫 방문에는 허브의 추천 카드를 한 번 더 누르게 하지 않는다. activeRun이 있으면
       // partnerCtaDecision이 story-continue를 반환하므로 보존 중인 런을 절대 재시작하지 않는다.
       if (cta.kind === 'story-start' && recommendation?.chapterId && !storyProgress?.activeRun) {
+        if (placementTier === null) {
+          setPlacementOpen(true);
+          return;
+        }
         onOpenStory?.();
-        void startChapter(recommendation.chapterId);
+        const chapter = STORY_CHAPTERS.find(chapter => chapter.id === recommendation.chapterId);
+        if (chapter) void startChapter(chapter.id, defaultRunModeForTier(placementTier, chapter));
         return;
       }
       onOpenStory?.();
@@ -231,6 +240,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
         characterId={showcaseOpen ? partnerId : null}
         onClose={() => setShowcaseOpen(false)}
       />
+      {placementOpen && <PlacementSheet onClose={() => setPlacementOpen(false)} onStarted={onOpenStory} />}
     </section>
   );
 }

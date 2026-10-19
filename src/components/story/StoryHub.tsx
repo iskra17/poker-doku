@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { getCharacterById } from '@/lib/characters';
 import { nextBondScene } from '@/lib/characters/bond-scenes';
 import { STORY_CHAPTERS } from '@/lib/story/chapters';
@@ -15,6 +15,8 @@ import {
   recommendationCopy,
 } from '@/lib/story/story-hub-rules';
 import { nextStoryRewards, STORY_REWARD_CATALOG } from '@/lib/story/rewards/catalog';
+import { defaultRunModeForTier, placementTierFromFlags, SKILL_TIERS } from '@/lib/story/placement';
+import { PLACEMENT_TIER_EXPLANATION, PLACEMENT_TIER_LABEL } from '@/lib/story/placement-copy';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
@@ -23,6 +25,7 @@ import GalleryCard from '@/components/gallery/GalleryCard';
 import ChapterCard from './ChapterCard';
 import DailyDrillsCard from './DailyDrillsCard';
 import ReviewNotePanel from './ReviewNotePanel';
+import PlacementSheet from './PlacementSheet';
 
 /**
  * 수련 스토리 허브 — **비선형 수련 목록**(2026-09-03 피드백 ②).
@@ -38,6 +41,11 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const startChapter = useStoryStore(state => state.startChapter);
   const startDaily = useStoryStore(state => state.startDaily);
   const load = useStoryStore(state => state.load);
+  const setPlacementTier = useStoryStore(state => state.setPlacementTier);
+  const [placementOpen, setPlacementOpen] = useState(false);
+  const [editingTier, setEditingTier] = useState(false);
+  const [savingTier, setSavingTier] = useState(false);
+  const tier = placementTierFromFlags(progress?.flags);
   // 운영자 모드 — 잠긴 챕터도 열어 둔다(서버 start도 operator면 해금 검사를 우회)
   const operator = useOperatorMode();
   const progression = useProgressionStore(state => state.snapshot);
@@ -111,6 +119,37 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         </span>
       </div>
 
+      <div className="mb-2 rounded-xl border border-mystic/20 bg-panel/90 px-3 py-2 text-xs" aria-label="내 수련 단계">
+        {tier ? (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-x-2">
+              <p className="font-bold text-ink">내 수련 단계: {PLACEMENT_TIER_LABEL[tier]}{tier === 'advanced' ? ' · 빠른 진행' : ''}</p>
+              <div className="flex gap-3">
+                <button type="button" disabled={pending || savingTier} onClick={() => setEditingTier(value => !value)} aria-expanded={editingTier} className="min-h-11 text-mystic disabled:opacity-50">바꾸기</button>
+                <button type="button" disabled={pending || savingTier} onClick={() => setPlacementOpen(true)} className="min-h-11 text-ink-dim underline disabled:opacity-50">다시 측정</button>
+              </div>
+            </div>
+            {editingTier && (
+              <div className="mt-1 space-y-2">
+                <div className="grid grid-cols-3 gap-1" role="group" aria-label="수련 단계 선택">
+                  {SKILL_TIERS.map(option => (
+                    <button key={option} type="button" aria-pressed={tier === option} disabled={pending || savingTier} onClick={async () => {
+                      setSavingTier(true);
+                      const ok = await setPlacementTier(option);
+                      setSavingTier(false);
+                      if (ok) setEditingTier(false);
+                    }} className={`min-h-11 rounded-lg border px-2 font-bold disabled:opacity-50 ${tier === option ? 'border-mystic bg-mystic/20 text-ink' : 'border-mystic/20 text-ink-dim'}`}>{PLACEMENT_TIER_LABEL[option]}</button>
+                  ))}
+                </div>
+                <p className="text-[11px] leading-relaxed text-ink-dim">{PLACEMENT_TIER_EXPLANATION[tier]} 변경한 단계는 다음 수련부터 적용돼요.</p>
+              </div>
+            )}
+          </>
+        ) : (
+          <button type="button" disabled={pending} onClick={() => setPlacementOpen(true)} className="min-h-11 w-full text-left font-bold text-mystic disabled:opacity-50">실력 측정하기</button>
+        )}
+      </div>
+
       {partnerId && (
         <div className="mb-2 rounded-xl border border-blossom/20 bg-panel/90 px-3 py-2 text-[11px]" aria-label="파트너 인연">
           <p className="font-bold text-ink">{getCharacterById(partnerId)?.name ?? '파트너'} · 인연 Lv.{affinity?.level ?? 1}</p>
@@ -155,7 +194,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
                   recommended={recommendation?.chapterId === chapter.id}
                   partnerId={partnerId as StoryHeroineId | null}
                   pending={pending || (!!activeRun && activeRun.chapterId !== chapter.id)}
-                  onStart={() => void startChapter(chapter.id)}
+                  onStart={() => void startChapter(chapter.id, defaultRunModeForTier(tier, chapter))}
                   onExam={() => void startChapter(chapter.id, 'exam')}
                   onGraduation={chapter.graduation ? () => void startChapter(chapter.id, 'graduation') : undefined}
                 />
@@ -170,6 +209,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         <ReviewNotePanel reviewQueue={progress.reviewQueue} drillStats={progress.drillStats} />
         {onOpenGallery && <GalleryCard onOpen={onOpenGallery} />}
       </div>
+      {placementOpen && <PlacementSheet onClose={() => setPlacementOpen(false)} />}
     </section>
   );
 }

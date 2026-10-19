@@ -10,8 +10,9 @@
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 import { formatCard } from '@/lib/poker/card-notation';
 import type { PokerClientSocket, RealtimeAck } from '@/lib/realtime/protocol';
-import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
-import type { StoryAdvanceTarget, StoryDrillAck, StoryQuizReceipt, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
+import type { DrillAnswer, DrillInstancePublic, DrillResult } from '@/lib/story/drills/types';
+import type { PlacementSelfReport, SkillTier } from '@/lib/story/placement';
+import type { StoryAdvanceTarget, StoryDrillAck, StoryPlacementAck, StoryPlacementRequest, StoryQuizReceipt, StoryProgressView, StoryRunMode, StoryRunView } from '@/lib/story/views';
 import { emitGameEvent } from '@/lib/events/game-events';
 import { receiveQuizCountdown, type QuizCountdown } from '@/lib/story/quiz-countdown';
 
@@ -36,6 +37,9 @@ export interface StoryStoreState {
   hint: string | null;
 
   load(): Promise<StoryLoadOutcome>;
+  fetchPlacementQuestions(): Promise<DrillInstancePublic[] | null>;
+  submitPlacement(selfReport: PlacementSelfReport, answers: (DrillAnswer | null)[]): Promise<StoryPlacementAck | null>;
+  setPlacementTier(tier: SkillTier): Promise<boolean>;
   /** mode 'exam' = 실력 확인(드릴만) — 생략하면 챕터 전체 */
   startChapter(chapterId: string, mode?: StoryRunMode): Promise<boolean>;
   advance(target?: StoryAdvanceTarget): Promise<boolean>;
@@ -132,6 +136,17 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
       });
     };
 
+    const placement = async (request: StoryPlacementRequest): Promise<StoryPlacementAck | null> => {
+      const generation = identityGeneration;
+      const ack = await withAck<StoryPlacementAck>((socket, done) => socket.emit('story-placement', request, done));
+      if (generation !== identityGeneration || !ack?.ok || !ack.data) return null;
+      if (request.action !== 'questions') {
+        await get().load();
+        if (generation !== identityGeneration) return null;
+      }
+      return ack.data;
+    };
+
     return {
       profileId: null,
       progress: null,
@@ -182,6 +197,12 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
           controllers.delete(controller);
         }
       },
+
+      fetchPlacementQuestions: async () => (await placement({ action: 'questions' }))?.questions ?? null,
+
+      submitPlacement: (selfReport, answers) => placement({ action: 'submit', selfReport, answers }),
+
+      setPlacementTier: async tier => !!(await placement({ action: 'set', tier }))?.tier,
 
       startChapter: async (chapterId, mode) => {
         const ack = await withAck<{ runId: string }>((socket, done) => {

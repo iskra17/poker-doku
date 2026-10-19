@@ -15,6 +15,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
+import { defaultRunModeForTier, placementTierFromFlags, tierShowsBeginnerGuide } from '@/lib/story/placement';
 import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
@@ -107,7 +108,9 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
     })
     : { allowed: false as const, reason: 'wrong-phase' as const };
   const canSwitchToExamNow = examEligibility.allowed && !firstDrillClear;
-  const beginnerGuideEnabled = connected && run?.chapterId === 'act1-ch01' && run.mode === 'full' && !beginnerGuideDismissed;
+  const tier = placementTierFromFlags(storyProgress?.flags);
+  const beginnerGuideEligible = run?.chapterId === 'act1-ch01' && run.mode === 'full' && tierShowsBeginnerGuide(tier);
+  const beginnerGuideEnabled = connected && beginnerGuideEligible && !beginnerGuideDismissed;
 
   const finishScene = async (chosen: Record<string, string>) => {
     // 선택은 서버 플래그로 남긴다 (실패해도 진행은 막지 않음 — 정답 없는 선택지)
@@ -132,18 +135,19 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
         >
           <header className="flex flex-none items-center justify-between border-b border-mystic/20 px-4 py-2">
             <div className="min-w-0">
-              <p className={`text-[10px] font-bold tracking-wider ${run.mode === 'full' ? 'text-ink-dim' : 'text-gilded'}`}>
+              <p className={`text-[10px] font-bold tracking-wider ${run.mode === 'full' || run.mode === 'fast' ? 'text-ink-dim' : 'text-gilded'}`}>
                 {run.mode === 'exam'
                   ? '실력 확인 · 힌트 없음 · 85점 이상 통과'
                   : run.mode === 'graduation'
                     ? '졸업 대결 · 실제 6인 Sit & Go'
                     : '수련 스토리'}
+                {run.mode === 'fast' && <span className="ml-2 inline-block rounded border border-gilded/30 bg-gilded/10 px-1.5 py-0.5 text-gilded">빠른 진행</span>}
               </p>
               <h2 className="truncate text-sm font-bold">{title}</h2>
             </div>
             <div className="flex items-center gap-2 text-[10px] text-ink-dim">
               <span aria-label="진행">{Math.min(run.stepIndex + 1, run.stepCount)}/{run.stepCount}</span>
-              {run.chapterId === 'act1-ch01' && run.mode === 'full' && run.phase !== 'ended' && profileId && (
+              {beginnerGuideEligible && run.phase !== 'ended' && profileId && (
                 <button
                   type="button"
                   onClick={() => setBeginnerGuideDismissed(profileId, !beginnerGuideDismissed)}
@@ -190,11 +194,15 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 onRetrySparring={() => void retrySparring()}
                 onOpenGallery={onOpenGallery ? () => { dismissRun(); onOpenGallery(); } : undefined}
                 onNextChapter={chapterId => {
-                  void startChapter(chapterId);
+                  const next = getChapter(chapterId);
+                  if (next) void startChapter(chapterId, defaultRunModeForTier(tier, next));
                 }}
                 onRetry={() => {
                   const chapterId = run.chapterId;
-                  void startChapter(chapterId);
+                  // daily·exam 재도전은 해당 모드를 유지한다.
+                  if (chapterId === 'daily') void useStoryStore.getState().startDaily();
+                  else if (run.mode === 'exam') void startChapter(chapterId, 'exam');
+                  else if (chapter) void startChapter(chapterId, defaultRunModeForTier(tier, chapter));
                 }}
                 onFullCourse={() => {
                   const chapterId = run.chapterId;

@@ -12,7 +12,7 @@ export function isFirstDrillClearMilestone(
 ): boolean {
   return !!run
     && run.chapterId === 'act1-ch01'
-    && run.mode === 'full'
+    && (run.mode === 'full' || run.mode === 'fast')
     && run.phase === 'scene'
     && run.stepKind === 'scene'
     && stepId === FIRST_DRILL_CLEAR_STEP_ID;

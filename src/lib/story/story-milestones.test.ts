@@ -9,8 +9,9 @@ const base = {
 };
 
 describe('story milestones', () => {
-  it('recognizes only the server-confirmed full-mode first drill scene', () => {
+  it('recognizes the server-confirmed full/fast first drill scene', () => {
     expect(isFirstDrillClearMilestone(base, FIRST_DRILL_CLEAR_STEP_ID)).toBe(true);
+    expect(isFirstDrillClearMilestone({ ...base, mode: 'fast' }, FIRST_DRILL_CLEAR_STEP_ID)).toBe(true);
     expect(isFirstDrillClearMilestone({ ...base, mode: 'exam' }, FIRST_DRILL_CLEAR_STEP_ID)).toBe(false);
     expect(isFirstDrillClearMilestone({ ...base, phase: 'drill', stepKind: 'drill-set' }, FIRST_DRILL_CLEAR_STEP_ID)).toBe(false);
     expect(isFirstDrillClearMilestone({ ...base, chapterId: 'act1-ch02' }, FIRST_DRILL_CLEAR_STEP_ID)).toBe(false);

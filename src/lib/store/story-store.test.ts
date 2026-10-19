@@ -190,6 +190,99 @@ describe('story-store', () => {
     expect(offline.getState().error).toContain('연결');
   });
 
+  it('placement questions use the shared pending lock and return only the server questions', async () => {
+    const fetch = vi.fn();
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().bindSocket(socket);
+    const request = store.getState().fetchPlacementQuestions();
+    expect(store.getState().pending).toBe(true);
+    expect(await store.getState().fetchPlacementQuestions()).toBeNull();
+    expect(await store.getState().setPlacementTier('advanced')).toBe(false);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]).toMatchObject({ event: 'story-placement', payload: { action: 'questions' } });
+    const questions = [runFixture().drill!.instance];
+    emitted[0].ack!({ ok: true, data: { questions } });
+    expect(await request).toEqual(questions);
+    expect(store.getState().pending).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { selfReport: 'new' as const, answers: [], tier: 'beginner' },
+    { selfReport: 'regular' as const, answers: [{ kind: 'multiple-choice' as const, index: 1 }], tier: 'advanced' },
+  ])('placement submit ($selfReport) reloads saved flags after the server ack', async ({ selfReport, answers, tier }) => {
+    const progress = { ...progressFixture(), flags: { 'placement:tier': tier } };
+    const fetch = vi.fn().mockResolvedValue(jsonResponse(200, { progress }));
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().setProfileIdentity('p1');
+    store.getState().bindSocket(socket);
+    const request = store.getState().submitPlacement(selfReport, answers);
+    expect(emitted[0]).toMatchObject({ event: 'story-placement', payload: { action: 'submit', selfReport, answers } });
+    const result = { tier, correct: answers.length, total: answers.length };
+    emitted[0].ack!({ ok: true, data: result });
+    expect(await request).toEqual(result);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(store.getState().progress?.flags['placement:tier']).toBe(tier);
+  });
+
+  it('setting a placement tier reloads flags without changing the current run', async () => {
+    const fetch = vi.fn().mockResolvedValue(jsonResponse(200, { progress: { ...progressFixture(), flags: { 'placement:tier': 'novice' } } }));
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().setProfileIdentity('p1');
+    store.getState().bindSocket(socket);
+    store.getState().receiveRun(runFixture({ mode: 'fast' }));
+    const request = store.getState().setPlacementTier('novice');
+    expect(emitted[0]).toMatchObject({ event: 'story-placement', payload: { action: 'set', tier: 'novice' } });
+    emitted[0].ack!({ ok: true, data: { tier: 'novice' } });
+    expect(await request).toBe(true);
+    expect(store.getState().progress?.flags['placement:tier']).toBe('novice');
+    expect(store.getState().run?.mode).toBe('fast');
+  });
+
+  it('placement errors and offline requests do not reload or overwrite progress', async () => {
+    const fetch = vi.fn();
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().bindSocket(socket);
+    const request = store.getState().submitPlacement('new', []);
+    emitted[0].ack!({ ok: false, code: 'story-locked', message: '다시 측정해 주세요.' });
+    expect(await request).toBeNull();
+    expect(store.getState().error).toBe('다시 측정해 주세요.');
+    expect(store.getState().pending).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+    store.getState().bindSocket(makeSocket(false).socket);
+    expect(await store.getState().fetchPlacementQuestions()).toBeNull();
+    expect(await store.getState().setPlacementTier('novice')).toBe(false);
+    expect(store.getState().error).toContain('연결');
+  });
+
+  it('placement discards a prior identity ack and never reloads the new profile', async () => {
+    const fetch = vi.fn();
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().setProfileIdentity('p1');
+    store.getState().bindSocket(socket);
+    const request = store.getState().submitPlacement('new', []);
+    store.getState().setProfileIdentity('p2');
+    emitted[0].ack!({ ok: true, data: { tier: 'beginner', correct: 0, total: 0 } });
+    expect(await request).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(store.getState().progress).toBeNull();
+  });
+
+  it('starts fast runs with an explicit mode in the chapter command', async () => {
+    const store = createStoryStore({ fetch: vi.fn() });
+    const { socket, emitted } = makeSocket();
+    store.getState().bindSocket(socket);
+    const request = store.getState().startChapter('act1-ch01', 'fast');
+    expect(emitted[0]).toMatchObject({ event: 'start-story-chapter', payload: { chapterId: 'act1-ch01', mode: 'fast' } });
+    emitted[0].ack!({ ok: true, data: { runId: 'fast-1' } });
+    expect(await request).toBe(true);
+  });
+
   it('advance sends the current runId/stepIndex and clears hint/result on success', async () => {
     const store = createStoryStore({ fetch: vi.fn() });
     const { socket, emitted, fire } = makeSocket();

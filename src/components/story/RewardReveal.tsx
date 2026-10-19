@@ -138,6 +138,7 @@ export default function RewardReveal({ result, onDone }: RewardRevealProps) {
       role="presentation"
       aria-live="polite"
     >
+      {result.mode === 'fast' && <p className="mt-2 text-center"><span className="inline-block rounded border border-gilded/30 bg-gilded/10 px-2 py-0.5 text-[10px] font-bold text-gilded">빠른 진행</span></p>}
       {/* 졸업 대결만 재도전 — 등급·드릴 통계는 이 런에 없다. 순위 카드는 결산 헤더가 그린다. */}
       {plan.graduationOnly && (
         <p className="mt-2 rounded-xl border border-mystic/25 bg-mystic/5 p-2 text-center text-[11px] text-ink-dim">
