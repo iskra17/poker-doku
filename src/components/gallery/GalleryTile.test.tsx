@@ -9,11 +9,11 @@ const locked: GalleryEntry = {
 };
 
 describe('GalleryTile 잠금 예고', () => {
-  it('잠긴 인연 씬은 인물·제목·조건과 강하게 흐린 썸네일만 보여 주고 열 수 없다', () => {
+  it('잠긴 인연 씬은 인물·제목·조건과 흐린 썸네일만 보여 주고 열 수 없다', () => {
     const markup = renderToStaticMarkup(<GalleryTile entry={locked} />);
     for (const copy of ['아라', '연습실', '인연 Lv.2', '🔒']) expect(markup).toContain(copy);
     expect(markup).toContain('blur-md');
-    expect(markup).toContain('brightness-[0.35]');
+    expect(markup).toContain('brightness-75');
     expect(markup).not.toContain('<button');
   });
 
