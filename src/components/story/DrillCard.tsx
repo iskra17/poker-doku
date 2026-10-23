@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { describeCorrectAnswer, isAnswerComplete, isTapToSubmit, TAP_SUBMIT_DELAY_MS } from '@/lib/story/drill-input';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
 import type { StoryHeroineId } from '@/lib/story/types';
@@ -65,6 +65,8 @@ export default function DrillCard({
     startedAt.current = performance.now();
   }, [key]);
   const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reduceMotion = useReducedMotion() ?? false;
+  const resultRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => () => {
     if (tapTimer.current) clearTimeout(tapTimer.current);
     tapTimer.current = null;
@@ -105,6 +107,20 @@ export default function DrillCard({
     }, TAP_SUBMIT_DELAY_MS);
   };
 
+  // 채점 결과가 오면 해설·[다음]을 화면 안으로 — 판단 재생이 먼저 보이게 잠깐 뒤, 타자기 해설이 다 쓰인 뒤 한 번 더.
+  // 이미 보이면 'nearest'라 움직이지 않는다. DOM 스크롤만 하고 setState는 하지 않는다.
+  const explanationLength = answered && lastResult ? lastResult.explanation.text.length + praise.length : 0;
+  useEffect(() => {
+    if (!answered) return;
+    const reveal = () => resultRef.current?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
+    const first = setTimeout(reveal, reduceMotion ? 0 : 650);
+    const second = setTimeout(reveal, Math.min(4_000, 700 + explanationLength * 18));
+    return () => {
+      clearTimeout(first);
+      clearTimeout(second);
+    };
+  }, [answered, key, reduceMotion, explanationLength]);
+
   if (drill.retryOffer) {
     const count = drill.retryOffer.count;
     return (
@@ -144,7 +160,7 @@ export default function DrillCard({
   }
 
   return (
-    <div className="relative flex w-full max-w-md flex-col gap-2" aria-label="수련 문제">
+    <div className="relative flex w-full max-w-md shrink-0 flex-col gap-2" aria-label="수련 문제">
       <DrillMomentLayer
         momentKey={key}
         pick={moment}
@@ -180,13 +196,31 @@ export default function DrillCard({
         {!retry && drill.wrongQueue > 0 && <span title="첫 패스가 끝나면 한 번 더 풀지 고를 수 있어요">오답 {drill.wrongQueue}</span>}
       </div>
 
-      <DrillTable
-        situation={instance.situation}
-        replayKey={key}
-        category={instance.category}
-        templateId={instance.templateId}
-        result={answered ? lastResult : null}
-      />
+      {/* 채점 스탬프는 테이블 위(우상단 레일)에 — 보기 타일 위에 두면 엉뚱한 보기를 가리킨다. 보기별 정답/오답은 타일 태그가 맡는다 */}
+      <div className="relative">
+        <DrillTable
+          situation={instance.situation}
+          replayKey={key}
+          category={instance.category}
+          templateId={instance.templateId}
+          result={answered ? lastResult : null}
+        />
+        <AnimatePresence>
+          {answered && lastResult && (
+            <motion.div
+              key={key}
+              initial={{ scale: 1.6, opacity: 0, rotate: -12 }}
+              animate={{ scale: 1, opacity: 1, rotate: -8 }}
+              className={`pointer-events-none absolute right-[3%] top-[9%] z-40 rounded-lg border-2 bg-abyss/70 px-3 py-1 text-lg font-black ${
+                lastResult.correct ? 'border-cyber text-cyber' : 'border-blossom text-blossom'
+              }`}
+              aria-hidden
+            >
+              {lastResult.correct ? '정답' : '오답'}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       <QuestionBubble speaker={teacherId} partnerId={partnerId} text={instance.question} />
 
@@ -203,7 +237,7 @@ export default function DrillCard({
         </ContextGuide>
       )}
 
-      <div className="relative" data-tour="drill-answer" role="group" aria-label="답 선택">
+      <div data-tour="drill-answer" role="group" aria-label="답 선택">
         <DrillAnswerInput
           key={key}
           spec={instance.answerSpec}
@@ -212,22 +246,6 @@ export default function DrillCard({
           disabled={pending || answered}
           reveal={answered ? { correctIndices, chosenIndex } : null}
         />
-        <AnimatePresence>
-          {answered && lastResult && (
-            <motion.div
-              key={key}
-              initial={{ scale: 1.6, opacity: 0, rotate: -12 }}
-              animate={{ scale: 1, opacity: 1, rotate: -8 }}
-              className={`pointer-events-none absolute right-2 top-2 rounded-lg border-2 px-3 py-1 text-lg font-black ${
-                lastResult.correct ? 'border-cyber text-cyber' : 'border-blossom text-blossom'
-              }`}
-              style={{ x: 0, y: 0 }}
-              aria-hidden
-            >
-              {lastResult.correct ? '정답' : '오답'}
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       {hint && !answered && (
@@ -266,7 +284,7 @@ export default function DrillCard({
           )}
         </div>
       ) : lastResult && (
-        <>
+        <div ref={resultRef} className="flex scroll-mb-3 flex-col gap-2">
           <CoachBubble
             speaker={lastResult.explanation.speaker}
             partnerId={partnerId}
@@ -286,7 +304,7 @@ export default function DrillCard({
           >
             {nextLabel}
           </button>
-        </>
+        </div>
       )}
       <p className="sr-only">출제 {resolveSpeaker(teacherId, partnerId).name}</p>
     </div>
