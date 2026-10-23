@@ -10,16 +10,18 @@
  * - 백분위는 `hand-rankings.ts`의 `handPercentile` 실측값(A♠A♥ 0.23% / A♦J♦ 2.56% / J♣7♦ 69.68%).
  */
 import type { Chapter, Scene, SceneSayLine, Step } from '../../types';
+import { partnerVariants } from '../../partner-lines';
 import { guidedSituation } from '../helpers';
 
 /**
  * Ch1 에필로그 선택(`choice:act1-ch01:after`)을 파트너가 기억하는 회상 씬 (2026-10-19 A2).
  * 값마다 씬 1개 — 서버 `sceneMatches`가 맞지 않는 씬을 건너뛰므로 Ch1을 안 했으면 셋 다 건너뛴다(1막 비선형 유지).
- * 화자 'partner'는 6명 누구여도 어색하지 않게 Ch1과 같은 중립 말줄임체로 쓴다.
+ * 화자 'partner'의 기본 `text`는 중립 말줄임체, `byPartner`가 히로인별 말투다(2026-10-24).
+ * 파트너가 이 챕터의 교사 사쿠라 본인일 수 있으므로 사쿠라 변주는 "오늘은 제가 가르치는 날"로 쓴다.
  */
 const CH01_AFTER_FLAG = 'choice:act1-ch01:after';
 
-function recallStep(value: 'thanks' | 'more' | 'quiet', lines: Array<Pick<SceneSayLine, 'text' | 'expression'>>): Step {
+function recallStep(value: 'thanks' | 'more' | 'quiet', lines: Array<Pick<SceneSayLine, 'text' | 'expression' | 'byPartner'>>): Step {
   const id = `act1-ch02:recall-${value}`;
   const scene: Scene = {
     id,
@@ -48,16 +50,82 @@ export const CH02: Chapter = {
   steps: [
     // ───────────────────────────────────────────── Ch1 마지막 한마디 회상 (플래그가 맞는 1개만 재생)
     recallStep('thanks', [
-      { text: '…지난번 그 말, 아직 기억하고 있어. 「옆에 있어 줘서 고마웠어요」.', expression: 'happy' },
-      { text: '그런 말 들으면… 오늘도 옆자리는 비워 둘 수밖에.', expression: 'happy' },
+      {
+        text: '…지난번 그 말, 아직 기억하고 있어. 「옆에 있어 줘서 고마웠어요」.',
+        expression: 'happy',
+        byPartner: partnerVariants({
+          sakura: '지, 지난번 그 말… 아직 기억해요. 「옆에 있어 줘서 고마웠어요」.',
+          ara: '야, 지난번 그 말. 「옆에 있어 줘서 고마웠어요」? …아직 기억하고 있거든.',
+          hana: '지난번 당신이 한 말, 기록해 뒀어요. 「옆에 있어 줘서 고마웠어요」.',
+          chloe: '지난번에 네가 한 말 있지? 「옆에 있어 줘서 고마웠어요」! 나 그거 클립으로 저장할 뻔했어~',
+          vivian: '지난번 그 대사, 아직 귓가에 남아 있어요. 「옆에 있어 줘서 고마웠어요」.',
+          elena: '…지난번 그 말. 「옆에 있어 줘서 고마웠어요」. …기억하고 있어.',
+        }),
+      },
+      {
+        text: '그런 말 들으면… 오늘도 옆자리는 비워 둘 수밖에.',
+        expression: 'happy',
+        byPartner: partnerVariants({
+          sakura: '그, 그래서… 오늘은 제가 가르치는 날인데도, 옆자리는 당신 자리로 비워 뒀어요.',
+          ara: '그러니까 오늘도 옆자리 비워 뒀어. …딴 데 앉기만 해 봐.',
+          hana: '그래서 오늘도 옆자리는 당신 몫으로 비워 뒀어요. 합리적인 배정이죠.',
+          chloe: '그래서 오늘도 옆자리 찜! 우리 짝이잖아~',
+          vivian: '그래서 오늘도 제 옆자리는 자기 거예요. 짝이니까요.',
+          elena: '…그래서 오늘도, 옆자리는 비워 뒀어.',
+        }),
+      },
     ]),
     recallStep('more', [
-      { text: '「한 핸드 더」라고 했던 거, 기억나. 그래서 오늘도 왔지.', expression: 'confident' },
-      { text: '좋아. 오늘은 그 한 핸드를 언제 치고 언제 넘기는지부터.', expression: 'neutral' },
+      {
+        text: '「한 핸드 더」라고 했던 거, 기억나. 그래서 오늘도 왔지.',
+        expression: 'confident',
+        byPartner: partnerVariants({
+          sakura: '「한 핸드 더」라고 하셨던 거… 기억나요. 그, 그래서 오늘 기다리고 있었어요.',
+          ara: '「한 핸드 더」라던 거, 기억나? 그래서 오늘 또 왔잖아. 약속 지키는 건 좋네.',
+          hana: '「한 핸드 더」 — 지난번 당신 요청이었죠. 그래서 오늘 표본을 더 준비했어요.',
+          chloe: '「한 핸드 더」라고 했던 거 기억나지? 그래서 오늘은 연장 방송이야~!',
+          vivian: '「한 핸드 더」 — 지난번 자기의 앙코르, 잊지 않았어요. 그래서 오늘 막을 다시 올렸죠.',
+          elena: '…「한 핸드 더」라고 했지. …그래서 왔어.',
+        }),
+      },
+      {
+        text: '좋아. 오늘은 그 한 핸드를 언제 치고 언제 넘기는지부터.',
+        expression: 'neutral',
+        byPartner: partnerVariants({
+          sakura: '오, 오늘은 그 한 핸드를 언제 치고 언제 넘기는지… 제, 제가 알려 드릴게요.',
+          ara: '좋아. 오늘은 그 한 핸드를 언제 치고 언제 넘기는지부터야.',
+          hana: '오늘의 주제는 그 한 핸드를 언제 치고 언제 넘길지예요. 기준이 있어요.',
+          chloe: '근데 오늘은 그 한 핸드를 언제 치고 언제 넘기는지 배운대! 꿀팁 각이야~',
+          vivian: '오늘은 그 한 핸드를 언제 연기하고 언제 쉬는지 배우는 날이에요.',
+          elena: '…오늘은 그 한 핸드를 언제 치고, 언제 넘기는지부터.',
+        }),
+      },
     ]),
     recallStep('quiet', [
-      { text: '지난번, 말없이 카드 정리하던 손… 아직 눈에 남아 있어.', expression: 'neutral' },
-      { text: '오늘 수업은 그런 손에 잘 맞을 거야. 기다리는 법이니까.', expression: 'happy' },
+      {
+        text: '지난번, 말없이 카드 정리하던 손… 아직 눈에 남아 있어.',
+        expression: 'neutral',
+        byPartner: partnerVariants({
+          sakura: '지, 지난번 말없이 카드 정리하던 손… 아직 눈에 선해요.',
+          ara: '지난번에 말없이 카드 정리하던 거… 뭐, 아직 기억은 나.',
+          hana: '지난번 말없이 카드를 정리하던 손, 기억해요. 순서가 정확했어요.',
+          chloe: '지난번에 말없이 카드 정리하던 손! 완전 조심조심~ 그거 아직 기억나.',
+          vivian: '지난번 말없이 카드를 정리하던 손… 대사 없는 연기가 제일 어렵거든요. 기억해요.',
+          elena: '…지난번, 말없이 카드 정리하던 손. …아직 눈에 남아 있어.',
+        }),
+      },
+      {
+        text: '오늘 수업은 그런 손에 잘 맞을 거야. 기다리는 법이니까.',
+        expression: 'happy',
+        byPartner: partnerVariants({
+          sakura: '오, 오늘은 제가 가르치는 날인데… 그런 손이라면 잘 맞을 거예요. 기다리는 법이니까요.',
+          ara: '오늘 수업, 너한테 딱일걸. 기다리는 법이거든.',
+          hana: '오늘 수업은 그런 성향에 잘 맞아요. 기다리는 법이니까요.',
+          chloe: '오늘 수업 너한테 찰떡일걸? 기다리는 법이래!',
+          vivian: '오늘 수업은 그런 손에 어울려요. 기다리는 법이거든요, 자기.',
+          elena: '…오늘 수업은 그런 손에 맞아. 기다리는 법이니까.',
+        }),
+      },
     ]),
 
     // ───────────────────────────────────────────── 프롤로그
@@ -82,6 +150,30 @@ export const CH02: Chapter = {
             text: '아… 네, 네. 저, 저는 사쿠라예요. 오, 오늘 수업을 제가… 마, 맡게 됐어요.',
             expression: 'surprised',
             effect: 'shake',
+            // 파트너가 사쿠라 본인이면 자기소개 대신 "짝에게 가르치는" 긴장으로
+            byPartner: { sakura: { text: '아… 네, 네. 오, 오늘은 제가 선생님이에요. 짜, 짝인 당신한테 가르치려니… 더 떨려요.', expression: 'surprised' } },
+          },
+          {
+            kind: 'say',
+            speaker: 'sakura',
+            // 에필로그의 "지금은 안 떨리네요"가 회수하는 고민 — 프롤로그에서 먼저 꺼낸다(2026-10-24)
+            text: '사, 사실… 누군가를 가르치는 건 처음이에요. 「가르칠 수 있을까」… 아침부터 계속 떨렸어요.',
+            expression: 'sad',
+          },
+          {
+            kind: 'say',
+            speaker: 'partner',
+            text: '(작게) …첫 수업이래. 끝까지 잘 들어 주면 돼.',
+            expression: 'neutral',
+            byPartner: partnerVariants({
+              // 파트너 = 사쿠라 본인: 자신을 제3자처럼 말하지 않고 짝에게 직접 건네는 한마디
+              sakura: { text: '그, 그래도… 당신이 제 짝이라서 다행이에요. 아는 얼굴이 앞에 있으면… 조금 덜 떨리니까요.', expression: 'happy' },
+              ara: { text: '(속닥) 사쿠라 씨 첫 수업이래. …제대로 들어 줘. 떨어도 실력은 진짜거든.', expression: 'neutral' },
+              hana: { text: '(작게) 사쿠라 씨의 첫 수업이에요. 긴장도는 높지만 내용은 정확할 거예요. 제가 보장해요.', expression: 'neutral' },
+              chloe: { text: '(속닥속닥) 사쿠라 씨 첫 수업이래! 우리 리액션 크게 해 주자~ 응원 모드 ON!', expression: 'happy' },
+              vivian: { text: '(작게) 첫 무대의 떨림이에요, 자기. 우리가 좋은 관객이 되어 주면 돼요.', expression: 'neutral' },
+              elena: { text: '(작게) …첫 수업이래. …끝까지 들어 줘.', expression: 'neutral' },
+            }),
           },
           {
             kind: 'say',
@@ -137,8 +229,9 @@ export const CH02: Chapter = {
           situation: guidedSituation({ hero: 'Jc 7d', heroPosition: 'UTG', potChips: 30, toCallChips: 20, note: '프리플랍, 뒤에 다섯 명이 남아 있어요' }),
           stages: [
             {
-              prompt: '이 핸드는 상위 몇 % 근처일까요? 어림으로 괜찮아요.',
-              answer: { kind: 'numeric', correct: 70, tolerance: 10, unit: '%', min: 0, max: 100 },
+              prompt: '이 핸드는 상위 몇 % 근처일까요? 어림으로 골라 보세요.',
+              // 숫자 키패드 대신 보기 선택(2026-10-24 — 숫자 입력이 시험지처럼 느껴졌다)
+              answer: { kind: 'multiple-choice', options: ['상위 10% 근처', '상위 40% 근처', '상위 70% 근처'], correctIndex: 2 },
               onCorrect: '마, 맞아요… 70% 근처예요. 강한 쪽 절반에도 못 드는 핸드예요.',
               onWrong: '아… J랑 7은 사이가 너무 멀어서요. 이 핸드는 상위 70% 근처, 한참 뒤쪽 핸드예요.',
             },
@@ -173,7 +266,8 @@ export const CH02: Chapter = {
       ],
     },
 
-    // ───────────────────────────────────────────── 드릴 7문 (D-RANGE 4 · D-POS 2 · D-ACT 1)
+    // ───────────────────────────────────────────── 드릴 4문 (D-RANGE 2 · D-POS 1 · D-ACT 1)
+    // 2026-10-24: 7 → 4. 숫자 입력 `range-percentile`과 Ch1에서 다룬 `pos-name`은 복습 노트·오늘의 수련에서만 나온다.
     {
       kind: 'drill-set',
       id: 'act1-ch02:drills',
@@ -181,9 +275,6 @@ export const CH02: Chapter = {
       teacher: 'sakura',
       drills: [
         { templateId: 'range-open-decision', seedPolicy: 'per-run' },
-        { templateId: 'range-open-decision', seedPolicy: 'per-run' },
-        { templateId: 'range-percentile', seedPolicy: 'per-run' },
-        { templateId: 'pos-name', seedPolicy: 'per-run' },
         { templateId: 'pos-first-to-act', seedPolicy: 'per-run' },
         { templateId: 'range-open-decision', seedPolicy: 'per-run' },
         // 수기 문항은 시드 고정 — 상황이 매번 같아야 해설이 성립한다.
@@ -356,7 +447,8 @@ export const CH02: Chapter = {
           {
             kind: 'say',
             speaker: 'sakura',
-            text: '사실 저, 오늘 아침까지 「가르칠 수 있을까」 하고 계속 떨었어요. 그런데 지금은… 이상하게 안 떨리네요.',
+            // 프롤로그에서 꺼낸 고민의 회수
+            text: '아침엔 「가르칠 수 있을까」 하고 그렇게 떨었는데요. 지금은… 이상하게 안 떨리네요.',
             expression: 'confident',
             effect: 'zoom',
           },
@@ -407,6 +499,21 @@ export const CH02: Chapter = {
             speaker: 'sakura',
             text: '다음엔 하나 씨 수업도 들어 보세요. 그분은… 숫자로 이야기해요. 저랑은 정반대지만, 당신에게는 둘 다 필요할 거예요.',
             expression: 'neutral',
+          },
+          {
+            kind: 'say',
+            speaker: 'partner',
+            text: '…사쿠라 씨 수업, 좋았어. 짝 대국 전에 들어 둬서 다행.',
+            expression: 'happy',
+            byPartner: partnerVariants({
+              // 파트너 = 사쿠라 본인: 자기 수업을 칭찬하지 않고 짝에게 고마움을 전한다
+              sakura: { text: '…다, 당신이 제 짝이라서, 오늘 끝까지 가르칠 수 있었던 것 같아요. 고마워요.', expression: 'happy' },
+              ara: { text: '사쿠라 씨 수업, 생각보다 괜찮았지? …짝 대국 전에 폴드 배운 거, 나한테도 이득이야.', expression: 'confident' },
+              hana: { text: '사쿠라 씨의 수업, 실전 효율이 높았어요. 짝 대국 준비로도 좋은 하루였어요.', expression: 'happy' },
+              chloe: { text: '사쿠라 씨 수업 완전 힐링이었어~ 짝 대국 전에 폴드 마스터했다, 우리!', expression: 'happy' },
+              vivian: { text: '사쿠라 씨, 오늘 무대 훌륭했어요. 짝 대국 전에 좋은 공연을 봤네요, 자기.', expression: 'happy' },
+              elena: { text: '…사쿠라 씨 수업, 좋았어. …짝 대국 전에 들어 둬서 다행이야.', expression: 'happy' },
+            }),
           },
         ],
       },

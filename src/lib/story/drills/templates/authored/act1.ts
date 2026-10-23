@@ -26,6 +26,52 @@ function villains(entries: Array<[number, string, string]>): DrillVillain[] {
 
 export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<DrillTemplate[]>([
   {
+    // Ch1 첫 핸드 복기(2026-10-24 파트너 중심 초반) — `act1-ch01:first-hand` 스크립트와 같은 카드.
+    // 나 A♠K♠ = 투페어(A·K), 카피 Q♥Q♦ = Q 원페어, 초코 5♠4♣ = 하이카드 → 나 승. 파트너 J♣T♥는 런타임 캐릭터라 넣지 않는다
+    // (히로인은 문항 상대가 될 수 없다). 빠른 진행은 첫 핸드를 건너뛰므로 문구는 "방금 친"을 가정하지 않는다.
+    // 좌석은 첫 핸드 테이블과 같은 배치(나 0 · 카피 2 · 초코 3)이고 포지션 라벨은 그 배치의 6-max 이름이다.
+    id: 'act-ch01-first-hand-recap',
+    category: 'hand-ranking',
+    title: '첫 핸드 복기',
+    difficulty: 1,
+    hints: ['카피는 Q 두 장으로 원페어예요. 내 A·K가 보드와 몇 번 짝이 맞는지 세어 보세요.'],
+    source: {
+      kind: 'authored',
+      instance: {
+        category: 'hand-ranking',
+        situation: {
+          hero: parseCards('As Ks'),
+          board: parseCards('Ah Kd 7c 2d 9s'),
+          potChips: 12 * BIG_BLIND,
+          toCallChips: 0,
+          bigBlind: BIG_BLIND,
+          heroStackChips: STACK,
+          heroPosition: 'BTN',
+          street: 'river',
+          villains: [
+            { seatIndex: 2, characterId: 'kapi', position: 'BB', stackChips: STACK, holeCards: parseCards('Qh Qd') },
+            { seatIndex: 3, characterId: 'choco', position: 'UTG', stackChips: STACK, holeCards: parseCards('5s 4c') },
+          ],
+          note: '도장의 첫 핸드 — 리버까지 간 세 사람이 카드를 열었어요.',
+        },
+        question: '첫 핸드의 마지막 장면이에요. 이 팟은 누가 가져갈까요?',
+        answerSpec: { kind: 'multiple-choice', options: ['카피', '초코', '나'], correctIndex: 2 },
+        hint: '카피는 Q 두 장으로 원페어예요. 내 A·K가 보드와 몇 번 짝이 맞는지 세어 보세요.',
+        explanation: {
+          text:
+            '보드는 A♥ K♦ 7♣ 2♦ 9♠예요. 수련생님의 A♠ K♠는 보드의 A와 K에 하나씩 짝이 맞아서 투페어(A·K)예요. '
+            + '카피의 Q♥ Q♦는 Q 원페어, 초코의 5♠ 4♣는 하이카드고요. '
+            + '짝이 두 쌍인 투페어가 원페어보다 높으니, 이 팟은 수련생님 거랍니다♪',
+          speaker: 'miyako',
+          facts: {
+            board: 'A♥ K♦ 7♣ 2♦ 9♠', heroHand: '투페어',
+            villain1Name: '카피', villain1Hand: '원페어', villain2Name: '초코', villain2Hand: '하이카드', winner: '나',
+          },
+        },
+      },
+    },
+  },
+  {
     // 보드 K♠9♦5♣3♥2♠ — 스트레이트(A·4 필요)·플러시(같은 무늬 셋 이하) 모두 불가.
     // 나 A♦J♣ = A 하이카드, 초코 9♥8♥ = 9 원페어 → 초코 승. "A를 들어도 짝이 없으면 진다"를 한 장면으로.
     id: 'act-ch01-pair-beats-high',

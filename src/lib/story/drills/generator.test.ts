@@ -179,7 +179,7 @@ describe('authored templates', () => {
   it('registers the Act 1·2·3·4 authored drills (ids unique, all instantiable)', () => {
     const ids = AUTHORED_DRILL_TEMPLATES.map(template => template.id);
     expect(ids).toEqual([
-      'act-ch01-pair-beats-high',
+      'act-ch01-first-hand-recap', 'act-ch01-pair-beats-high',
       'act-ch02-fold-utg', 'act-ch02-open-btn',
       'act-ch04-steal-btn', 'act-ch04-cbet-dry', 'act-ch04-iso-sb',
       'act-ch05-river-value', 'act-ch05-river-air-check',

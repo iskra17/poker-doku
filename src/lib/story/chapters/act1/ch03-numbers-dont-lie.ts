@@ -11,6 +11,7 @@
  *   드라코가 팟 60에 120(2배 오버벳) → 팟 180 · 콜 120 → 120 ÷ 300 = 40% → 폴드.
  */
 import type { Chapter } from '../../types';
+import { partnerVariants } from '../../partner-lines';
 import { guidedSituation } from '../helpers';
 
 export const CH03: Chapter = {
@@ -345,6 +346,36 @@ export const CH03: Chapter = {
                 },
               ],
             },
+          },
+          // 짝 대국 회수(2026-10-24) — Ch1 프롤로그의 고민·에필로그의 부탁을 1막 끝에서 닫는다.
+          // 파트너가 하나 본인이어도 자연스럽게 하나 변주는 1인칭 보고로 쓴다.
+          {
+            kind: 'say',
+            speaker: 'partner',
+            text: '…짝 대국 신청서, 오늘 냈어. 짝 칸에 우리 둘 이름.',
+            expression: 'happy',
+            byPartner: partnerVariants({
+              sakura: { text: '저, 저기… 짝 대국 신청서, 오늘 냈어요. 짝 칸에… 우리 둘 이름이요. 헤헤.', expression: 'happy' },
+              ara: { text: '아, 그리고 짝 대국 신청서 냈어. 짝 칸에 네 이름 적었으니까 이제 못 물러.', expression: 'confident' },
+              hana: { text: '그리고 보고할 게 하나 있어요. 짝 대국 신청서, 오늘 제출했어요 — 짝 칸에 당신과 제 이름으로.', expression: 'happy' },
+              chloe: { text: '아 맞다! 짝 대국 신청서 냈어~ 짝 칸에 우리 둘 이름! 이제 공식 팀이다☆', expression: 'happy' },
+              vivian: { text: '그리고 자기, 짝 대국 신청서를 냈어요. 포스터에 우리 둘 이름이 나란히 올라갈 거예요.', expression: 'happy' },
+              elena: { text: '…짝 대국 신청서, 냈어. …짝 칸에, 우리 둘 이름.', expression: 'happy' },
+            }),
+          },
+          {
+            kind: 'say',
+            speaker: 'partner',
+            text: '…이제 진짜 짝이야. 대국까지, 같이 가자.',
+            expression: 'confident',
+            byPartner: partnerVariants({
+              sakura: { text: '이, 이제 진짜 짝이에요. 대국까지… 같이 가요.', expression: 'happy' },
+              ara: { text: '이제 진짜 짝이다. 대국에서 나 창피하게 만들기만 해 봐. …같이 이기자.', expression: 'confident' },
+              hana: { text: '이제 공식적인 짝이에요. 대국까지 남은 시간, 계획대로 같이 써요.', expression: 'confident' },
+              chloe: { text: '이제 진짜 짝이야! 대국까지 같이 달리자~ Let\'s go!', expression: 'happy' },
+              vivian: { text: '이제 진짜 상대역이에요, 자기. 대국 무대까지 같이 가요.', expression: 'confident' },
+              elena: { text: '…이제 진짜 짝이야. …대국까지, 같이 가.', expression: 'confident' },
+            }),
           },
           {
             kind: 'say',

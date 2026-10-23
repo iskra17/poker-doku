@@ -12,7 +12,7 @@ interface FirstDrillClearSheetProps {
   onContinue: () => void;
 }
 
-/** Ch1 첫 두 드릴이 서버에서 닫힌 뒤 한 번만 거치는 작은 이벤트 시트. */
+/** Ch1 첫 드릴 세트(첫 핸드 복기 + 원페어 문항)가 서버에서 닫힌 뒤 한 번만 거치는 작은 이벤트 시트. */
 export default function FirstDrillClearSheet({ teacherId, partnerId, pending, onContinue }: FirstDrillClearSheetProps) {
   const reducedMotion = usePrefersReducedMotion();
   return (
@@ -27,7 +27,7 @@ export default function FirstDrillClearSheet({ teacherId, partnerId, pending, on
         <span aria-hidden className="absolute -right-5 -top-7 text-8xl text-gilded/15">✦</span>
         <p className="text-[10px] font-black tracking-[0.28em] text-cyber">FIRST STEP CLEAR</p>
         <h2 className="mt-1 text-2xl font-black text-ink">첫걸음 완료</h2>
-        <p className="mt-1 text-xs text-ink-dim">핸드 랭킹 첫 두 문제를 끝까지 풀었어요.</p>
+        <p className="mt-1 text-xs text-ink-dim">첫 핸드 복기와 족보 문제를 끝까지 풀었어요.</p>
       </div>
 
       <div className="space-y-3 p-4">

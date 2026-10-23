@@ -1,7 +1,7 @@
 import type { StoryRunView } from './views';
 
 /**
- * Ch1의 첫 두 핸드 랭킹 드릴을 닫은 뒤 보여 주는 짧은 이벤트 스텝.
+ * Ch1의 첫 드릴 세트(첫 핸드 복기 + 원페어 문항)를 닫은 뒤 보여 주는 짧은 이벤트 스텝.
  * 서버가 이 장면 스텝을 보냈다는 사실이 세트 완료의 경계이므로, 마지막 답변이나 로컬 점수로 추측하지 않는다.
  */
 export const FIRST_DRILL_CLEAR_STEP_ID = 'act1-ch01:first-drills-clear';
