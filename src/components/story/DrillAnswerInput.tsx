@@ -18,6 +18,12 @@ interface DrillAnswerInputProps {
 
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'] as const;
 
+/** 짧은 보기(포지션·족보·이름)는 여러 열로 — 테이블 아래 질문·보기가 모바일 한 화면에 들어오게 한다 */
+function choiceColumns(options: readonly string[]): string {
+  if (options.length < 2 || options.some(option => option.length > 9)) return '';
+  return options.length === 3 ? 'grid-cols-3' : 'grid-cols-2';
+}
+
 /**
  * 드릴 입력 4종(+다중선택) — 선택지 그리드 / 숫자 키패드+슬라이더 / 카드 그리드 / 미니 액션 바.
  * 값은 상위(DrillCard·LessonPage)가 들고 있고, 여기선 그리기와 정규화만 한다.
@@ -26,7 +32,7 @@ export default function DrillAnswerInput({ spec, value, onChange, disabled = fal
   switch (spec.kind) {
     case 'multiple-choice':
       return (
-        <div className="grid gap-2" role="radiogroup" aria-label="보기">
+        <div className={`grid gap-2 ${choiceColumns(spec.options)}`} role="radiogroup" aria-label="보기">
           {spec.options.map((option, index) => {
             const chosen = value?.kind === 'multiple-choice' && value.index === index;
             const correct = reveal?.correctIndices?.includes(index);

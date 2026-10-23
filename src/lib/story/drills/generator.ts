@@ -156,6 +156,9 @@ function cloneSituation(situation: DrillSituation): DrillSituation {
     villains: situation.villains.map(cloneVillain),
   };
   if (situation.note !== undefined) out.note = situation.note;
+  // 테이블 배치용 공개 좌석 번호 (정답 아님 — drill-table-model)
+  if (situation.heroSeatIndex !== undefined) out.heroSeatIndex = situation.heroSeatIndex;
+  if (situation.dealerSeatIndex !== undefined) out.dealerSeatIndex = situation.dealerSeatIndex;
   return out;
 }
 
