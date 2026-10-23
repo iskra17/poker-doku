@@ -168,7 +168,7 @@ describe('1막 챕터 데이터', () => {
   });
 
   it('드릴 수와 프리셋 핸드 수가 커리큘럼(A5-1)과 같다', () => {
-    // 2026-10-24 필수 문제 축소: Ch1 6 → 4, Ch2 7 → 4 (반복은 복습 노트·오늘의 수련으로)
+    // 2026-10-24 필수 문제 축소: Ch1 6 → 4, Ch2 7 → 4 (반복 문항은 빠진다 — 오늘의 수련 풀도 완료 챕터 슬롯에서 만든다)
     expect([drillCount(CH01), drillCount(CH02), drillCount(CH03)]).toEqual([4, 4, 8]);
     expect([presetHandCounts(CH01), presetHandCounts(CH02), presetHandCounts(CH03)]).toEqual([[1, 2], [2], [2]]);
 
