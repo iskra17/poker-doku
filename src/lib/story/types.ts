@@ -410,6 +410,11 @@ export interface Chapter {
    * 검증기: tournament 스파링 정확히 1개 + `examDisabled`.
    */
   graduation?: true;
+  /**
+   * 선택 연습 풀 — 필수 드릴에서 뺐지만 「오늘의 수련」에서는 계속 나오게 할 **생성** 템플릿 id (2026-10-24:
+   * 초반 필수 문제를 줄이되 반복 연습은 선택으로 남긴다는 회의 합의). 완료 챕터의 드릴 슬롯과 함께 오늘의 수련 풀이 된다.
+   */
+  practicePool?: readonly string[];
   steps: Step[];
   failScene?: Scene;
   rewards: ChapterRewards;

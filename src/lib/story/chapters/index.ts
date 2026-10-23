@@ -100,6 +100,14 @@ export function validateChapters(chapters: readonly Chapter[], options: Validate
       const tournaments = chapter.steps.filter(step => step.kind === 'sparring' && step.table.tournament).length;
       if (tournaments !== 1) errors.push(`${at}: graduation chapter needs exactly one tournament sparring (found ${tournaments})`);
     }
+    for (const templateId of chapter.practicePool ?? []) {
+      // 오늘의 수련은 seed를 바꿔 출제하므로 수기 문항은 선택 연습 풀에 둘 수 없다 (reviewPool과 같은 규칙)
+      if (options.templateIds && !options.templateIds.has(templateId)) {
+        errors.push(`${at}: unknown practicePool template ${templateId}`);
+      } else if (options.generatedTemplateIds && !options.generatedTemplateIds.has(templateId)) {
+        errors.push(`${at}: practicePool template ${templateId} is not a generated template`);
+      }
+    }
     validateRewards(chapter, errors);
     validateSteps(chapter, options, errors);
     if (chapter.failScene) validateScene(chapter.failScene, `${at} failScene`, errors);

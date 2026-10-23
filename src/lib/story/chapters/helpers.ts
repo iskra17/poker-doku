@@ -2,7 +2,7 @@
  * 챕터 데이터 집필 헬퍼 — 레슨 「함께 풀기」의 구조화된 상황(`DrillSituation`).
  *
  * 2026-09-03 피드백: 보드가 intro 문장에만 있어 2단계 프롬프트·오답 피드백 때 사라졌다. 이제 guided 블록은
- * 상황을 데이터로 들고 `GuidedBlock`이 `DrillTableView`로 상시 렌더한다 — 문장은 보조, 카드가 주.
+ * 상황을 데이터로 들고 `GuidedBlock`이 `DrillTable`(실제 타원 테이블)로 상시 렌더한다 — 문장은 보조, 카드가 주.
  * 카드 표기는 authored 드릴과 같은 'Ks Kh 7d 4c 2s' 문자열(`parseCards`).
  */
 import { parseCards } from '@/lib/poker/card-notation';

@@ -763,6 +763,21 @@ describe('daily drills', () => {
     expect(coordinator.startDaily(PROFILE)).toMatchObject({ ok: false, code: 'action-rejected' });
   });
 
+  it('draws from the chapter practicePool so drills dropped from the required sets stay in daily practice', () => {
+    // 슬롯은 생성기에 없는 id뿐 — 풀에 남는 것은 practicePool 항목 하나여야 한다
+    const base = makeChapter();
+    const chapter = makeChapter({
+      practicePool: ['outs-count'],
+      steps: base.steps.map(step => (step.kind === 'drill-set'
+        ? { ...step, drills: [{ templateId: 'no-such-template', seedPolicy: 'per-run' as const }] }
+        : step)),
+    });
+    const ctx = setup([chapter]);
+    ctx.repository.complete(PROFILE, 'act1-ch01');
+    expect(ctx.coordinator.startDaily(PROFILE).ok).toBe(true);
+    expect(ctx.latest().drill).toMatchObject({ total: 3, instance: { templateId: 'outs-count' } });
+  });
+
   it('counts only first attempts toward the daily total — retries never consume the day', () => {
     const ctx = setup();
     const { coordinator, repository, rewards, latest } = ctx;

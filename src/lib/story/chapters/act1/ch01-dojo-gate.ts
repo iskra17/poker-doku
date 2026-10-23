@@ -48,6 +48,8 @@ export const CH01: Chapter = {
   teacher: 'miyako',
   belt: 'white',
   requires: [],
+  // 필수 드릴에서 뺀 내 최고 족보 반복 — 「오늘의 수련」에서만 나온다 (2026-10-24 회의 합의)
+  practicePool: ['rank-best-hand'],
   estimatedMinutes: 10,
   steps: [
     // ───────────────────────────────────────────── 프롤로그 — 파트너의 사건 (6~8줄, 건너뛰기 허용)

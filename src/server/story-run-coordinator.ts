@@ -1867,24 +1867,27 @@ export class StoryRunCoordinator {
     return completed.size > 0;
   }
 
-  /** 완료 챕터의 드릴 슬롯에서 템플릿 풀을 만든다 (생성기에 있는 것만) */
+  /** 완료 챕터의 드릴 슬롯 + 선택 연습 풀(`practicePool`)에서 템플릿 풀을 만든다 (생성기에 있는 것만) */
   private dailyPool(completed: ReadonlySet<ChapterId>): Array<{ templateId: string; teacher: Chapter['teacher'] }> {
     const pool: Array<{ templateId: string; teacher: Chapter['teacher'] }> = [];
     const seen = new Set<string>();
     for (const chapter of this.chapters) {
       if (!completed.has(chapter.id)) continue;
+      const add = (templateId: string) => {
+        if (seen.has(templateId) || !getDrillTemplate(templateId)) return;
+        seen.add(templateId);
+        pool.push({ templateId, teacher: chapter.teacher });
+      };
       for (const step of chapter.steps) {
         if (step.kind !== 'drill-set') continue;
         // 동적 복습 슬롯은 진입 시점에야 정해지므로 풀에는 후보(reviewPool) 자체를 넣는다
         const templateIds = step.drills.flatMap(slot => (
           slot.templateId === REVIEW_SLOT_TEMPLATE_ID ? [...(step.reviewPool ?? [])] : [slot.templateId]
         ));
-        for (const templateId of templateIds) {
-          if (seen.has(templateId) || !getDrillTemplate(templateId)) continue;
-          seen.add(templateId);
-          pool.push({ templateId, teacher: chapter.teacher });
-        }
+        templateIds.forEach(add);
       }
+      // 필수에서 뺀 반복 문항 — 슬롯 뒤에 넣어 기존 풀 순서(=결정론 출제)를 바꾸지 않는다
+      (chapter.practicePool ?? []).forEach(add);
     }
     return pool;
   }
