@@ -94,3 +94,13 @@ describe('shouldReloadOnOpen', () => {
     expect(shouldReloadOnOpen(true, 'loading')).toBe(false);
   });
 });
+
+describe('selectGalleryView — 해금 0개여도 보너스 탭 (2026-10-24 잠금 예고)', () => {
+  it('보너스를 하나도 갖지 않은 신규 프로필도 설정이 켜져 있으면 보너스 탭이 보인다', () => {
+    const fresh = { ...snapshot(), inventory: [] as ProgressionSnapshot['inventory'] };
+    const result = selectGalleryView({ real: buildGallery({ snapshot: fresh, progress: null }), seen: new Set(), showBonusCg: true });
+    expect(result.summary.find(row => row.section === 'bonus')).toEqual({ section: 'bonus', unlocked: 0, total: 50 });
+    const noSnapshot = selectGalleryView({ real: buildGallery({ snapshot: null, progress: null }), seen: new Set(), showBonusCg: true });
+    expect(noSnapshot.summary.some(row => row.section === 'bonus')).toBe(true);
+  });
+});

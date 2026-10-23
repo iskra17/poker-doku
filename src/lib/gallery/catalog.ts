@@ -9,6 +9,7 @@ import { getCharacterArt } from '@/lib/assets/character-art';
 import { getStoryBackground } from '@/lib/assets/story-backgrounds';
 import { getSceneCg, SCENE_CG_IDS, sceneCgChapterId, type SceneCgId } from '@/lib/assets/story-cgs';
 import { getBondSceneArt, getBondScenes, isBondSceneUnlocked, type BondScene } from '@/lib/characters/bond-scenes';
+import { getCharacterById } from '@/lib/characters';
 import { COLLECTION_CATALOG } from '@/lib/collection/catalog';
 import { resolveTitle } from '@/lib/cosmetics/titles';
 import { PROGRESSION_CHARACTER_IDS, type ProgressionSnapshot } from '@/lib/progression/types';
@@ -40,6 +41,12 @@ export interface GalleryEntry {
   /** 타일 이미지 — 칭호는 null(플레이트로 그림) */
   art: string | null;
   characterId?: string;
+  /**
+   * 잠금 칸 예고용 — 인물 이름과 장면 제목(인물 접두 없이). 인연 씬·이벤트 CG·보너스 CG에만 채운다(2026-10-24).
+   * 잠긴 칸은 이 둘과 해금 조건, 강하게 흐린 썸네일만 보여 준다 — 원본은 해금 뒤에만 선명하게.
+   */
+  characterName?: string;
+  title?: string;
   level?: number;
   outfitId?: string;
   /** 뷰어 payload — 인연 씬 */
@@ -99,6 +106,8 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
         hint: `인연 Lv.${scene.unlockLevel}`,
         art: getBondSceneArt(scene),
         characterId,
+        characterName: characterDisplayName(characterId),
+        title: scene.title,
         level: scene.unlockLevel,
         bond: scene,
         caption: scene.caption,
@@ -114,7 +123,12 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
       const cutscene = toStoryRewardCutscene(item) ?? undefined;
       // 보너스 CG(인연·도장 레벨 해금)는 별도 섹션 — 기존 이벤트 CG 집계를 흔들지 않는다
       const section: GallerySection = isBonusStoryReward(item) ? 'bonus' : 'cg';
-      entries.push({ id: item.id, section, name: item.name, unlocked, hint, art: item.art ?? null, characterId: item.subjectId ?? item.characterId, cutscene, caption: cutscene?.caption });
+      const characterId = item.subjectId ?? item.characterId;
+      entries.push({
+        id: item.id, section, name: item.name, unlocked, hint, art: item.art ?? null, characterId, cutscene, caption: cutscene?.caption,
+        characterName: characterDisplayName(cutscene?.characterId ?? characterId),
+        title: cutscene?.title ?? item.name,
+      });
     } else if (item.kind === 'outfit' && item.characterId) {
       const art = getCharacterArt(item.characterId, 'happy', item.outfitId ?? null) ?? getCharacterArt(item.characterId, 'happy');
       entries.push({ id: item.id, section: 'outfit', name: item.name, unlocked, hint, art, characterId: item.characterId, outfitId: item.outfitId, caption: item.description });
@@ -139,6 +153,7 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
       sceneCg: true,
       sceneCgId: id,
       caption: chapter?.title ?? '',
+      title: cg.title,
     });
   }
 
@@ -177,6 +192,13 @@ export function buildGallery({ snapshot, progress, chapters = STORY_CHAPTERS, un
   }
 
   return unlockAll ? entries.map(entry => (entry.unlocked ? entry : { ...entry, unlocked: true })) : entries;
+}
+
+/** 잠금 칸에 쓰는 인물 이름 — 미야코는 로스터 밖(딜러)이라 따로 */
+function characterDisplayName(id: string | null | undefined): string | undefined {
+  if (!id) return undefined;
+  if (id === 'miyako' || id === 'dealer') return '미야코';
+  return getCharacterById(id)?.name;
 }
 
 const BACKGROUND_NAME: Readonly<Record<string, string>> = Object.freeze({
