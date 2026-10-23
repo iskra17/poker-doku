@@ -1867,14 +1867,17 @@ export class StoryRunCoordinator {
     return completed.size > 0;
   }
 
-  /** 완료 챕터의 드릴 슬롯 + 선택 연습 풀(`practicePool`)에서 템플릿 풀을 만든다 (생성기에 있는 것만) */
+  /** 완료 챕터의 드릴 슬롯 + 선택 연습 풀(`practicePool`)에서 템플릿 풀을 만든다 (생성 템플릿만) */
   private dailyPool(completed: ReadonlySet<ChapterId>): Array<{ templateId: string; teacher: Chapter['teacher'] }> {
     const pool: Array<{ templateId: string; teacher: Chapter['teacher'] }> = [];
     const seen = new Set<string>();
     for (const chapter of this.chapters) {
       if (!completed.has(chapter.id)) continue;
       const add = (templateId: string) => {
-        if (seen.has(templateId) || !getDrillTemplate(templateId)) return;
+        // 오늘의 수련은 날마다 seed를 바꿔 출제한다 — 수기 문항은 seed를 무시해 매일 같은 문제가 되므로 넣지 않는다
+        // (틀린 수기 문항은 복습 노트 경로로만 다시 나온다)
+        const template = getDrillTemplate(templateId);
+        if (seen.has(templateId) || !template || template.source.kind !== 'generated') return;
         seen.add(templateId);
         pool.push({ templateId, teacher: chapter.teacher });
       };

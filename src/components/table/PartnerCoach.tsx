@@ -18,7 +18,7 @@ import { onGameEvent } from '@/lib/events/game-events';
 import { usePrefersReducedMotion } from '@/lib/hooks/use-reduced-motion';
 import { playEffect } from '@/lib/sound/effects';
 import { useGameStore } from '@/lib/store/game-store';
-import { usePartnerCoachStore } from '@/lib/store/partner-coach-store';
+import { coachHandKey, usePartnerCoachStore } from '@/lib/store/partner-coach-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 
@@ -156,7 +156,7 @@ export default function PartnerCoach() {
           tallyRef.current.lastFollowed = followed;
           if (followed) {
             tallyRef.current.followed += 1;
-            usePartnerCoachStore.getState().recordFollow(state.handNumber);
+            usePartnerCoachStore.getState().recordFollow(coachHandKey(useGameStore.getState().currentRoomId, state.handNumber));
           }
           show(followed ? 'followed' : 'ignored', state.handNumber + state.actionSeq);
           break;

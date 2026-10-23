@@ -269,7 +269,7 @@ export const CH02: Chapter = {
     },
 
     // ───────────────────────────────────────────── 드릴 4문 (D-RANGE 2 · D-POS 1 · D-ACT 1)
-    // 2026-10-24: 7 → 4. 숫자 입력 `range-percentile`과 Ch1에서 다룬 `pos-name`은 뺐다(오늘의 수련 풀에서도 빠지고 기존 복습 노트로만 나온다; pos-name은 Ch1 풀에 남는다).
+    // 2026-10-24: 7 → 4. 숫자 입력 `range-percentile`(→ `practicePool`로 「오늘의 수련」에만)과 Ch1에서 다룬 `pos-name`(Ch1 슬롯에 남는다)은 뺐다.
     {
       kind: 'drill-set',
       id: 'act1-ch02:drills',

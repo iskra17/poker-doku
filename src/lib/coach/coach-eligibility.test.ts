@@ -58,7 +58,10 @@ describe('isPartnerCoachEligible', () => {
     expect(isPartnerCoachEligible({ ...story, storyCoachStep: false })).toBe(false);
     expect(isPartnerCoachEligible({ ...story, storyCoachStep: true })).toBe(true);
     // opt-in이어도 설정·다른 휴먼·주간 도장·토너먼트·아레나 제외는 그대로
-    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, enabled: false })).toBe(false);
+    // 수업 스텝의 훈수는 설정(partnerCoach)이 꺼져 있어도 켠다 — 지시문이 훈수를 약속한다. 스텝 밖 스토리 방은 그대로 꺼진다
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, enabled: false })).toBe(true);
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: false, enabled: false })).toBe(false);
+    expect(isPartnerCoachEligible({ ...base, enabled: false })).toBe(false);
     const players = [...base.gameState!.players, seat('other', 'human')];
     expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, gameState: { ...base.gameState!, players } })).toBe(false);
     expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, gameState: { ...base.gameState!, weeklyDojo: true } })).toBe(false);

@@ -764,18 +764,27 @@ describe('daily drills', () => {
   });
 
   it('draws from the chapter practicePool so drills dropped from the required sets stay in daily practice', () => {
-    // 슬롯은 생성기에 없는 id뿐 — 풀에 남는 것은 practicePool 항목 하나여야 한다
+    // 슬롯은 생성기에 없는 id와 수기 문항뿐 — 수기 문항은 seed를 무시해 매일 같은 문제가 되므로 풀에서 빠지고,
+    // 남는 것은 practicePool 항목 하나여야 한다
     const base = makeChapter();
     const chapter = makeChapter({
       practicePool: ['outs-count'],
       steps: base.steps.map(step => (step.kind === 'drill-set'
-        ? { ...step, drills: [{ templateId: 'no-such-template', seedPolicy: 'per-run' as const }] }
+        ? { ...step, drills: [
+          { templateId: 'no-such-template', seedPolicy: 'per-run' as const },
+          { templateId: 'act-ch01-pair-beats-high', seedPolicy: 'fixed' as const, fixedSeed: 0 },
+        ] }
         : step)),
     });
     const ctx = setup([chapter]);
     ctx.repository.complete(PROFILE, 'act1-ch01');
     expect(ctx.coordinator.startDaily(PROFILE).ok).toBe(true);
     expect(ctx.latest().drill).toMatchObject({ total: 3, instance: { templateId: 'outs-count' } });
+    for (let index = 0; index < 3; index++) {
+      expect(ctx.latest().drill?.instance.templateId).toBe('outs-count');
+      expect(answerCurrent(ctx, true).ok).toBe(true);
+      ctx.coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
+    }
   });
 
   it('counts only first attempts toward the daily total — retries never consume the day', () => {

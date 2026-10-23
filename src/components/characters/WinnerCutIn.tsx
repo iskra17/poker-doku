@@ -11,7 +11,7 @@ import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
 import { stripeBg } from './cut-in-shell';
 import { useGameStore } from '@/lib/store/game-store';
-import { usePartnerCoachStore } from '@/lib/store/partner-coach-store';
+import { coachHandKey, usePartnerCoachStore } from '@/lib/store/partner-coach-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 
 /**
@@ -73,7 +73,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
       } else if (player.id === myPlayerId && partnerId && getCharacterById(partnerId) && partnerWinCheer(partnerId, event.handNumber)) {
         // 내 승리 + 히로인 파트너 → 파트너가 축하 (훈수를 따른 핸드면 훈수의 '같이 이겼다' 반응)
         const partner = getCharacterById(partnerId)!;
-        const followed = usePartnerCoachStore.getState().followedHandNumber === event.handNumber;
+        const followed = usePartnerCoachStore.getState().followedHandKey === coachHandKey(useGameStore.getState().currentRoomId, event.handNumber);
         cutIn = {
           characterId: partner.id,
           name: partner.name,

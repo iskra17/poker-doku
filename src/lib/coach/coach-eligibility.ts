@@ -26,7 +26,9 @@ export interface CoachEligibilityInput {
 
 export function isPartnerCoachEligible(input: CoachEligibilityInput): boolean {
   const { enabled, gameState, myPlayerId, roomTableType, inStoryRoom, storyCoachStep = false } = input;
-  if (!enabled || !gameState || !myPlayerId) return false;
+  // 스토리 opt-in 스텝(Ch1 첫 핸드)의 훈수는 수업의 일부라 설정과 무관하게 켠다 — 지시문이 "파트너가 거들어요"라고 약속한다
+  const storyLesson = inStoryRoom && storyCoachStep;
+  if ((!enabled && !storyLesson) || !gameState || !myPlayerId) return false;
   if (inStoryRoom) {
     if (!storyCoachStep) return false;
   } else if (roomTableType !== 'bots') {
