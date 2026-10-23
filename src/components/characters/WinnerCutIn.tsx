@@ -4,22 +4,29 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { onGameEvent } from '@/lib/events/game-events';
 import { getCharacterById } from '@/lib/characters';
+import { partnerWinCheer } from '@/lib/characters/partner-cheers';
+import { coachReactionLine } from '@/lib/coach/coach-lines';
 import { useTypewriter } from '@/lib/hooks/use-typewriter';
 import { useChipFormatter } from '@/lib/hooks/use-chip-format';
 import CharacterImage from './CharacterImage';
 import { stripeBg } from './cut-in-shell';
 import { useGameStore } from '@/lib/store/game-store';
+import { usePartnerCoachStore } from '@/lib/store/partner-coach-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
 
 /**
  * 갸루게식 승리 컷인 — winners 이벤트 1.6초 후 슬라이드인, ~3.4초에 아웃.
  * 봇 승자: 해당 캐릭터 버스트업 + winQuote / 휴먼 승자: 미야코의 축하.
+ * 단 승자가 나이고 선택 파트너가 히로인이면 미야코 대신 **파트너**가 축하한다(2026-10-24 파트너 중심 초반 —
+ * 내 화면에만 보이는 연출). 그 핸드에서 파트너 훈수를 따랐다면 훈수의 "같이 이겼다" 반응을 컷인이 대신 말한다.
  * 데스크탑은 왼쪽(액션 로그 아래) 슬라이드인 — LoserCutIn과 세로 스택 (38%/62%).
  */
 
 interface CutInData {
   characterId: string;
   name: string;
+  /** 금액 앞 라벨 — 파트너 컷인은 "내 팟"(파트너 이름 옆 금액이 파트너 몫으로 읽히지 않게) */
+  amountLabel?: string;
   quote: string;
   color: string;
   amount: number;
@@ -35,6 +42,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
   const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const myPlayerId = useGameStore(state => state.myPlayerId);
   const equippedCutin = useProgressionStore(state => state.snapshot?.equipment.cutin ?? null);
+  const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null);
 
   useEffect(() => {
     const unsubscribe = onGameEvent(event => {
@@ -62,6 +70,19 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
           amount: top.amount,
           cutinId: null,
         };
+      } else if (player.id === myPlayerId && partnerId && getCharacterById(partnerId) && partnerWinCheer(partnerId, event.handNumber)) {
+        // 내 승리 + 히로인 파트너 → 파트너가 축하 (훈수를 따른 핸드면 훈수의 '같이 이겼다' 반응)
+        const partner = getCharacterById(partnerId)!;
+        const followed = usePartnerCoachStore.getState().followedHandNumber === event.handNumber;
+        cutIn = {
+          characterId: partner.id,
+          name: partner.name,
+          amountLabel: '내 팟',
+          quote: followed ? coachReactionLine(partner.id, 'followed-won', event.handNumber) : partnerWinCheer(partnerId, event.handNumber)!,
+          color: partner.color,
+          amount: top.amount,
+          cutinId: equippedCutin,
+        };
       } else {
         // 휴먼 승자 → 미야코가 축하
         cutIn = {
@@ -85,7 +106,7 @@ export default function WinnerCutIn({ isMobile }: WinnerCutInProps) {
       unsubscribe();
       timersRef.current.forEach(clearTimeout);
     };
-  }, [equippedCutin, myPlayerId]);
+  }, [equippedCutin, myPlayerId, partnerId]);
 
   return (
     <AnimatePresence>
@@ -118,7 +139,7 @@ function DesktopCutIn({ data }: { data: CutInData }) {
           >
             {data.name}
           </div>
-          <div className="text-gilded text-xs font-bold tabular">+{formatChips(data.amount)}</div>
+          <div className="text-gilded text-xs font-bold tabular">{data.amountLabel ? `${data.amountLabel} ` : ''}+{formatChips(data.amount)}</div>
           <p className="text-ink text-xs mt-1 leading-snug">{display}</p>
         </div>
       </div>
@@ -147,9 +168,9 @@ function MobileCutIn({ data }: { data: CutInData }) {
             <span className="text-sm font-bold" style={{ color: data.color, fontFamily: 'var(--font-display)' }}>
               {data.name}
             </span>
-            <span className="text-gilded text-[11px] font-bold tabular">+{formatChips(data.amount)}</span>
+            <span className="text-gilded text-[11px] font-bold tabular">{data.amountLabel ? `${data.amountLabel} ` : ''}+{formatChips(data.amount)}</span>
           </div>
-          <p className="text-ink text-[11px] leading-snug truncate">{display}</p>
+          <p className="text-ink text-[11px] leading-snug line-clamp-2">{display}</p>
         </div>
       </div>
     </motion.div>
