@@ -61,7 +61,8 @@ const REACTION_EXPRESSION: Record<CoachReaction, Expression> = {
  * [○○ 말대로 · 액션] 버튼 한 번으로 그대로 실행한다. 따르면 기뻐하고, 안 따라도 꾸짖지 않으며,
  * 따랐는데 쇼다운에서 지면 "결정은 맞았어요"로 위로한다.
  *
- * 노출 조건은 `coach-eligibility.ts` 단일 소스(봇만 상대하는 테이블 · 스토리/주간 도장/토너먼트/아레나 제외).
+ * 노출 조건은 `coach-eligibility.ts` 단일 소스(봇만 상대하는 테이블 · 스토리/주간 도장/토너먼트/아레나 제외 —
+ * 스토리는 챕터가 opt-in한 '연습' 스텝(`practice-table.partnerCoach`, Ch1 첫 핸드)만 예외).
  * 판단은 공개 스냅샷만 보는 `coach-brain.ts`, 대사는 `coach-lines.ts`. 서버 전송·보상은 없다(로컬 피드백만).
  * 위치는 테이블 영역 좌하단(액션 독 바로 위) — 독 높이는 그대로라 테이블 좌표가 흔들리지 않는다.
  */
@@ -74,11 +75,14 @@ export default function PartnerCoach() {
   const pendingAction = useGameStore(state => state.pendingAction);
   const sendAction = useGameStore(state => state.sendAction);
   const enabled = useSettingsStore(state => state.partnerCoach);
-  const partnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null);
+  const selectedPartnerId = useProgressionStore(state => state.snapshot?.profile.selectedCharacterId ?? null);
   const followCount = usePartnerCoachStore(state => state.followCount);
-  const { active: inStoryRoom } = useStoryLive();
+  const { active: inStoryRoom, step: storyStep, run: storyRun } = useStoryLive();
   const reducedMotion = usePrefersReducedMotion();
 
+  // 스토리 방은 챕터 데이터가 opt-in한 '연습' 스텝(Ch1 첫 핸드)에서만 — 파트너는 그 런의 파트너(라인업 'partner'와 같은 사람)
+  const storyCoachStep = inStoryRoom && storyStep?.kind === 'practice-table' && storyStep.partnerCoach === true;
+  const partnerId = inStoryRoom ? (storyRun?.context.partnerId ?? null) : selectedPartnerId;
   const character = partnerId ? getCharacterById(partnerId) ?? null : null;
   const roomTableType = rooms.find(room => room.id === currentRoomId)?.tableType;
   const eligible = !!character && isPartnerCoachEligible({
@@ -87,6 +91,7 @@ export default function PartnerCoach() {
     myPlayerId,
     roomTableType,
     inStoryRoom,
+    storyCoachStep,
   });
 
   const advice = useMemo(
@@ -151,7 +156,7 @@ export default function PartnerCoach() {
           tallyRef.current.lastFollowed = followed;
           if (followed) {
             tallyRef.current.followed += 1;
-            usePartnerCoachStore.getState().recordFollow();
+            usePartnerCoachStore.getState().recordFollow(state.handNumber);
           }
           show(followed ? 'followed' : 'ignored', state.handNumber + state.actionSeq);
           break;
@@ -161,7 +166,10 @@ export default function PartnerCoach() {
           tallyRef.current = { handNumber: -1, followed: 0, lastFollowed: false };
           if (!me || !eligibleRef.current || tally.handNumber !== event.handNumber || tally.followed === 0) break;
           if (event.winners.some(winner => winner.playerId === me)) {
-            show('followed-won', event.handNumber);
+            // 내가 가장 큰 팟을 가져간 핸드는 승리 컷인(WinnerCutIn)이 파트너의 "같이 이겼다"를 띄운다 —
+            // 좌하단 반응까지 띄우면 모바일 하단 컷인과 겹친다(2026-10-24)
+            const top = event.winners.reduce((a, b) => (b.amount > a.amount ? b : a));
+            if (top.playerId !== me) show('followed-won', event.handNumber);
             break;
           }
           // 쇼다운까지 가서 졌고, 마지막 결정이 훈수대로였을 때만 "결정은 맞았어요"

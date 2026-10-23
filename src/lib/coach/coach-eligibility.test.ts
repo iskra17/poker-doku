@@ -52,6 +52,21 @@ describe('isPartnerCoachEligible', () => {
     expect(isPartnerCoachEligible({ ...base, gameState: { ...base.gameState!, economyMode: 'arena' } })).toBe(false);
   });
 
+  it('스토리 방은 스텝이 opt-in(partnerCoach)했을 때만 켜고, 그때도 목록 tableType 없이 판정한다 (2026-10-24 Ch1 첫 핸드)', () => {
+    const story = { ...base, inStoryRoom: true, roomTableType: undefined };
+    expect(isPartnerCoachEligible(story)).toBe(false);
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: false })).toBe(false);
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true })).toBe(true);
+    // opt-in이어도 설정·다른 휴먼·주간 도장·토너먼트·아레나 제외는 그대로
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, enabled: false })).toBe(false);
+    const players = [...base.gameState!.players, seat('other', 'human')];
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, gameState: { ...base.gameState!, players } })).toBe(false);
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, gameState: { ...base.gameState!, weeklyDojo: true } })).toBe(false);
+    expect(isPartnerCoachEligible({ ...story, storyCoachStep: true, gameState: { ...base.gameState!, economyMode: 'arena' } })).toBe(false);
+    // 스토리 방이 아니면 opt-in 플래그는 무시한다(일반 방은 목록 tableType으로만)
+    expect(isPartnerCoachEligible({ ...base, roomTableType: 'mixed', storyCoachStep: true })).toBe(false);
+  });
+
   it('좌석이 없거나(착석 대기) 스냅샷이 없으면 끈다', () => {
     expect(isPartnerCoachEligible({ ...base, myPlayerId: 'ghost' })).toBe(false);
     expect(isPartnerCoachEligible({ ...base, myPlayerId: null })).toBe(false);
