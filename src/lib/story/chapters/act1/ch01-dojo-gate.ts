@@ -22,20 +22,27 @@ import { guidedSituation, guidedStageSituation } from '../helpers';
 import { FIRST_DRILL_CLEAR_STEP_ID } from '../../story-milestones';
 
 /** Ch1 연습 테이블 — 첫 핸드·본 연습·스파링이 같은 라인업을 쓴다 (스텝마다 새 객체) */
-function ch01Table(): LiveTableSpec {
+/**
+ * Ch1 테이블. `coachOnly`(첫 핸드)는 파트너를 상대석에 앉히지 않는다 — 파트너는 훈수(PartnerCoach)로만 곁에 있다.
+ * 아바타가 파트너와 같으면 파트너 좌석이 다른 히로인으로 바뀌어 "아라가 훈수를 두는데 사쿠라가 상대"가 됐다(2026-10-24 주행).
+ */
+function ch01Table({ coachOnly = false }: { coachOnly?: boolean } = {}): LiveTableSpec {
   return {
     blinds: { small: 10, big: 20 },
     heroSeat: 0,
     heroStackBB: 100,
     lineup: [
-      { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
+      coachOnly
+        ? { seatIndex: 1, characterId: 'mochi', stackBB: 100, role: 'neighbor' }
+        : { seatIndex: 1, characterId: 'partner', stackBB: 100, role: 'partner' },
       { seatIndex: 2, characterId: 'kapi', stackBB: 100, role: 'neighbor' },
       { seatIndex: 3, characterId: 'choco', stackBB: 100, role: 'neighbor' },
     ],
     difficulty: 'easy',
     turnTimeSec: 90,
     botThinkScale: 0.6,
-    hints: 1,
+    // 첫 핸드는 계산 패널(필요 승률 등) 없이 파트너 훈수만 — 숫자는 Ch3에서 배운다
+    hints: coachOnly ? 0 : 1,
   };
 }
 
@@ -194,11 +201,11 @@ export const CH01: Chapter = {
       id: 'act1-ch01:first-hand',
       tag: '연습',
       partnerCoach: true,
-      table: ch01Table(),
+      table: ch01Table({ coachOnly: true }),
       scripts: [
         // A♠K♠ on A♥K♦7♣2♦9♠ — 투페어(A·K). 쇼다운까지 가면 **반드시** 이기는 첫 핸드(사용자 결정 2026-10-19):
         // 상대 셋 모두 카드를 고정한다 — 비워 두면 랜덤 포켓 페어(77·99·22)가 셋을 만들어 진다.
-        // 파트너 J♣T♥는 Q가 없어 스트레이트 불가, 카피 Q♥Q♦는 원페어, 초코 5♠4♣는 하이카드.
+        // 모찌 J♣T♥는 Q가 없어 스트레이트 불가, 카피 Q♥Q♦는 원페어, 초코 5♠4♣는 하이카드.
         // 보드 다이아 2장 + 상대 다이아 0장이라 플러시도 없다 (회귀: act1.test.ts 평가기 검산).
         // 수기 복기 문항 `act-ch01-first-hand-recap`이 같은 카드를 쓴다 — 함께 바꿀 것.
         { hero: 'As Ks', board: 'Ah Kd 7c 2d 9s', villains: { 1: 'Jc Th', 2: 'Qh Qd', 3: '5s 4c' } },

@@ -52,7 +52,7 @@ export const ACT1_AUTHORED_DRILLS: readonly DrillTemplate[] = Object.freeze<Dril
             { seatIndex: 2, characterId: 'kapi', position: 'BB', stackChips: STACK, holeCards: parseCards('Qh Qd') },
             { seatIndex: 3, characterId: 'choco', position: 'UTG', stackChips: STACK, holeCards: parseCards('5s 4c') },
           ],
-          note: '도장의 첫 핸드 — 리버까지 간 세 사람이 카드를 열었어요.',
+          note: '도장의 첫 핸드 — 모두의 카드를 열어 볼게요.',
         },
         question: '첫 핸드의 마지막 장면이에요. 이 팟은 누가 가져갈까요?',
         answerSpec: { kind: 'multiple-choice', options: ['카피', '초코', '나'], correctIndex: 2 },

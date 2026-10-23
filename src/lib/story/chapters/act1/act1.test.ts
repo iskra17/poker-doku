@@ -223,9 +223,15 @@ describe('1막 챕터 데이터', () => {
       const villainBest = evaluateHand(parseCards(holeCards), scriptBoard);
       expect(compareHands(heroBest, villainBest)).toBeGreaterThan(0);
     }
-    // 라인업·블라인드·턴 시간·봇 속도는 본 연습과 같다
-    expect(first.table).toEqual(practice.table);
+    // 블라인드·턴 시간·봇 속도는 본 연습과 같다. 첫 핸드만 파트너가 훈수 전용이라 상대석에 앉지 않고 계산 패널도 끈다(2026-10-24)
+    const { lineup: firstLineup, hints: firstHints, ...firstRest } = first.table;
+    const { lineup: practiceLineup, hints: practiceHints, ...practiceRest } = practice.table;
+    expect(firstRest).toEqual(practiceRest);
     expect(first.table).not.toBe(practice.table);
+    expect(firstLineup.some(seat => seat.role === 'partner' || seat.characterId === 'partner')).toBe(false);
+    expect(practiceLineup.some(seat => seat.role === 'partner')).toBe(true);
+    expect(firstHints).toBe(0);
+    expect(practiceHints).toBe(1);
     // 2026-10-24: 첫 핸드는 직접 고르고, 이 스텝에서만 파트너 실시간 훈수가 켜진다
     expect(first.perHandPrompt).toContain('직접 골라');
     expect(first.partnerCoach).toBe(true);
