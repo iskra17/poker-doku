@@ -18,6 +18,20 @@ interface DrillAnswerInputProps {
 
 const KEYPAD = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '.', '0', '⌫'] as const;
 
+/** 채점 뒤 보기 타일 태그 — 정답 타일엔 '정답', 내가 고른 오답 타일엔 '오답'. 다른 보기 위에는 그리지 않는다 */
+function RevealTag({ correct }: { correct: boolean }) {
+  return (
+    <span
+      className={`pointer-events-none absolute -right-1 -top-1.5 rotate-[-6deg] rounded-md border-2 bg-abyss px-1.5 text-[11px] font-black leading-tight ${
+        correct ? 'border-cyber text-cyber' : 'border-blossom text-blossom'
+      }`}
+      aria-label={correct ? '정답' : '내가 고른 오답'}
+    >
+      {correct ? '정답' : '오답'}
+    </span>
+  );
+}
+
 /** 짧은 보기(포지션·족보·이름)는 여러 열로 — 테이블 아래 질문·보기가 모바일 한 화면에 들어오게 한다 */
 function choiceColumns(options: readonly string[]): string {
   if (options.length < 2 || options.some(option => option.length > 9)) return '';
@@ -45,7 +59,7 @@ export default function DrillAnswerInput({ spec, value, onChange, disabled = fal
                 aria-checked={chosen}
                 disabled={disabled}
                 onClick={() => onChange({ kind: 'multiple-choice', index })}
-                className={`rounded-xl border px-3 py-2.5 text-left text-sm transition ${
+                className={`relative rounded-xl border px-3 py-2.5 text-left text-sm transition ${
                   correct
                     ? 'border-cyber/70 bg-cyber/15 text-ink'
                     : wrongChosen
@@ -57,6 +71,7 @@ export default function DrillAnswerInput({ spec, value, onChange, disabled = fal
               >
                 <span className="mr-2 text-[10px] font-bold text-ink-dim">{String.fromCharCode(65 + index)}</span>
                 {option}
+                {(correct || wrongChosen) && <RevealTag correct={!!correct} />}
               </button>
             );
           })}
@@ -77,11 +92,12 @@ export default function DrillAnswerInput({ spec, value, onChange, disabled = fal
                 aria-checked={chosen}
                 disabled={disabled}
                 onClick={() => onChange({ kind: 'multi-select', indices: toggleIndex(value?.kind === 'multi-select' ? value.indices : [], index) })}
-                className={`rounded-xl border px-3 py-2.5 text-left text-sm ${
+                className={`relative rounded-xl border px-3 py-2.5 text-left text-sm ${
                   correct ? 'border-cyber/70 bg-cyber/15' : chosen ? 'border-mystic bg-mystic/20' : 'border-mystic/25 bg-elevated/50'
                 }`}
               >
                 <span className="mr-2">{chosen ? '☑' : '☐'}</span>{option}
+                {correct && <RevealTag correct />}
               </button>
             );
           })}

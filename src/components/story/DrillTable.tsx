@@ -153,6 +153,22 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
 
   return (
     <div className="w-full">
+      {/* 판단 재생 캡션 — 테이블 밖 고정 높이 줄 (상단 좌석 배지와 겹치지 않게, 레이아웃 흔들림 없이) */}
+      <div className="flex h-4 items-center justify-center" aria-live="polite">
+        <AnimatePresence mode="wait">
+          {view.caption && (
+            <motion.p
+              key={view.caption}
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="max-w-full truncate text-center text-[11px] font-bold text-gilded"
+            >
+              {view.caption}
+            </motion.p>
+          )}
+        </AnimatePresence>
+      </div>
       <div
         className="relative mx-auto w-full select-none"
         style={{ maxWidth: 'min(100%, calc(44dvh * 10 / 11))', aspectRatio: '10 / 11' }}
@@ -161,22 +177,6 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
         aria-label={tableAriaLabel(model)}
       >
         <TableFelt story feltId={feltId} />
-
-        {/* 판단 재생 캡션 */}
-        <AnimatePresence>
-          {view.caption && (
-            <motion.p
-              key={view.caption}
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-x-2 top-0 z-30 text-center text-[11px] font-bold text-gilded drop-shadow"
-              aria-live="polite"
-            >
-              {view.caption}
-            </motion.p>
-          )}
-        </AnimatePresence>
 
         {/* 팟 — 보드 위. 쇼다운 재생에서는 승자 앞으로 미끄러진다 */}
         {potShown && model.pot > 0 && (
@@ -444,7 +444,7 @@ function DrillSeat({ seat, pos, cardsDealt, dealDelay, showSeatNumber, highlight
   return (
     <div className="absolute z-10" style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}>
       <div className="relative flex flex-col items-center">
-        {/* 배지(족보·액션 순서·액션) — 아바타 위 */}
+        {/* 배지(족보·액션 순서·액션) — 아바타 위, 포지션 배지(아바타 우상단)보다 한 줄 위로 띄워 둘 다 읽히게 */}
         <AnimatePresence>
           {badge && (
             <motion.span
@@ -452,7 +452,7 @@ function DrillSeat({ seat, pos, cardsDealt, dealDelay, showSeatNumber, highlight
               initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0 }}
-              className={`absolute bottom-full left-1/2 z-30 mb-0.5 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-black shadow ${BADGE_TONE[badge.tone]}`}
+              className={`absolute bottom-full left-1/2 z-30 mb-3 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-black shadow ${BADGE_TONE[badge.tone]}`}
               style={{ x: '-50%' }}
             >
               {badge.text}
