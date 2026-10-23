@@ -17,7 +17,7 @@ export default function GalleryTile({ entry, isNew = false, onOpen }: { entry: G
   const aspect = entry.section === 'bg' ? 'aspect-video' : 'aspect-[2/3]';
   if (!entry.unlocked && PREVIEW_SECTIONS.has(entry.section) && entry.art) {
     // 잠금 예고(2026-10-24 회의 합의 — "예고는 하되 원본은 아낀다"): 인물 이름 + 장면 제목 + 해금 조건,
-    // 썸네일은 강하게 흐리고 어둡게만 — 원본을 선명하게 보여 주지 않는다.
+    // 썸네일은 흐리게만 — 색과 윤곽으로 기대를 주되 원본을 선명하게 보여 주지 않는다(2026-10-24 주행: 너무 어두워 예고가 안 됐다).
     const label = [entry.characterName, entry.title ?? entry.name].filter(Boolean).join(' · ');
     return (
       <div
@@ -33,10 +33,10 @@ export default function GalleryTile({ entry, isNew = false, onOpen }: { entry: G
             aria-hidden
             draggable={false}
             onError={() => setBroken(true)}
-            className="pointer-events-none h-full w-full scale-125 select-none object-cover opacity-60 blur-xl brightness-[0.35] saturate-50"
+            className="pointer-events-none h-full w-full scale-110 select-none object-cover opacity-90 blur-md brightness-75 saturate-75"
           />
         )}
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-abyss/30 px-1 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-t from-abyss/80 via-abyss/20 to-abyss/40 px-1 text-center">
           <span className="text-sm" aria-hidden>🔒</span>
           {entry.characterName && <span className="mt-0.5 block text-[9px] font-bold leading-tight text-ink">{entry.characterName}</span>}
           <span className="line-clamp-2 block text-[8px] leading-tight text-ink/85">{entry.title ?? entry.name}</span>
