@@ -318,6 +318,17 @@ npx tsc --noEmit
     `dismissRun()`까지 보관), VN 커서는 `scene-cursor.ts`(순수), 입력 4종 `DrillAnswerInput`, 함께 풀기는
     `drill-input.ts`의 로컬 채점(점수 없음). PartnerCard CTA는 보존 좌석 > 스토리 > 자유 연습(`story-hub-rules.ts`).
     회귀: `story-run-coordinator.test.ts`·`socket-handler.story.test.ts`·`generator.test.ts`·`chapters/act1/act1.test.ts`.
+  - **실제 테이블 수련 문제 + 파트너 중심 초반 (2026-10-24, 3모델 회의 → 사용자 결정 "운전면허 시험 같다")**: 계획
+    `docs/superpowers/plans/2026-10-24-table-drills-partner-first-plan.md`. ①드릴·함께 풀기·실력 배치는 `DrillTable`(실전과 같은 타원 펠트 —
+    `PokerTable`과 `table/TableFelt.tsx` 공유, 좌석 좌표는 `table-layout.ts`)이 그린다. 좌석 모델은 순수 `drill-table-model.ts`(공개 필드
+    `DrillSituation.heroSeatIndex/dealerSeatIndex` → 포지션 라벨 역산 → 순서 배치). 인트로(상황 재생)는 정답과 무관한 정보만, **판단 재생은
+    `DrillResult`를 받은 뒤에만**(`planDrillDemo` — 채점 전 족보 평가·포지션 라벨 계산 금지, `pos-name`은 라벨 '?' 유지). 검토 화면 `/preview/drill-table`(dev 전용).
+    ②씬 라인 `byPartner`(히로인별 문장·표정·화자)는 `partner-lines.ts resolveSceneForPartner` 한 곳에서 풀고 라인 순서·선택지 id는 불변 —
+    교사 본인이 파트너면 자기 자신을 3인칭으로 부르지 않는 변주를 둔다(act1.test 고정). ③practice-table `partnerCoach: true`(현재 Ch1 첫 핸드만)면
+    스토리 방에서도 `PartnerCoach`가 켜진다(`coach-eligibility` `storyCoachStep` — 수업 스텝이라 설정 off와 무관, 그 밖의 배제 규칙은 동일). 첫 핸드는
+    파트너를 상대석에 앉히지 않는다(훈수 전용). ④`Chapter.practicePool`(생성 템플릿만)은 필수 드릴에서 뺀 유형을 「오늘의 수련」에 남긴다 — 오늘의 수련 풀은
+    **생성 템플릿만**(수기 문항은 seed를 무시해 매일 같은 문제가 되므로 복습 노트 경로로만). ⑤내 승리 컷인은 히로인 파트너가 축하(`partner-cheers.ts`,
+    훈수를 따른 핸드면 `followed-won` — 키는 `coachHandKey(roomId, handNumber)`). 1막 공통 훅은 파트너의 도장 「짝 대국」(Ch1 프롤로그 → Ch1 에필로그 부탁 → Ch3 에필로그 회수).
   - **라이브 스텝 (Phase 1b — 방 오케스트레이션)**: `src/server/story-live-adapter.ts`(`LiveTableAdapter`)가
     `StoryRoomHooks`(room-manager.ts, `MttRoomHooks`와 같은 병렬 패턴 — **일반화 금지**)를 구현해 `setStoryHooks`로
     주입되고, RoomManager의 모든 훅 호출은 `isStoryRoom(config.storyChapterId)` 가드 뒤에 있어 **비스토리 방 실행 경로는
