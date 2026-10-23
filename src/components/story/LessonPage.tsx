@@ -10,7 +10,7 @@ import { gradeLocally, isAnswerComplete, isTapToSubmit, TAP_SUBMIT_DELAY_MS } fr
 import type { DrillAnswer, DrillSituation } from '@/lib/story/drills/types';
 import type { GuidedStage, LessonBlock, StoryHeroineId, StoryTeacherRef } from '@/lib/story/types';
 import DrillAnswerInput from './DrillAnswerInput';
-import DrillTableView from './DrillTableView';
+import DrillTable from './DrillTable';
 import { resolveSpeaker } from './ScenePlayer';
 import ContextGuide from '@/components/onboarding/ContextGuide';
 
@@ -122,7 +122,8 @@ function TextBlock({ speaker, text, partnerId, onNext, last, beginnerGuide, pend
 }
 
 /**
- * 함께 풀기 — 상황(보드·내 카드·팟·콜)은 `DrillTableView`로 **단계·피드백과 무관하게 상시** 그린다.
+ * 함께 풀기 — 상황(보드·내 카드·팟·콜)은 실제 테이블(`DrillTable`)로 **단계·피드백과 무관하게 상시** 그린다.
+ * 블록이 처음 열릴 때만 인트로를 재생하고, 단계 오버라이드(보드·홀카드 공개 등)는 같은 테이블에 새 카드로 딜링된다.
  * 예전엔 보드가 intro 문장에만 있어 2단계·오답 피드백 때 사라져 풀 수 없었다(2026-09-03 피드백 ①).
  * intro는 정적 한 줄로 항상 보이고, 말풍선은 이번 단계의 프롬프트/피드백만 담는다.
  */
@@ -194,7 +195,7 @@ function GuidedBlock({ teacher, intro, situation, stages, partnerId, onDone, las
       </ContextGuide>}
       <p className="text-xs font-bold tracking-widest text-gilded">함께 풀기 · 점수 없음</p>
       <div className="mt-2">
-        <DrillTableView situation={merged} />
+        <DrillTable situation={merged} replayKey="guided" />
       </div>
       <p className="mt-2 text-xs leading-relaxed text-ink-dim" aria-label="상황 설명">{intro}</p>
       <div className="mt-2 flex gap-3">

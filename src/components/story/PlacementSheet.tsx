@@ -11,7 +11,7 @@ import { defaultRunModeForTier, type PlacementSelfReport, type SkillTier } from 
 import { PLACEMENT_TIER_EXPLANATION, PLACEMENT_TIER_LABEL } from '@/lib/story/placement-copy';
 import { recommendChapter } from '@/lib/story/story-hub-rules';
 import DrillAnswerInput from './DrillAnswerInput';
-import DrillTableView from './DrillTableView';
+import DrillTable from './DrillTable';
 
 const SELF_REPORT_OPTIONS: readonly { value: PlacementSelfReport; label: string }[] = [
   { value: 'new', label: '처음이에요' },
@@ -133,7 +133,7 @@ export default function PlacementSheet({ onClose, onStarted }: { onClose: () => 
           question ? (
             <>
               <p className="text-xs font-bold text-mystic" aria-live="polite">{answers.length + 1}/{questions.length}</p>
-              <DrillTableView situation={question.situation} />
+              <DrillTable situation={question.situation} replayKey={`placement-${answers.length}`} category={question.category} templateId={question.templateId} />
               <h3 className="text-sm font-bold leading-relaxed text-ink">{question.question}</h3>
               <DrillAnswerInput key={answers.length} spec={question.answerSpec} value={selected} onChange={chooseAnswer} disabled={locked} />
               <p className="text-[11px] text-ink-dim">보기를 누르면 다음 문제로 넘어가요.</p>

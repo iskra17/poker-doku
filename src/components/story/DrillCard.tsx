@@ -10,9 +10,11 @@ import { drillMomentLine, expressionForResult, pickDrillMoment } from '@/lib/sto
 import CoachBubble from './CoachBubble';
 import DrillAnswerInput from './DrillAnswerInput';
 import DrillMomentLayer from './DrillMomentLayer';
-import DrillTableView from './DrillTableView';
+import DrillTable from './DrillTable';
 import { resolveSpeaker } from './ScenePlayer';
 import ContextGuide from '@/components/onboarding/ContextGuide';
+import CharacterImage from '@/components/characters/CharacterImage';
+import { useOutfitId } from '@/lib/hooks/use-outfit';
 
 interface DrillCardProps {
   drill: StoryDrillView;
@@ -37,7 +39,8 @@ interface DrillCardProps {
 const PRAISE = ['정답이에요!', '좋아요, 그거예요.', '완벽해요.', '그렇죠!'];
 
 /**
- * 드릴 카드 — 진행 바+콤보 → 상황 미니 테이블 → 질문 → 입력 → [힌트][제출] → 즉시 피드백 스탬프 + 히로인 해설.
+ * 드릴 카드 — 진행 점+콤보 → 실제 테이블 위 상황(`DrillTable`, 인트로 재생) → 출제자 말풍선 질문 → 입력 → [힌트][제출]
+ * → 즉시 피드백 스탬프 + 테이블 위 판단 재생 + 히로인 해설.
  * 보기·액션 하나만 고르는 문항(`isTapToSubmit`)은 [제출] 없이 누르는 즉시 채점한다 — 짧은 간격 동안 선택을 보여 주고,
  * 그 안에 다른 보기를 누르면 그 답으로 바뀐다.
  * 정답 판정은 서버(ack의 DrillResult). 다음 문항은 [다음]으로 story-advance 대신 서버가 story-update로 밀어준다.
@@ -89,8 +92,6 @@ export default function DrillCard({
   const momentSpeaker = lastResult ? resolveSpeaker(lastResult.explanation.speaker, partnerId) : null;
   // 퍼펙트는 StoryCutIn(StoryStage)이 교사 대사를 맡으므로 여기선 스탬프·색종이만(말풍선 중복 방지)
   const momentLine = moment && lastResult && moment.moment !== 'drill-perfect' ? drillMomentLine(lastResult.explanation.speaker, moment.moment, instance.seed) : '';
-  const progressValue = retry ? retry.index : drill.index;
-  const progressMax = retry ? retry.total : drill.total;
   const answerComplete = isAnswerComplete(instance.answerSpec, answer);
   const nextLabel = drill.index + 1 < drill.total || drill.wrongQueue > 0 ? '다음 문제' : '세트 완료';
   const tapSubmit = isTapToSubmit(instance.answerSpec);
@@ -109,11 +110,8 @@ export default function DrillCard({
     return (
       <div className="flex w-full max-w-md flex-col gap-3" aria-label="재출제 선택">
         <div className="flex items-center gap-2 text-xs text-ink-dim">
-          <span className="font-bold tracking-wider">문제 {drill.total}/{drill.total}</span>
-          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-valuenow={drill.total} aria-valuemin={0} aria-valuemax={drill.total}>
-            <span className="block h-full rounded-full bg-mystic" style={{ width: '100%' }} />
-          </span>
-          <span className="rounded-full bg-blossom/15 px-2 py-px font-bold text-blossom">오답 {count}</span>
+          <ProgressDots total={drill.total} done={drill.total} current={null} tone="mystic" label={`문제 ${drill.total}/${drill.total}`} />
+          <span className="ml-auto rounded-full bg-blossom/15 px-2 py-px font-bold text-blossom">오답 {count}</span>
         </div>
         <CoachBubble
           speaker={teacherId}
@@ -154,14 +152,17 @@ export default function DrillCard({
         teacherName={momentSpeaker?.name ?? ''}
         teacherColor={momentSpeaker?.color ?? null}
       />
-      {/* 진행 바 + 콤보 — 첫 패스 분모는 불변, 재출제는 별도 카운터 */}
+      {/* 진행 점 + 콤보 — 첫 패스 분모는 불변, 재출제는 별도 점 줄 */}
       <div className="flex items-center gap-2 text-xs text-ink-dim">
-        <span className={`font-bold tracking-wider ${retry ? 'text-blossom' : ''}`}>
-          {retry ? `재출제 ${retry.index + 1}/${retry.total}` : `문제 ${drill.index + 1}/${drill.total}`}
-        </span>
-        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-abyss" role="progressbar" aria-valuenow={progressValue} aria-valuemin={0} aria-valuemax={progressMax}>
-          <span className={`block h-full rounded-full ${retry ? 'bg-blossom' : 'bg-mystic'}`} style={{ width: `${(progressValue / Math.max(1, progressMax)) * 100}%` }} />
-        </span>
+        {retry ? (
+          <>
+            <span className="font-bold text-blossom">재출제</span>
+            <ProgressDots total={retry.total} done={retry.index} current={retry.index} tone="blossom" label={`재출제 ${retry.index + 1}/${retry.total}`} />
+          </>
+        ) : (
+          <ProgressDots total={drill.total} done={drill.index} current={drill.index} tone="mystic" label={`문제 ${drill.index + 1}/${drill.total}`} />
+        )}
+        <span className="flex-1" />
         <AnimatePresence>
           {drill.streak >= 2 && (
             <motion.span
@@ -179,9 +180,15 @@ export default function DrillCard({
         {!retry && drill.wrongQueue > 0 && <span title="첫 패스가 끝나면 한 번 더 풀지 고를 수 있어요">오답 {drill.wrongQueue}</span>}
       </div>
 
-      <DrillTableView situation={instance.situation} />
+      <DrillTable
+        situation={instance.situation}
+        replayKey={key}
+        category={instance.category}
+        templateId={instance.templateId}
+        result={answered ? lastResult : null}
+      />
 
-      <p className="px-1 text-sm font-bold text-ink">{instance.question}</p>
+      <QuestionBubble speaker={teacherId} partnerId={partnerId} text={instance.question} />
 
       {beginnerGuide && !pending && onDismissGuide && (
         <ContextGuide
@@ -282,6 +289,42 @@ export default function DrillCard({
         </>
       )}
       <p className="sr-only">출제 {resolveSpeaker(teacherId, partnerId).name}</p>
+    </div>
+  );
+}
+
+/** 진행 점 — 지난 문항은 채운 점, 현재 문항은 큰 점. 스크린리더용 progressbar 값은 유지한다 */
+function ProgressDots({ total, done, current, tone, label }: { total: number; done: number; current: number | null; tone: 'mystic' | 'blossom'; label: string }) {
+  const fill = tone === 'blossom' ? 'bg-blossom' : 'bg-mystic';
+  return (
+    <span className="flex items-center gap-1" role="progressbar" aria-valuenow={done} aria-valuemin={0} aria-valuemax={total} aria-label={label}>
+      {Array.from({ length: total }).map((_, index) => (
+        <span
+          key={index}
+          className={`block rounded-full transition-all ${
+            index === current ? `h-2.5 w-2.5 ${fill} ring-2 ring-white/30` : index < done ? `h-1.5 w-1.5 ${fill}` : 'h-1.5 w-1.5 bg-white/15'
+          }`}
+        />
+      ))}
+    </span>
+  );
+}
+
+/** 출제자 말풍선 — 테이블 아래에서 교사(또는 파트너)가 질문을 건넨다 */
+function QuestionBubble({ speaker, partnerId, text }: { speaker: string; partnerId: StoryHeroineId | null; text: string }) {
+  const who = resolveSpeaker(speaker, partnerId);
+  const outfitId = useOutfitId(who.artId);
+  return (
+    <div className="flex items-end gap-2" aria-label="문제">
+      {who.artId && (
+        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full border" style={{ borderColor: `${who.color ?? '#fff'}66` }}>
+          <CharacterImage characterId={who.artId} expression="neutral" round outfitId={outfitId} className="h-full w-full text-lg" />
+        </div>
+      )}
+      <div className="relative min-w-0 flex-1 rounded-2xl rounded-bl-sm border border-mystic/30 bg-panel/90 px-3 py-2">
+        {who.name && <p className="text-[10px] font-bold" style={{ color: who.color ?? undefined }}>{who.name}</p>}
+        <p className="text-sm font-bold leading-snug text-ink">{text}</p>
+      </div>
     </div>
   );
 }
