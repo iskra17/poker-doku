@@ -24,6 +24,7 @@ import {
   skipScene,
   type SceneCursor,
 } from '@/lib/story/scene-cursor';
+import { resolveSceneForPartner } from '@/lib/story/partner-lines';
 import type { Scene, SceneSpeaker, StoryHeroineId } from '@/lib/story/types';
 
 interface ScenePlayerProps {
@@ -56,7 +57,9 @@ export function resolveSpeaker(speaker: SceneSpeaker, partnerId: StoryHeroineId 
 /** 대사창 고정 높이 — 이름 줄 + 본문 4줄(text-sm·leading-relaxed) + 여백 */
 const DIALOGUE_BOX_HEIGHT = 'h-[9.25rem]';
 
-export default function ScenePlayer({ scene, partnerId, onFinish, allowSkip = true, compact = false }: ScenePlayerProps) {
+export default function ScenePlayer({ scene: sourceScene, partnerId, onFinish, allowSkip = true, compact = false }: ScenePlayerProps) {
+  // 파트너별 대사(byPartner)는 여기서 한 번 풀어 쓴다 — 라인 순서·선택지 id는 그대로라 커서·서버 choose와 맞는다
+  const scene = useMemo(() => resolveSceneForPartner(sourceScene, partnerId), [sourceScene, partnerId]);
   const [cursor, setCursor] = useState<SceneCursor>(() => createSceneCursor(scene));
   const [auto, setAuto] = useState(false);
   const [logOpen, setLogOpen] = useState(false);

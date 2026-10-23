@@ -366,6 +366,12 @@ function validateSayLine(line: SceneSayLine, sceneId: string, at: string, errors
   if (!line.text.trim()) errors.push(`${at}: scene ${sceneId} has an empty line`);
   if (line.cg !== undefined && !isSceneCgId(line.cg)) errors.push(`${at}: scene ${sceneId} unknown cg ${String(line.cg)}`);
   if (line.effect !== undefined && !isSceneEffect(line.effect)) errors.push(`${at}: scene ${sceneId} unknown effect ${String(line.effect)}`);
+  // 파트너별 변주 — 히로인 키만, 빈 대사 금지, 화자 덮어쓰기는 'partner'·'narrator'·캐릭터 id 문자열(빈 값 금지)
+  for (const [key, variant] of Object.entries(line.byPartner ?? {})) {
+    if (!isStoryHeroineId(key)) errors.push(`${at}: scene ${sceneId} byPartner has non-heroine key ${key}`);
+    if (!variant || !variant.text.trim()) errors.push(`${at}: scene ${sceneId} byPartner.${key} has an empty line`);
+    if (variant?.speaker !== undefined && !variant.speaker.trim()) errors.push(`${at}: scene ${sceneId} byPartner.${key} has an empty speaker`);
+  }
 }
 
 function validateScene(scene: Scene, at: string, errors: string[]): void {
