@@ -7,9 +7,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseCards } from '@/lib/poker/card-notation';
 import { compareHands, evaluateHand } from '@/lib/poker/evaluator';
+import { hasAwkwardPokerTerminology } from '@/lib/characters/poker-terminology';
 import { ACT1_AUTHORED_DRILLS } from '../../drills/templates/authored/act1';
+import { resolveSceneForPartner } from '../../partner-lines';
 import { sceneMatchesFlags } from '../../scene-cursor';
-import type { Chapter, Scene, SceneSayLine, Step } from '../../types';
+import { FIRST_DRILL_CLEAR_STEP_ID } from '../../story-milestones';
+import { STORY_HEROINE_IDS, type Chapter, type Scene, type SceneSayLine, type Step } from '../../types';
 import { validateChapters } from '../index';
 import { CH01 } from './ch01-dojo-gate';
 import { CH02 } from './ch02-art-of-waiting';
@@ -72,14 +75,18 @@ function linesBySpeaker(chapters: readonly Chapter[], speaker: string): string[]
 /** 플레이어가 읽는 모든 문자열 — 닉네임 플레이스홀더 검사 대상 */
 function allPlayerFacingText(chapter: Chapter): string[] {
   const texts: string[] = [];
+  const pushSay = (line: SceneSayLine) => {
+    texts.push(line.text);
+    for (const variant of Object.values(line.byPartner ?? {})) if (variant) texts.push(variant.text);
+  };
   const pushScene = (scene: Scene) => {
     for (const line of scene.lines) {
-      if (line.kind === 'say') texts.push(line.text);
+      if (line.kind === 'say') pushSay(line);
       else {
         if (line.choice.prompt) texts.push(line.choice.prompt);
         for (const option of line.choice.options) {
           texts.push(option.text);
-          for (const reply of option.reply ?? []) texts.push(reply.text);
+          for (const reply of option.reply ?? []) pushSay(reply);
         }
       }
     }
@@ -134,7 +141,7 @@ describe('1막 챕터 데이터', () => {
 
   it('수기 문항 템플릿 id가 유일하고 authored 소스다', () => {
     const ids = ACT1_AUTHORED_DRILLS.map(template => template.id);
-    expect(ids).toEqual(['act-ch01-pair-beats-high', 'act-ch02-fold-utg', 'act-ch02-open-btn']);
+    expect(ids).toEqual(['act-ch01-first-hand-recap', 'act-ch01-pair-beats-high', 'act-ch02-fold-utg', 'act-ch02-open-btn']);
     expect(new Set(ids).size).toBe(ids.length);
     for (const template of ACT1_AUTHORED_DRILLS) {
       expect(template.source.kind).toBe('authored');
@@ -147,10 +154,11 @@ describe('1막 챕터 데이터', () => {
 
   it('A6 템플릿 순서를 지킨다', () => {
     for (const chapter of ACT1) {
-      // Ch1은 프롤로그 직후 첫 핸드(연습 1핸드) + 짧은 씬, Ch2는 Ch1 선택 회상 씬 3개(플래그 분기)가 앞에 붙는다 (2026-10-19 A1·A2)
+      // Ch1은 사건 단위(2026-10-24): 프롤로그 → 첫 핸드 → 소감 → 첫 핸드 복기 드릴 → 첫걸음 씬 → 테이블의 언어 레슨·드릴 → 연습 → 스파링 → 에필로그.
+      // Ch2는 Ch1 선택 회상 씬 3개(플래그 분기)가 앞에 붙는다 (2026-10-19 A2)
       const base = ['scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result'];
       const expected = chapter.id === 'act1-ch01'
-        ? ['scene', 'practice-table', 'scene', 'lesson', 'drill-set', 'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result']
+        ? ['scene', 'practice-table', 'scene', 'drill-set', 'scene', 'lesson', 'drill-set', 'practice-table', 'sparring', 'scene', 'result']
         : chapter.id === 'act1-ch02'
           ? ['scene', 'scene', 'scene', ...base]
           : base;
@@ -160,7 +168,8 @@ describe('1막 챕터 데이터', () => {
   });
 
   it('드릴 수와 프리셋 핸드 수가 커리큘럼(A5-1)과 같다', () => {
-    expect([drillCount(CH01), drillCount(CH02), drillCount(CH03)]).toEqual([6, 7, 8]);
+    // 2026-10-24 필수 문제 축소: Ch1 6 → 4, Ch2 7 → 4 (반복 문항은 빠진다 — 오늘의 수련 풀도 완료 챕터 슬롯에서 만든다)
+    expect([drillCount(CH01), drillCount(CH02), drillCount(CH03)]).toEqual([4, 4, 8]);
     expect([presetHandCounts(CH01), presetHandCounts(CH02), presetHandCounts(CH03)]).toEqual([[1, 2], [2], [2]]);
 
     // Ch2의 수기 문항은 시드 고정 — 상황이 매번 같아야 수기 해설이 성립한다.
@@ -170,9 +179,30 @@ describe('1막 챕터 데이터', () => {
     expect(authored).toEqual({ templateId: 'act-ch02-fold-utg', seedPolicy: 'fixed', fixedSeed: 0 });
   });
 
+  it('Ch1 필수에서 rank-best-hand를, Ch2 필수와 함께 풀기에서 숫자 입력을 뺀다 (2026-10-24)', () => {
+    const slots = (chapter: Chapter) => chapter.steps.flatMap(step => (step.kind === 'drill-set' ? step.drills.map(slot => slot.templateId) : []));
+    expect(slots(CH01)).toEqual(['act-ch01-first-hand-recap', 'act-ch01-pair-beats-high', 'rank-who-wins', 'pos-name']);
+    expect(slots(CH02)).not.toContain('range-percentile');
+    const stages = CH02.steps.flatMap(step => (step.kind === 'lesson'
+      ? step.blocks.flatMap(block => (block.kind === 'guided' ? block.stages : []))
+      : []));
+    expect(stages.length).toBeGreaterThan(0);
+    for (const stage of stages) expect(stage.answer.kind).not.toBe('numeric');
+  });
+
+  it('Ch2는 사쿠라의 "가르칠 수 있을까" 고민을 프롤로그에서 꺼내고 에필로그에서 회수한다 (2026-10-24)', () => {
+    const scene = (id: string) => {
+      const step = CH02.steps.find(candidate => candidate.id === id);
+      if (step?.kind !== 'scene') throw new Error('fixture');
+      return sceneSayLines(step.scene).filter(line => line.speaker === 'sakura').map(line => line.text).join('\n');
+    };
+    expect(scene('act1-ch02:prologue')).toContain('가르칠 수 있을까');
+    expect(scene('act1-ch02:epilogue')).toContain('안 떨리네요');
+  });
+
   it('Ch1은 프롤로그 바로 뒤에 결과가 정해진 첫 핸드 1개를 두고, 본 연습은 같은 핸드를 반복하지 않는다 (2026-10-19 A1)', () => {
-    expect(CH01.steps.slice(0, 4).map(step => step.id)).toEqual([
-      'act1-ch01:prologue', 'act1-ch01:first-hand', 'act1-ch01:first-hand-after', 'act1-ch01:lesson-foundation',
+    expect(CH01.steps.slice(0, 5).map(step => step.id)).toEqual([
+      'act1-ch01:prologue', 'act1-ch01:first-hand', 'act1-ch01:first-hand-after', 'act1-ch01:drills', FIRST_DRILL_CLEAR_STEP_ID,
     ]);
     const first = CH01.steps[1];
     const practice = CH01.steps.find(step => step.id === 'act1-ch01:practice');
@@ -195,18 +225,41 @@ describe('1막 챕터 데이터', () => {
     }
     // 라인업·블라인드·턴 시간·봇 속도는 본 연습과 같다
     expect(first.table).toEqual(practice.table);
-    expect(first.perHandPrompt).toContain('끝까지');
+    expect(first.table).not.toBe(practice.table);
+    // 2026-10-24: 첫 핸드는 직접 고르고, 이 스텝에서만 파트너 실시간 훈수가 켜진다
+    expect(first.perHandPrompt).toContain('직접 골라');
+    expect(first.partnerCoach).toBe(true);
+    expect(CH01.steps.filter(step => step.kind === 'practice-table' && step.partnerCoach).map(step => step.id)).toEqual(['act1-ch01:first-hand']);
     expect(practice.scripts[0].hero).not.toBe('As Ks');
     expect(practice.scripts[1]).toEqual({ hero: '7d 2c' });
 
     const after = CH01.steps[2];
     if (after.kind !== 'scene') throw new Error('fixture');
+    expect(after.fastModeSkip).toBe(true);
     expect(after.scene.lines.map(line => (line.kind === 'say' ? line.speaker : 'choice'))).toEqual(['partner', 'miyako']);
 
-    // 첫 드릴의 첫 문항은 수기 2인 문항(원페어 vs 하이카드) — 시드 고정
+    // 첫 드릴 세트 = 첫 핸드 복기(수기) + 원페어 vs 하이카드(수기) — 둘 다 시드 고정
     const drills = CH01.steps.find(step => step.id === 'act1-ch01:drills');
     if (drills?.kind !== 'drill-set') throw new Error('fixture');
-    expect(drills.drills[0]).toEqual({ templateId: 'act-ch01-pair-beats-high', seedPolicy: 'fixed', fixedSeed: 0 });
+    expect(drills.drills).toEqual([
+      { templateId: 'act-ch01-first-hand-recap', seedPolicy: 'fixed', fixedSeed: 0 },
+      { templateId: 'act-ch01-pair-beats-high', seedPolicy: 'fixed', fixedSeed: 0 },
+    ]);
+    // 복기 문항은 첫 핸드 스크립트와 같은 카드이고, 상대에 히로인(런타임 파트너)을 넣지 않는다
+    const recap = ACT1_AUTHORED_DRILLS.find(template => template.id === 'act-ch01-first-hand-recap');
+    if (recap?.source.kind !== 'authored') throw new Error('fixture');
+    const recapSituation = recap.source.instance.situation;
+    expect(recapSituation.hero).toEqual(parseCards(script.hero!));
+    expect(recapSituation.board).toEqual(scriptBoard);
+    expect(recapSituation.villains.map(villain => [villain.seatIndex, villain.characterId])).toEqual([[2, 'kapi'], [3, 'choco']]);
+    for (const villain of recapSituation.villains) {
+      expect(villain.holeCards).toEqual(parseCards(script.villains![villain.seatIndex]));
+      expect(compareHands(heroBest, evaluateHand(villain.holeCards!, scriptBoard))).toBeGreaterThan(0);
+    }
+    const recapSpec = recap.source.instance.answerSpec;
+    if (recapSpec.kind !== 'multiple-choice') throw new Error('fixture');
+    expect(recapSpec.options[recapSpec.correctIndex]).toBe('나');
+    expect(recap.source.instance.question).not.toContain('방금');
     const easy = ACT1_AUTHORED_DRILLS.find(template => template.id === 'act-ch01-pair-beats-high');
     if (easy?.source.kind !== 'authored') throw new Error('fixture');
     expect(easy.source.instance.situation.villains).toHaveLength(1);
@@ -384,6 +437,89 @@ describe('1막 말투 체크리스트', () => {
     for (const chapter of ACT1) {
       const formulas = conceptCards(chapter).filter(card => Boolean(card.formula));
       expect(formulas.length).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+describe('1막 파트너별 대사 (2026-10-24 파트너 중심 초반)', () => {
+  /** 챕터의 모든 씬(스텝 씬·인터럽트·failScene) */
+  function chapterScenes(chapter: Chapter): Scene[] {
+    const scenes: Scene[] = [];
+    for (const step of chapter.steps) {
+      if (step.kind === 'scene') scenes.push(step.scene);
+      if (step.kind === 'sparring') for (const interrupt of step.interrupts) scenes.push(interrupt.scene);
+    }
+    if (chapter.failScene) scenes.push(chapter.failScene);
+    return scenes;
+  }
+
+  it('Ch1의 모든 파트너 대사는 히로인 6명 변주를 갖는다', () => {
+    const partnerLines = chapterSayLines(CH01).filter(line => line.speaker === 'partner');
+    expect(partnerLines.length).toBeGreaterThanOrEqual(10);
+    for (const line of partnerLines) {
+      expect(Object.keys(line.byPartner ?? {}).sort(), line.text).toEqual([...STORY_HEROINE_IDS].sort());
+    }
+  });
+
+  it('Ch1 프롤로그는 미야코 환영 1줄 뒤 파트너의 고민(짝 대국)으로 이어지고, "두 문제" 예고가 없다', () => {
+    const prologue = CH01.steps[0];
+    if (prologue.kind !== 'scene') throw new Error('fixture');
+    const says = sceneSayLines(prologue.scene);
+    expect(says[0]).toMatchObject({ speaker: 'miyako', cg: 'act1-ch01-prologue' });
+    expect(says.filter(line => line.speaker === 'miyako')).toHaveLength(1);
+    expect(prologue.scene.lines.length).toBeGreaterThanOrEqual(5);
+    expect(prologue.scene.lines.length).toBeLessThanOrEqual(8);
+    expect(allPlayerFacingText(CH01).some(text => text.includes('두 문제'))).toBe(false);
+    for (const heroine of STORY_HEROINE_IDS) {
+      const resolved = resolveSceneForPartner(prologue.scene, heroine);
+      const text = sceneSayLines(resolved).map(line => line.text).join('\n');
+      expect(text, heroine).toContain('짝 대국');
+      expect(text, heroine).toContain('한 핸드');
+    }
+  });
+
+  it('Ch1 에필로그는 파트너가 짝 대국의 짝을 부탁하고, 선택지는 모두 수락이며 Ch2 회상 인용을 보존한다', () => {
+    const epilogue = CH01.steps.find(step => step.id === 'act1-ch01:epilogue');
+    if (epilogue?.kind !== 'scene') throw new Error('fixture');
+    for (const heroine of STORY_HEROINE_IDS) {
+      const resolved = resolveSceneForPartner(epilogue.scene, heroine);
+      expect(sceneSayLines(resolved).some(line => line.speaker === 'partner' && line.text.includes('짝')), heroine).toBe(true);
+    }
+    const choice = epilogue.scene.lines.find(line => line.kind === 'choice');
+    if (choice?.kind !== 'choice') throw new Error('fixture');
+    const byId = new Map(choice.choice.options.map(option => [option.id, option.text]));
+    expect(byId.get('thanks')).toContain('옆에 있어 줘서 고마웠어요');
+    expect(byId.get('more')).toContain('한 핸드 더');
+    expect(byId.get('quiet')).toContain('말없이');
+  });
+
+  it('Ch2·Ch3 프롤로그/에필로그에 파트너 대사가 있고, 교사 본인이 파트너면 자신을 제3자로 부르지 않는다', () => {
+    const cases: Array<[Chapter, string, string]> = [[CH02, 'sakura', '사쿠라 씨'], [CH03, 'hana', '하나 씨']];
+    for (const [chapter, teacher, thirdPerson] of cases) {
+      const partnerLines = chapterSayLines(chapter).filter(line => line.speaker === 'partner' && line.byPartner);
+      expect(partnerLines.length, chapter.id).toBeGreaterThan(0);
+      for (const scene of chapterScenes(chapter)) {
+        const resolved = resolveSceneForPartner(scene, teacher as (typeof STORY_HEROINE_IDS)[number]);
+        for (const line of sceneSayLines(resolved).filter(candidate => candidate.speaker === 'partner')) {
+          expect(line.text, `${chapter.id} ${scene.id}`).not.toContain(thirdPerson);
+        }
+      }
+    }
+    // Ch3 에필로그가 짝 대국을 회수한다
+    const ch03Epilogue = CH03.steps.find(step => step.id === 'act1-ch03:epilogue');
+    if (ch03Epilogue?.kind !== 'scene') throw new Error('fixture');
+    for (const heroine of STORY_HEROINE_IDS) {
+      const text = sceneSayLines(resolveSceneForPartner(ch03Epilogue.scene, heroine)).map(line => line.text).join('\n');
+      expect(text, heroine).toContain('짝 대국');
+    }
+  });
+
+  it('1막의 모든 문구(파트너 변주 포함)가 포커 용어 규칙을 지킨다', () => {
+    for (const chapter of ACT1) {
+      for (const text of allPlayerFacingText(chapter)) {
+        expect(hasAwkwardPokerTerminology(text), text).toBe(false);
+        expect(text, text).not.toMatch(/한 판|첫 판/);
+      }
     }
   });
 });

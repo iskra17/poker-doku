@@ -152,3 +152,22 @@ describe('buildGallery unlockAll (운영자 미리보기)', () => {
     expect(summarizeGallery(all).every(row => row.unlocked === row.total)).toBe(true);
   });
 });
+
+describe('buildGallery — 잠금 예고 필드 (2026-10-24)', () => {
+  it('인연 씬·이벤트 CG·보너스 CG는 인물 이름과 접두 없는 장면 제목을 갖는다', () => {
+    const entries = buildGallery({ snapshot: snapshot(), progress: progress() });
+    const bond = entries.find(entry => entry.id === 'bond:ara-lv5')!;
+    expect(bond).toMatchObject({ unlocked: false, characterName: '아라', title: '연습실', hint: '인연 Lv.2' });
+    const bonus = entries.find(entry => entry.id === 'story-bonus-cg-sakura-casual')!;
+    expect(bonus.characterName).toBe('사쿠라');
+    expect(bonus.title).toBeTruthy();
+    expect(bonus.title!.startsWith('사쿠라 · ')).toBe(false);
+    expect(entries.find(entry => entry.id === 'story-bonus-cg-miyako-casual')?.characterName).toBe('미야코');
+    const belt = entries.find(entry => entry.id === 'story-cg-act1-belt-white')!;
+    expect(belt.characterName).toBe('미야코');
+    for (const entry of entries.filter(candidate => candidate.section === 'bond' || candidate.section === 'bonus')) {
+      expect(entry.characterName, entry.id).toBeTruthy();
+      expect(entry.title, entry.id).toBeTruthy();
+    }
+  });
+});

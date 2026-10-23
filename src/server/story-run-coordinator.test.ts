@@ -630,23 +630,22 @@ describe('drill set flow', () => {
 });
 
 describe('Ch1 first drill milestone', () => {
-  it('holds a full run at the server-confirmed milestone and keeps exam coverage at six slots', () => {
+  it('holds a full run at the server-confirmed milestone and keeps exam coverage at four slots', () => {
     const full = setup([CH01]);
     const { coordinator, latest, repository } = full;
     expect(coordinator.start(PROFILE, 'act1-ch01')).toMatchObject({ ok: true });
-    // 0 프롤로그 → 1 첫 핸드(어댑터 없음 = 건너뜀) → 2 첫 핸드 뒤 씬 → 3 레슨 → 4 첫 드릴 세트
+    // 0 프롤로그 → 1 첫 핸드(어댑터 없음 = 건너뜀) → 2 첫 핸드 뒤 씬 → 3 첫 드릴 세트(첫 핸드 복기 + 원페어) → 4 첫걸음 씬
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 0, target: 'next' });
     expect(latest()).toMatchObject({ stepIndex: 2, stepKind: 'scene' });
     coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 2, target: 'next' });
-    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 3, target: 'next' });
-    expect(latest()).toMatchObject({ stepIndex: 4, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
+    expect(latest()).toMatchObject({ stepIndex: 3, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
 
     answerCurrent(full, true);
-    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 4, target: 'next' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 3, target: 'next' });
     answerCurrent(full, true);
-    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 4, target: 'next' });
+    coordinator.advance(PROFILE, { runId: 'run-1', expectedStepIndex: 3, target: 'next' });
     expect(latest()).toMatchObject({
-      stepIndex: 5,
+      stepIndex: 4,
       stepKind: 'scene',
       phase: 'scene',
       result: null,
@@ -655,7 +654,7 @@ describe('Ch1 first drill milestone', () => {
 
     const exam = setup([CH01]);
     expect(exam.coordinator.start(PROFILE, 'act1-ch01', 'exam')).toMatchObject({ ok: true });
-    expect(exam.latest()).toMatchObject({ stepIndex: 4, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
+    expect(exam.latest()).toMatchObject({ stepIndex: 3, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
     let view = exam.latest();
     for (let set = 0; set < 2; set += 1) {
       const slots = view.drill!.total;
@@ -665,11 +664,11 @@ describe('Ch1 first drill milestone', () => {
         exam.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: stepIndex, target: 'next' });
         view = exam.latest();
       }
-      if (set === 0) expect(view).toMatchObject({ stepIndex: 7, stepKind: 'drill-set', phase: 'drill', drill: { total: 4 } });
+      if (set === 0) expect(view).toMatchObject({ stepIndex: 6, stepKind: 'drill-set', phase: 'drill', drill: { total: 2 } });
     }
-    expect(view).toMatchObject({ stepIndex: 11, stepKind: 'result', phase: 'result' });
+    expect(view).toMatchObject({ stepIndex: 10, stepKind: 'result', phase: 'result' });
     exam.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' });
-    expect(exam.latest().result?.drill.slots).toBe(6);
+    expect(exam.latest().result?.drill.slots).toBe(4);
   });
 });
 
@@ -1558,24 +1557,24 @@ describe('fast mode (숙련자 빠른 진행)', () => {
       expect(ctx.coordinator.advance(PROFILE, { runId: view.runId, expectedStepIndex: view.stepIndex, target: 'next' }).ok).toBe(true);
       record();
     }
-    // 1(연습)·3(레슨)·6(레슨)·8(연습)과 첫 핸드 소감 씬(2, fastModeSkip)은 건너뛰고, 나머지 씬·드릴·스파링은 그대로
+    // 1(연습)·5(레슨)·7(연습)과 첫 핸드 소감 씬(2, fastModeSkip)은 건너뛰고, 나머지 씬·드릴·스파링은 그대로
     expect(visited).toEqual([
       { stepIndex: 0, stepKind: 'scene' },
-      { stepIndex: 4, stepKind: 'drill-set', total: fastSlots(4) },
-      { stepIndex: 5, stepKind: 'scene' },
-      { stepIndex: 7, stepKind: 'drill-set', total: fastSlots(7) },
-      { stepIndex: 9, stepKind: 'sparring' },
+      { stepIndex: 3, stepKind: 'drill-set', total: fastSlots(3) },
+      { stepIndex: 4, stepKind: 'scene' },
+      { stepIndex: 6, stepKind: 'drill-set', total: fastSlots(6) },
+      { stepIndex: 8, stepKind: 'sparring' },
     ]);
-    // Ch1 두 번째 세트(4슬롯 전부 난이도 1)는 최소 3문으로 줄어든다
-    expect(fastSlots(7)).toBe(3);
+    // Ch1 세트는 2문씩(2026-10-24 필수 축소) — 최소치(3)보다 작아 빠른 진행에서도 그대로 2문
+    expect([fastSlots(3), fastSlots(6)]).toEqual([2, 2]);
     expect(fake.enters).toHaveLength(1);
-    expect(fake.enters[0]).toMatchObject({ stepIndex: 9, difficultyOverride: 'normal' });
+    expect(fake.enters[0]).toMatchObject({ stepIndex: 8, difficultyOverride: 'normal' });
     expect(fake.enters[0].step.kind).toBe('sparring');
 
     fake.finish(liveSummary());
     const ended = driveUntil(ctx, view => view.phase === 'ended');
     expect(ended.result).toMatchObject({ mode: 'fast', passed: true, rewards: { firstClear: true } });
-    expect(ended.result?.drill.slots).toBe(fastSlots(4) + fastSlots(7));
+    expect(ended.result?.drill.slots).toBe(fastSlots(3) + fastSlots(6));
     expect(ctx.repository.listProgress(PROFILE).find(row => row.chapterId === 'act1-ch01')?.completions).toBe(1);
     expect(ctx.rewards.chapters[0]).toMatchObject({ chapterId: 'act1-ch01', firstClear: true });
   });

@@ -61,11 +61,28 @@ export function isSceneEffect(value: unknown): value is SceneEffect {
   return value.startsWith('sfx:') && (SCENE_SFX as readonly string[]).includes(value.slice('sfx:'.length));
 }
 
+/**
+ * 파트너별 대사 변주 — 런타임 파트너(선택 히로인)가 이 키일 때 기본 `text`·`expression` 대신 쓴다.
+ * `speaker`는 드물게만 쓴다: 그 챕터의 교사가 파트너 본인이라 'partner' 줄이 같은 사람을 "제3자"로 말하게 될 때
+ * 화자를 바꿔 어색함을 피한다(예: Ch2 교사 사쿠라 = 파트너 사쿠라). 없는 키는 기본 `text`로 폴백한다.
+ */
+export interface PartnerLineVariant {
+  text: string;
+  expression?: Expression;
+  speaker?: SceneSpeaker;
+}
+
 export interface SceneSayLine {
   kind: 'say';
   speaker: SceneSpeaker;
+  /** 기본 대사 — 파트너가 없거나 `byPartner`에 그 파트너 키가 없을 때 쓴다 */
   text: string;
   expression?: Expression;
+  /**
+   * 파트너별 변주(2026-10-24 파트너 중심 초반) — 화자가 'partner'인 줄을 히로인 6명 말투로 수기 작성할 때 쓴다.
+   * 해석은 렌더 직전 `resolveSceneForPartner`(partner-lines.ts) 한 곳에서 한다. 정답·플래그·선택지 id와 무관하다.
+   */
+  byPartner?: Partial<Record<StoryHeroineId, PartnerLineVariant>>;
   /** 배경 id (character-art 매니페스트 외 스토리 배경 — 없으면 로비 배경 폴백) */
   bg?: string;
   music?: StoryMusic;
@@ -331,6 +348,11 @@ export type Step =
       table: LiveTableSpec;
       scripts: DealScript[];
       perHandPrompt?: string;
+      /**
+       * 파트너 실시간 훈수(`PartnerCoach`)를 이 스텝에서만 켠다 — 스토리 방은 기본 제외(`coach-eligibility.ts`).
+       * Ch1 첫 핸드 전용(2026-10-24): 결과가 정해진 핸드에서 "직접 고르되 옆에서 거든다"를 체험하게 한다.
+       */
+      partnerCoach?: true;
     }
   | {
       kind: 'sparring';
