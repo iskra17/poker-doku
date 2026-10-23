@@ -89,6 +89,13 @@ export interface DrillSituation {
   villains: DrillVillain[];
   /** 상황 카드 하단 한 줄 설명 (선택) */
   note?: string;
+  /**
+   * 테이블 배치용 공개 좌석 번호(0~5, 시계 방향 증가) — 정답이 아니다(문제 문구로도 공개되던 정보).
+   * 없으면 `drill-table-model.ts`가 포지션 라벨에서 역산하고, 라벨도 없으면 순서대로 앉힌다.
+   */
+  heroSeatIndex?: number;
+  /** 딜러 버튼 좌석 번호(0~5) — 공개 사양 */
+  dealerSeatIndex?: number;
 }
 
 export type DrillDifficulty = 1 | 2 | 3;

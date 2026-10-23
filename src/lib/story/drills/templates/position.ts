@@ -5,7 +5,8 @@
  * - `pos-first-to-act` : 스트리트별 첫 액션 자리 (전원 참여 가정)
  *
  * 주의: `pos-name`은 포지션 라벨 자체가 정답이므로 상황 카드의 `heroPosition`과
- * 빌런 `position`을 전부 '?'로 감춘다 (버튼 위치는 `note`로만 준다).
+ * 빌런 `position`을 전부 '?'로 감춘다. 버튼·내 좌석 번호는 공개 필드
+ * (`dealerSeatIndex`/`heroSeatIndex`)로 주고 테이블이 D 버튼과 좌석 번호로 그린다.
  */
 import { pickOne, randomInt } from '@/lib/poker/seeded-rng';
 import type { Street } from '@/lib/poker/types';
@@ -72,7 +73,9 @@ const posName: GeneratedDrillDefinition = {
         heroPosition: HIDDEN,
         street: 'preflop',
         villains,
-        note: `딜러 버튼은 ${layout.dealerSeat + 1}번 자리, 내 자리는 ${heroSeat + 1}번 자리예요.`,
+        note: '딜러 버튼(D)에서 시계 방향으로 세어 보세요.',
+        heroSeatIndex: heroSeat,
+        dealerSeatIndex: layout.dealerSeat,
       },
       question: '지금 내가 앉은 자리의 포지션 이름은 무엇일까요?',
       answerSpec: { kind: 'multiple-choice', options: choice.options, correctIndex: choice.correctIndex },
@@ -135,6 +138,8 @@ const firstToAct: GeneratedDrillDefinition = {
         street,
         villains,
         note: '여섯 명이 모두 핸드에 남아 있어요.',
+        heroSeatIndex: heroSeat,
+        dealerSeatIndex: layout.dealerSeat,
       },
       question: `여섯 명 전원이 참여한 상태예요. ${streetKo}에서 가장 먼저 액션하는 자리는 어디일까요?`,
       answerSpec: { kind: 'multiple-choice', options: choice.options, correctIndex: choice.correctIndex },
