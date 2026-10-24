@@ -20,6 +20,6 @@ export default function LobbyGuide() {
     || !tierShowsBeginnerGuide(placementTierFromFlags(progress.flags))
     || progress.chapters.some(chapter => chapter.completions > 0)) return null;
   return <ContextGuide target={'[data-tour="lobby-start"]'} onDismiss={() => setBeginnerGuideDismissed(profileId, true)}>
-    첫 수련을 눌러 내 실력에 맞는 수련을 시작해요.
+    첫 수련을 눌러 도장의 첫 수업을 시작해요.
   </ContextGuide>;
 }

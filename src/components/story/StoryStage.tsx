@@ -15,7 +15,7 @@ import { useGameStore } from '@/lib/store/game-store';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useOperatorMode } from '@/lib/store/operator-store';
 import { useStoryStore } from '@/lib/store/story-store';
-import { defaultRunModeForTier, placementTierFromFlags, tierShowsBeginnerGuide } from '@/lib/story/placement';
+import { defaultRunModeForTier, PLACEMENT_CHECK_AFTER_CHAPTER_ID, placementCheckFromFlags, placementTierFromFlags, tierShowsBeginnerGuide } from '@/lib/story/placement';
 import { setBeginnerGuideDismissed, useBeginnerGuideDismissed } from '@/lib/story/beginner-guide';
 import ChapterResult from './ChapterResult';
 import DrillCard from './DrillCard';
@@ -24,6 +24,7 @@ import ScenePlayer from './ScenePlayer';
 import StoryCutIn from './StoryCutIn';
 import FirstDrillClearSheet from './FirstDrillClearSheet';
 import MasqueradePanel from './live/MasqueradePanel';
+import PlacementSheet from './PlacementSheet';
 
 const noopSubscribe = () => () => {};
 
@@ -64,6 +65,8 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
 
   // 드릴 퍼펙트 컷인 — 스토어가 발행하는 story-drill-result(perfect)에서 교사 컷인을 띄운다(외부 이벤트 콜백 setState)
   const [cutIn, setCutIn] = useState<StoryCutInData | null>(null);
+  // Ch1 결산의 4문 체크 시트 — 런 id에 묶어 새 런이 시작되면 저절로 사라진다
+  const [placementCheckRunId, setPlacementCheckRunId] = useState<string | null>(null);
   useEffect(() => onGameEvent(event => {
     if (event.type !== 'story-drill-result' || !event.perfect) return;
     const current = useStoryStore.getState().run;
@@ -111,6 +114,9 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
   const tier = placementTierFromFlags(storyProgress?.flags);
   const beginnerGuideEligible = run?.chapterId === 'act1-ch01' && run.mode === 'full' && tierShowsBeginnerGuide(tier);
   const beginnerGuideEnabled = connected && beginnerGuideEligible && !beginnerGuideDismissed;
+  // Ch1을 마친 자기 평가 사용자(체크 대기·아직 숙련 아님)에게 결산에서 4문 체크를 권한다
+  const offerPlacementCheck = run?.phase === 'ended' && run.result?.chapterId === PLACEMENT_CHECK_AFTER_CHAPTER_ID
+    && run.result.passed && tier !== 'advanced' && placementCheckFromFlags(storyProgress?.flags) === 'pending';
 
   const finishScene = async (chosen: Record<string, string>) => {
     // 선택은 서버 플래그로 남긴다 (실패해도 진행은 막지 않음 — 정답 없는 선택지)
@@ -193,6 +199,7 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                 }}
                 onRetrySparring={() => void retrySparring()}
                 onOpenGallery={onOpenGallery ? () => { dismissRun(); onOpenGallery(); } : undefined}
+                onPlacementCheck={offerPlacementCheck ? () => setPlacementCheckRunId(run.runId) : undefined}
                 onNextChapter={chapterId => {
                   const next = getChapter(chapterId);
                   if (next) void startChapter(chapterId, defaultRunModeForTier(tier, next));
@@ -213,6 +220,9 @@ export default function StoryStage({ onOpenGallery }: { onOpenGallery?: () => vo
                   void startChapter(chapterId, 'graduation');
                 }}
               />
+            )}
+            {run.phase === 'ended' && placementCheckRunId === run.runId && (
+              <PlacementSheet mode="check" startChapterId={run.result?.nextChapterId ?? undefined} onClose={() => setPlacementCheckRunId(null)} />
             )}
 
             {run.phase === 'failure-scene' && chapter?.failScene && (

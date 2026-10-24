@@ -90,19 +90,30 @@ export interface StoryQuizReceipt { quizId: string; accepted: true }
  * 실력 배치 (`story-placement`, 2026-10-20) — 'questions'는 서버가 새 seed로 4문을 발급(정답 제외),
  * 'submit'은 발급한 문항을 서버가 다시 생성해 채점하고 `placement:tier` flag를 저장, 'set'은 사용자가 직접 바꾼다.
  * 'new' 자기 평가는 questions 없이 submit(answers: [])만 보내도 된다. 성공 뒤 서버는 진행 요약을 다시 보낸다.
+ *
+ * 첫 수련 흐름(2026-10-24): 'self-report'는 문제 없이 자기 평가만으로 등급을 정한다(new→beginner, 그 밖→novice —
+ * advanced 불가)고 `placement:check`='pending'을 남긴다. Ch1 뒤 초대에서 'check'로 4문을 채점받으면 숙련 기준일 때만
+ * advanced로 올리고(아니면 등급 유지) 'taken', 'decline'은 초대를 접는다('declined').
  */
 export type StoryPlacementRequest =
   | { action: 'questions' }
   | { action: 'submit'; selfReport: PlacementSelfReport; answers: (DrillAnswer | null)[] }
+  | { action: 'self-report'; selfReport: PlacementSelfReport }
+  | { action: 'check'; answers: (DrillAnswer | null)[] }
+  | { action: 'decline' }
   | { action: 'set'; tier: SkillTier };
 
 export interface StoryPlacementAck {
   /** action 'questions'일 때만 */
   questions?: DrillInstancePublic[];
-  /** action 'submit'·'set' 결과 */
+  /** action 'submit'·'self-report'·'set' 결과 등급. 'check'는 올라갔을 때만 'advanced' */
   tier?: SkillTier;
   correct?: number;
   total?: number;
+  /** action 'check' — 숙련(빠른 진행)으로 올라갔는지 */
+  promoted?: boolean;
+  /** action 'decline' */
+  declined?: true;
 }
 export interface StoryQuizFeedback { seatIndex: number; selected: number | null; correctIndex: number; correctLabel: string; selectedLabel: string | null; characterId: string; explanation: string }
 export interface ObservationNote { seatIndex: number; hands: number; entered: number; raised: number; called: number }

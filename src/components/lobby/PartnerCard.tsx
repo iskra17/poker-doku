@@ -240,7 +240,7 @@ export default function PartnerCard({ onOpenStory }: PartnerCardProps = {}) {
         characterId={showcaseOpen ? partnerId : null}
         onClose={() => setShowcaseOpen(false)}
       />
-      {placementOpen && <PlacementSheet onClose={() => setPlacementOpen(false)} onStarted={onOpenStory} />}
+      {placementOpen && <PlacementSheet mode="first-run" onClose={() => setPlacementOpen(false)} onStarted={onOpenStory} />}
     </section>
   );
 }

@@ -7,7 +7,7 @@ import type { DrillAnswer, DrillAnswerSpec } from '../lib/story/drills/types';
 import { makeChapterChain, makeChapter, makeScene, makeSteps } from '../lib/story/test-fixtures';
 import type { Chapter, StoryTeacherId } from '../lib/story/types';
 import type { StoryDrillAck, StoryPlacementAck, StoryProgressView, StoryRunView } from '../lib/story/views';
-import { PLACEMENT_TEMPLATE_IDS, PLACEMENT_TIER_FLAG } from '../lib/story/placement';
+import { PLACEMENT_CHECK_FLAG, PLACEMENT_TEMPLATE_IDS, PLACEMENT_TIER_FLAG } from '../lib/story/placement';
 import { createSocketTestHarness } from './socket-test-harness';
 import type { ConnectedTestClient, SocketTestHarness } from './socket-test-harness';
 
@@ -150,6 +150,34 @@ describe('story socket events', () => {
     expect(fresh).toEqual({ ok: true, data: { tier: 'beginner', correct: 0, total: 0 } });
   });
 
+  it('story-placement: first-run self-report never grants advanced; the after-Ch1 check promotes only on a passing score; decline keeps the tier', async () => {
+    const { client, profile, harness: h } = await setup();
+    const flags = () => h.runtime.storyProgress(profile.profile.id)?.flags ?? {};
+    const reported = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'self-report', selfReport: 'regular' }, done));
+    expect(reported).toEqual({ ok: true, data: { tier: 'novice' } });
+    expect(flags()).toMatchObject({ [PLACEMENT_TIER_FLAG]: 'novice', [PLACEMENT_CHECK_FLAG]: 'pending' });
+
+    // 1문만 맞히면 등급 유지
+    let issued = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'questions' }, done));
+    let questions = issued.ok ? issued.data!.questions! : [];
+    const oneRight = questions.map((question, index) => index === 0 ? answerFor(question.templateId, question.seed, 'miyako') : null);
+    const kept = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'check', answers: oneRight }, done));
+    expect(kept).toEqual({ ok: true, data: { promoted: false, correct: 1, total: 4 } });
+    expect(flags()).toMatchObject({ [PLACEMENT_TIER_FLAG]: 'novice', [PLACEMENT_CHECK_FLAG]: 'taken' });
+
+    // 다시 풀어 4문 정답이면 숙련
+    issued = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'questions' }, done));
+    questions = issued.ok ? issued.data!.questions! : [];
+    const allRight = questions.map(question => answerFor(question.templateId, question.seed, 'miyako'));
+    const promoted = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'check', answers: allRight }, done));
+    expect(promoted).toEqual({ ok: true, data: { tier: 'advanced', promoted: true, correct: 4, total: 4 } });
+    expect(flags()[PLACEMENT_TIER_FLAG]).toBe('advanced');
+
+    const declined = await withAck<StoryPlacementAck>(done => client.socket.emit('story-placement', { action: 'decline' }, done));
+    expect(declined).toEqual({ ok: true, data: { declined: true } });
+    expect(flags()).toMatchObject({ [PLACEMENT_TIER_FLAG]: 'advanced', [PLACEMENT_CHECK_FLAG]: 'declined' });
+  });
+
   it('story-placement: rejects malformed payloads and client-chosen tiers/answers keys as invalid-payload', async () => {
     const { client, profile, harness: h } = await setup();
     for (const bad of [
@@ -161,10 +189,17 @@ describe('story socket events', () => {
       { action: 'submit', selfReport: 'regular', answers: [{ kind: 'multiple-choice', index: 99 }] },
       { action: 'submit', selfReport: 'regular', answers: Array.from({ length: 9 }, () => null) },
       { action: 'questions', seed: 1 },
+      { action: 'self-report', selfReport: 'pro' },
+      { action: 'self-report', selfReport: 'regular', tier: 'advanced' },
+      { action: 'check', selfReport: 'regular', answers: [] },
+      { action: 'check', answers: Array.from({ length: 9 }, () => null) },
+      { action: 'decline', tier: 'advanced' },
     ]) {
       expect(await withAck(done => client.socket.emit('story-placement', bad as never, done))).toMatchObject({ ok: false, code: 'invalid-payload' });
     }
     expect(await withAck(done => client.socket.emit('story-placement', { action: 'submit', selfReport: 'rules', answers: [] }, done)))
+      .toMatchObject({ ok: false, code: 'stale-state' });
+    expect(await withAck(done => client.socket.emit('story-placement', { action: 'check', answers: [] }, done)))
       .toMatchObject({ ok: false, code: 'stale-state' });
     expect(h.runtime.storyProgress(profile.profile.id)?.flags[PLACEMENT_TIER_FLAG]).toBeUndefined();
   });

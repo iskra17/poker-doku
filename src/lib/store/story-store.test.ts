@@ -227,6 +227,33 @@ describe('story-store', () => {
     expect(store.getState().progress?.flags['placement:tier']).toBe(tier);
   });
 
+  it('first-run self-report, after-Ch1 check and decline emit their own actions and reload flags', async () => {
+    const progress = { ...progressFixture(), flags: { 'placement:tier': 'novice', 'placement:check': 'pending' } };
+    const fetch = vi.fn().mockResolvedValue(jsonResponse(200, { progress }));
+    const store = createStoryStore({ fetch });
+    const { socket, emitted } = makeSocket();
+    store.getState().setProfileIdentity('p1');
+    store.getState().bindSocket(socket);
+
+    const reported = store.getState().submitPlacementSelfReport('rules');
+    expect(emitted[0]).toMatchObject({ event: 'story-placement', payload: { action: 'self-report', selfReport: 'rules' } });
+    emitted[0].ack!({ ok: true, data: { tier: 'novice' } });
+    expect(await reported).toEqual({ tier: 'novice' });
+    expect(store.getState().progress?.flags['placement:check']).toBe('pending');
+
+    const answers = [{ kind: 'multiple-choice' as const, index: 0 }, null];
+    const checked = store.getState().submitPlacementCheck(answers);
+    expect(emitted[1]).toMatchObject({ event: 'story-placement', payload: { action: 'check', answers } });
+    emitted[1].ack!({ ok: true, data: { promoted: false, correct: 1, total: 4 } });
+    expect(await checked).toEqual({ promoted: false, correct: 1, total: 4 });
+
+    const declined = store.getState().declinePlacementCheck();
+    expect(emitted[2]).toMatchObject({ event: 'story-placement', payload: { action: 'decline' } });
+    emitted[2].ack!({ ok: true, data: { declined: true } });
+    expect(await declined).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
   it('setting a placement tier reloads flags without changing the current run', async () => {
     const fetch = vi.fn().mockResolvedValue(jsonResponse(200, { progress: { ...progressFixture(), flags: { 'placement:tier': 'novice' } } }));
     const store = createStoryStore({ fetch });

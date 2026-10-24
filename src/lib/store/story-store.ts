@@ -40,6 +40,12 @@ export interface StoryStoreState {
   fetchPlacementQuestions(): Promise<DrillInstancePublic[] | null>;
   submitPlacement(selfReport: PlacementSelfReport, answers: (DrillAnswer | null)[]): Promise<StoryPlacementAck | null>;
   setPlacementTier(tier: SkillTier): Promise<boolean>;
+  /** 첫 수련 — 자기 평가만으로 등급 저장(서버가 정함, 숙련 없음) */
+  submitPlacementSelfReport(selfReport: PlacementSelfReport): Promise<StoryPlacementAck | null>;
+  /** Ch1 뒤 4문 체크 — 숙련 기준이면 서버가 승급, 아니면 등급 유지 */
+  submitPlacementCheck(answers: (DrillAnswer | null)[]): Promise<StoryPlacementAck | null>;
+  /** Ch1 뒤 체크 초대 접기 */
+  declinePlacementCheck(): Promise<boolean>;
   /** mode 'exam' = 실력 확인(드릴만) — 생략하면 챕터 전체 */
   startChapter(chapterId: string, mode?: StoryRunMode): Promise<boolean>;
   advance(target?: StoryAdvanceTarget): Promise<boolean>;
@@ -203,6 +209,12 @@ export function createStoryStore(dependencies: Dependencies): StoryStore {
       submitPlacement: (selfReport, answers) => placement({ action: 'submit', selfReport, answers }),
 
       setPlacementTier: async tier => !!(await placement({ action: 'set', tier }))?.tier,
+
+      submitPlacementSelfReport: selfReport => placement({ action: 'self-report', selfReport }),
+
+      submitPlacementCheck: answers => placement({ action: 'check', answers }),
+
+      declinePlacementCheck: async () => !!(await placement({ action: 'decline' }))?.declined,
 
       startChapter: async (chapterId, mode) => {
         const ack = await withAck<{ runId: string }>((socket, done) => {
