@@ -5,11 +5,12 @@ import PokerTable from '@/components/table/PokerTable';
 import { ACTION_DOCK_HEIGHT } from '@/components/table/ActionBar';
 import { useGameStore } from '@/lib/store/game-store';
 import type { Card, PublicGameState, PublicPlayer } from '@/lib/poker/types';
+import { finalTableThemeStyle, resolveFinalTableTheme } from '@/lib/tournament/final-table-themes';
 
 /**
  * 실전 테이블 검토 화면 — 게임 store에 6인 샘플 스냅샷을 넣고 실제 `PokerTable`을 GameRoomView와 같은 골격
  * (상단 바 · 테이블 · 고정 높이 액션 독 자리)으로 띄운다. 개발 서버 전용.
- * `?state=turn|showdown|preflop` · `?story=1`(수련 테마) · `?final=1`(파이널 테마)
+ * `?state=turn|showdown|preflop` · `?dealer=<players 인덱스>` · `?story=1`(수련 테마) · `?final=1`(파이널 테마)
  */
 
 const c = (text: string): Card => {
@@ -32,7 +33,7 @@ function player(seatIndex: number, partial: Partial<PublicPlayer> & Pick<PublicP
   };
 }
 
-function sampleState(kind: string): PublicGameState {
+function sampleState(kind: string, dealerIndex: number): PublicGameState {
   const showdown = kind === 'showdown';
   const preflop = kind === 'preflop';
   const players: PublicPlayer[] = [
@@ -51,7 +52,7 @@ function sampleState(kind: string): PublicGameState {
     currentBet: 240,
     minRaise: 240,
     street: showdown ? 'showdown' : preflop ? 'preflop' : 'turn',
-    dealerIndex: 3,
+    dealerIndex,
     activePlayerIndex: showdown ? -1 : 0,
     smallBlind: 10,
     bigBlind: 20,
@@ -74,7 +75,7 @@ export default function PokerTablePreview() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    useGameStore.setState({ gameState: sampleState(params.get('state') ?? 'turn'), myPlayerId: 'me' });
+    useGameStore.setState({ gameState: sampleState(params.get('state') ?? 'turn', Number(params.get('dealer') ?? 3)), myPlayerId: 'me' });
     // 외부 시스템(URL) 동기화 — 마운트 1회
     queueMicrotask(() => {
       setFlags({ story: params.get('story') === '1', final: params.get('final') === '1' });
@@ -84,7 +85,7 @@ export default function PokerTablePreview() {
   }, []);
 
   return (
-    <div className="flex h-dvh flex-col bg-abyss text-ink">
+    <div className="flex h-dvh flex-col bg-abyss text-ink" style={flags.final ? finalTableThemeStyle(resolveFinalTableTheme(null)) : undefined}>
       <header className="flex h-14 shrink-0 items-center border-b border-mystic/20 px-3 text-xs font-bold text-ink-dim">실전 테이블 · 미리보기</header>
       <div className="relative flex-1 overflow-hidden">
         <div className="relative isolate mx-auto h-full w-full max-w-[1100px]">

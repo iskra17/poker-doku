@@ -198,7 +198,7 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
       {/* 실전 테이블 비율 그대로 — 화면 위쪽 절반 안에 들어가도록 높이를 묶고 폭은 비율에서 얻는다 */}
       <div
         className="relative mx-auto select-none"
-        style={{ width: `min(100%, calc(50dvh * ${TABLE_ASPECT}))`, aspectRatio: String(TABLE_ASPECT) }}
+        style={{ width: `min(100%, calc(54dvh * ${TABLE_ASPECT}))`, aspectRatio: String(TABLE_ASPECT) }}
         onClick={handleTap}
         role="group"
         aria-label={tableAriaLabel(model)}
@@ -533,7 +533,7 @@ function TableNotes({ situation }: { situation: DrillSituation }) {
     lines.push(<span key={`range-${villain.seatIndex}`}><span className="font-bold text-ink">{name}</span> 가정 레인지: {villain.range}</span>);
   }
   return (
-    <div className="mt-1 space-y-0.5 text-center text-[11px] leading-snug text-ink-dim">
+    <div className="mt-2 space-y-0.5 text-center text-[11px] leading-snug text-ink-dim">
       {lines.map((line, index) => <p key={index}>{line}</p>)}
       <p className="text-[10px] text-ink-dim/70">블라인드 {formatChips(Math.round(situation.bigBlind / 2))}/{formatChips(situation.bigBlind)}</p>
     </div>
