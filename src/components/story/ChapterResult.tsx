@@ -17,6 +17,8 @@ interface ChapterResultProps {
   onFullCourse?: () => void;
   /** 결산에 CG·인연 씬·의상·칭호가 있었을 때 [기록실 보기] — 런을 닫고 기록실을 연다 */
   onOpenGallery?: () => void;
+  /** Ch1 뒤 「다음 수업부터 빠르게 가기」 4문 체크 초대 — 있으면 다음 수업 카드 위에 보여 준다(선택) */
+  onPlacementCheck?: () => void;
   /** 졸업 챕터 — 수업을 건너뛰고 대결만 다시 도전 */
   onGraduationRetry?: () => void;
 }
@@ -61,7 +63,7 @@ function hasCollectible(result: ChapterResultView): boolean {
  * 결산 — 헤더 + 보상 리빌(`RewardReveal`: 스탬프·통계·보상 카드·CG 컷신·띠 승급·다음 보상) + 버튼 행.
  * 버튼은 리빌이 끝난 뒤에만 켜진다(연출 중 오조작 방지 — 탭으로 언제든 끝까지 갈 수 있으므로 스킵 불가 아님).
  */
-export default function ChapterResult({ result, onClose, onNextChapter, onRetry, onRetrySparring, pending = false, onFullCourse, onOpenGallery, onGraduationRetry }: ChapterResultProps) {
+export default function ChapterResult({ result, onClose, onNextChapter, onRetry, onRetrySparring, pending = false, onFullCourse, onOpenGallery, onPlacementCheck, onGraduationRetry }: ChapterResultProps) {
   const chapter = getChapter(result.chapterId);
   const graduationChapter = !!chapter?.graduation;
   // '졸업 대결만 재도전'은 durable 완료가 있어야 서버가 열어 준다 — 완료 전 결산에서 버튼을 노출하면
@@ -93,6 +95,15 @@ export default function ChapterResult({ result, onClose, onNextChapter, onRetry,
 
       {done && (
         <>
+          {result.passed && onPlacementCheck && (
+            <div className="mt-3 rounded-2xl border border-gilded/35 bg-gilded/5 p-3 text-left" aria-label="다음 수업부터 빠르게 가기">
+              <p className="text-sm font-black text-ink">다음 수업부터 빠르게 가기</p>
+              <p className="mt-1 text-xs leading-relaxed text-ink-dim">규칙을 이미 아신다면 4문만 풀고 다음 수업부터 빠르게 가요. 안 풀어도 그대로 이어서 배울 수 있어요.</p>
+              <button type="button" disabled={pending} onClick={onPlacementCheck} className="mt-2 min-h-11 w-full rounded-xl border border-gilded/40 bg-gilded/10 px-3 text-sm font-bold text-gilded disabled:opacity-50">
+                4문 풀기
+              </button>
+            </div>
+          )}
           {result.passed && next && onNextChapter && (
             <button
               type="button"

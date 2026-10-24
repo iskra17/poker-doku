@@ -15,7 +15,7 @@ import {
   recommendationCopy,
 } from '@/lib/story/story-hub-rules';
 import { nextStoryRewards, STORY_REWARD_CATALOG } from '@/lib/story/rewards/catalog';
-import { defaultRunModeForTier, placementTierFromFlags, SKILL_TIERS } from '@/lib/story/placement';
+import { defaultRunModeForTier, placementTierFromFlags, shouldOfferPlacementCheck, SKILL_TIERS } from '@/lib/story/placement';
 import { PLACEMENT_TIER_EXPLANATION, PLACEMENT_TIER_LABEL } from '@/lib/story/placement-copy';
 import type { StoryAct, StoryHeroineId } from '@/lib/story/types';
 import { useProgressionStore } from '@/lib/store/progression-store';
@@ -25,7 +25,7 @@ import GalleryCard from '@/components/gallery/GalleryCard';
 import ChapterCard from './ChapterCard';
 import DailyDrillsCard from './DailyDrillsCard';
 import ReviewNotePanel from './ReviewNotePanel';
-import PlacementSheet from './PlacementSheet';
+import PlacementSheet, { type PlacementSheetMode } from './PlacementSheet';
 
 /**
  * 수련 스토리 허브 — **비선형 수련 목록**(2026-09-03 피드백 ②).
@@ -42,10 +42,13 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
   const startDaily = useStoryStore(state => state.startDaily);
   const load = useStoryStore(state => state.load);
   const setPlacementTier = useStoryStore(state => state.setPlacementTier);
-  const [placementOpen, setPlacementOpen] = useState(false);
+  const declinePlacementCheck = useStoryStore(state => state.declinePlacementCheck);
+  const [placementMode, setPlacementMode] = useState<PlacementSheetMode | null>(null);
   const [editingTier, setEditingTier] = useState(false);
   const [savingTier, setSavingTier] = useState(false);
   const tier = placementTierFromFlags(progress?.flags);
+  // Ch1을 끝낸 자기 평가 사용자에게만 — 「다음 수업부터 빠르게 가기」(4문, 선택)
+  const offerCheck = shouldOfferPlacementCheck(progress);
   // 운영자 모드 — 잠긴 챕터도 열어 둔다(서버 start도 operator면 해금 검사를 우회)
   const operator = useOperatorMode();
   const progression = useProgressionStore(state => state.snapshot);
@@ -126,7 +129,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
               <p className="font-bold text-ink">내 수련 단계: {PLACEMENT_TIER_LABEL[tier]}{tier === 'advanced' ? ' · 빠른 진행' : ''}</p>
               <div className="flex gap-3">
                 <button type="button" disabled={pending || savingTier} onClick={() => setEditingTier(value => !value)} aria-expanded={editingTier} className="min-h-11 text-mystic disabled:opacity-50">바꾸기</button>
-                <button type="button" disabled={pending || savingTier} onClick={() => setPlacementOpen(true)} className="min-h-11 text-ink-dim underline disabled:opacity-50">다시 측정</button>
+                <button type="button" disabled={pending || savingTier} onClick={() => setPlacementMode('full')} className="min-h-11 text-ink-dim underline disabled:opacity-50">다시 측정</button>
               </div>
             </div>
             {editingTier && (
@@ -146,9 +149,20 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
             )}
           </>
         ) : (
-          <button type="button" disabled={pending} onClick={() => setPlacementOpen(true)} className="min-h-11 w-full text-left font-bold text-mystic disabled:opacity-50">실력 측정하기</button>
+          <button type="button" disabled={pending} onClick={() => setPlacementMode('full')} className="min-h-11 w-full text-left font-bold text-mystic disabled:opacity-50">실력 측정하기</button>
         )}
       </div>
+
+      {offerCheck && (
+        <div className="mb-2 rounded-xl border border-gilded/30 bg-gilded/5 px-3 py-2 text-xs" aria-label="다음 수업부터 빠르게 가기">
+          <p className="font-bold text-ink">다음 수업부터 빠르게 가기</p>
+          <p className="mt-0.5 leading-relaxed text-ink-dim">규칙을 이미 아신다면 4문만 풀고 다음 수업부터 빠르게 가요.</p>
+          <div className="mt-1 flex gap-3">
+            <button type="button" disabled={pending} onClick={() => setPlacementMode('check')} className="min-h-11 font-bold text-gilded disabled:opacity-50">4문 풀기</button>
+            <button type="button" disabled={pending} onClick={() => void declinePlacementCheck()} className="min-h-11 text-ink-dim underline disabled:opacity-50">괜찮아요</button>
+          </div>
+        </div>
+      )}
 
       {partnerId && (
         <div className="mb-2 rounded-xl border border-blossom/20 bg-panel/90 px-3 py-2 text-[11px]" aria-label="파트너 인연">
@@ -209,7 +223,7 @@ export default function StoryHub({ onOpenGallery }: { onOpenGallery?: () => void
         <ReviewNotePanel reviewQueue={progress.reviewQueue} drillStats={progress.drillStats} />
         {onOpenGallery && <GalleryCard onOpen={onOpenGallery} />}
       </div>
-      {placementOpen && <PlacementSheet onClose={() => setPlacementOpen(false)} />}
+      {placementMode && <PlacementSheet mode={placementMode} onClose={() => setPlacementMode(null)} />}
     </section>
   );
 }

@@ -13,7 +13,7 @@ const input = vi.hoisted(() => ({
 vi.mock('@/lib/store/story-store', () => ({
   useStoryStore: (select: (state: unknown) => unknown) => select({
     progress: input.progress, progressStatus: 'ready', error: null, pending: false,
-    startChapter: input.startChapter, startDaily: vi.fn(), load: vi.fn(), setPlacementTier: vi.fn(),
+    startChapter: input.startChapter, startDaily: vi.fn(), load: vi.fn(), setPlacementTier: vi.fn(), declinePlacementCheck: vi.fn(),
   }),
 }));
 vi.mock('@/lib/store/progression-store', () => ({ useProgressionStore: (select: (state: unknown) => unknown) => select({ snapshot: null }) }));
@@ -71,5 +71,21 @@ describe('StoryHub placement', () => {
     expect(input.startChapter.mock.calls).toEqual([
       ['act4-ch12', 'full'], ['act1-ch01', 'exam'], ['act4-ch12', 'graduation'],
     ]);
+  });
+
+  it.each([
+    [{ 'placement:tier': 'novice', 'placement:check': 'pending' }, 1, true],
+    [{ 'placement:tier': 'beginner', 'placement:check': 'pending' }, 1, true],
+    [{ 'placement:tier': 'novice', 'placement:check': 'pending' }, 0, false],
+    [{ 'placement:tier': 'advanced', 'placement:check': 'pending' }, 1, false],
+    [{ 'placement:tier': 'novice', 'placement:check': 'declined' }, 1, false],
+    [{ 'placement:tier': 'novice' }, 1, false],
+  ])('Ch1 뒤 빠르게 가기 초대 %j (Ch1 완료 %i) → %s', (flags, completions, shown) => {
+    input.progress!.flags = flags;
+    input.progress!.chapters[0].completions = completions;
+    const markup = renderToStaticMarkup(<StoryHub />);
+    expect(markup.includes('규칙을 이미 아신다면 4문만 풀고 다음 수업부터 빠르게 가요.')).toBe(shown);
+    // 다시 측정(전체 측정) 진입점은 그대로 남는다
+    expect(markup).toContain('다시 측정');
   });
 });
