@@ -1879,7 +1879,8 @@ export function setupSocketHandlers(
     });
 
     /**
-     * 실력 배치 — 'questions' 발급(정답 제외) / 'submit' 서버 채점 + 등급 저장 / 'set' 직접 변경.
+     * 실력 배치 — 'questions' 발급(정답 제외) / 'submit' 서버 채점 + 등급 저장 / 'set' 직접 변경 /
+     * 'self-report' 첫 수련 자기 평가(advanced 없음) / 'check' Ch1 뒤 4문(숙련일 때만 승급) / 'decline' 초대 접기.
      * 진행 요약을 push하는 서버 이벤트는 없다 — 클라가 ack 뒤 허브 뷰(`/api/story`·get-story-progress)를 다시 받는다.
      * 로그에는 답·문항을 남기지 않는다(등급·정답 수만).
      */
@@ -1910,6 +1911,26 @@ export function setupSocketHandlers(
             eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'submit', selfReport: request.selfReport, tier: submitted.value.tier, correct: submitted.value.correct, total: submitted.value.total } });
           }
           replyStory(ack, submitted);
+          return;
+        }
+        case 'self-report': {
+          const reported = storyPlacement.selfReport(session.playerId, request.selfReport);
+          if (reported.ok) eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'self-report', selfReport: request.selfReport, tier: reported.value.tier } });
+          replyStory(ack, reported);
+          return;
+        }
+        case 'check': {
+          const checked = storyPlacement.check(session.playerId, request.answers);
+          if (checked.ok) {
+            eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'check', promoted: checked.value.promoted, correct: checked.value.correct, total: checked.value.total } });
+          }
+          replyStory(ack, checked);
+          return;
+        }
+        case 'decline': {
+          const declined = storyPlacement.decline(session.playerId);
+          if (declined.ok) eventLog.log('story-placement', { playerId: session.playerId, data: { action: 'decline' } });
+          replyStory(ack, declined);
           return;
         }
         case 'set': {

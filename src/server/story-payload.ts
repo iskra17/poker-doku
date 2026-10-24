@@ -194,20 +194,35 @@ export function parseStoryPlacementRequest(input: unknown): ParseResult<StoryPla
       return { ok: true, value: { action: 'set', tier: input.tier } };
     case 'submit': {
       if (!hasOnlyKeys(input, ['action', 'selfReport', 'answers']) || !isPlacementSelfReport(input.selfReport)) return fail();
-      if (!Array.isArray(input.answers) || input.answers.length > PLACEMENT_ANSWERS_MAX) return fail();
-      const answers: (DrillAnswer | null)[] = [];
-      for (const raw of input.answers) {
-        if (raw === null) {
-          answers.push(null);
-          continue;
-        }
-        const answer = parseDrillAnswer(raw);
-        if (!answer) return fail();
-        answers.push(answer);
-      }
-      return { ok: true, value: { action: 'submit', selfReport: input.selfReport, answers } };
+      const answers = parsePlacementAnswers(input.answers);
+      return answers ? { ok: true, value: { action: 'submit', selfReport: input.selfReport, answers } } : fail();
     }
+    case 'self-report':
+      if (!hasOnlyKeys(input, ['action', 'selfReport']) || !isPlacementSelfReport(input.selfReport)) return fail();
+      return { ok: true, value: { action: 'self-report', selfReport: input.selfReport } };
+    case 'check': {
+      if (!hasOnlyKeys(input, ['action', 'answers'])) return fail();
+      const answers = parsePlacementAnswers(input.answers);
+      return answers ? { ok: true, value: { action: 'check', answers } } : fail();
+    }
+    case 'decline':
+      return hasOnlyKeys(input, ['action']) ? { ok: true, value: { action: 'decline' } } : fail();
     default:
       return fail();
   }
+}
+
+function parsePlacementAnswers(input: unknown): (DrillAnswer | null)[] | null {
+  if (!Array.isArray(input) || input.length > PLACEMENT_ANSWERS_MAX) return null;
+  const answers: (DrillAnswer | null)[] = [];
+  for (const raw of input) {
+    if (raw === null) {
+      answers.push(null);
+      continue;
+    }
+    const answer = parseDrillAnswer(raw);
+    if (!answer) return null;
+    answers.push(answer);
+  }
+  return answers;
 }
