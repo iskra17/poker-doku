@@ -138,7 +138,7 @@ export default function DrillTablePreview() {
           <p className="text-[11px] text-ink-dim">프레임은 430×900(모바일). 테이블을 탭하면 재생을 건너뛴다.</p>
         </aside>
 
-        <div className="mx-auto flex h-[900px] w-[430px] shrink-0 flex-col overflow-hidden rounded-2xl border border-mystic/30 bg-abyss">
+        <div data-preview="frame" className="mx-auto flex h-[900px] w-[430px] shrink-0 flex-col overflow-hidden rounded-2xl border border-mystic/30 bg-abyss">
           <header className="flex h-12 shrink-0 items-center border-b border-mystic/20 px-3 text-xs font-bold text-ink-dim">수련 · 미리보기</header>
           <main className="flex min-h-0 flex-1 flex-col items-center justify-start gap-3 overflow-y-auto px-3 py-3">
             {!view || !instance ? (

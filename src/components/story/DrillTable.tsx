@@ -2,22 +2,22 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'framer-motion';
-import CharacterImage from '@/components/characters/CharacterImage';
-import CardComponent from '@/components/table/Card';
 import ChipSVG, { decomposeChips } from '@/components/table/ChipSVG';
-import TableFelt from '@/components/table/TableFelt';
-import { BET_POSITIONS, BOARD_POS, DEALER_BTN_POSITIONS, POT_POS, SEATS, type TablePos } from '@/components/table/table-layout';
+import PokerTableView, { type SeatDecor } from '@/components/table/PokerTableView';
+import { BET_POSITIONS, POT_POS, SEAT_DEPTH, TABLE_ASPECT, type TablePos } from '@/components/table/table-layout';
+import type { SeatAction } from '@/lib/hooks/use-seat-actions';
 import { getCharacterById } from '@/lib/characters';
 import { formatCard } from '@/lib/poker/card-notation';
-import type { Card } from '@/lib/poker/types';
+import type { Card, PublicPlayer } from '@/lib/poker/types';
 import { useProfileStore } from '@/lib/store/profile-store';
 import { useProgressionStore } from '@/lib/store/progression-store';
-import { buildDrillTableModel, planDrillDemo, type DrillDemo, type DrillTableModel, type DrillTableSeat } from '@/lib/story/drill-table-model';
+import { buildDrillTableModel, planDrillDemo, type DemoAction, type DrillDemo, type DrillTableModel, type DrillTableSeat } from '@/lib/story/drill-table-model';
 import type { DrillCategory, DrillResult, DrillSituation } from '@/lib/story/drills/types';
 
 /**
- * 수련 문제 테이블 — 실전 테이블(`PokerTable`)과 같은 타원 펠트(`TableFelt`) 위에 문제 상황을 앉힌다.
- * 게임 store에 의존하지 않는다 (상황은 props, 좌석 배치는 `drill-table-model.ts` 순수 함수).
+ * 수련 문제 테이블 — 실전 캐시 테이블과 **같은 뷰**(`PokerTableView`: 좌석·카드·팟·칩·D/SB/BB)에 문제 상황을 앉힌다.
+ * 게임 store에 의존하지 않는다 (상황은 props, 좌석 배치는 `drill-table-model.ts` 순수 함수 → 합성 공개 스냅샷).
+ * 펠트는 실전 스토리 방과 같은 수련 테마(`storyTheme`), 비율은 실전 테이블 비율(`TABLE_ASPECT`) 그대로다.
  *
  * - 인트로(상황 재생): 카드 딜링 → 보드가 스트리트 순으로 → 팟 칩이 모임 → 내 차례 강조 (~1.6초, 탭하면 즉시 완성).
  *   `prefers-reduced-motion`이면 정지 화면. 보기 입력은 막지 않는다(입력은 부모 소관).
@@ -103,7 +103,6 @@ function demoSchedule(demo: DrillDemo): number[] {
 }
 
 const formatChips = (chips: number): string => chips.toLocaleString('ko-KR');
-const cardKey = (card: Card) => formatCard(card);
 
 const STREET_LABEL: Record<DrillSituation['street'], string> = {
   preflop: '프리플랍',
@@ -113,11 +112,16 @@ const STREET_LABEL: Record<DrillSituation['street'], string> = {
   showdown: '쇼다운',
 };
 
+/** 표시용 뒷면 카드 — 공개 스냅샷의 마스킹 placeholder와 같은 역할 (앞면은 그리지 않는다) */
+const CARD_BACK: Card = { rank: '2', suit: 'clubs' };
+const HERO_ID = 'drill-hero';
+
 // ---------------------------------------------------------------------------
 
 function DrillTableStage({ situation, category, templateId, result = null, intro = true }: DrillTableProps) {
   const reduce = useReducedMotion() ?? false;
   const heroAvatarId = useProfileStore(state => state.profile?.avatarId ?? null);
+  const heroAlias = useProfileStore(state => state.profile?.alias ?? null);
   const feltId = useProgressionStore(state => state.snapshot?.cosmetics?.felt ?? null);
   const model = useMemo(() => buildDrillTableModel(situation, { heroAvatarId }), [situation, heroAvatarId]);
 
@@ -150,6 +154,28 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
   const heroTurn = introStep >= INTRO.turn_glow && !demo && model.seats[0].holeCards.length > 0;
 
   const view = describeDemo(model, demo, demoStep);
+  const players = toPlayers(model, { cardsDealt, mucked: view.mucked, act: view.act, heroName: heroAlias || '플레이어' });
+  const seatActions: Record<number, SeatAction> = view.act ? { 0: view.act.seatAction } : {};
+  const activeSeatIndex = view.spotlight ?? (heroTurn ? 0 : -1);
+
+  const seatDecor = (slot: number): SeatDecor | null => {
+    const seat = model.seats[slot];
+    if (!seat || seat.occupant === 'empty') return null;
+    const label = view.labels.get(slot) ?? null;
+    const badge = view.badges.get(slot) ?? null;
+    return {
+      avatarOverlay: (
+        <SeatMarks
+          label={label?.text ?? seat.position}
+          labelState={label?.emphasis ? 'emphasis' : label ? 'revealed' : 'given'}
+          seatNumber={model.showSeatNumbers && seat.seatIndex !== null ? seat.seatIndex + 1 : null}
+          badge={badge}
+        />
+      ),
+      footer: seat.rangeTag ? <span className="mt-0.5 rounded bg-gilded/20 px-1 text-[9px] font-bold text-gilded">{seat.rangeTag}</span> : undefined,
+      highlightCards: view.highlightCards,
+    };
+  };
 
   return (
     <div className="w-full">
@@ -169,144 +195,109 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
           )}
         </AnimatePresence>
       </div>
+      {/* 실전 테이블 비율 그대로 — 화면 위쪽 절반 안에 들어가도록 높이를 묶고 폭은 비율에서 얻는다 */}
       <div
-        className="relative mx-auto w-full select-none"
-        style={{ maxWidth: 'min(100%, calc(44dvh * 10 / 11))', aspectRatio: '10 / 11' }}
+        className="relative mx-auto select-none"
+        style={{ width: `min(100%, calc(50dvh * ${TABLE_ASPECT}))`, aspectRatio: String(TABLE_ASPECT) }}
         onClick={handleTap}
         role="group"
         aria-label={tableAriaLabel(model)}
       >
-        <TableFelt story feltId={feltId} />
-
-        {/* 팟 — 보드 위. 쇼다운 재생에서는 승자 앞으로 미끄러진다 */}
-        {potShown && model.pot > 0 && (
-          <motion.div
-            className="absolute z-20"
-            style={{ x: '-50%', y: '-78%' }}
-            initial={{ left: POT_POS.x, top: POT_POS.y, opacity: 0, scale: 0.8 }}
-            animate={{ left: view.potTarget.x, top: view.potTarget.y, opacity: 1, scale: 1 }}
-            transition={{ duration: view.potTarget === POT_POS ? 0.3 : 0.6, ease: 'easeOut' }}
-          >
-            <PotPill amount={model.pot} street={STREET_LABEL[model.street]} withBet={model.toCall > 0} />
-          </motion.div>
-        )}
-        {/* 팟 칩 모으기 — 인트로에서 한 번 */}
-        {animateIntro && !demo && introStep === INTRO.pot && model.pot > 0 && model.seats.map(seat => (
-          seat.occupant === 'empty' ? null : (
-            <motion.div
-              key={`gather-${seat.slot}`}
-              className="pointer-events-none absolute z-10"
-              style={{ x: '-50%', y: '-50%' }}
-              initial={{ left: BET_POSITIONS[seat.slot].x, top: BET_POSITIONS[seat.slot].y, opacity: 1 }}
-              animate={{ left: POT_POS.x, top: POT_POS.y, opacity: 0 }}
-              transition={{ duration: 0.45, ease: 'easeIn' }}
-            >
-              <ChipSVG denom={decomposeChips(model.bigBlind, 1)[0]} size={14} />
-            </motion.div>
-          )
-        ))}
-
-        {/* 보드 */}
-        <div className="absolute z-10" style={{ left: BOARD_POS.x, top: BOARD_POS.y, transform: 'translate(-50%, -50%)' }}>
-          <div className="flex items-center gap-[3px]" aria-label="보드">
-            {model.board.slice(0, visibleBoard).map((card, index) => (
-              <CardComponent
-                key={cardKey(card)}
-                card={card}
-                size="sm"
-                delay={index < 3 ? index * 0.08 : 0}
-                highlight={view.highlightCards?.has(cardKey(card)) ?? false}
-                dimmed={view.highlightCards ? !view.highlightCards.has(cardKey(card)) : false}
-              />
-            ))}
-            {Array.from({ length: Math.max(0, 5 - visibleBoard) }).map((_, index) => (
-              <div key={`empty-${index}`} className="h-14 w-10 rounded-lg border-2 border-dashed border-white/10" />
-            ))}
-          </div>
-        </div>
-
-        {/* 좌석 */}
-        {model.seats.map(seat => (
-          <DrillSeat
-            key={seat.slot}
-            seat={seat}
-            pos={SEATS[seat.slot]}
-            cardsDealt={cardsDealt}
-            dealDelay={seat.slot * 0.05}
-            showSeatNumber={model.showSeatNumbers}
-            highlightCards={view.highlightCards}
-            label={view.labels.get(seat.slot) ?? null}
-            badge={view.badges.get(seat.slot) ?? null}
-            spotlight={view.spotlight === seat.slot || (heroTurn && seat.slot === 0)}
-            mucked={view.mucked && seat.slot === 0}
-          />
-        ))}
-
-        {/* D / SB / BB */}
-        {model.dealerSlot !== null && (
-          <PositionButton slot={model.dealerSlot} label="D" title="딜러 버튼" className="bg-gilded border-gilded text-[11px]" pulse={view.dealerPulse} />
-        )}
-        {model.sbSlot !== null && <PositionButton slot={model.sbSlot} label="SB" title="스몰 블라인드" className="bg-cyber border-cyber text-[8px]" />}
-        {model.bbSlot !== null && <PositionButton slot={model.bbSlot} label="BB" title="빅 블라인드" className="bg-blossom border-blossom text-[8px]" />}
-
-        {/* 내 앞 — 콜 금액 / 정답 액션 실연 / 정답 말풍선 */}
-        <AnimatePresence>
-          {heroTurn && model.toCall > 0 && (
-            <motion.div
-              key="to-call"
-              className="absolute z-20"
-              style={{ left: BET_POSITIONS[0].x, top: BET_POSITIONS[0].y, x: '-50%', y: '-50%' }}
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0 }}
-            >
-              <span className="flex items-center gap-1 rounded-full border border-blossom/50 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-blossom tabular-nums">
-                콜 {formatChips(model.toCall)}
-              </span>
-            </motion.div>
+        <PokerTableView
+          players={players}
+          myPlayerId={HERO_ID}
+          communityCards={model.board.slice(0, visibleBoard)}
+          winningCards={view.highlightCards ?? undefined}
+          pots={potShown && model.pot > 0 ? [{ amount: model.pot, eligiblePlayerIds: [] }] : []}
+          dealerSeatIndex={model.dealerSlot ?? -1}
+          sbSeatIndex={model.sbSlot ?? -1}
+          bbSeatIndex={model.bbSlot ?? -1}
+          activeSeatIndex={activeSeatIndex}
+          seatActions={seatActions}
+          compact
+          storyTheme
+          feltId={feltId}
+          interactive={false}
+          dealerPulse={view.dealerPulse}
+          potPosition={view.potTarget}
+          potExtra={potShown && model.pot > 0 ? (
+            <p className="mt-0.5 whitespace-nowrap text-center text-[9px] font-bold text-ink-dim">
+              {STREET_LABEL[model.street]}{model.toCall > 0 ? ' · 상대 벳 포함' : ''}
+            </p>
+          ) : null}
+          seatDecor={seatDecor}
+          renderEmptySeat={(slot, displaySlot, pos) => (
+            <EmptySeat
+              pos={pos}
+              depth={SEAT_DEPTH[displaySlot]}
+              seatNumber={model.showSeatNumbers && model.seats[slot].seatIndex !== null ? model.seats[slot].seatIndex! + 1 : null}
+              label={view.labels.get(slot) ?? null}
+            />
           )}
-          {view.act && (
-            <motion.div
-              key="act"
-              className="absolute z-20"
-              style={{ x: '-50%', y: '-50%' }}
-              initial={{ left: SEATS[0].x, top: '82%', opacity: 0, scale: 0.7 }}
-              animate={{ left: BET_POSITIONS[0].x, top: BET_POSITIONS[0].y, opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5, ease: 'easeOut' }}
-            >
-              <ActChips label={view.act.label} chips={view.act.chips} action={view.act.action} />
-            </motion.div>
-          )}
-          {view.answer && (
-            <motion.div
-              key="answer"
-              className="absolute z-30 max-w-[78%]"
-              style={{ left: '50%', top: BET_POSITIONS[0].y, x: '-50%', y: '-50%' }}
-              initial={{ opacity: 0, scale: 0.85 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              <span className="block rounded-2xl border border-gilded/60 bg-panel/95 px-3 py-1 text-center text-[12px] font-bold leading-snug text-gilded shadow-lg line-clamp-2">
-                정답 · {view.answer}
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        >
+          {/* 팟 칩 모으기 — 인트로에서 한 번 */}
+          {animateIntro && !demo && introStep === INTRO.pot && model.pot > 0 && model.seats.map(seat => (
+            seat.occupant === 'empty' ? null : (
+              <motion.div
+                key={`gather-${seat.slot}`}
+                className="pointer-events-none absolute z-10"
+                style={{ x: '-50%', y: '-50%' }}
+                initial={{ left: BET_POSITIONS[seat.slot].x, top: BET_POSITIONS[seat.slot].y, opacity: 1 }}
+                animate={{ left: POT_POS.x, top: POT_POS.y, opacity: 0 }}
+                transition={{ duration: 0.45, ease: 'easeIn' }}
+              >
+                <ChipSVG denom={decomposeChips(model.bigBlind, 1)[0]} size={14} />
+              </motion.div>
+            )
+          ))}
 
-        {demoDone && !reduce && (
-          <button
-            type="button"
-            onClick={event => {
-              event.stopPropagation();
-              setDemoRun(run => run + 1);
-            }}
-            className="absolute bottom-[1%] right-[2%] z-30 rounded-full border border-mystic/40 bg-black/50 px-2 py-0.5 text-[10px] font-bold text-ink-dim hover:text-ink"
-          >
-            다시 보기
-          </button>
-        )}
-        {introRunning && (
-          <span className="pointer-events-none absolute bottom-[1%] right-[2%] z-30 text-[9px] text-ink-dim/70">탭하면 바로 보기</span>
-        )}
+          {/* 내 앞 — 콜 금액 / 정답 말풍선 */}
+          <AnimatePresence>
+            {heroTurn && model.toCall > 0 && (
+              <motion.div
+                key="to-call"
+                className="pointer-events-none absolute z-20"
+                style={{ left: BET_POSITIONS[0].x, top: BET_POSITIONS[0].y, x: '-50%', y: '-50%' }}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <span className="flex items-center gap-1 rounded-full border border-blossom/50 bg-black/60 px-2 py-0.5 text-[11px] font-bold text-blossom tabular-nums">
+                  콜 {formatChips(model.toCall)}
+                </span>
+              </motion.div>
+            )}
+            {view.answer && (
+              <motion.div
+                key="answer"
+                className="pointer-events-none absolute z-30 max-w-[78%]"
+                style={{ left: '50%', top: BET_POSITIONS[0].y, x: '-50%', y: '-50%' }}
+                initial={{ opacity: 0, scale: 0.85 }}
+                animate={{ opacity: 1, scale: 1 }}
+              >
+                <span className="block rounded-2xl border border-gilded/60 bg-panel/95 px-3 py-1 text-center text-[12px] font-bold leading-snug text-gilded shadow-lg line-clamp-2">
+                  정답 · {view.answer}
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {demoDone && !reduce && (
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                setDemoRun(run => run + 1);
+              }}
+              className="absolute bottom-[1%] right-[2%] z-30 rounded-full border border-mystic/40 bg-black/50 px-2 py-0.5 text-[10px] font-bold text-ink-dim hover:text-ink"
+            >
+              다시 보기
+            </button>
+          )}
+          {introRunning && (
+            <span className="pointer-events-none absolute bottom-[1%] right-[2%] z-30 text-[9px] text-ink-dim/70">탭하면 바로 보기</span>
+          )}
+        </PokerTableView>
       </div>
       <TableNotes situation={situation} />
     </div>
@@ -314,19 +305,65 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
 }
 
 // ---------------------------------------------------------------------------
+// 문제 상황 → 합성 공개 스냅샷 (실전 좌석 컴포넌트가 그대로 읽는 모양). 좌석 번호 = 표시 슬롯, 히어로 = 0
+
+function toPlayers(model: DrillTableModel, options: {
+  cardsDealt: boolean;
+  mucked: boolean;
+  act: DemoView['act'];
+  heroName: string;
+}): PublicPlayer[] {
+  const players: PublicPlayer[] = [];
+  for (const seat of model.seats) {
+    if (seat.occupant === 'empty') continue;
+    players.push(toPlayer(seat, options));
+  }
+  return players;
+}
+
+function toPlayer(seat: DrillTableSeat, options: { cardsDealt: boolean; mucked: boolean; act: DemoView['act']; heroName: string }): PublicPlayer {
+  const hero = seat.occupant === 'hero';
+  const faceUp = seat.holeCards.length > 0;
+  const holeCards = !options.cardsDealt ? []
+    : faceUp ? seat.holeCards
+      : seat.cardBacks ? [CARD_BACK, CARD_BACK] : [];
+  return {
+    id: hero ? HERO_ID : `drill-seat-${seat.slot}`,
+    name: hero ? options.heroName : seat.name,
+    type: hero ? 'human' : 'bot',
+    avatar: seat.characterId ?? 'player',
+    chips: seat.stackChips ?? 0,
+    seatIndex: seat.slot,
+    holeCards,
+    currentBet: hero && options.act?.chips ? options.act.chips : 0,
+    totalContributed: 0,
+    status: hero && options.mucked ? 'folded' : 'active',
+    hasActed: false,
+    revealed: !hero && faceUp,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // 판단 재생 → 화면 요소
+
+type BadgeTone = 'gilded' | 'cyber' | 'blossom' | 'ink';
 
 interface DemoView {
   caption: string | null;
   labels: Map<number, { text: string; emphasis: boolean }>;
-  badges: Map<number, { text: string; tone: 'gilded' | 'cyber' | 'blossom' | 'ink' }>;
+  badges: Map<number, { text: string; tone: BadgeTone }>;
   spotlight: number | null;
-  highlightCards: Set<string> | null;
+  highlightCards: Card[] | null;
   potTarget: TablePos;
   dealerPulse: boolean;
   mucked: boolean;
-  act: { label: string; chips: number | null; action: string } | null;
+  act: { chips: number | null; seatAction: SeatAction } | null;
   answer: string | null;
+}
+
+function seatActionOf(action: DemoAction, chips: number | null): SeatAction {
+  if (action === 'bet') return { type: 'raise', amount: chips ?? 0, isBet: true };
+  return { type: action, amount: action === 'all-in' ? 0 : chips ?? 0 };
 }
 
 function describeDemo(model: DrillTableModel, demo: DrillDemo | null, step: number): DemoView {
@@ -344,9 +381,9 @@ function describeDemo(model: DrillTableModel, demo: DrillDemo | null, step: numb
       });
       view.spotlight = entries[Math.min(step, entries.length) - 1]?.slot ?? null;
       if (step >= entries.length + 1) {
-        const keys = new Set<string>();
-        for (const entry of entries) if (winnerSlots.includes(entry.slot)) entry.cards.forEach(card => keys.add(cardKey(card)));
-        view.highlightCards = keys;
+        const cards: Card[] = [];
+        for (const entry of entries) if (winnerSlots.includes(entry.slot)) cards.push(...entry.cards);
+        view.highlightCards = cards;
         view.spotlight = winnerSlots.length === 1 ? winnerSlots[0] : null;
         for (const slot of winnerSlots) {
           const entry = entries.find(e => e.slot === slot);
@@ -390,10 +427,10 @@ function describeDemo(model: DrillTableModel, demo: DrillDemo | null, step: numb
       break;
     }
     case 'act': {
+      // 실전 좌석과 같은 문법 — 액션 배지(플레이트) + 베팅 칩 스택(내 앞) + 폴드는 카드가 어두워진다
       view.spotlight = 0;
-      view.badges.set(0, { text: demo.label, tone: demo.action === 'fold' ? 'blossom' : 'cyber' });
       if (demo.action === 'fold') view.mucked = true;
-      else if (demo.action !== 'check') view.act = { label: demo.label, chips: demo.chips, action: demo.action };
+      if (step >= 1) view.act = { chips: demo.action === 'fold' || demo.action === 'check' ? null : demo.chips, seatAction: seatActionOf(demo.action, demo.chips) };
       view.caption = `정답 액션: ${demo.label}`;
       break;
     }
@@ -407,191 +444,81 @@ function describeDemo(model: DrillTableModel, demo: DrillDemo | null, step: numb
 }
 
 // ---------------------------------------------------------------------------
-// 하위 표시 요소
+// 좌석 덧그림 — 실전 좌석(PlayerSeat) 아바타 위에 얹는 포지션·좌석 번호·재생 배지
 
-function DrillSeat({ seat, pos, cardsDealt, dealDelay, showSeatNumber, highlightCards, label, badge, spotlight, mucked }: {
-  seat: DrillTableSeat;
-  pos: TablePos;
-  cardsDealt: boolean;
-  dealDelay: number;
-  showSeatNumber: boolean;
-  highlightCards: Set<string> | null;
-  label: { text: string; emphasis: boolean } | null;
-  badge: { text: string; tone: 'gilded' | 'cyber' | 'blossom' | 'ink' } | null;
-  spotlight: boolean;
-  mucked: boolean;
-}) {
-  const seatNumber = showSeatNumber && seat.seatIndex !== null ? seat.seatIndex + 1 : null;
-  if (seat.occupant === 'empty') {
-    return (
-      <div className="pointer-events-none absolute z-0" style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }} aria-hidden>
-        <div className="relative flex h-9 w-9 items-center justify-center rounded-full border-2 border-dashed border-white/15 bg-black/20">
-          {seatNumber !== null && <span className="text-[9px] font-bold text-ink-dim/60">{seatNumber}</span>}
-        </div>
-        {label && <SeatLabel label={label} />}
-      </div>
-    );
-  }
-
-  const hero = seat.occupant === 'hero';
-  const profile = seat.characterId ? getCharacterById(seat.characterId) : undefined;
-  const color = profile?.color ?? 'var(--color-mystic)';
-  const cardSide: 'left' | 'right' = seat.slot === 4 || seat.slot === 5 ? 'left' : 'right';
-  const shownLabel = label?.text ?? seat.position;
-  const cards = seat.holeCards;
-  const faceSize = hero ? 'sm' : 'xs';
-
-  return (
-    <div className="absolute z-10" style={{ left: pos.x, top: pos.y, transform: 'translate(-50%, -50%)' }}>
-      <div className="relative flex flex-col items-center">
-        {/* 배지(족보·액션 순서·액션) — 아바타 위, 포지션 배지(아바타 우상단)보다 한 줄 위로 띄워 둘 다 읽히게 */}
-        <AnimatePresence>
-          {badge && (
-            <motion.span
-              key={badge.text}
-              initial={{ opacity: 0, scale: 0.6 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0 }}
-              className={`absolute bottom-full left-1/2 z-30 mb-3 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-black shadow ${BADGE_TONE[badge.tone]}`}
-              style={{ x: '-50%' }}
-            >
-              {badge.text}
-            </motion.span>
-          )}
-        </AnimatePresence>
-
-        <motion.div
-          className={`relative ${hero ? 'h-11 w-11' : 'h-10 w-10'} rounded-full`}
-          animate={spotlight ? { scale: [1, 1.08, 1] } : { scale: 1 }}
-          transition={spotlight ? { duration: 0.9, repeat: Infinity } : { duration: 0.2 }}
-          style={{ boxShadow: spotlight ? `0 0 0 2px var(--color-gilded), 0 0 18px var(--color-gilded)` : `0 0 8px ${color}40` }}
-        >
-          <CharacterImage
-            characterId={seat.characterId ?? 'player'}
-            expression="neutral"
-            round
-            className="h-full w-full text-lg"
-          />
-          {/* 포지션 배지 */}
-          {shownLabel && (
-            <span
-              className={`absolute -right-2 -top-1 z-20 rounded-full border px-1 text-[9px] font-black leading-tight ${
-                label?.emphasis ? 'scale-125 border-gilded bg-gilded text-abyss'
-                  : shownLabel === '?' ? 'border-mystic/60 bg-black/80 text-mystic'
-                    : label ? 'border-gilded/70 bg-black/80 text-gilded' : 'border-cyber/50 bg-black/80 text-cyber'
-              }`}
-            >
-              {shownLabel}
-            </span>
-          )}
-          {seatNumber !== null && (
-            <span className="absolute -left-1.5 -top-1 z-20 rounded-full bg-black/80 px-1 text-[8px] font-bold leading-tight text-ink-dim">{seatNumber}번</span>
-          )}
-
-          {/* 홀카드 — 아바타 옆 */}
-          {cardsDealt && (cards.length > 0 || seat.cardBacks) && (
-            <motion.div
-              className="absolute top-1/2 z-20 flex gap-0.5"
-              style={{ ...(cardSide === 'left' ? { right: 'calc(100% - 6px)' } : { left: 'calc(100% - 6px)' }), y: '-50%' }}
-              animate={mucked ? { opacity: 0.35, y: '-80%', rotate: -10, scale: 0.85 } : { opacity: 1, y: '-50%', rotate: 0, scale: 1 }}
-              transition={{ duration: 0.45 }}
-            >
-              {cards.length > 0
-                ? cards.map((card, index) => (
-                  <CardComponent
-                    key={cardKey(card)}
-                    card={card}
-                    size={faceSize}
-                    hidden={mucked}
-                    delay={dealDelay + index * 0.08}
-                    highlight={(hero && !highlightCards) || (highlightCards?.has(cardKey(card)) ?? false)}
-                    dimmed={highlightCards ? !highlightCards.has(cardKey(card)) : false}
-                  />
-                ))
-                : [0, 1].map(index => (
-                  <CardComponent key={index} card={{ rank: 'A', suit: 'spades' }} hidden size="2xs" delay={dealDelay + index * 0.08} />
-                ))}
-            </motion.div>
-          )}
-        </motion.div>
-
-        {/* 이름·스택 플레이트 */}
-        <div className="relative z-20 -mt-1.5 min-w-[54px] rounded-md border border-white/10 bg-black/70 px-1.5 py-px text-center">
-          <p className={`mx-auto max-w-[64px] truncate text-[10px] font-bold leading-tight ${hero ? 'text-blossom' : 'text-white'}`}>{seat.name}</p>
-          {seat.stackChips !== null && (
-            <p className="text-[9px] font-semibold leading-tight text-gilded tabular-nums">{formatChips(seat.stackChips)}</p>
-          )}
-        </div>
-        {seat.rangeTag && (
-          <span className="mt-0.5 rounded bg-gilded/20 px-1 text-[9px] font-bold text-gilded">{seat.rangeTag}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-const BADGE_TONE: Record<'gilded' | 'cyber' | 'blossom' | 'ink', string> = {
+const BADGE_TONE: Record<BadgeTone, string> = {
   gilded: 'border-gilded bg-gilded text-abyss',
   cyber: 'border-cyber/70 bg-black/85 text-cyber',
   blossom: 'border-blossom/70 bg-black/85 text-blossom',
   ink: 'border-white/20 bg-black/85 text-ink',
 };
 
-function SeatLabel({ label }: { label: { text: string; emphasis: boolean } }) {
+function SeatMarks({ label, labelState, seatNumber, badge }: {
+  label: string | null;
+  labelState: 'given' | 'revealed' | 'emphasis';
+  seatNumber: number | null;
+  badge: { text: string; tone: BadgeTone } | null;
+}) {
   return (
-    <motion.span
-      initial={{ opacity: 0, scale: 0.6 }}
-      animate={{ opacity: 1, scale: 1 }}
-      className="absolute left-1/2 top-1/2 rounded-full border border-gilded/60 bg-black/80 px-1 text-[9px] font-black text-gilded"
-      style={{ x: '-50%', y: '-50%' }}
-    >
-      {label.text}
-    </motion.span>
-  );
-}
-
-function PositionButton({ slot, label, title, className, pulse = false }: { slot: number; label: string; title: string; className: string; pulse?: boolean }) {
-  const pos = DEALER_BTN_POSITIONS[slot];
-  return (
-    <motion.div
-      className="pointer-events-none absolute z-20"
-      style={{ left: pos.x, top: pos.y, x: '-50%', y: '-50%' }}
-      animate={pulse ? { scale: [1, 1.45, 1, 1.3, 1] } : { scale: 1 }}
-      transition={{ duration: pulse ? 0.9 : 0.2 }}
-    >
-      <div className={`flex h-6 w-6 items-center justify-center rounded-full border-2 font-bold text-abyss shadow-sm ${className}`} title={title} aria-label={title}>
-        {label}
-      </div>
-    </motion.div>
-  );
-}
-
-function PotPill({ amount, street, withBet }: { amount: number; street: string; withBet: boolean }) {
-  const chips = decomposeChips(amount, 3);
-  return (
-    <div className="flex flex-col items-center">
-      <div className="flex items-center gap-1 rounded-full border border-gilded/40 bg-black/60 px-2 py-0.5 shadow-lg">
-        <span className="text-[9px] font-bold text-ink-dim">{street}</span>
-        <span className="flex -space-x-1.5">
-          {chips.map((denom, index) => <ChipSVG key={index} denom={denom} size={13} />)}
+    <>
+      {/* 재생 배지(족보·액션 순서) — 아바타 위 한 줄 */}
+      <AnimatePresence>
+        {badge && (
+          <motion.span
+            key={badge.text}
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0 }}
+            className={`pointer-events-none absolute bottom-full left-1/2 z-40 mb-1 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-black shadow ${BADGE_TONE[badge.tone]}`}
+            style={{ x: '-50%' }}
+          >
+            {badge.text}
+          </motion.span>
+        )}
+      </AnimatePresence>
+      {/* 포지션 배지 — 아바타 우상단 */}
+      {label && (
+        <span
+          className={`pointer-events-none absolute -right-1.5 -top-1 z-40 rounded-full border px-1 text-[10px] font-black leading-tight ${
+            labelState === 'emphasis' ? 'scale-125 border-gilded bg-gilded text-abyss'
+              : label === '?' ? 'border-mystic/60 bg-black/80 text-mystic'
+                : labelState === 'revealed' ? 'border-gilded/70 bg-black/80 text-gilded' : 'border-cyber/50 bg-black/80 text-cyber'
+          }`}
+        >
+          {label}
         </span>
-        <span className="text-[11px] font-bold text-gilded tabular-nums">팟 {formatChips(amount)}</span>
-      </div>
-      {withBet && <span className="mt-px text-[8px] text-ink-dim">상대 벳 포함</span>}
-    </div>
+      )}
+      {seatNumber !== null && (
+        <span className="pointer-events-none absolute -left-1.5 -top-1 z-40 rounded-full bg-black/80 px-1 text-[9px] font-bold leading-tight text-ink-dim">{seatNumber}번</span>
+      )}
+    </>
   );
 }
 
-function ActChips({ label, chips, action }: { label: string; chips: number | null; action: string }) {
-  const denoms = decomposeChips(chips ?? 100, 3);
+function EmptySeat({ pos, depth, seatNumber, label }: {
+  pos: TablePos;
+  depth: number;
+  seatNumber: number | null;
+  label: { text: string; emphasis: boolean } | null;
+}) {
   return (
-    <div className="flex items-center gap-1 rounded-full border border-cyber/60 bg-black/70 px-2 py-0.5 shadow-lg">
-      <span className="flex -space-x-1.5">
-        {denoms.map((denom, index) => <ChipSVG key={index} denom={denom} size={13} />)}
-      </span>
-      <span className={`text-[11px] font-black ${action === 'all-in' ? 'text-blossom' : 'text-cyber'}`}>
-        {label}{chips !== null && label.indexOf(formatChips(chips)) < 0 ? ` ${formatChips(chips)}` : ''}
-      </span>
+    <div
+      className="pointer-events-none absolute z-0"
+      style={{ left: pos.x, top: pos.y, transform: `translate(-50%, -50%) scale(${depth})` }}
+      aria-hidden
+    >
+      <div className="relative flex h-12 w-12 items-center justify-center rounded-full border-2 border-dashed border-white/15 bg-black/20">
+        {seatNumber !== null && <span className="text-[10px] font-bold text-ink-dim/60">{seatNumber}번</span>}
+        {label && (
+          <motion.span
+            initial={{ opacity: 0, scale: 0.6 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="absolute -right-1.5 -top-1 rounded-full border border-gilded/60 bg-black/80 px-1 text-[10px] font-black text-gilded"
+          >
+            {label.text}
+          </motion.span>
+        )}
+      </div>
     </div>
   );
 }

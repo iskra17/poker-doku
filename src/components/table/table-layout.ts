@@ -53,8 +53,16 @@ export const DECK_POS: TablePos = { x: '82%', y: '6%' };
 // 상단 좌석 라인(~40%)·하단 베팅 라인(60%) 사이 중앙 (PokerTable top-[48%]와 동기)
 export const BOARD_POS: TablePos = { x: '50%', y: '48%' };
 
+// 실전 테이블 좌표 컨테이너의 대표 가로:세로 비 (430×900 모바일: 상단 바·액션 독을 뺀 430×≈668).
+// 좌표 컨테이너를 따로 크기 잡는 곳(수련 문제 테이블)은 이 비율을 지켜야 % 좌표가 실전과 같은 모양이 된다.
+export const TABLE_ASPECT = 0.65;
+
+// 좌석 원근 배율 — 디스플레이 슬롯 순서 (먼 좌석일수록 작다)
+export const SEAT_DEPTH: number[] = [1, 1, 1, 1, 1, 1];
+
 export function getLayout() {
   return {
+    seatDepth: SEAT_DEPTH,
     seats: SEATS,
     betPositions: BET_POSITIONS,
     dealerBtnPositions: DEALER_BTN_POSITIONS,
