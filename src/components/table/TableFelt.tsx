@@ -1,9 +1,15 @@
+import { FELT_PLANE } from './table-layout';
+
 /**
  * 테이블 외형(글로우·두께·레일·펠트·베팅 라인·수련 워터마크) — 표시 전용.
  *
  * 실전 테이블(`PokerTable`)과 수련 문제 테이블(`DrillTable`)이 같은 마크업을 쓴다.
  * 스토어를 읽지 않는다: 펠트 코스메틱(`feltId`)과 테마 플래그는 호출부가 넘긴다.
  * 부모는 `position: relative` 좌표 컨테이너여야 한다 (모든 % 좌표의 기준).
+ *
+ * 원근: 레이어 전체를 `FELT_PLANE`(table-layout 단일 소스) 평면에 올려 하단 가장자리 축으로 뒤로 눕힌다 —
+ * 원경 레일이 좁아지고 근경 레일이 두께(앞면)를 드러낸다. 좌석·칩 좌표는 같은 상수로 `projectFelt()`가 계산한다.
+ * perspective는 컨테이너 높이 단위(cqh)라 화면 크기가 달라도 같은 모양이고, 정적 변환이라 매 프레임 비용이 없다.
  */
 
 interface TableFeltProps {
@@ -54,70 +60,103 @@ export default function TableFelt({ finalTable = false, story: storyTheme = fals
       ? `inset 0 2px 4px rgba(255,255,255,0.14), inset 0 -6px 12px rgba(0,0,0,0.5), 0 0 40px color-mix(in srgb, ${storyRail} 20%, transparent)`
       : 'inset 0 2px 4px rgba(255,255,255,0.08), inset 0 -6px 12px rgba(0,0,0,0.35)';
   const feltBackground = finalTable
-    ? 'radial-gradient(ellipse at 50% 64%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
+    ? 'radial-gradient(ellipse at 50% 70%, var(--final-felt-glow) 0%, var(--final-felt) 58%, color-mix(in srgb, black 38%, var(--final-felt)) 100%)'
     : story
-      ? `radial-gradient(ellipse at 50% 68%, ${storyFeltHi} 0%, ${storyFeltLo} 58%, var(--color-story-abyss) 100%)`
-      : 'radial-gradient(ellipse at 50% 68%, var(--color-felt-hi) 0%, var(--color-felt-lo) 70%, var(--color-abyss) 100%)';
+      ? `radial-gradient(ellipse at 50% 72%, ${storyFeltHi} 0%, ${storyFeltLo} 58%, var(--color-story-abyss) 100%)`
+      : 'radial-gradient(ellipse at 50% 72%, var(--color-felt-hi) 0%, var(--color-felt-lo) 70%, var(--color-abyss) 100%)';
   const feltShadow = finalTable
     ? 'inset 0 12px 32px rgba(0,0,0,0.45), inset 0 0 34px color-mix(in srgb, var(--final-highlight) 11%, transparent)'
     : story
       ? `inset 0 12px 30px rgba(0,0,0,0.5), inset 0 0 30px color-mix(in srgb, ${storyRail} 10%, transparent)`
       : 'inset 0 10px 24px rgba(0,0,0,0.3)';
 
+  // 테이블 두께(옆판) — 레일보다 한 단계 어둡게. 보이는 건 근경 쪽 초승달 띠뿐이다
+  const apronBackground = finalTable
+    ? 'color-mix(in srgb, black 30%, var(--final-rail-bottom))'
+    : story
+      ? `color-mix(in srgb, black 42%, ${storyFeltLo})`
+      : 'color-mix(in srgb, black 34%, var(--color-elevated))';
+  const apronShadow = finalTable
+    ? '0 16px 34px rgba(0,0,0,0.75), inset 0 -10px 16px rgba(0,0,0,0.6), 0 0 30px color-mix(in srgb, var(--final-accent) 18%, transparent)'
+    : '0 16px 30px rgba(0,0,0,0.65), inset 0 -10px 16px rgba(0,0,0,0.55)';
+  const trim = story ? (yellowFelt ? 'border-gilded/50' : 'border-cyber/40') : 'border-gilded/30';
+  const inset = `${FELT_PLANE.inset * 100}%`;
+  const railBox = { left: inset, right: inset, top: 0, bottom: 0, borderRadius: RAIL_RADIUS } as const;
+
   return (
-    <>
-      {/* Outer glow */}
+    <div className="pointer-events-none absolute inset-0 isolate" style={{ containerType: 'size' }} aria-hidden>
+      {/* 바닥 그림자 — 화면 평면(눕히지 않음). 테이블 아래 바닥에 넓게 깔려 테이블을 방 안에 고정한다 */}
       <div
-        className="absolute rounded-[9999px] opacity-30"
+        className="absolute"
         style={{
-          left: '4%', right: '4%', top: '11%', bottom: '5%',
-          background: outerGlow,
+          left: '-6%', right: '-6%', top: `${FELT_PLANE.bottom * 100 - 30}%`, height: '44%',
+          background: 'radial-gradient(ellipse 50% 46% at 50% 58%, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.35) 55%, transparent 100%)',
         }}
       />
-
-      {/* 테이블 두께 — 레일과 같은 레이스트랙을 아래로 밀어 측면(근경 가장자리)을 노출 */}
+      {/* 펠트 평면 — 하단 가장자리를 축으로 뒤로 눕힌다 (원경이 좁고 짧아진다) */}
       <div
-        className="absolute rounded-[9999px] border-b-2 border-gilded/20"
+        className="absolute inset-x-0"
         style={{
-          left: '4%', right: '4%', top: 'calc(11% + 14px)', bottom: 'calc(5% - 14px)',
-          background: finalTable
-            ? 'linear-gradient(180deg, var(--final-rail-bottom) 0%, color-mix(in srgb, black 45%, var(--final-rail-bottom)) 80%)'
-            : 'linear-gradient(180deg, var(--color-elevated) 0%, var(--color-abyss) 70%)',
-          boxShadow: finalTable
-            ? '0 12px 30px rgba(0,0,0,0.72), 0 0 30px color-mix(in srgb, var(--final-accent) 18%, transparent)'
-            : '0 10px 26px rgba(0,0,0,0.6)',
-        }}
-      />
-
-      {/* 레일(쿠션) — 실제 홀덤 테이블의 패딩 레일. 상단에 하이라이트, 골드 트림 */}
-      <div
-        className={`absolute rounded-[9999px] border-2 ${story ? (yellowFelt ? 'border-gilded/50' : 'border-cyber/40') : 'border-gilded/30'}`}
-        style={{
-          left: '4%', right: '4%', top: '11%', bottom: '5%',
-          background: railBackground,
-          boxShadow: railShadow,
-        }}
-      />
-
-      {/* 펠트 — 레일 안쪽, 하단(플레이어 쪽)이 가깝게 보이도록 광원을 아래로 */}
-      <div
-        className="absolute rounded-[9999px] border border-black/50"
-        style={{
-          left: 'calc(4% + 12px)', right: 'calc(4% + 12px)',
-          top: 'calc(11% + 12px)', bottom: 'calc(5% + 12px)',
-          background: feltBackground,
-          boxShadow: feltShadow,
+          bottom: `${(1 - FELT_PLANE.bottom) * 100}%`,
+          height: `${FELT_PLANE.height * 100}%`,
+          transformOrigin: '50% 100%',
+          transform: `perspective(${FELT_PLANE.perspective * 100}cqh) rotateX(${FELT_PLANE.tiltDeg}deg)`,
         }}
       >
-        {/* 베팅 라인 */}
-        <div className={`absolute inset-5 md:inset-7 rounded-[9999px] border ${story ? (yellowFelt ? 'border-gilded/25' : 'border-cyber/20') : 'border-gilded/15'}`} />
-        {/* 수련 테이블 워터마크 — 보드 위쪽 펠트에 옅게 (실전 방엔 없음) */}
-        {story && watermark && (
-          <div className="pointer-events-none absolute inset-x-0 top-[17%] flex justify-center" aria-hidden>
-            <span className={`select-none text-[11px] font-black tracking-[0.45em] ${yellowFelt ? 'text-gilded/30' : 'text-cyber/25'}`}>{yellowFelt ? '노란띠 도장' : '수련 테이블'}</span>
-          </div>
-        )}
+        {/* Outer glow */}
+        <div className="absolute opacity-30" style={{ ...railBox, background: outerGlow }} />
+
+        {/* 테이블 두께 — 레일과 같은 외곽선을 근경 쪽으로 밀어 앞면(옆판)을 노출. 원경 쪽은 레일 아래로 숨는다 */}
+        <div
+          className={`absolute border-b-2 ${trim}`}
+          style={{ ...railBox, top: THICKNESS, bottom: `calc(0px - ${THICKNESS})`, background: apronBackground, boxShadow: apronShadow }}
+        />
+
+        {/* 레일(쿠션) — 패딩 레일. 근경 쪽 윗면에 은은한 반사광, 트림 */}
+        <div
+          className={`absolute border-2 ${trim}`}
+          style={{ ...railBox, background: `${NEAR_SHEEN}, ${railBackground}`, boxShadow: railShadow }}
+        />
+        {/* 근경 레일 모서리 하이라이트 — 시점 쪽 가장자리만 굵게 빛나 앞 레일이 손 앞에 있는 느낌 */}
+        <div
+          className={`absolute border-b-[3px] ${story ? (yellowFelt ? 'border-gilded/45' : 'border-cyber/40') : 'border-gilded/40'}`}
+          style={{ ...railBox, top: '2px', bottom: '-1px' }}
+        />
+
+        {/* 펠트 — 레일 안쪽, 하단(플레이어 쪽)이 가깝게 보이도록 광원을 아래로 */}
+        <div
+          className="absolute border border-black/50"
+          style={{
+            left: `calc(${inset} + ${RAIL_PX}px)`, right: `calc(${inset} + ${RAIL_PX}px)`,
+            top: `${RAIL_PX}px`, bottom: `${RAIL_PX}px`,
+            borderRadius: RAIL_RADIUS,
+            background: feltBackground,
+            boxShadow: feltShadow,
+          }}
+        >
+          {/* 원경 어둠 — 멀수록 조명이 덜 닿는 공기 원근 */}
+          <div className="absolute inset-0" style={{ borderRadius: RAIL_RADIUS, background: FAR_SHADE }} />
+          {/* 베팅 라인 */}
+          <div style={{ borderRadius: RAIL_RADIUS }} className={`absolute inset-5 md:inset-7 border ${story ? (yellowFelt ? 'border-gilded/25' : 'border-cyber/20') : 'border-gilded/15'}`} />
+          {/* 수련 테이블 워터마크 — 보드 위쪽 펠트에 옅게 (실전 방엔 없음) */}
+          {story && watermark && (
+            <div className="pointer-events-none absolute inset-x-0 top-[17%] flex justify-center">
+              <span className={`select-none text-[11px] font-black tracking-[0.45em] ${yellowFelt ? 'text-gilded/30' : 'text-cyber/25'}`}>{yellowFelt ? '노란띠 도장' : '수련 테이블'}</span>
+            </div>
+          )}
+        </div>
       </div>
-    </>
+    </div>
   );
 }
+
+/** 레일 외곽 모양 — 완전한 레이스트랙보다 둥근 타원형(눕히면 직선 옆면이 양동이처럼 보인다) */
+const RAIL_RADIUS = '50% / 38%';
+/** 레일(쿠션) 폭(px, 평면 기준) */
+const RAIL_PX = 14;
+/** 테이블 두께(근경 앞면) — 평면 안에서 근경 쪽으로 밀어낸 같은 외곽선. px + 높이 비율 */
+const THICKNESS = 'calc(14px + 2.6%)';
+/** 근경 레일 윗면 반사광 */
+const NEAR_SHEEN = 'radial-gradient(ellipse 60% 12% at 50% 100%, rgba(255,255,255,0.18) 0%, transparent 100%)';
+/** 원경 펠트 어둠 (평면 위쪽 = 먼 쪽) */
+const FAR_SHADE = 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.18) 34%, transparent 58%)';

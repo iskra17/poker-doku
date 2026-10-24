@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { PublicPlayer } from '@/lib/poker/types';
+import type { ReactNode } from 'react';
+import type { Card, PublicPlayer } from '@/lib/poker/types';
 import { SeatAction } from '@/lib/hooks/use-seat-actions';
 import { useSeatExpression } from '@/lib/hooks/use-seat-expression';
 import { useSettingsStore } from '@/lib/store/settings-store';
@@ -31,6 +32,18 @@ interface PlayerSeatProps {
   /** 홀카드를 붙일 쪽 — 우측 열 좌석은 화면 클리핑 방지를 위해 왼쪽(테이블 중앙 방향) */
   cardSide?: 'left' | 'right';
   onSit?: (seatIndex: number) => void;
+  /** 원근 깊이 배율 — 먼 좌석일수록 작게 (`table-layout` SEAT_DEPTH). 기본 1 */
+  depthScale?: number;
+  /** 아바타 위에 겹쳐 그릴 표시(수련 테이블 포지션·순서 배지 등) — 아바타 기준 absolute */
+  avatarOverlay?: ReactNode;
+  /** 이름/칩 플레이트 아래 한 줄(수련 테이블 유형 배지 등) */
+  footer?: ReactNode;
+  /** 강조할 홀카드 — 주면 포함 카드는 빛나고 나머지는 어둡게 (수련 테이블 쇼다운 재생) */
+  highlightCards?: readonly Card[] | null;
+  /** false면 아바타 탭(쇼케이스)·칩 표기 토글을 끈다 — 수련 문제 테이블 */
+  interactive?: boolean;
+  /** 내 좌석(하단 중앙)이면 홀카드를 아바타 앞(펠트 쪽)에 크게 — 원근 테이블의 전경 */
+  heroCardsFront?: boolean;
 }
 
 /**
@@ -92,6 +105,7 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 export default function PlayerSeat({
   player, isCurrentPlayer, isActive, position, seatIndex, compact = false,
   turnDuration = 0, turnTotalSeconds = 30, seatAction, cardSide = 'right', onSit,
+  depthScale = 1, avatarOverlay, footer, highlightCards = null, interactive = true, heroCardsFront = false,
 }: PlayerSeatProps) {
   // 훅은 early return 이전에 호출 (React 규칙)
   const expression = useSeatExpression(player?.id, isActive);
@@ -103,8 +117,8 @@ export default function PlayerSeat({
   if (!player) {
     return (
       <div
-        className="absolute -translate-x-1/2 -translate-y-1/2"
-        style={{ left: position.x, top: position.y }}
+        className="absolute"
+        style={{ left: position.x, top: position.y, transform: `translate(-50%, -50%) scale(${depthScale})` }}
       >
         <button
           onClick={() => onSit?.(seatIndex)}
@@ -131,6 +145,7 @@ export default function PlayerSeat({
   // 히어로는 폴드해도 자기 카드를 계속 확인할 수 있어야 한다 — 상대 폴드 카드만 숨김
   const showCards = player.holeCards.length > 0 && (isCurrentPlayer || !isFolded);
   const revealed = !isCurrentPlayer && !!player.revealed;
+  const heroFront = heroCardsFront && isCurrentPlayer;
 
   // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 sm > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
   const cardOverlapPx = isCurrentPlayer ? 14 : revealed ? 12 : 10;
@@ -158,8 +173,8 @@ export default function PlayerSeat({
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.8 }}
-      animate={{ opacity: 1, scale: 1 }}
+      initial={{ opacity: 0, scale: 0.8 * depthScale }}
+      animate={{ opacity: 1, scale: depthScale }}
       className="absolute z-10"
       // Tailwind -translate 클래스는 framer transform에 덮여 사라지므로 x/y로 센터링
       style={{ left: position.x, top: position.y, x: '-50%', y: '-50%' }}
@@ -168,10 +183,10 @@ export default function PlayerSeat({
         {/* 아바타 + 턴 타이머 링 + 홀카드(측면 배지) — 디밍은 여기(와 카드)에만.
             탭하면 캐릭터 쇼케이스(상반신 일러스트) 오픈 */}
         <div
-          className={`relative z-10 rounded-full cursor-pointer ${frameClass}`}
-          onClick={() => setShowcaseOpen(true)}
-          role="button"
-          aria-label={`${player.name} 캐릭터 보기`}
+          className={`relative z-10 rounded-full ${interactive ? 'cursor-pointer' : ''} ${frameClass}`}
+          onClick={interactive ? () => setShowcaseOpen(true) : undefined}
+          role={interactive ? 'button' : undefined}
+          aria-label={interactive ? `${player.name} 캐릭터 보기` : undefined}
         >
           <SeatEmote playerId={player.id} />
           <div className={`transition-[filter,opacity] ${visualClasses.portrait}`}>
@@ -190,8 +205,32 @@ export default function PlayerSeat({
             />
           )}
 
+          {/* 히어로 홀카드(전경) — 아바타 오른쪽 위, 펠트 쪽으로 크게 내밀어 부채꼴로 펼치고 테이블 쪽으로 살짝 눕힌다
+              (GGPoker식 내 패). 얼굴을 가리지 않고 하단 중앙이라 잘리지 않아 모바일에서도 sm(데스크톱 md)로 키운다 */}
+          {showCards && heroFront && (
+            <div
+              className={`absolute z-30 flex pointer-events-none transition-[filter,opacity] ${visualClasses.cards}`}
+              style={{ left: `calc(100% - ${compact ? 16 : 20}px)`, bottom: '34%', transform: 'perspective(700px) rotateX(16deg)', transformOrigin: '50% 100%' }}
+            >
+              {player.holeCards.map((card, i) => (
+                <div
+                  key={i}
+                  style={{ transform: `rotate(${i === 0 ? -7 : 7}deg) translateY(${i === 0 ? 2 : 0}px)`, marginLeft: i === 0 ? 0 : compact ? -8 : -12 }}
+                >
+                  <CardComponent
+                    card={card}
+                    size={compact ? 'sm' : 'md'}
+                    delay={i * 0.1}
+                    highlight={highlightCards ? highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
+                    dimmed={highlightCards ? !highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 sm / 상대 카드백 2xs / 쇼다운 공개 sm */}
-          {showCards && (
+          {showCards && !heroFront && (
             <div
               className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none transition-[filter,opacity] ${revealed ? 'z-30' : 'z-20'} ${visualClasses.cards}`}
               style={cardAnchorStyle}
@@ -204,10 +243,13 @@ export default function PlayerSeat({
                   // 히어로 확대(sm)는 데스크톱만 — 360px급(S24) 화면에선 xs 유지 (2026-07-22 유저 피드백: 모바일 짤림)
                   size={isCurrentPlayer ? (compact ? 'xs' : 'sm') : revealed ? 'sm' : '2xs'}
                   delay={i * 0.1}
+                  highlight={highlightCards ? highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
+                  dimmed={highlightCards ? !highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
                 />
               ))}
             </div>
           )}
+          {avatarOverlay}
         </div>
 
         {/* 이름/칩 플레이트 — 아바타 하단에 겹침, 폴드여도 가독 유지 */}
@@ -236,8 +278,9 @@ export default function PlayerSeat({
             {/* 칩 — 터치/클릭으로 칩↔BB 표기 전환 (소수 첫째 자리 반올림) */}
             <button
               type="button"
-              onClick={toggleChipDisplayMode}
-              title="칩 ↔ BB 표기 전환"
+              onClick={interactive ? toggleChipDisplayMode : undefined}
+              tabIndex={interactive ? undefined : -1}
+              title={interactive ? '칩 ↔ BB 표기 전환' : undefined}
               className={`block w-full font-semibold cursor-pointer select-none tabular-nums
                 ${isBusted ? 'text-red-400' : 'text-gilded'} text-xs`}
             >
@@ -266,6 +309,8 @@ export default function PlayerSeat({
             )}
           </AnimatePresence>
         </div>
+
+        {footer}
 
         {/* 상태 표시 */}
         {isSittingOut && !isBusted && (

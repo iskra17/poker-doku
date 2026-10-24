@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { describeCorrectAnswer, isAnswerComplete, isTapToSubmit, TAP_SUBMIT_DELAY_MS } from '@/lib/story/drill-input';
 import type { DrillAnswer, DrillResult } from '@/lib/story/drills/types';
@@ -107,19 +107,21 @@ export default function DrillCard({
     }, TAP_SUBMIT_DELAY_MS);
   };
 
-  // 채점 결과가 오면 해설·[다음]을 화면 안으로 — 판단 재생이 먼저 보이게 잠깐 뒤, 타자기 해설이 다 쓰인 뒤 한 번 더.
+  // 채점 결과가 오면 해설·[다음]을 화면 안으로 — **판단 재생이 끝난 뒤에만** (재생 중 스크롤하면 테이블이 헤더 밑으로 밀려
+  // 재생을 못 본다). 재생 끝(DrillTable onReplayDone)에 한 번, 타자기 해설이 다 쓰일 즈음 한 번 더.
   // 이미 보이면 'nearest'라 움직이지 않는다. DOM 스크롤만 하고 setState는 하지 않는다.
   const explanationLength = answered && lastResult ? lastResult.explanation.text.length + praise.length : 0;
-  useEffect(() => {
-    if (!answered) return;
+  const revealTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    revealTimer.current = null;
+  }, [key]);
+  const handleReplayDone = useCallback(() => {
     const reveal = () => resultRef.current?.scrollIntoView({ block: 'nearest', behavior: reduceMotion ? 'auto' : 'smooth' });
-    const first = setTimeout(reveal, reduceMotion ? 0 : 650);
-    const second = setTimeout(reveal, Math.min(4_000, 700 + explanationLength * 18));
-    return () => {
-      clearTimeout(first);
-      clearTimeout(second);
-    };
-  }, [answered, key, reduceMotion, explanationLength]);
+    reveal();
+    if (revealTimer.current) clearTimeout(revealTimer.current);
+    revealTimer.current = setTimeout(reveal, Math.min(3_000, explanationLength * 18));
+  }, [reduceMotion, explanationLength]);
 
   if (drill.retryOffer) {
     const count = drill.retryOffer.count;
@@ -204,6 +206,7 @@ export default function DrillCard({
           category={instance.category}
           templateId={instance.templateId}
           result={answered ? lastResult : null}
+          onReplayDone={handleReplayDone}
         />
         <AnimatePresence>
           {answered && lastResult && (
