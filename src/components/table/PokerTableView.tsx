@@ -9,7 +9,12 @@ import CommunityCards from './CommunityCards';
 import PotDisplay from './PotDisplay';
 import ChipStack from './ChipStack';
 import TableFelt from './TableFelt';
-import { getLayout, toDisplayIndex, type TablePos } from './table-layout';
+import { BET_DEPTH, BOARD_DEPTH, DEALER_BTN_DEPTH, POT_DEPTH, getLayout, layFlat, toDisplayIndex, type TablePos } from './table-layout';
+
+/** 보드 카드 추가 배율 — 원근 배율 위에 한 단계 작게 (펠트에 놓인 카드가 좌석보다 커 보이지 않게) */
+const BOARD_SIZE = 0.92;
+/** 눕힌 포지션 버튼의 접지 그림자 */
+const CHIP_SHADOW = '0 3px 4px rgba(0,0,0,0.45)';
 
 /** 좌석 하나에 덧그릴 표시 — 수련 테이블이 포지션·순서·족보 배지와 하이라이트를 얹는 통로 */
 export interface SeatDecor {
@@ -114,7 +119,7 @@ export default function PokerTableView({
 
       {underlay}
 
-      {/* Pot display — 보드 위 (table-layout POT_POS) */}
+      {/* Pot display — 보드 위 (table-layout POT_POS). 펠트에 놓인 물건은 평면과 같은 기울기로 눕힌다 (layFlat) */}
       {potPosition ? (
         <motion.div
           className="absolute z-10"
@@ -123,18 +128,20 @@ export default function PokerTableView({
           animate={{ left: potPosition.x, top: potPosition.y }}
           transition={{ duration: 0.6, ease: 'easeOut' }}
         >
-          <PotDisplay pots={pots} compact={compact} />
-          {potExtra}
+          <div style={{ transform: layFlat(POT_DEPTH) }}>
+            <PotDisplay pots={pots} compact={compact} />
+            {potExtra}
+          </div>
         </motion.div>
       ) : (
-        <div className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={{ left: potPos.x, top: potPos.y }}>
+        <div className="absolute z-10" style={{ left: potPos.x, top: potPos.y, transform: `translate(-50%, -50%) ${layFlat(POT_DEPTH)}` }}>
           <PotDisplay pots={pots} compact={compact} />
           {potExtra}
         </div>
       )}
 
-      {/* Community cards (table-layout BOARD_POS) */}
-      <div className="absolute -translate-x-1/2 -translate-y-1/2 z-10" style={{ left: boardPos.x, top: boardPos.y }}>
+      {/* Community cards (table-layout BOARD_POS) — 펠트에 눕혀, 원근 배율보다 한 단계 작게 */}
+      <div className="absolute z-10" style={{ left: boardPos.x, top: boardPos.y, transform: `translate(-50%, -50%) ${layFlat(BOARD_DEPTH * BOARD_SIZE)}` }}>
         <CommunityCards cards={communityCards} winningCards={winningCards} compact={compact} />
       </div>
 
@@ -159,6 +166,8 @@ export default function PokerTableView({
             seatAction={seatActions?.[i] ?? null}
             // 우측 열(슬롯 4·5)은 카드가 화면 밖으로 잘리지 않게 왼쪽(중앙 방향)에 부착
             cardSide={displaySlot === 4 || displaySlot === 5 ? 'left' : 'right'}
+            // 히어로 카드는 아바타 앞(펠트 쪽)에 크게 — 시점 바로 앞의 내 패
+            heroCardsFront={displaySlot === 0}
             depthScale={seatDepth[displaySlot]}
             interactive={interactive}
             avatarOverlay={decor?.avatarOverlay}
@@ -184,6 +193,7 @@ export default function PokerTableView({
             <div
               className={`rounded-full text-abyss font-bold flex items-center justify-center border-2
                 ${btn.color} ${compact ? 'w-6 h-6' : 'w-7 h-7'} ${btn.textSize}`}
+              style={{ transform: layFlat(DEALER_BTN_DEPTH[toDisplayIndex(btn.seatIndex, mySeatIndex)] ?? 1), boxShadow: CHIP_SHADOW }}
               title={btn.title}
               aria-label={btn.title}
             >
@@ -197,12 +207,13 @@ export default function PokerTableView({
       {betPositions.map((_, i) => {
         const player = seatPlayers[i];
         if (!player || player.currentBet <= 0) return null;
-        const pos = betPositions[toDisplayIndex(i, mySeatIndex)];
+        const slot = toDisplayIndex(i, mySeatIndex);
+        const pos = betPositions[slot];
         return (
           <div
             key={`bet-${i}`}
-            className="absolute -translate-x-1/2 -translate-y-1/2 z-10"
-            style={{ left: pos.x, top: pos.y }}
+            className="absolute z-10"
+            style={{ left: pos.x, top: pos.y, transform: `translate(-50%, -50%) ${layFlat(BET_DEPTH[slot])}` }}
           >
             <ChipStack amount={player.currentBet} size={compact ? 'xs' : 'sm'} />
           </div>

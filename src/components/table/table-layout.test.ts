@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BET_POSITIONS, BOARD_POS, DEALER_BTN_POSITIONS, POT_POS, SEATS, SEAT_DEPTH, projectFelt } from './table-layout';
+import { BET_DEPTH, BET_POSITIONS, BOARD_DEPTH, BOARD_POS, DEALER_BTN_POSITIONS, FELT_PLANE, POT_DEPTH, POT_POS, SEATS, SEAT_DEPTH, layFlat, projectFelt } from './table-layout';
 
 const num = (value: string) => parseFloat(value);
 
@@ -25,11 +25,12 @@ describe('perspective table layout', () => {
     }
   });
 
-  it('scales seats by depth: hero 1, far seats smaller but readable, mirror symmetric', () => {
-    expect(SEAT_DEPTH[0]).toBe(1);
+  it('scales seats by depth: hero in front (>= 1), far seats smaller but readable, mirror symmetric', () => {
+    expect(SEAT_DEPTH[0]).toBeGreaterThanOrEqual(1);
+    expect(SEAT_DEPTH[1]).toBeLessThan(SEAT_DEPTH[0]);
     expect(SEAT_DEPTH[3]).toBeLessThan(SEAT_DEPTH[2]);
     expect(SEAT_DEPTH[2]).toBeLessThan(SEAT_DEPTH[1]);
-    expect(Math.min(...SEAT_DEPTH)).toBeGreaterThanOrEqual(0.84);
+    expect(Math.min(...SEAT_DEPTH)).toBeGreaterThanOrEqual(0.72);
     expect(SEAT_DEPTH[1]).toBe(SEAT_DEPTH[5]);
     expect(SEAT_DEPTH[2]).toBe(SEAT_DEPTH[4]);
   });
@@ -43,5 +44,14 @@ describe('perspective table layout', () => {
     expect(num(BET_POSITIONS[0].y)).toBeLessThan(num(SEATS[0].y));
     expect(num(BET_POSITIONS[3].y)).toBeGreaterThan(num(SEATS[3].y));
     expect(num(POT_POS.y)).toBeLessThan(num(BOARD_POS.y));
+  });
+
+  it('puts the hero in the foreground below the near rail and lays felt objects flat with the plane', () => {
+    expect(num(SEATS[0].y)).toBeGreaterThan(FELT_PLANE.bottom * 100);
+    // 먼 물건일수록 작게 (팟·보드는 근경 베팅보다 멀다)
+    expect(POT_DEPTH).toBeLessThan(BET_DEPTH[0]);
+    expect(BOARD_DEPTH).toBeLessThan(BET_DEPTH[0]);
+    expect(BET_DEPTH[3]).toBeLessThan(BET_DEPTH[0]);
+    expect(layFlat(0.8)).toContain(`rotateX(${FELT_PLANE.tiltDeg}deg)`);
   });
 });

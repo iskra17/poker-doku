@@ -6,7 +6,7 @@ import { onGameEvent } from '@/lib/events/game-events';
 import { useGameStore } from '@/lib/store/game-store';
 import { useSettingsStore } from '@/lib/store/settings-store';
 import { THROWABLE_MAP, THROWABLES } from '@/lib/throwables/catalog';
-import { getLayout, SEATS, toDisplayIndex, TablePos } from './table-layout';
+import { getLayout, HERO_AVATAR_Y, toDisplayIndex, TablePos } from './table-layout';
 import ThrowablePicker from './ThrowablePicker';
 
 /**
@@ -24,8 +24,8 @@ import ThrowablePicker from './ThrowablePicker';
 // 이력: 머리 위 중앙(50%,79%) → (33%,91%) → (40%,92%) → (40%,88%) → 현재. y를 내리면
 // 이름 플레이트 층으로 떨어져 "너무 밑"이 되니 주의. 히어로 홀카드는 오른쪽 부착이라 왼쪽이 빈다.
 // 히어로가 딜러 버튼을 가진 핸드에는 D 칩과 부분 겹침 — z-30이라 발사대가 위에 뜬다.
-// 원근 테이블(2026-10-24)에서 히어로 좌석 y가 table-layout 투영값이 되어, 아바타 중심(좌석 중심 −1.6%)에 맞춰 따라간다.
-const LAUNCHER_POS: TablePos = { x: '39%', y: `${parseFloat(SEATS[0].y) - 1.6}%` };
+// 원근 테이블(2026-10-24)에서 히어로가 전경 좌석으로 옮겨져, 아바타 중심(table-layout HERO_AVATAR_Y)을 따라간다.
+const LAUNCHER_POS: TablePos = { x: '39%', y: HERO_AVATAR_Y };
 const MIN_DRAG_PX = 28;
 const TRAJECTORY_TS = [0.22, 0.4, 0.58, 0.76, 0.9] as const;
 

@@ -42,6 +42,8 @@ interface PlayerSeatProps {
   highlightCards?: readonly Card[] | null;
   /** false면 아바타 탭(쇼케이스)·칩 표기 토글을 끈다 — 수련 문제 테이블 */
   interactive?: boolean;
+  /** 내 좌석(하단 중앙)이면 홀카드를 아바타 앞(펠트 쪽)에 크게 — 원근 테이블의 전경 */
+  heroCardsFront?: boolean;
 }
 
 /**
@@ -103,7 +105,7 @@ const actionLabels: Record<string, { text: string; color: string }> = {
 export default function PlayerSeat({
   player, isCurrentPlayer, isActive, position, seatIndex, compact = false,
   turnDuration = 0, turnTotalSeconds = 30, seatAction, cardSide = 'right', onSit,
-  depthScale = 1, avatarOverlay, footer, highlightCards = null, interactive = true,
+  depthScale = 1, avatarOverlay, footer, highlightCards = null, interactive = true, heroCardsFront = false,
 }: PlayerSeatProps) {
   // 훅은 early return 이전에 호출 (React 규칙)
   const expression = useSeatExpression(player?.id, isActive);
@@ -143,6 +145,7 @@ export default function PlayerSeat({
   // 히어로는 폴드해도 자기 카드를 계속 확인할 수 있어야 한다 — 상대 폴드 카드만 숨김
   const showCards = player.holeCards.length > 0 && (isCurrentPlayer || !isFolded);
   const revealed = !isCurrentPlayer && !!player.revealed;
+  const heroFront = heroCardsFront && isCurrentPlayer;
 
   // 홀카드 앵커 — 아바타 가장자리에 살짝 겹치게 (히어로 sm > 공개 sm > 카드백 2xs 순으로 겹침량 조절)
   const cardOverlapPx = isCurrentPlayer ? 14 : revealed ? 12 : 10;
@@ -202,8 +205,32 @@ export default function PlayerSeat({
             />
           )}
 
+          {/* 히어로 홀카드(전경) — 아바타 오른쪽 위, 펠트 쪽으로 크게 내밀어 부채꼴로 펼치고 테이블 쪽으로 살짝 눕힌다
+              (GGPoker식 내 패). 얼굴을 가리지 않고 하단 중앙이라 잘리지 않아 모바일에서도 sm(데스크톱 md)로 키운다 */}
+          {showCards && heroFront && (
+            <div
+              className={`absolute z-30 flex pointer-events-none transition-[filter,opacity] ${visualClasses.cards}`}
+              style={{ left: `calc(100% - ${compact ? 16 : 20}px)`, bottom: '34%', transform: 'perspective(700px) rotateX(16deg)', transformOrigin: '50% 100%' }}
+            >
+              {player.holeCards.map((card, i) => (
+                <div
+                  key={i}
+                  style={{ transform: `rotate(${i === 0 ? -7 : 7}deg) translateY(${i === 0 ? 2 : 0}px)`, marginLeft: i === 0 ? 0 : compact ? -8 : -12 }}
+                >
+                  <CardComponent
+                    card={card}
+                    size={compact ? 'sm' : 'md'}
+                    delay={i * 0.1}
+                    highlight={highlightCards ? highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
+                    dimmed={highlightCards ? !highlightCards.some(c => c.rank === card.rank && c.suit === card.suit) : false}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           {/* 홀카드 — 아바타 옆에 두 장 나란히 (기울임 없이 같은 높이): 히어로 sm / 상대 카드백 2xs / 쇼다운 공개 sm */}
-          {showCards && (
+          {showCards && !heroFront && (
             <div
               className={`absolute top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none transition-[filter,opacity] ${revealed ? 'z-30' : 'z-20'} ${visualClasses.cards}`}
               style={cardAnchorStyle}

@@ -85,12 +85,12 @@ export default function TableFelt({ finalTable = false, story: storyTheme = fals
 
   return (
     <div className="pointer-events-none absolute inset-0 isolate" style={{ containerType: 'size' }} aria-hidden>
-      {/* 바닥 그림자 — 화면 평면(눕히지 않음). 테이블이 바닥 위에 놓여 보이게 */}
+      {/* 바닥 그림자 — 화면 평면(눕히지 않음). 테이블 아래 바닥에 넓게 깔려 테이블을 방 안에 고정한다 */}
       <div
         className="absolute"
         style={{
-          left: '0%', right: '0%', top: `${FELT_PLANE.bottom * 100 - 16}%`, height: '24%',
-          background: 'radial-gradient(ellipse 50% 50% at 50% 55%, rgba(0,0,0,0.6) 0%, rgba(0,0,0,0.28) 55%, transparent 100%)',
+          left: '-6%', right: '-6%', top: `${FELT_PLANE.bottom * 100 - 30}%`, height: '44%',
+          background: 'radial-gradient(ellipse 50% 46% at 50% 58%, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0.35) 55%, transparent 100%)',
         }}
       />
       {/* 펠트 평면 — 하단 가장자리를 축으로 뒤로 눕힌다 (원경이 좁고 짧아진다) */}
@@ -116,6 +116,11 @@ export default function TableFelt({ finalTable = false, story: storyTheme = fals
         <div
           className={`absolute border-2 ${trim}`}
           style={{ ...railBox, background: `${NEAR_SHEEN}, ${railBackground}`, boxShadow: railShadow }}
+        />
+        {/* 근경 레일 모서리 하이라이트 — 시점 쪽 가장자리만 굵게 빛나 앞 레일이 손 앞에 있는 느낌 */}
+        <div
+          className={`absolute border-b-[3px] ${story ? (yellowFelt ? 'border-gilded/45' : 'border-cyber/40') : 'border-gilded/40'}`}
+          style={{ ...railBox, top: '2px', bottom: '-1px' }}
         />
 
         {/* 펠트 — 레일 안쪽, 하단(플레이어 쪽)이 가깝게 보이도록 광원을 아래로 */}
@@ -150,8 +155,8 @@ const RAIL_RADIUS = '50% / 38%';
 /** 레일(쿠션) 폭(px, 평면 기준) */
 const RAIL_PX = 14;
 /** 테이블 두께(근경 앞면) — 평면 안에서 근경 쪽으로 밀어낸 같은 외곽선. px + 높이 비율 */
-const THICKNESS = 'calc(10px + 1.8%)';
+const THICKNESS = 'calc(14px + 2.6%)';
 /** 근경 레일 윗면 반사광 */
-const NEAR_SHEEN = 'radial-gradient(ellipse 55% 14% at 50% 100%, rgba(255,255,255,0.12) 0%, transparent 100%)';
+const NEAR_SHEEN = 'radial-gradient(ellipse 60% 12% at 50% 100%, rgba(255,255,255,0.18) 0%, transparent 100%)';
 /** 원경 펠트 어둠 (평면 위쪽 = 먼 쪽) */
-const FAR_SHADE = 'linear-gradient(180deg, rgba(0,0,0,0.42) 0%, rgba(0,0,0,0.14) 32%, transparent 55%)';
+const FAR_SHADE = 'linear-gradient(180deg, rgba(0,0,0,0.5) 0%, rgba(0,0,0,0.18) 34%, transparent 58%)';

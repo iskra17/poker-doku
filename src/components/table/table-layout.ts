@@ -17,14 +17,14 @@ export interface TablePos {
 
 /**
  * 펠트 평면 — 컨테이너 높이(H) 단위. 레일 타원은 평면 상자 전체(좌우 4% 안쪽)를 채운다.
- * - bottom: 평면 하단 가장자리(근경 레일)의 화면 위치 (위에서부터, H 비율)
+ * - bottom: 평면 하단 가장자리(근경 레일)의 화면 위치 (위에서부터, H 비율). 그 아래는 히어로 전경 존
  * - height: 평면을 눕히기 전 높이 (H 배수, 눕히면 짧아진다)
  * - tiltDeg: 뒤로 눕힌 각도 / perspective: 시점 거리 (H 배수 — 화면 크기와 무관하게 같은 모양)
  */
 export const FELT_PLANE = {
-  bottom: 0.93,
-  height: 1.12,
-  tiltDeg: 24,
+  bottom: 0.85,
+  height: 1.2,
+  tiltDeg: 36,
   perspective: 2.1,
   /** 레일 타원의 좌우 여백 (컨테이너 폭 비율, 한쪽) */
   inset: 0.04,
@@ -48,73 +48,86 @@ export function projectFelt(u: number, v: number): { x: number; y: number; scale
 }
 
 const pct = (value: number) => `${Math.round(value * 10) / 10}%`;
+const round2 = (value: number) => Math.round(value * 100) / 100;
 
 /**
- * 원근 이전(평평한 테이블) 설계 좌표 → 투영 화면 좌표.
+ * 원근 이전(평평한 테이블) 설계 좌표 → 투영 화면 좌표 + 그 자리의 원근 배율.
  * 기존 평면 레이아웃은 레일 상자 x 4~96%, y 11~95%에서 서로 겹치지 않게 다듬은 값이라,
  * 그 상대 위치를 그대로 눕힌 평면에 옮긴다. dy는 투영 뒤 화면 % 보정(스프라이트 크기 여유).
  */
-function onFelt(flatX: number, flatY: number, dy = 0): TablePos {
-  const u = (flatX - 50) / 46;
-  const v = (95 - flatY) / 84;
-  const p = projectFelt(u, v);
-  return { x: pct(p.x), y: pct(p.y + dy) };
+function feltPoint(flatX: number, flatY: number, dy = 0): { pos: TablePos; depth: number } {
+  const p = projectFelt((flatX - 50) / 46, (95 - flatY) / 84);
+  return { pos: { x: pct(p.x), y: pct(p.y + dy) }, depth: round2(p.scale) };
 }
 
-function depthAt(flatY: number): number {
-  return projectFelt(0, (95 - flatY) / 84).scale;
-}
-
-// 좌석(평면 설계 좌표) — 히어로는 근경 레일에 걸터앉도록 레일 쪽으로 내린다
-const SEAT_FLAT: readonly [number, number, number][] = [
-  [50, 93, -2.1], // 0: 하단 중앙 (히어로) — 아바타가 근경 레일에 걸친다. 360×640(테이블 높이 ≈408px)에서도 플레이트가 독에 잘리지 않는 높이
-  [10, 66, 0],    // 1: 좌하
-  [9, 32, 0],     // 2: 좌상
-  [50, 15, 0],    // 3: 상단 중앙
-  [91, 32, 0],    // 4: 우상
-  [90, 66, 0],    // 5: 우하
+// 좌석 — 상대 5명은 레일 위(평면 설계 좌표), 히어로는 평면 밖 전경: 근경 레일이 가슴 높이를 지나도록
+// 레일 선(bottom) 바로 아래에 둔다. 360×640(테이블 높이 ≈408px)에서도 플레이트가 독에 잘리지 않는 높이.
+const OPPONENT_SEATS = [
+  feltPoint(10, 71),   // 1: 좌하 (공개 카드 줄이 보드 아래로 오도록 근경 쪽)
+  feltPoint(9, 31),    // 2: 좌상
+  feltPoint(50, 14),   // 3: 상단 중앙
+  feltPoint(91, 31),   // 4: 우상
+  feltPoint(90, 71),   // 5: 우하 (공개 카드 줄이 보드 아래로 오도록 근경 쪽)
 ];
+const HERO_SEAT: TablePos = { x: '50%', y: pct(FELT_PLANE.bottom * 100 + 1.5) };
 
-export const SEATS: TablePos[] = SEAT_FLAT.map(([x, y, dy]) => onFelt(x, y, dy));
+export const SEATS: TablePos[] = [HERO_SEAT, ...OPPONENT_SEATS.map(point => point.pos)];
 
 /**
- * 좌석 원근 배율 — 디스플레이 슬롯 순서. 먼 좌석일수록 작다(히어로 1).
- * 가독성 하한 0.84 — 원경 좌석의 이름·칩 글자가 너무 작아지지 않게.
+ * 좌석 원근 배율 — 디스플레이 슬롯 순서. 히어로는 시점 바로 앞이라 1보다 크고, 먼 좌석일수록 작다.
+ * 투영 배율(원경 레일 ≈0.75)을 따르되 글자 가독성을 위해 측면은 조금 완만하게 다듬은 값.
  */
-export const SEAT_DEPTH: number[] = SEAT_FLAT.map(([, y]) =>
-  Math.round(Math.max(0.84, depthAt(y) / depthAt(SEAT_FLAT[0][1])) * 100) / 100,
-);
+export const SEAT_DEPTH: number[] = [1.06, 0.93, 0.83, 0.74, 0.83, 0.93];
+
+/** 히어로 아바타 중심의 화면 y(%) 근사 — 좌석 중심보다 위 (아바타+플레이트 컬럼의 위쪽) */
+export const HERO_AVATAR_Y = pct(parseFloat(HERO_SEAT.y) - 2.2);
 
 // 각 좌석에서 테이블 중앙 방향으로 오프셋된 베팅 칩 위치
-export const BET_POSITIONS: TablePos[] = [
-  onFelt(50, 75),   // 0: 히어로 → 위로 (히어로 카드 팬과 안 겹치게)
-  onFelt(30, 61),   // 1: 좌하 → 우상
-  onFelt(31, 38),   // 2: 좌상 → 우하
-  onFelt(50, 30.5), // 3: 상단 → 아래로 (원근으로 좁아진 원경 — 360×640에서도 플레이트와 안 겹치게)
-  onFelt(69, 38),   // 4: 우상 → 좌하
-  onFelt(70, 61),   // 5: 우하 → 좌상
+const BETS = [
+  feltPoint(50, 80),   // 0: 히어로 → 위로 (펠트에 놓인 히어로 카드보다 안쪽)
+  feltPoint(34, 78),   // 1: 좌하 → 오른쪽 아래 (쇼다운 공개 카드 줄보다 아래)
+  feltPoint(30, 40),   // 2: 좌상 → 우하
+  feltPoint(50, 30),   // 3: 상단 → 아래로 (원경 — 플레이트·팟과 안 겹치게)
+  feltPoint(70, 40),   // 4: 우상 → 좌하
+  feltPoint(66, 78),   // 5: 우하 → 왼쪽 아래 (쇼다운 공개 카드 줄보다 아래)
 ];
+export const BET_POSITIONS: TablePos[] = BETS.map(point => point.pos);
+/** 베팅 칩의 원근 배율 (근경 레일 = 1) — 펠트에 눕혀 그릴 때 쓴다 */
+export const BET_DEPTH: number[] = BETS.map(point => point.depth);
 
 // 딜러 버튼 위치 — 좌석 옆 펠트 위, 베팅 칩보다 살짝 바깥.
-// 주의: 커뮤니티 카드 라인과 x 16~84% 교차 지역은 보드와 겹치므로 피할 것
-export const DEALER_BTN_POSITIONS: TablePos[] = [
-  onFelt(31, 93, -4.2), // 0: 히어로 → 아바타 왼쪽 (아바타 중심 높이, 투척 발사대보다 바깥)
-  onFelt(30, 69),   // 1: 좌하 → 베팅 칩 아래쪽
-  onFelt(31, 30),   // 2: 좌상 → 베팅 칩 위쪽
-  onFelt(64, 19),   // 3: 상단 → 오른쪽
-  onFelt(69, 30),   // 4: 우상 → 베팅 칩 위쪽
-  onFelt(70, 69),   // 5: 우하 → 베팅 칩 아래쪽
+// 원경 측면(2·4)은 공개 카드(아바타 안쪽 옆)와 겹치지 않게 플레이트 아래 안쪽에 둔다.
+const DEALER_BTNS = [
+  { pos: { x: '31%', y: HERO_AVATAR_Y }, depth: 1 }, // 0: 히어로 → 아바타 왼쪽 (전경, 투척 발사대보다 바깥)
+  feltPoint(16, 86),   // 1: 좌하 → 플레이트 아래 바깥 (근경 레일 위)
+  feltPoint(22, 45),   // 2: 좌상 → 플레이트 아래 안쪽
+  feltPoint(39, 29),   // 3: 상단 → 플레이트 아래 왼쪽 (양옆 원경 좌석의 공개 카드·홀카드 뒷면을 피해)
+  feltPoint(78, 45),   // 4: 우상 → 플레이트 아래 안쪽
+  feltPoint(84, 86),   // 5: 우하 → 플레이트 아래 바깥 (히어로 카드 팬을 피해)
 ];
+export const DEALER_BTN_POSITIONS: TablePos[] = DEALER_BTNS.map(point => point.pos);
+export const DEALER_BTN_DEPTH: number[] = DEALER_BTNS.map(point => point.depth);
 
 // 팟 위치 — 보드 위쪽 (칩 수거/푸시 애니메이션의 목적지/출발지).
-// 좌상/우상 좌석 박스와 얽히지 않게 보드 바로 위 밴드에 둔다.
-export const POT_POS: TablePos = onFelt(50, 38);
+const POT = feltPoint(50, 40);
+export const POT_POS: TablePos = POT.pos;
+export const POT_DEPTH = POT.depth;
 
 // 덱(딜러) 위치 — 우상단 딜러 코너 근처(화면 고정, 펠트 밖). 딜링/폴드 카드 비행의 출발/도착점
 export const DECK_POS: TablePos = { x: '82%', y: '6%' };
 
 // 커뮤니티 카드 라인 (딜링 비행 목적지 근사) — 상단 좌석 라인·하단 베팅 라인 사이 중앙
-export const BOARD_POS: TablePos = onFelt(50, 50.5);
+const BOARD = feltPoint(50, 53);
+export const BOARD_POS: TablePos = BOARD.pos;
+export const BOARD_DEPTH = BOARD.depth;
+
+/**
+ * 펠트에 놓인 물건(보드·팟·칩·포지션 버튼)을 평면과 같은 기울기로 눕히는 transform 조각.
+ * 세운 스프라이트(좌석)와 달리 테이블 위에 "놓여" 보이게 한다. size는 원근 배율 × 추가 배율.
+ */
+export function layFlat(size: number): string {
+  return `scale(${round2(size)}) perspective(900px) rotateX(${FELT_PLANE.tiltDeg}deg)`;
+}
 
 // 실전 테이블 좌표 컨테이너의 대표 가로:세로 비 (430×900 모바일: 상단 바·액션 독을 뺀 430×≈668).
 // 좌표 컨테이너를 따로 크기 잡는 곳(수련 문제 테이블)은 이 비율을 지켜야 % 좌표가 실전과 같은 모양이 된다.

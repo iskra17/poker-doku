@@ -320,7 +320,7 @@ npx tsc --noEmit
     회귀: `story-run-coordinator.test.ts`·`socket-handler.story.test.ts`·`generator.test.ts`·`chapters/act1/act1.test.ts`.
   - **실제 테이블 수련 문제 + 파트너 중심 초반 (2026-10-24, 3모델 회의 → 사용자 결정 "운전면허 시험 같다")**: 계획
     `docs/superpowers/plans/2026-10-24-table-drills-partner-first-plan.md`. ①드릴·함께 풀기·실력 배치는 `DrillTable`이 그린다 — **실전과 같은 `PokerTableView`**(실제 좌석·카드·팟·칩, 수련 펠트,
-    실전 비율 `TABLE_ASPECT`)에 문제 상황을 합성 공개 스냅샷으로 넣고, 재생 배지·포지션 라벨은 `seatDecor`로 덧그린다(자체 좌석 그리기 금지 — 2026-10-24 "조잡한 테이블" 피드백). 좌석 모델은 순수 `drill-table-model.ts`(공개 필드
+    실전 비율 `TABLE_ASPECT`)를 실전 기준 크기(430×662)로 그린 뒤 ResizeObserver 배율 하나로 통째 축소한다 — 문제 상황은 합성 공개 스냅샷으로 넣고, 재생 배지·포지션 라벨은 `seatDecor`로 덧그린다(자체 좌석 그리기 금지 — 2026-10-24 "조잡한 테이블" 피드백). 좌석 모델은 순수 `drill-table-model.ts`(공개 필드
     `DrillSituation.heroSeatIndex/dealerSeatIndex` → 포지션 라벨 역산 → 순서 배치). 인트로(상황 재생)는 정답과 무관한 정보만, **판단 재생은
     `DrillResult`를 받은 뒤에만**(`planDrillDemo` — 채점 전 족보 평가·포지션 라벨 계산 금지, `pos-name`은 라벨 '?' 유지). 검토 화면 `/preview/drill-table`(dev 전용).
     ②씬 라인 `byPartner`(히로인별 문장·표정·화자)는 `partner-lines.ts resolveSceneForPartner` 한 곳에서 풀고 라인 순서·선택지 id는 불변 —
@@ -640,8 +640,9 @@ npx tsc --noEmit
   (`max-w-[min(440px,60dvh)]`) 하나를 중앙 렌더. 좌석/베팅/팟/딜러버튼 좌표는 `table-layout.ts`가
   단일 소스 (`getLayout()` 무인자). **원근 테이블(2026-10-24 피드백 "내 자리가 바닥 같다")**: `TableFelt`가 펠트·레일을
   `FELT_PLANE`(하단 축 rotateX + 컨테이너 높이 단위 cqh perspective) 평면으로 눕히고, 좌표는 같은 상수로 `projectFelt()`/`onFelt()`가
-  평면 설계 좌표를 투영해 만든다(좌석 원근 배율 `SEAT_DEPTH`, 히어로 1). 펠트 변환 상수와 좌표를 따로 손대면 칩/카드 비행·말풍선이
-  펠트와 어긋난다. 표시는 `PokerTableView`(store 무의존 — 좌석·보드·팟·칩·D/SB/BB)가 맡고 `PokerTable`은 store 연결 + 실전 전용
+  평면 설계 좌표를 투영해 만든다(좌석 원근 배율 `SEAT_DEPTH` — 히어로 1.06·원경 0.74). 펠트에 놓인 물건(보드·팟·베팅 칩·D/SB/BB)은
+  `layFlat(깊이)`로 평면과 같은 기울기로 눕히고, 히어로는 평면 밖 전경(근경 레일 아래, 홀카드는 아바타 오른쪽 위에 크게 — `PlayerSeat heroCardsFront`).
+  펠트 변환 상수와 좌표를 따로 손대면 칩/카드 비행·말풍선이 펠트와 어긋난다. 표시는 `PokerTableView`(store 무의존 — 좌석·보드·팟·칩·D/SB/BB)가 맡고 `PokerTable`은 store 연결 + 실전 전용
   레이어(DealerCorner·AnimationLayer·투척·좌석 말풍선·WinnerSequence)만 얹는다. 회귀: `table-layout.test.ts`, 검토 화면 `/preview/poker-table`. 포지션 버튼은 D/SB/BB 3종(PokerTable) — 같은 크기·모양에
   색만 구분(D 골드/SB 시안/BB 핑크, 업계 관행 매핑), SB/BB 좌석은 엔진이 postBlinds에서 기록한
   `GameState.smallBlindId`/`bigBlindId`(id 기준 — 좌석 splice에 안전)로 판정하고 헤즈업(딜러=SB)은

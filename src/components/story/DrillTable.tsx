@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'framer-motion';
 import ChipSVG, { decomposeChips } from '@/components/table/ChipSVG';
 import PokerTableView, { type SeatDecor } from '@/components/table/PokerTableView';
@@ -35,6 +35,8 @@ interface DrillTableProps {
   result?: DrillResult | null;
   /** 인트로 재생 (기본 true) */
   intro?: boolean;
+  /** 판단 재생이 끝났을 때(모션 감소면 채점 직후) — 부모가 해설을 화면 안으로 스크롤하는 시점 */
+  onReplayDone?: () => void;
 }
 
 export default function DrillTable(props: DrillTableProps) {
@@ -104,6 +106,32 @@ function demoSchedule(demo: DrillDemo): number[] {
 
 const formatChips = (chips: number): string => chips.toLocaleString('ko-KR');
 
+/**
+ * 실전 기준 크기 — 430×900 모바일에서 상단 바·액션 독을 뺀 실전 테이블 좌표 컨테이너(≈430×662).
+ * 수련 테이블은 이 크기로 **실전 그대로** 그린 뒤 CSS scale 하나로 줄인다(컴포넌트 크기와 테이블 비율이 실전과 같다).
+ */
+const REF_W = 430;
+const REF_H = Math.round(REF_W / TABLE_ASPECT);
+/** ResizeObserver 측정 전 첫 렌더 배율 (430×900에서 56dvh 기준 근사) */
+const INITIAL_SCALE = 0.76;
+
+/** 컨테이너 폭에 맞춘 축소 배율 — setState는 ResizeObserver 콜백에서만 */
+function useFitScale() {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(INITIAL_SCALE);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(entries => {
+      const width = entries[0]?.contentRect.width ?? 0;
+      if (width > 0) setScale(Math.round((width / REF_W) * 1000) / 1000);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return { ref, scale };
+}
+
 const STREET_LABEL: Record<DrillSituation['street'], string> = {
   preflop: '프리플랍',
   flop: '플랍',
@@ -118,7 +146,7 @@ const HERO_ID = 'drill-hero';
 
 // ---------------------------------------------------------------------------
 
-function DrillTableStage({ situation, category, templateId, result = null, intro = true }: DrillTableProps) {
+function DrillTableStage({ situation, category, templateId, result = null, intro = true, onReplayDone }: DrillTableProps) {
   const reduce = useReducedMotion() ?? false;
   const heroAvatarId = useProfileStore(state => state.profile?.avatarId ?? null);
   const heroAlias = useProfileStore(state => state.profile?.alias ?? null);
@@ -137,6 +165,16 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
   const demoTimeline = useTimeline(demo && !reduce ? `demo:${demoRun}` : null, demo ? demoSchedule(demo) : []);
   const demoStep = demo ? (reduce ? demoTimeline.total : demoTimeline.step) : 0;
   const demoDone = demo !== null && demoStep >= demoTimeline.total;
+
+  // 판단 재생이 끝나면 부모에게 알린다 (해설 스크롤 시점) — 콜백은 최신 것을 ref로 읽는다
+  const replayDoneRef = useRef(onReplayDone);
+  useEffect(() => {
+    replayDoneRef.current = onReplayDone;
+  }, [onReplayDone]);
+  useEffect(() => {
+    if (demoDone) replayDoneRef.current?.();
+  }, [demoDone, demoRun]);
+  const { ref: fitRef, scale: fitScale } = useFitScale();
 
   const introStep = !animateIntro || demo ? INTRO_STEPS : introTimeline.step;
   const introRunning = animateIntro && !demo && introStep < INTRO_STEPS;
@@ -195,14 +233,16 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
           )}
         </AnimatePresence>
       </div>
-      {/* 실전 테이블 비율 그대로 — 화면 위쪽 절반 안에 들어가도록 높이를 묶고 폭은 비율에서 얻는다 */}
+      {/* 실전 테이블을 실전 크기(REF_W×REF_H)로 그리고 통째로 축소 — 화면 위쪽 절반 남짓에 들어가도록 높이를 묶고 폭은 비율에서 얻는다 */}
       <div
+        ref={fitRef}
         className="relative mx-auto select-none"
-        style={{ width: `min(100%, calc(54dvh * ${TABLE_ASPECT}))`, aspectRatio: String(TABLE_ASPECT) }}
+        style={{ width: `min(100%, calc(56dvh * ${TABLE_ASPECT}))`, aspectRatio: String(TABLE_ASPECT) }}
         onClick={handleTap}
         role="group"
         aria-label={tableAriaLabel(model)}
       >
+        <div className="absolute left-0 top-0" style={{ width: REF_W, height: REF_H, transform: `scale(${fitScale})`, transformOrigin: '0 0' }}>
         <PokerTableView
           players={players}
           myPlayerId={HERO_ID}
@@ -221,7 +261,7 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
           dealerPulse={view.dealerPulse}
           potPosition={view.potTarget}
           potExtra={potShown && model.pot > 0 ? (
-            <p className="mt-0.5 whitespace-nowrap text-center text-[9px] font-bold text-ink-dim">
+            <p className="mt-0.5 whitespace-nowrap text-center text-[12px] font-bold text-ink-dim">
               {STREET_LABEL[model.street]}{model.toCall > 0 ? ' · 상대 벳 포함' : ''}
             </p>
           ) : null}
@@ -251,7 +291,10 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
             )
           ))}
 
-          {/* 내 앞 — 콜 금액 / 정답 말풍선 */}
+        </PokerTableView>
+        </div>
+
+          {/* 내 앞 — 콜 금액 / 정답 말풍선. 축소 상자 밖(같은 비율 → 같은 % 좌표)에 그려 글자가 작아지지 않는다 */}
           <AnimatePresence>
             {heroTurn && model.toCall > 0 && (
               <motion.div
@@ -297,7 +340,6 @@ function DrillTableStage({ situation, category, templateId, result = null, intro
           {introRunning && (
             <span className="pointer-events-none absolute bottom-[1%] right-[2%] z-30 text-[9px] text-ink-dim/70">탭하면 바로 보기</span>
           )}
-        </PokerTableView>
       </div>
       <TableNotes situation={situation} />
     </div>
@@ -469,17 +511,17 @@ function SeatMarks({ label, labelState, seatNumber, badge }: {
             initial={{ opacity: 0, scale: 0.6 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0 }}
-            className={`pointer-events-none absolute bottom-full left-1/2 z-40 mb-1 whitespace-nowrap rounded-full border px-1.5 py-px text-[10px] font-black shadow ${BADGE_TONE[badge.tone]}`}
+            className={`pointer-events-none absolute bottom-full left-1/2 z-40 mb-1 whitespace-nowrap rounded-full border px-2 py-px text-[13px] font-black shadow ${BADGE_TONE[badge.tone]}`}
             style={{ x: '-50%' }}
           >
             {badge.text}
           </motion.span>
         )}
       </AnimatePresence>
-      {/* 포지션 배지 — 아바타 우상단 */}
+      {/* 포지션 배지 — 아바타 좌상단 (우측엔 홀카드가 붙는다) */}
       {label && (
         <span
-          className={`pointer-events-none absolute -right-1.5 -top-1 z-40 rounded-full border px-1 text-[10px] font-black leading-tight ${
+          className={`pointer-events-none absolute -left-2 -top-1.5 z-40 rounded-full border px-1.5 text-[13px] font-black leading-tight ${
             labelState === 'emphasis' ? 'scale-125 border-gilded bg-gilded text-abyss'
               : label === '?' ? 'border-mystic/60 bg-black/80 text-mystic'
                 : labelState === 'revealed' ? 'border-gilded/70 bg-black/80 text-gilded' : 'border-cyber/50 bg-black/80 text-cyber'
@@ -489,7 +531,7 @@ function SeatMarks({ label, labelState, seatNumber, badge }: {
         </span>
       )}
       {seatNumber !== null && (
-        <span className="pointer-events-none absolute -left-1.5 -top-1 z-40 rounded-full bg-black/80 px-1 text-[9px] font-bold leading-tight text-ink-dim">{seatNumber}번</span>
+        <span className="pointer-events-none absolute -left-4 top-1/2 z-40 -translate-y-1/2 rounded-full bg-black/80 px-1.5 text-[12px] font-bold leading-tight text-ink-dim">{seatNumber}번</span>
       )}
     </>
   );
@@ -507,13 +549,13 @@ function EmptySeat({ pos, depth, seatNumber, label }: {
       style={{ left: pos.x, top: pos.y, transform: `translate(-50%, -50%) scale(${depth})` }}
       aria-hidden
     >
-      <div className="relative flex h-12 w-12 items-center justify-center rounded-full border-2 border-dashed border-white/15 bg-black/20">
-        {seatNumber !== null && <span className="text-[10px] font-bold text-ink-dim/60">{seatNumber}번</span>}
+      <div className="relative flex h-16 w-16 items-center justify-center rounded-full border-2 border-dashed border-white/15 bg-black/20">
+        {seatNumber !== null && <span className="text-[13px] font-bold text-ink-dim/60">{seatNumber}번</span>}
         {label && (
           <motion.span
             initial={{ opacity: 0, scale: 0.6 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="absolute -right-1.5 -top-1 rounded-full border border-gilded/60 bg-black/80 px-1 text-[10px] font-black text-gilded"
+            className="absolute -right-2 -top-1.5 rounded-full border border-gilded/60 bg-black/80 px-1.5 text-[13px] font-black text-gilded"
           >
             {label.text}
           </motion.span>
