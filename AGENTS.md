@@ -318,6 +318,10 @@ npx tsc --noEmit
     `dismissRun()`까지 보관), VN 커서는 `scene-cursor.ts`(순수), 입력 4종 `DrillAnswerInput`, 함께 풀기는
     `drill-input.ts`의 로컬 채점(점수 없음). PartnerCard CTA는 보존 좌석 > 스토리 > 자유 연습(`story-hub-rules.ts`).
     회귀: `story-run-coordinator.test.ts`·`socket-handler.story.test.ts`·`generator.test.ts`·`chapters/act1/act1.test.ts`.
+  - **실력 배치 (2026-10-20, 2026-10-24 개정 — 배치 문항과 Ch1 드릴이 겹쳐 보였다)**: `lib/story/placement.ts` + 서버 `story-placement.ts`
+    (`story-placement` 이벤트). 첫 수련은 자기 평가만(`action:'self-report'` — 서버가 new→beginner, 그 밖→novice, **채점 없이 advanced 금지**)
+    묻고 바로 Ch1. 4문 체크는 Ch1 완료 뒤 결산·허브의 「다음 수업부터 빠르게 가기」 초대(`placement:check` 'pending'→'taken'|'declined',
+    `action:'check'`는 3문 이상만 advanced, 아니면 등급 유지)로 선택. 배치 문항에 Ch1 드릴 유형을 넣지 말 것(`placement.test.ts` 고정).
   - **실제 테이블 수련 문제 + 파트너 중심 초반 (2026-10-24, 3모델 회의 → 사용자 결정 "운전면허 시험 같다")**: 계획
     `docs/superpowers/plans/2026-10-24-table-drills-partner-first-plan.md`. ①드릴·함께 풀기·실력 배치는 `DrillTable`(실전과 같은 타원 펠트 —
     `PokerTable`과 `table/TableFelt.tsx` 공유, 좌석 좌표는 `table-layout.ts`)이 그린다. 좌석 모델은 순수 `drill-table-model.ts`(공개 필드
